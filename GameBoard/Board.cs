@@ -21,6 +21,8 @@ class BoardData
 public class Board
 {
   public int[,] BoardArray;
+  public int MinX { get; private set; }
+  public int MinY { get; private set; }
 
   public Board()
   {
@@ -46,21 +48,21 @@ public class Board
       throw new InvalidDataException("board.json does not contain any cells.");
     }
 
-    int minX = data.Cells.Min(cell => cell[0]);
+    MinX = data.Cells.Min(cell => cell[0]);
     int maxX = data.Cells.Max(cell => cell[0]);
 
-    int minY = data.Cells.Min(cell => cell[1]);
+    MinY = data.Cells.Min(cell => cell[1]);
     int maxY = data.Cells.Max(cell => cell[1]);
 
-    int width = maxX - minX + 1;
-    int height = maxY - minY + 1;
+    int width = maxX - MinX + 1;
+    int height = maxY - MinY + 1;
 
     BoardArray = new int[height, width];
 
     foreach (int[] cell in data.Cells)
     {
-      int x = cell[0] - minX;
-      int y = cell[1] - minY;
+      int x = cell[0] - MinX;
+      int y = cell[1] - MinY;
 
       BoardArray[y, x] = 1;
     }

@@ -2,15 +2,17 @@ namespace MedivalChess.GameBoard;
 
 public class Piece
 {
-  public PieceType Type;
-  public PieceCategory Category;
-  public int Health;
+  public PieceDefinition Definition { get; }
+  public int CurrentHealth { get; set; }
+  public (int x, int y) Position { get; set; }
+  public Team Team;
 
-  public Piece(PieceType type, PieceCategory category, int health)
+  public Piece(PieceDefinition definition, (int x, int y) position, Team team = Team.Red)
   {
-    Type = type;
-    Category = category;
-    Health = health;
+    Definition = definition;
+    CurrentHealth = Definition.Health;
+    Position = position;
+    Team = team;
   }
 }
 
@@ -73,6 +75,11 @@ public enum PieceCategory
   Melee, Ranged, Intelligence,
   Mechanical, Structure, Transport,
   Royal
+}
+
+public enum Team
+{
+  Red, Blue
 }
 
 public class PieceDefinitions

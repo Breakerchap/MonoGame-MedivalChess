@@ -2,6 +2,7 @@
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MedivalChess.GameBoard;
+using System;
 
 namespace MedivalChess;
 
@@ -11,6 +12,7 @@ public class Game1 : Game
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
   private Board _board;
+  private PieceSetup pieceSetup = new PieceSetup();
   private Color darkCellColour = new Color(181, 136, 99);
   private Color lightCellColour = new Color(240, 217, 181);
   private Vector2 _cameraPosition = Vector2.Zero;
@@ -31,6 +33,8 @@ public class Game1 : Game
   protected override void Initialize()
   {
     _board = new Board();
+
+    pieceSetup.AddPieces();
 
     base.Initialize();
   }
@@ -133,6 +137,7 @@ public class Game1 : Game
   {
     GraphicsDevice.Clear(Color.CornflowerBlue);
 
+    /* Camera Logic */
     Vector2 screenCentre = new Vector2(
       GraphicsDevice.Viewport.Width / 2f,
       GraphicsDevice.Viewport.Height / 2f
@@ -151,8 +156,9 @@ public class Game1 : Game
         0
       );
 
-    _spriteBatch.Begin(transformMatrix: cameraTransform);
+    _spriteBatch.Begin(SpriteSortMode.FrontToBack, transformMatrix: cameraTransform);
 
+    /* Build Board */
     var BoardArray = _board.BoardArray;
     int cellSize = 64;
 
@@ -168,17 +174,48 @@ public class Game1 : Game
             : lightCellColour;
 
           _spriteBatch.Draw(
-            _pixel,
-            new Rectangle(
-              x * cellSize,
-              y * cellSize,
-              cellSize,
-              cellSize
-            ),
-            cellColour
+              _pixel,
+              new Rectangle(x * cellSize, y * cellSize, cellSize, cellSize),
+              null,
+              cellColour,
+              0f,
+              Vector2.Zero,
+              SpriteEffects.None,
+              0.1f
           );
         }
       }
+    }
+
+    
+
+    /* Draw Pieces */
+    
+    foreach (Piece piece in pieceSetup.pieces)
+    {
+      int pieceX = piece.Position.x - _board.MinX;
+      int pieceY = piece.Position.y - _board.MinY;
+      Color colour;
+
+      if (piece.Team == Team.Red) { colour = Color.Red; }
+      else if (piece.Team == Team.Blue) { colour = Color.Blue; }
+      else { Console.WriteLine($"{piece} doesnt have a team"); colour = Color.White; }
+
+      _spriteBatch.Draw(
+          _pixel,
+          new Rectangle(
+              pieceX * cellSize + 5,
+              pieceY * cellSize + 5,
+              cellSize - 10,
+              cellSize - 10
+          ),
+          null,
+          colour,
+          0f,
+          Vector2.Zero,
+          SpriteEffects.None,
+          0.5f
+      );
     }
 
     _spriteBatch.End();
