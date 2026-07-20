@@ -1,13 +1,15 @@
 namespace MedivalChess.GameBoard;
 
+using MedivalChess.Player;
+
 public class Piece
 {
   public PieceDefinition Definition { get; }
   public int CurrentHealth { get; set; }
   public (int x, int y) Position { get; set; }
-  public Team Team;
+  public TeamName Team;
 
-  public Piece(PieceDefinition definition, (int x, int y) position, Team team = Team.Red)
+  public Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
     Definition = definition;
     CurrentHealth = Definition.Health;
@@ -18,8 +20,8 @@ public class Piece
 
 public class PieceDefinition
 {
-  public PieceType Name { get; }
-  public PieceCategory Type { get; }
+  public PieceType Type { get; }
+  public PieceCategory Category { get; }
   public (int range, Shape shape) Movement { get; }
   public int Attack { get; }
   public int Health { get; }
@@ -29,7 +31,7 @@ public class PieceDefinition
 
   public PieceDefinition(
     PieceType name,
-    PieceCategory type,
+    PieceCategory category,
     (int range, Shape shape) movement,
     int attack,
     int health,
@@ -38,8 +40,8 @@ public class PieceDefinition
     int cost
   )
   {
-    Name = name;
-    Type = type;
+    Type = name;
+    Category = category;
     Movement = movement;
     Attack = attack;
     Health = health;
@@ -61,12 +63,12 @@ public enum Shape
 
 public enum PieceType
 {
-  Soldier, Defender, Archer, Scout, Spearman, 
-  Peasant, Knight, Crossbowman,Cavalier,	Chariot,
+  Soldier, Defender, Archer, Scout, Spearman,
+  Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, FieldHospital,
-  Ambulance, Teacher, Ox, Engineer, Ballista, 
-  Elephant, Guard, Mercenary, Assassin, 
-  
+  Ambulance, Teacher, Ox, Engineer, Ballista,
+  Elephant, Guard, Mercenary, Assassin,
+
   King, Princess, Palace, Baron, Emissary
 }
 
@@ -75,11 +77,6 @@ public enum PieceCategory
   Melee, Ranged, Intelligence,
   Mechanical, Structure, Transport,
   Royal
-}
-
-public enum Team
-{
-  Red, Blue
 }
 
 public class PieceDefinitions

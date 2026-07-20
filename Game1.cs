@@ -2,6 +2,7 @@
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MedivalChess.GameBoard;
+using MedivalChess.Player;
 using System;
 
 namespace MedivalChess;
@@ -13,10 +14,14 @@ public class Game1 : Game
   private Texture2D _pixel;
   private Board _board;
   private PieceSetup pieceSetup = new PieceSetup();
+  private Piece selectedPiece;
   private Color darkCellColour = new Color(181, 136, 99);
+  private Color darkHighlightCellColour = new Color(220, 195, 75);
   private Color lightCellColour = new Color(240, 217, 181);
+  private Color lightHighlightCellColour = new Color(246, 235, 114);
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
+  private MouseState _previousMouseState;
 
   public Game1()
   {
@@ -130,6 +135,83 @@ public class Game1 : Game
     // Move camera so the same world point stays under the mouse
     _cameraPosition += mouseWorldBefore - mouseWorldAfter;
 
+    bool wasLeftClick =
+      mouse.LeftButton == ButtonState.Pressed &&
+      _previousMouseState.LeftButton == ButtonState.Released;
+
+    if (wasLeftClick)
+    {
+      const int cellSize = 64;
+      int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
+      int boardY = (int)MathF.Floor(mouseWorldBefore.Y / cellSize) + _board.MinY;
+      var targetPosition = (x: boardX, y: boardY);
+      Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
+
+      if (selectedPiece == null)
+      {
+        if (pieceAtTarget?.Team == Team.currentTurn)
+        {
+          selectedPiece = pieceAtTarget;
+
+          Console.WriteLine(
+            $"Selected {selectedPiece.Team} {selectedPiece.Definition.Type}."
+          );
+        }
+      }
+      else if (pieceAtTarget == selectedPiece)
+      {
+        selectedPiece = null;
+      }
+      else if (
+        pieceAtTarget != null &&
+        pieceAtTarget.Team == Team.currentTurn
+      )
+      {
+        selectedPiece = pieceAtTarget;
+
+        Console.WriteLine(
+          $"Selected {selectedPiece.Team} {selectedPiece.Definition.Type}."
+        );
+      }
+      else
+      {
+        var movementOffset = (
+          x: targetPosition.x - selectedPiece.Position.x,
+          y: targetPosition.y - selectedPiece.Position.y
+        );
+
+        int arrayX = targetPosition.x - _board.MinX;
+        int arrayY = targetPosition.y - _board.MinY;
+
+        bool isBoardCell =
+          arrayX >= 0 &&
+          arrayX < _board.BoardArray.GetLength(1) &&
+          arrayY >= 0 &&
+          arrayY < _board.BoardArray.GetLength(0) &&
+          _board.BoardArray[arrayY, arrayX] == 1;
+
+        bool isValidMove =
+          isBoardCell &&
+          Movement.ValidMovementSquares(selectedPiece)
+            .Contains(movementOffset);
+
+        if (isValidMove)
+        {
+          selectedPiece.Position = targetPosition;
+
+          Console.WriteLine(
+            $"Moved piece to ({boardX}, {boardY})."
+          );
+
+          Team.AdvanceTurn();
+        }
+
+        selectedPiece = null;
+      }
+    }
+
+    _previousMouseState = mouse;
+
     base.Update(gameTime);
   }
 
@@ -161,6 +243,9 @@ public class Game1 : Game
     /* Build Board */
     var BoardArray = _board.BoardArray;
     int cellSize = 64;
+    var validMovementOffsets = selectedPiece == null
+      ? null
+      : Movement.ValidMovementSquares(selectedPiece);
 
     for (int y = 0; y < BoardArray.GetLength(0); y++)
     {
@@ -168,10 +253,24 @@ public class Game1 : Game
       {
         if (BoardArray[y, x] == 1)
         {
+          var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
+          bool isValidMove =
+            selectedPiece != null &&
+            validMovementOffsets != null &&
+            validMovementOffsets.Contains((
+              boardPosition.x - selectedPiece.Position.x,
+              boardPosition.y - selectedPiece.Position.y
+            )) &&
+            pieceSetup.GetPieceAt(boardPosition) == null;
+
           Color cellColour =
-            (x + y) % 2 == 0
-            ? darkCellColour
-            : lightCellColour;
+            isValidMove
+            ? (x + y) % 2 == 0
+              ? darkHighlightCellColour
+              : lightHighlightCellColour
+            : (x + y) % 2 == 0
+              ? darkCellColour
+              : lightCellColour;
 
           _spriteBatch.Draw(
               _pixel,
@@ -187,18 +286,18 @@ public class Game1 : Game
       }
     }
 
-    
+
 
     /* Draw Pieces */
-    
+
     foreach (Piece piece in pieceSetup.pieces)
     {
       int pieceX = piece.Position.x - _board.MinX;
       int pieceY = piece.Position.y - _board.MinY;
       Color colour;
 
-      if (piece.Team == Team.Red) { colour = Color.Red; }
-      else if (piece.Team == Team.Blue) { colour = Color.Blue; }
+      if (piece.Team == TeamName.Red) { colour = Color.Red; }
+      else if (piece.Team == TeamName.Blue) { colour = Color.Blue; }
       else { Console.WriteLine($"{piece} doesnt have a team"); colour = Color.White; }
 
       _spriteBatch.Draw(
@@ -214,7 +313,7 @@ public class Game1 : Game
           0f,
           Vector2.Zero,
           SpriteEffects.None,
-          0.5f
+          0.11f
       );
     }
 
