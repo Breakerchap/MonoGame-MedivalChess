@@ -10,7 +10,7 @@ internal static class Program
   private static extern bool AllocConsole();
 #endif
 
-  static void Main()
+  private static void Main()
   {
 #if DEBUG
     AllocConsole();

@@ -2,14 +2,14 @@ namespace MedivalChess.GameBoard;
 
 using MedivalChess.Player;
 
-public class Piece
+internal sealed class Piece
 {
-  public PieceDefinition Definition { get; }
-  public int CurrentHealth { get; set; }
-  public (int x, int y) Position { get; set; }
-  public TeamName Team;
+  internal PieceDefinition Definition { get; }
+  internal int CurrentHealth { get; set; }
+  internal (int x, int y) Position { get; set; }
+  internal TeamName Team { get; }
 
-  public Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
+  internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
     Definition = definition;
     CurrentHealth = Definition.Health;
@@ -18,18 +18,18 @@ public class Piece
   }
 }
 
-public class PieceDefinition
+internal sealed class PieceDefinition
 {
-  public PieceType Type { get; }
-  public PieceCategory Category { get; }
-  public (int range, Shape shape) Movement { get; }
-  public int Attack { get; }
-  public int Health { get; }
-  public (int x, int y) Size { get; }
-  public (int range, Shape shape) AttackShape { get; }
-  public int Cost { get; }
+  internal PieceType Type { get; }
+  internal PieceCategory Category { get; }
+  internal (int range, Shape shape) Movement { get; }
+  internal int Attack { get; }
+  internal int Health { get; }
+  internal (int x, int y) Size { get; }
+  internal (int range, Shape shape) AttackShape { get; }
+  internal int Cost { get; }
 
-  public PieceDefinition(
+  internal PieceDefinition(
     PieceType name,
     PieceCategory category,
     (int range, Shape shape) movement,
@@ -52,7 +52,7 @@ public class PieceDefinition
 
 }
 
-public enum Shape
+internal enum Shape
 {
   Any, Straight, Forward,
   AbsoluteStraightOrDiagonal,
@@ -61,7 +61,7 @@ public enum Shape
   MoveOnEnemy, None
 }
 
-public enum PieceType
+internal enum PieceType
 {
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
@@ -72,16 +72,16 @@ public enum PieceType
   King, Princess, Palace, Baron, Emissary
 }
 
-public enum PieceCategory
+internal enum PieceCategory
 {
   Melee, Ranged, Intelligence,
   Mechanical, Structure, Transport,
   Royal
 }
 
-public class PieceDefinitions
+internal static class PieceDefinitions
 {
-  public static readonly PieceDefinition Soldier = new(
+  internal static readonly PieceDefinition Soldier = new(
     PieceType.Soldier,
     PieceCategory.Melee,
     (2, Shape.Straight),
@@ -91,7 +91,7 @@ public class PieceDefinitions
     (1, Shape.Straight),
     20
   );
-  public static readonly PieceDefinition Defender = new(
+  internal static readonly PieceDefinition Defender = new(
     PieceType.Defender,
     PieceCategory.Melee,
     (2, Shape.Straight),
@@ -102,7 +102,7 @@ public class PieceDefinitions
     20
   );
 
-  public static readonly PieceDefinition Archer = new(
+  internal static readonly PieceDefinition Archer = new(
     PieceType.Archer,
     PieceCategory.Ranged,
     (2, Shape.Any),
@@ -113,7 +113,7 @@ public class PieceDefinitions
     25
   );
 
-  public static readonly PieceDefinition Scout = new(
+  internal static readonly PieceDefinition Scout = new(
     PieceType.Scout,
     PieceCategory.Intelligence,
     (4, Shape.Any),
@@ -124,7 +124,7 @@ public class PieceDefinitions
     20
   );
 
-  public static readonly PieceDefinition Spearman = new(
+  internal static readonly PieceDefinition Spearman = new(
     PieceType.Spearman,
     PieceCategory.Melee,
     (2, Shape.Any),
@@ -135,7 +135,7 @@ public class PieceDefinitions
     20
   );
 
-  public static readonly PieceDefinition Peasant = new(
+  internal static readonly PieceDefinition Peasant = new(
     PieceType.Peasant,
     PieceCategory.Melee,
     (1, Shape.Straight),
@@ -146,7 +146,7 @@ public class PieceDefinitions
     10
   );
 
-  public static readonly PieceDefinition Knight = new(
+  internal static readonly PieceDefinition Knight = new(
     PieceType.Knight,
     PieceCategory.Melee,
     (3, Shape.Any),
@@ -157,7 +157,7 @@ public class PieceDefinitions
     40
   );
 
-  public static readonly PieceDefinition Crossbowman = new(
+  internal static readonly PieceDefinition Crossbowman = new(
     PieceType.Crossbowman,
     PieceCategory.Ranged,
     (2, Shape.Any),
@@ -168,7 +168,7 @@ public class PieceDefinitions
     40
   );
 
-  public static readonly PieceDefinition Cavalier = new(
+  internal static readonly PieceDefinition Cavalier = new(
     PieceType.Cavalier,
     PieceCategory.Melee,
     (4, Shape.Any),
@@ -179,7 +179,7 @@ public class PieceDefinitions
     40
   );
 
-  public static readonly PieceDefinition Chariot = new(
+  internal static readonly PieceDefinition Chariot = new(
     PieceType.Chariot,
     PieceCategory.Melee,
     (4, Shape.Straight),
@@ -190,7 +190,7 @@ public class PieceDefinitions
     35
   );
 
-  public static readonly PieceDefinition Cannon = new(
+  internal static readonly PieceDefinition Cannon = new(
     PieceType.Cannon,
     PieceCategory.Mechanical,
     (2, Shape.AbsoluteStraightOrDiagonal),
@@ -201,7 +201,7 @@ public class PieceDefinitions
     40
   );
 
-  public static readonly PieceDefinition Spy = new(
+  internal static readonly PieceDefinition Spy = new(
     PieceType.Spy,
     PieceCategory.Intelligence,
     (5, Shape.Any),
@@ -212,7 +212,7 @@ public class PieceDefinitions
     35
   );
 
-  public static readonly PieceDefinition Catapult = new(
+  internal static readonly PieceDefinition Catapult = new(
     PieceType.Catapult,
     PieceCategory.Mechanical,
     (1, Shape.Any),
@@ -223,7 +223,7 @@ public class PieceDefinitions
     50
   );
 
-  public static readonly PieceDefinition FieldHospital = new(
+  internal static readonly PieceDefinition FieldHospital = new(
     PieceType.FieldHospital,
     PieceCategory.Structure,
     (1, Shape.Any),
@@ -234,7 +234,7 @@ public class PieceDefinitions
     0
   );
 
-  public static readonly PieceDefinition Ambulance = new(
+  internal static readonly PieceDefinition Ambulance = new(
     PieceType.Ambulance,
     PieceCategory.Transport,
     (5, Shape.Any),
@@ -245,7 +245,7 @@ public class PieceDefinitions
     35
   );
 
-  public static readonly PieceDefinition Teacher = new(
+  internal static readonly PieceDefinition Teacher = new(
     PieceType.Teacher,
     PieceCategory.Intelligence,
     (4, Shape.Any),
@@ -256,7 +256,7 @@ public class PieceDefinitions
     30
   );
 
-  public static readonly PieceDefinition Ox = new(
+  internal static readonly PieceDefinition Ox = new(
     PieceType.Ox,
     PieceCategory.Transport,
     (4, Shape.Any),
@@ -267,7 +267,7 @@ public class PieceDefinitions
     40
   );
 
-  public static readonly PieceDefinition Engineer = new(
+  internal static readonly PieceDefinition Engineer = new(
     PieceType.Engineer,
     PieceCategory.Intelligence,
     (3, Shape.Any),
@@ -278,7 +278,7 @@ public class PieceDefinitions
     45
   );
 
-  public static readonly PieceDefinition Ballista = new(
+  internal static readonly PieceDefinition Ballista = new(
     PieceType.Ballista,
     PieceCategory.Mechanical,
     (1, Shape.Straight),
@@ -289,7 +289,7 @@ public class PieceDefinitions
     55
   );
 
-  public static readonly PieceDefinition Elephant = new(
+  internal static readonly PieceDefinition Elephant = new(
     PieceType.Elephant,
     PieceCategory.Melee,
     (2, Shape.Straight),
@@ -300,7 +300,7 @@ public class PieceDefinitions
     55
   );
 
-  public static readonly PieceDefinition Guard = new(
+  internal static readonly PieceDefinition Guard = new(
     PieceType.Guard,
     PieceCategory.Melee,
     (3, Shape.Any),
@@ -311,7 +311,7 @@ public class PieceDefinitions
     25
   );
 
-  public static readonly PieceDefinition Mercenary = new(
+  internal static readonly PieceDefinition Mercenary = new(
     PieceType.Mercenary,
     PieceCategory.Melee,
     (3, Shape.Any),
@@ -322,7 +322,7 @@ public class PieceDefinitions
     20
   );
 
-  public static readonly PieceDefinition Assassin = new(
+  internal static readonly PieceDefinition Assassin = new(
     PieceType.Assassin,
     PieceCategory.Melee,
     (3, Shape.Any),
@@ -333,7 +333,7 @@ public class PieceDefinitions
     60
   );
 
-  public static readonly PieceDefinition King = new(
+  internal static readonly PieceDefinition King = new(
     PieceType.King,
     PieceCategory.Royal,
     (1, Shape.Any),
@@ -344,7 +344,7 @@ public class PieceDefinitions
     0
   );
 
-  public static readonly PieceDefinition Princess = new(
+  internal static readonly PieceDefinition Princess = new(
     PieceType.Princess,
     PieceCategory.Royal,
     (1, Shape.Any),
@@ -355,7 +355,7 @@ public class PieceDefinitions
     0
   );
 
-  public static readonly PieceDefinition Palace = new(
+  internal static readonly PieceDefinition Palace = new(
     PieceType.Palace,
     PieceCategory.Royal,
     (0, Shape.None),
@@ -366,7 +366,7 @@ public class PieceDefinitions
     0
   );
 
-  public static readonly PieceDefinition Baron = new(
+  internal static readonly PieceDefinition Baron = new(
     PieceType.Baron,
     PieceCategory.Royal,
     (1, Shape.Any),
@@ -377,7 +377,7 @@ public class PieceDefinitions
     0
   );
 
-  public static readonly PieceDefinition Emissary = new(
+  internal static readonly PieceDefinition Emissary = new(
     PieceType.Emissary,
     PieceCategory.Royal,
     (3, Shape.Any),

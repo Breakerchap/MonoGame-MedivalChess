@@ -7,24 +7,19 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
-class Tile
-{
-  public Piece Piece;
-}
-
-class BoardData
+internal sealed class BoardData
 {
   [JsonPropertyName("cells")]
   public List<int[]> Cells { get; set; } = new();
 }
 
-public class Board
+internal sealed class Board
 {
-  public int[,] BoardArray;
-  public int MinX { get; private set; }
-  public int MinY { get; private set; }
+  internal int[,] BoardArray { get; }
+  internal int MinX { get; }
+  internal int MinY { get; }
 
-  public Board()
+  internal Board()
   {
     string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", "board.json");
     if (!File.Exists(boardPath))
@@ -38,7 +33,7 @@ public class Board
     }
 
     string json = File.ReadAllText(boardPath);
-    BoardData? data = JsonSerializer.Deserialize<BoardData>(json, new JsonSerializerOptions
+    BoardData data = JsonSerializer.Deserialize<BoardData>(json, new JsonSerializerOptions
     {
       PropertyNameCaseInsensitive = true
     });

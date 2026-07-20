@@ -2,28 +2,28 @@ namespace MedivalChess.Player;
 
 using MedivalChess.GameBoard;
 
-public class Team
+internal sealed class Team
 {
-  public TeamName TeamName { get; }
-  public PieceType? ChosenRoyal { get; }
-  public int Money { get; set; }
+  internal TeamName TeamName { get; }
+  internal PieceType? ChosenRoyal { get; }
+  internal int Money { get; set; }
 
-  public Team(TeamName teamName, PieceType? chosenRoyal, int? money = null)
+  internal Team(TeamName teamName, PieceType? chosenRoyal, int? money = null)
   {
     TeamName = teamName;
     ChosenRoyal = chosenRoyal;
-    Money = money ?? Globals.startingCash;
+    Money = money ?? Globals.StartingCash;
   }
 
-  public static TeamName currentTurn = TeamName.Red;
+  internal static TeamName CurrentTurn { get; private set; } = TeamName.Red;
 
-  public static void AdvanceTurn()
+  internal static void AdvanceTurn()
   {
-    currentTurn = currentTurn == TeamName.Red ? TeamName.Blue : TeamName.Red;
+    CurrentTurn = CurrentTurn == TeamName.Red ? TeamName.Blue : TeamName.Red;
   }
 }
 
-public enum TeamName
+internal enum TeamName
 {
   Red, Blue
 }

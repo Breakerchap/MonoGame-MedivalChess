@@ -4,25 +4,32 @@ using System.Collections.Generic;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
 
-public class PieceSetup
+internal sealed class PieceSetup
 {
-  public List<Piece> pieces = new();
+  private readonly List<Piece> _pieces = new();
 
-  public void AddPieces()
+  internal IReadOnlyList<Piece> Pieces => _pieces;
+
+  internal void AddPieces()
   {
     Piece piece1 = new Piece(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
     Piece piece2 = new Piece(PieceDefinitions.Archer, (2, 2), TeamName.Blue);
 
-    pieces.Add(piece1);
-    pieces.Add(piece2);
+    _pieces.Add(piece1);
+    _pieces.Add(piece2);
   }
 
-  public Piece GetPieceAt((int x, int y) position)
+  internal Piece GetPieceAt((int x, int y) position)
   {
-    return pieces.Find(piece => piece.Position == position);
+    return _pieces.Find(piece => piece.Position == position);
   }
 
-  public List<Team> CreateTeams()
+  internal bool RemovePiece(Piece piece)
+  {
+    return _pieces.Remove(piece);
+  }
+
+  internal List<Team> CreateTeams()
   {
     List<Team> teams = new();
     TeamName currentTeam = TeamName.Red;
@@ -31,7 +38,7 @@ public class PieceSetup
     {
       PieceType? chosenRoyal = null;
 
-      foreach (Piece piece in pieces)
+      foreach (Piece piece in _pieces)
       {
         if (piece.Definition.Category == PieceCategory.Royal && piece.Team == currentTeam)
         {
@@ -39,8 +46,8 @@ public class PieceSetup
           break;
         }
       }
-      currentTeam = TeamName.Blue;
       teams.Add(new Team(currentTeam, chosenRoyal));
+      currentTeam = TeamName.Blue;
 
     }
     return teams;

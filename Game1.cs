@@ -4,26 +4,30 @@ using Microsoft.Xna.Framework.Input;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using System;
+using System.Collections.Generic;
+using Microsoft.Xna.Framework.Graphics.PackedVector;
 
 namespace MedivalChess;
 
-public class Game1 : Game
+internal sealed class Game1 : Game
 {
-  private GraphicsDeviceManager _graphics;
+  private readonly GraphicsDeviceManager _graphics;
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
   private Board _board;
-  private PieceSetup pieceSetup = new PieceSetup();
+  private readonly PieceSetup pieceSetup = new();
+  private List<Team> _teams = [];
   private Piece selectedPiece;
-  private Color darkCellColour = new Color(181, 136, 99);
-  private Color darkHighlightCellColour = new Color(220, 195, 75);
-  private Color lightCellColour = new Color(240, 217, 181);
-  private Color lightHighlightCellColour = new Color(246, 235, 114);
+  private static readonly Color darkCellColour = new(181, 136, 99);
+  private static readonly Color darkHighlightCellColour = new(220, 195, 75);
+  private static readonly Color lightCellColour = new(240, 217, 181);
+  private static readonly Color lightHighlightCellColour = new(246, 235, 114);
+  private static readonly Color attackableCellColour = new(245, 56, 56);
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
   private MouseState _previousMouseState;
 
-  public Game1()
+  internal Game1()
   {
     _graphics = new GraphicsDeviceManager(this);
     Content.RootDirectory = "Content";
@@ -40,6 +44,7 @@ public class Game1 : Game
     _board = new Board();
 
     pieceSetup.AddPieces();
+    _teams = pieceSetup.CreateTeams();
 
     base.Initialize();
   }
@@ -139,7 +144,11 @@ public class Game1 : Game
       mouse.LeftButton == ButtonState.Pressed &&
       _previousMouseState.LeftButton == ButtonState.Released;
 
-    if (wasLeftClick)
+    bool wasRightClick =
+      mouse.RightButton == ButtonState.Pressed &&
+      _previousMouseState.RightButton == ButtonState.Released;
+
+    if (wasLeftClick || wasRightClick)
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -149,7 +158,7 @@ public class Game1 : Game
 
       if (selectedPiece == null)
       {
-        if (pieceAtTarget?.Team == Team.currentTurn)
+        if (pieceAtTarget?.Team == Team.CurrentTurn)
         {
           selectedPiece = pieceAtTarget;
 
@@ -164,7 +173,7 @@ public class Game1 : Game
       }
       else if (
         pieceAtTarget != null &&
-        pieceAtTarget.Team == Team.currentTurn
+        pieceAtTarget.Team == Team.CurrentTurn
       )
       {
         selectedPiece = pieceAtTarget;
@@ -175,38 +184,85 @@ public class Game1 : Game
       }
       else
       {
-        var movementOffset = (
-          x: targetPosition.x - selectedPiece.Position.x,
-          y: targetPosition.y - selectedPiece.Position.y
-        );
-
-        int arrayX = targetPosition.x - _board.MinX;
-        int arrayY = targetPosition.y - _board.MinY;
-
-        bool isBoardCell =
-          arrayX >= 0 &&
-          arrayX < _board.BoardArray.GetLength(1) &&
-          arrayY >= 0 &&
-          arrayY < _board.BoardArray.GetLength(0) &&
-          _board.BoardArray[arrayY, arrayX] == 1;
-
-        bool isValidMove =
-          isBoardCell &&
-          Movement.ValidMovementSquares(selectedPiece)
-            .Contains(movementOffset);
-
-        if (isValidMove)
+        if (wasLeftClick)
         {
-          selectedPiece.Position = targetPosition;
+          var movementOffset = (
+                  x: targetPosition.x - selectedPiece.Position.x,
+                  y: targetPosition.y - selectedPiece.Position.y
+                );
 
-          Console.WriteLine(
-            $"Moved piece to ({boardX}, {boardY})."
+          int arrayX = targetPosition.x - _board.MinX;
+          int arrayY = targetPosition.y - _board.MinY;
+
+          bool isBoardCell =
+            arrayX >= 0 &&
+            arrayX < _board.BoardArray.GetLength(1) &&
+            arrayY >= 0 &&
+            arrayY < _board.BoardArray.GetLength(0) &&
+            _board.BoardArray[arrayY, arrayX] == 1;
+
+          bool isValidMove =
+            isBoardCell &&
+            Actions.ValidActionSquares(selectedPiece, true)
+              .Contains(movementOffset) &&
+            pieceAtTarget == null;
+
+          if (isValidMove)
+          {
+            selectedPiece.Position = targetPosition;
+
+            Console.WriteLine(
+              $"Moved piece to ({boardX}, {boardY})."
+            );
+
+            Team.AdvanceTurn();
+          }
+
+          selectedPiece = null;
+        }
+        else if (wasRightClick)
+        {
+          var attackOffset = (
+           x: targetPosition.x - selectedPiece.Position.x,
+           y: targetPosition.y - selectedPiece.Position.y
           );
 
-          Team.AdvanceTurn();
-        }
+          int arrayX = targetPosition.x - _board.MinX;
+          int arrayY = targetPosition.y - _board.MinY;
 
-        selectedPiece = null;
+          bool isBoardCell =
+            arrayX >= 0 &&
+            arrayX < _board.BoardArray.GetLength(1) &&
+            arrayY >= 0 &&
+            arrayY < _board.BoardArray.GetLength(0) &&
+            _board.BoardArray[arrayY, arrayX] == 1;
+
+          bool isValidAttack =
+            isBoardCell &&
+            Actions.ValidActionSquares(selectedPiece, false)
+              .Contains(attackOffset) &&
+            pieceAtTarget != null &&
+            pieceAtTarget.Team != selectedPiece.Team;
+
+          if (isValidAttack)
+          {
+            Actions.Attack(selectedPiece, pieceAtTarget);
+
+            Team attackingTeam = _teams.Find(team => team.TeamName == selectedPiece.Team);
+            if (Actions.HandlePieceDeath(pieceAtTarget, attackingTeam))
+            {
+              pieceSetup.RemovePiece(pieceAtTarget);
+            }
+
+            Console.WriteLine(
+              $"Attacked {pieceAtTarget.Team} {pieceAtTarget.Definition.Type} at ({boardX}, {boardY})."
+            );
+
+            Team.AdvanceTurn();
+          }
+
+          selectedPiece = null;
+        }
       }
     }
 
@@ -245,7 +301,10 @@ public class Game1 : Game
     int cellSize = 64;
     var validMovementOffsets = selectedPiece == null
       ? null
-      : Movement.ValidMovementSquares(selectedPiece);
+      : Actions.ValidActionSquares(selectedPiece, true);
+    var validAttackOffsets = selectedPiece == null
+      ? null
+      : Actions.ValidActionSquares(selectedPiece, false);
 
     for (int y = 0; y < BoardArray.GetLength(0); y++)
     {
@@ -254,6 +313,7 @@ public class Game1 : Game
         if (BoardArray[y, x] == 1)
         {
           var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
+          Piece pieceAtBoardPosition = pieceSetup.GetPieceAt(boardPosition);
           bool isValidMove =
             selectedPiece != null &&
             validMovementOffsets != null &&
@@ -261,10 +321,21 @@ public class Game1 : Game
               boardPosition.x - selectedPiece.Position.x,
               boardPosition.y - selectedPiece.Position.y
             )) &&
-            pieceSetup.GetPieceAt(boardPosition) == null;
+            pieceAtBoardPosition == null;
+          bool isValidAttack =
+            selectedPiece != null &&
+            validAttackOffsets != null &&
+            validAttackOffsets.Contains((
+              boardPosition.x - selectedPiece.Position.x,
+              boardPosition.y - selectedPiece.Position.y
+            )) &&
+            pieceAtBoardPosition != null &&
+            pieceAtBoardPosition.Team != selectedPiece.Team;
 
           Color cellColour =
-            isValidMove
+            isValidAttack
+            ? attackableCellColour
+            : isValidMove
             ? (x + y) % 2 == 0
               ? darkHighlightCellColour
               : lightHighlightCellColour
@@ -286,11 +357,9 @@ public class Game1 : Game
       }
     }
 
-
-
     /* Draw Pieces */
 
-    foreach (Piece piece in pieceSetup.pieces)
+    foreach (Piece piece in pieceSetup.Pieces)
     {
       int pieceX = piece.Position.x - _board.MinX;
       int pieceY = piece.Position.y - _board.MinY;

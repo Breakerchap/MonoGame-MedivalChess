@@ -1,6 +1,6 @@
 namespace MedivalChess;
 
-public static class Globals
+internal static class Globals
 {
-  public static int startingCash = 1000;
+  internal const int StartingCash = 1000;
 }
