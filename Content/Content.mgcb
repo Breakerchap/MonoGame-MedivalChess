@@ -13,3 +13,14 @@
 
 #---------------------------------- Content ---------------------------------#
 
+#begin PieceLabel.spritefont
+/importer:FontDescriptionImporter
+/processor:FontDescriptionProcessor
+/processorParam:PremultiplyAlpha=True
+/processorParam:TextureFormat=Compressed
+/processorParam:FontName=Arial
+/processorParam:Size=18
+/processorParam:Spacing=0
+/processorParam:UseKerning=True
+/processorParam:Style=Regular
+/build:PieceLabel.spritefont

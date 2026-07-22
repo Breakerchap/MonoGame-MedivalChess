@@ -14,6 +14,7 @@ internal sealed class Game1 : Game
   private readonly GraphicsDeviceManager _graphics;
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
+  private SpriteFont _pieceLabelFont;
   private Board _board;
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
@@ -55,6 +56,7 @@ internal sealed class Game1 : Game
 
     _pixel = new Texture2D(GraphicsDevice, 1, 1);
     _pixel.SetData(new[] { Color.White });
+    _pieceLabelFont = Content.Load<SpriteFont>("PieceLabel");
   }
 
   protected override void Update(GameTime gameTime)
@@ -383,6 +385,24 @@ internal sealed class Game1 : Game
           Vector2.Zero,
           SpriteEffects.None,
           0.11f
+      );
+
+      string label = piece.Definition.Type.ToString()[..2];
+      Vector2 labelSize = _pieceLabelFont.MeasureString(label);
+
+      _spriteBatch.DrawString(
+        _pieceLabelFont,
+        label,
+        new Vector2(
+          pieceX * cellSize + cellSize / 2f - labelSize.X / 2f,
+          pieceY * cellSize + cellSize / 2f - labelSize.Y / 2f
+        ),
+        Color.White,
+        0f,
+        Vector2.Zero,
+        1f,
+        SpriteEffects.None,
+        0.12f
       );
     }
 
