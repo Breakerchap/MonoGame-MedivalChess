@@ -265,7 +265,7 @@ internal sealed class Game1 : Game
               $"Moved piece to ({boardX}, {boardY})."
             );
 
-            Team.AdvanceTurn();
+            CompleteAction();
           }
 
           selectedPiece = null;
@@ -308,7 +308,7 @@ internal sealed class Game1 : Game
               $"Attacked {pieceAtTarget.Team} {pieceAtTarget.Definition.Type} at ({boardX}, {boardY})."
             );
 
-            Team.AdvanceTurn();
+            CompleteAction();
           }
 
           selectedPiece = null;
@@ -341,15 +341,25 @@ internal sealed class Game1 : Game
       return;
     }
 
-    pieceSetup.AddPiece(new Piece(definition, targetPosition, Team.CurrentTurn));
-    buyingTeam.Money -= definition.Cost;
+    Piece boughtPiece = Team.BuyPiece(definition, buyingTeam, targetPosition);
+    pieceSetup.AddPiece(boughtPiece);
     _isPurchaseMode = false;
 
     Console.WriteLine(
       $"Bought and placed {definition.Type} at ({targetPosition.x}, {targetPosition.y})."
     );
 
-    Team.AdvanceTurn();
+    CompleteAction();
+  }
+
+  private void CompleteAction()
+  {
+    Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+
+    if (currentTeam.SpendAction())
+    {
+      Team.AdvanceTurn();
+    }
   }
 
   private bool IsBoardCell(int arrayX, int arrayY)
@@ -683,7 +693,16 @@ internal sealed class Game1 : Game
       turnColour
     );
 
-    float moneyY = 20 + _pieceLabelFont.LineSpacing + 8;
+    Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+    float actionPointsY = 20 + _pieceLabelFont.LineSpacing + 4;
+    _spriteBatch.DrawString(
+      _pieceLabelFont,
+      $"Action Points: {currentTeam.ActionPoints}/{Team.ActionsPerTurn}",
+      new Vector2(20, actionPointsY),
+      turnColour
+    );
+
+    float moneyY = actionPointsY + _pieceLabelFont.LineSpacing + 8;
     foreach (Team team in _teams)
     {
       Color teamColour = team.TeamName == TeamName.Red ? Color.Red : Color.Blue;

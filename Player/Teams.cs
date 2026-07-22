@@ -5,15 +5,19 @@ using System;
 
 internal sealed class Team
 {
+  internal const int ActionsPerTurn = 3;
+
   internal TeamName TeamName { get; }
   internal PieceType? ChosenRoyal { get; }
   internal int Money { get; set; }
+  internal int ActionPoints { get; set; }
 
   internal Team(TeamName teamName, PieceType? chosenRoyal, int? money = null)
   {
     TeamName = teamName;
     ChosenRoyal = chosenRoyal;
     Money = money ?? Globals.StartingCash;
+    ActionPoints = ActionsPerTurn;
   }
 
   internal static TeamName CurrentTurn { get; private set; } = TeamName.Red;
@@ -21,6 +25,19 @@ internal sealed class Team
   internal static void AdvanceTurn()
   {
     CurrentTurn = CurrentTurn == TeamName.Red ? TeamName.Blue : TeamName.Red;
+  }
+
+  internal bool SpendAction()
+  {
+    ActionPoints--;
+
+    if (ActionPoints > 0)
+    {
+      return false;
+    }
+
+    ActionPoints = ActionsPerTurn;
+    return true;
   }
 
   internal static Piece BuyPiece(PieceDefinition piece, Team team, (int x, int y) position)
