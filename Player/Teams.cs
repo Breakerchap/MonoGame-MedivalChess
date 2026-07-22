@@ -1,6 +1,7 @@
 namespace MedivalChess.Player;
 
 using MedivalChess.GameBoard;
+using System;
 
 internal sealed class Team
 {
@@ -20,6 +21,14 @@ internal sealed class Team
   internal static void AdvanceTurn()
   {
     CurrentTurn = CurrentTurn == TeamName.Red ? TeamName.Blue : TeamName.Red;
+  }
+
+  internal static Piece BuyPiece(PieceDefinition piece, Team team, (int x, int y) position)
+  {
+    if (team.Money < piece.Cost) { Console.WriteLine("Cannot Afford Piece"); return null; }
+
+    team.Money -= piece.Cost;
+    return new Piece(piece, position, team.TeamName);
   }
 }
 

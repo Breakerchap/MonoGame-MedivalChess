@@ -4,6 +4,7 @@ import re
 import sys
 from collections import deque
 from pathlib import Path
+from tkinter import Tk, filedialog
 
 import pygame
 
@@ -135,7 +136,7 @@ class ShapePainter:
           self.import_gdscript(SAVE_GDSCRIPT_PATH)
 
         elif event.key == pygame.K_o and (mods & pygame.KMOD_CTRL):
-          self.import_json(SAVE_JSON_PATH)
+          self.choose_and_import_json()
 
         elif event.key == pygame.K_c and not (mods & pygame.KMOD_CTRL):
           self.save_history_state()
@@ -161,6 +162,13 @@ class ShapePainter:
 
         elif event.key == pygame.K_v and (mods & pygame.KMOD_CTRL):
           self.paste_clipboard_at_mouse()
+
+      elif event.type == pygame.DROPFILE:
+        dropped_path = Path(event.file)
+        if dropped_path.suffix.lower() == ".json":
+          self.import_json(dropped_path)
+        else:
+          self.set_status("Drop a .json file to import it", STATUS_ERROR_COLOUR)
 
       elif event.type == pygame.MOUSEBUTTONDOWN:
         if event.button == 1:
@@ -528,17 +536,41 @@ class ShapePainter:
 
     return min_x, max_x, min_y, max_y
 
+  def choose_and_import_json(self) -> None:
+    root = Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    try:
+      filename = filedialog.askopenfilename(
+        title="Import tile shape JSON",
+        filetypes=[
+          ("JSON files", "*.json"),
+          ("All files", "*.*"),
+        ],
+      )
+    finally:
+      root.destroy()
+
+    if filename:
+      self.import_json(Path(filename))
+
   def import_json(self, path: Path) -> None:
     try:
       if not path.exists():
         self.set_status(f"JSON not found: {path.name}", STATUS_ERROR_COLOUR)
         return
 
-      raw = json.loads(path.read_text(encoding="utf-8"))
-      cells_raw = raw.get("cells")
+      raw = json.loads(path.read_text(encoding="utf-8-sig"))
+
+      # Accept either {"cells": [[x, y], ...]} or a bare [[x, y], ...] list.
+      if isinstance(raw, dict):
+        cells_raw = raw.get("cells")
+      else:
+        cells_raw = raw
 
       if not isinstance(cells_raw, list):
-        self.set_status("Invalid JSON: missing cells list", STATUS_ERROR_COLOUR)
+        self.set_status("Invalid JSON: expected a cells list", STATUS_ERROR_COLOUR)
         return
 
       imported_cells: set[tuple[int, int]] = set()
@@ -559,7 +591,10 @@ class ShapePainter:
       self.filled_cells = imported_cells
       self.clear_selection()
       self.clear_rectangle_preview()
-      self.set_status(f"Imported JSON: {len(imported_cells)} tiles", STATUS_OK_COLOUR)
+      self.set_status(
+        f"Imported {len(imported_cells)} tiles from {path.name}",
+        STATUS_OK_COLOUR,
+      )
 
     except Exception as exc:
       self.set_status(f"JSON import failed: {exc}", STATUS_ERROR_COLOUR)
@@ -731,7 +766,8 @@ class ShapePainter:
       "Ctrl+Y = redo",
       "Ctrl+C = copy selection",
       "Ctrl+V = paste at mouse",
-      "Ctrl+O = import JSON",
+      "Ctrl+O = choose JSON file",
+      "Drop .json file = import JSON",
       "Ctrl+Shift+O = import GDScript",
       "H = flip clipboard horizontally",
       "J = flip clipboard vertically",

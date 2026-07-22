@@ -29,6 +29,11 @@ internal sealed class PieceSetup
     return _pieces.Remove(piece);
   }
 
+  internal void AddPiece(Piece piece)
+  {
+    _pieces.Add(piece);
+  }
+
   internal List<Team> CreateTeams()
   {
     List<Team> teams = new();

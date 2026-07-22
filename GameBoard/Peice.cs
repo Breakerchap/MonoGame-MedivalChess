@@ -387,4 +387,23 @@ internal static class PieceDefinitions
     (1, Shape.Any),
     0
   );
+
+  internal static readonly PieceDefinition[] All =
+  [
+    Soldier, Defender, Archer, Scout, Spearman,
+    Peasant, Knight, Crossbowman, Cavalier, Chariot,
+    Cannon, Spy, Catapult, FieldHospital, Ambulance,
+    Teacher, Ox, Engineer, Ballista, Elephant,
+    Guard, Mercenary, Assassin, King, Princess,
+    Palace, Baron, Emissary
+  ];
+
+  internal static readonly PieceDefinition[] Purchasable =
+  [
+    Soldier, Defender, Archer, Scout, Spearman,
+    Peasant, Knight, Crossbowman, Cavalier, Chariot,
+    Cannon, Spy, Catapult, FieldHospital, Ambulance,
+    Teacher, Ox, Engineer, Ballista, Elephant,
+    Guard, Mercenary, Assassin
+  ];
 }
