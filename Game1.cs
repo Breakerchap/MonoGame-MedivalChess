@@ -408,6 +408,32 @@ internal sealed class Game1 : Game
 
     _spriteBatch.End();
 
+    _spriteBatch.Begin();
+
+    Color turnColour = Team.CurrentTurn == TeamName.Red ? Color.Red : Color.Blue;
+    _spriteBatch.DrawString(
+      _pieceLabelFont,
+      $"Turn: {Team.CurrentTurn}",
+      new Vector2(20, 20),
+      turnColour
+    );
+
+    float moneyY = 20 + _pieceLabelFont.LineSpacing + 8;
+    foreach (Team team in _teams)
+    {
+      Color teamColour = team.TeamName == TeamName.Red ? Color.Red : Color.Blue;
+      _spriteBatch.DrawString(
+        _pieceLabelFont,
+        $"{team.TeamName} Money: {team.Money}",
+        new Vector2(20, moneyY),
+        teamColour
+      );
+
+      moneyY += _pieceLabelFont.LineSpacing;
+    }
+
+    _spriteBatch.End();
+
     base.Draw(gameTime);
   }
 }
