@@ -32,11 +32,18 @@ internal static class Actions
     attackedPiece.CurrentHealth -= attackingPiece.Definition.Attack;
   }
 
-  internal static bool HandlePieceDeath(Piece piece, Team attackingTeam)
+  internal static bool HandlePieceDeath(
+    Piece piece,
+    Team attackingTeam,
+    Team defeatedTeam,
+    float killerRefundMultiplier,
+    float defeatedTeamRefundMultiplier
+  )
   {
     if (piece.CurrentHealth > 0) { return false; }
 
-    attackingTeam.Money += piece.Definition.Cost / 2;
+    attackingTeam.Money += (int)MathF.Round(piece.Definition.Cost * killerRefundMultiplier);
+    defeatedTeam.Money += (int)MathF.Round(piece.Definition.Cost * defeatedTeamRefundMultiplier);
     return true;
   }
 }

@@ -406,4 +406,9 @@ internal static class PieceDefinitions
     Teacher, Ox, Engineer, Ballista, Elephant,
     Guard, Mercenary, Assassin
   ];
+
+  internal static readonly PieceDefinition[] Royals =
+  [
+    King, Princess, Palace, Baron, Emissary
+  ];
 }

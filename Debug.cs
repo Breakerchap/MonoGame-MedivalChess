@@ -12,11 +12,6 @@ internal sealed class PieceSetup
 
   internal void AddPieces()
   {
-    Piece piece1 = new Piece(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
-    Piece piece2 = new Piece(PieceDefinitions.Archer, (2, 2), TeamName.Blue);
-
-    _pieces.Add(piece1);
-    _pieces.Add(piece2);
   }
 
   internal Piece GetPieceAt((int x, int y) position)

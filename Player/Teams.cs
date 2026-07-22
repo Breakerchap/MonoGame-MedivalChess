@@ -8,7 +8,7 @@ internal sealed class Team
   internal const int ActionsPerTurn = 3;
 
   internal TeamName TeamName { get; }
-  internal PieceType? ChosenRoyal { get; }
+  internal PieceType? ChosenRoyal { get; private set; }
   internal int Money { get; set; }
   internal int ActionPoints { get; set; }
 
@@ -25,6 +25,16 @@ internal sealed class Team
   internal static void AdvanceTurn()
   {
     CurrentTurn = CurrentTurn == TeamName.Red ? TeamName.Blue : TeamName.Red;
+  }
+
+  internal static void ResetTurn()
+  {
+    CurrentTurn = TeamName.Red;
+  }
+
+  internal void ChooseRoyal(PieceType royal)
+  {
+    ChosenRoyal = royal;
   }
 
   internal bool SpendAction()
