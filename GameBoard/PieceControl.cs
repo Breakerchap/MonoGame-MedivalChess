@@ -6,6 +6,36 @@ namespace MedivalChess.GameBoard;
 
 internal static class Actions
 {
+  internal static bool IsValidMovementDestination(Piece piece, (int x, int y) destination)
+  {
+    if (destination == piece.Position)
+    {
+      return false;
+    }
+
+    var offset = (
+      x: destination.x - piece.Position.x,
+      y: destination.y - piece.Position.y
+    );
+    return ValidActionSquares(piece, true).Contains(offset);
+  }
+
+  internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)
+  {
+    List<(int x, int y)> attackOffsets = ValidActionSquares(piece, false);
+
+    foreach ((int x, int y) origin in piece.OccupiedSquares())
+    {
+      var offset = (x: targetPosition.x - origin.x, y: targetPosition.y - origin.y);
+      if (attackOffsets.Contains(offset))
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
     var action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
@@ -20,6 +50,9 @@ internal static class Actions
 
       case Shape.AbsoluteStraightOrDiagonal:
         return ShapeFuncs.AbsoluteStraightOrDiagonalShape(action.range);
+
+      case Shape.None:
+        return [];
 
       default:
         Console.WriteLine($"Shape: `{action.shape}` not added yet");

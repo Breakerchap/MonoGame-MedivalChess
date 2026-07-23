@@ -6,8 +6,38 @@ internal static class UiText
 {
   internal static string BuildPieceLabel(PieceDefinition definition)
   {
-    string typeName = definition.Type.ToString();
-    return typeName.Length <= 2 ? typeName : typeName[..2];
+    return definition.Type switch
+    {
+      PieceType.Soldier => "So",
+      PieceType.Defender => "Df",
+      PieceType.Archer => "Ar",
+      PieceType.Scout => "Sc",
+      PieceType.Spearman => "Sp",
+      PieceType.Peasant => "Pe",
+      PieceType.Knight => "Kn",
+      PieceType.Crossbowman => "Cb",
+      PieceType.Cavalier => "Cv",
+      PieceType.Chariot => "Ch",
+      PieceType.Cannon => "Cn",
+      PieceType.Spy => "Sy",
+      PieceType.Catapult => "Ct",
+      PieceType.FieldHospital => "FH",
+      PieceType.Ambulance => "Am",
+      PieceType.Teacher => "Te",
+      PieceType.Ox => "Ox",
+      PieceType.Engineer => "En",
+      PieceType.Ballista => "Bl",
+      PieceType.Elephant => "El",
+      PieceType.Guard => "Gd",
+      PieceType.Mercenary => "Mc",
+      PieceType.Assassin => "As",
+      PieceType.King => "KI",
+      PieceType.Princess => "PR",
+      PieceType.Palace => "PA",
+      PieceType.Baron => "BR",
+      PieceType.Emissary => "EM",
+      _ => "??"
+    };
   }
 
   internal static string BuildAttackDetails(PieceDefinition definition)

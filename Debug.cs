@@ -16,7 +16,28 @@ internal sealed class PieceSetup
 
   internal Piece GetPieceAt((int x, int y) position)
   {
-    return _pieces.Find(piece => piece.Position == position);
+    return _pieces.Find(piece => piece.Occupies(position));
+  }
+
+  internal bool IsFootprintClear(
+    PieceDefinition definition,
+    (int x, int y) position,
+    Piece ignoredPiece = null
+  )
+  {
+    for (int y = 0; y < definition.Size.y; y++)
+    {
+      for (int x = 0; x < definition.Size.x; x++)
+      {
+        Piece occupiedPiece = GetPieceAt((position.x + x, position.y + y));
+        if (occupiedPiece != null && occupiedPiece != ignoredPiece)
+        {
+          return false;
+        }
+      }
+    }
+
+    return true;
   }
 
   internal bool RemovePiece(Piece piece)

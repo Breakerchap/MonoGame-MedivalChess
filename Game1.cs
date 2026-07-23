@@ -5,7 +5,6 @@ using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using System;
 using System.Collections.Generic;
-using Microsoft.Xna.Framework.Graphics.PackedVector;
 
 namespace MedivalChess;
 
@@ -41,25 +40,15 @@ internal sealed class Game1 : Game
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
   private SpriteFont _pieceLabelFont;
+  private UiRenderer _ui;
   private Board _board;
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
   private Piece selectedPiece;
-  private static readonly Color darkCellColour = new(181, 136, 99);
-  private static readonly Color lightCellColour = new(240, 217, 181);
-  private static readonly Color redTerritoryColour = new(220, 80, 80);
-  private static readonly Color blueTerritoryColour = new(80, 125, 220);
-  private static readonly Color noMansLandColour = new(130, 130, 130);
-  private static readonly Color uiPanelColour = new(20, 24, 34, 238);
-  private static readonly Color uiPanelBorderColour = new(111, 151, 192);
-  private static readonly Color uiMutedTextColour = new(185, 198, 214);
-  private static readonly Color moveOverlayColour = new(246, 214, 88, 150);
-  private static readonly Color attackOverlayColour = new(232, 76, 76, 175);
-  private static readonly Color selectedOutlineColour = new(255, 224, 104);
   private const int noMansLandHalfHeight = 2;
   private const float territoryTintAmount = 0.2f;
-  private const int purchasePanelWidth = 340;
-  private const int purchasePanelHeight = 450;
+  private const int purchasePanelWidth = 380;
+  private const int purchasePanelHeight = 470;
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
   private MouseState _previousMouseState;
@@ -113,6 +102,7 @@ internal sealed class Game1 : Game
     _pixel = new Texture2D(GraphicsDevice, 1, 1);
     _pixel.SetData(new[] { Color.White });
     _pieceLabelFont = Content.Load<SpriteFont>("PieceLabel");
+    _ui = new UiRenderer(_spriteBatch, _pixel, _pieceLabelFont);
   }
 
   protected override void Update(GameTime gameTime)
@@ -228,7 +218,7 @@ internal sealed class Game1 : Game
       {
         if (wasLeftClick)
         {
-          TryPurchaseAndPlace(targetPosition, pieceAtTarget);
+          TryPurchaseAndPlace(targetPosition);
         }
       }
       else if (selectedPiece == null)
@@ -242,12 +232,13 @@ internal sealed class Game1 : Game
           );
         }
       }
-      else if (pieceAtTarget == selectedPiece)
+      else if (pieceAtTarget == selectedPiece && targetPosition == selectedPiece.Position)
       {
         selectedPiece = null;
       }
       else if (
         pieceAtTarget != null &&
+        pieceAtTarget != selectedPiece &&
         pieceAtTarget.Team == Team.CurrentTurn
       )
       {
@@ -261,11 +252,6 @@ internal sealed class Game1 : Game
       {
         if (wasLeftClick)
         {
-          var movementOffset = (
-                  x: targetPosition.x - selectedPiece.Position.x,
-                  y: targetPosition.y - selectedPiece.Position.y
-                );
-
           int arrayX = targetPosition.x - _board.MinX;
           int arrayY = targetPosition.y - _board.MinY;
 
@@ -278,9 +264,8 @@ internal sealed class Game1 : Game
 
           bool isValidMove =
             isBoardCell &&
-            Actions.ValidActionSquares(selectedPiece, true)
-              .Contains(movementOffset) &&
-            pieceAtTarget == null;
+            Actions.IsValidMovementDestination(selectedPiece, targetPosition) &&
+            CanPlacePiece(selectedPiece.Definition, targetPosition, null, selectedPiece);
 
           if (isValidMove)
           {
@@ -297,11 +282,6 @@ internal sealed class Game1 : Game
         }
         else if (wasRightClick)
         {
-          var attackOffset = (
-           x: targetPosition.x - selectedPiece.Position.x,
-           y: targetPosition.y - selectedPiece.Position.y
-          );
-
           int arrayX = targetPosition.x - _board.MinX;
           int arrayY = targetPosition.y - _board.MinY;
 
@@ -314,8 +294,7 @@ internal sealed class Game1 : Game
 
           bool isValidAttack =
             isBoardCell &&
-            Actions.ValidActionSquares(selectedPiece, false)
-              .Contains(attackOffset) &&
+            Actions.CanAttackSquare(selectedPiece, targetPosition) &&
             pieceAtTarget != null &&
             pieceAtTarget.Team != selectedPiece.Team;
 
@@ -363,17 +342,13 @@ internal sealed class Game1 : Game
     base.Update(gameTime);
   }
 
-  private void TryPurchaseAndPlace((int x, int y) targetPosition, Piece pieceAtTarget)
+  private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
-    int arrayX = targetPosition.x - _board.MinX;
-    int arrayY = targetPosition.y - _board.MinY;
     PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
     Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
 
     bool canPlace =
-      IsBoardCell(arrayX, arrayY) &&
-      GetSquareOwner(arrayY) == Team.CurrentTurn &&
-      pieceAtTarget == null &&
+      CanPlacePiece(definition, targetPosition, Team.CurrentTurn) &&
       buyingTeam.Money >= definition.Cost;
 
     if (!canPlace)
@@ -418,6 +393,93 @@ internal sealed class Game1 : Game
       _board.BoardArray[arrayY, arrayX] == 1;
   }
 
+  private bool CanPlacePiece(
+    PieceDefinition definition,
+    (int x, int y) position,
+    TeamName? requiredOwner = null,
+    Piece ignoredPiece = null
+  )
+  {
+    for (int y = 0; y < definition.Size.y; y++)
+    {
+      for (int x = 0; x < definition.Size.x; x++)
+      {
+        int arrayX = position.x - _board.MinX + x;
+        int arrayY = position.y - _board.MinY + y;
+
+        if (!IsBoardCell(arrayX, arrayY))
+        {
+          return false;
+        }
+
+        if (requiredOwner.HasValue && GetSquareOwner(arrayY) != requiredOwner.Value)
+        {
+          return false;
+        }
+      }
+    }
+
+    return pieceSetup.IsFootprintClear(definition, position, ignoredPiece);
+  }
+
+  private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
+  {
+    HashSet<(int x, int y)> highlightedSquares = [];
+
+    foreach ((int x, int y) offset in Actions.ValidActionSquares(piece, true))
+    {
+      var destination = (x: piece.Position.x + offset.x, y: piece.Position.y + offset.y);
+      if (!Actions.IsValidMovementDestination(piece, destination) ||
+          !CanPlacePiece(piece.Definition, destination, null, piece))
+      {
+        continue;
+      }
+
+      for (int footprintY = 0; footprintY < piece.Definition.Size.y; footprintY++)
+      {
+        for (int footprintX = 0; footprintX < piece.Definition.Size.x; footprintX++)
+        {
+          highlightedSquares.Add((destination.x + footprintX, destination.y + footprintY));
+        }
+      }
+    }
+
+    return highlightedSquares;
+  }
+
+  private HashSet<(int x, int y)> GetValidAttackHighlightSquares(Piece piece)
+  {
+    HashSet<(int x, int y)> highlightedSquares = [];
+
+    foreach (Piece targetPiece in pieceSetup.Pieces)
+    {
+      if (targetPiece.Team == piece.Team)
+      {
+        continue;
+      }
+
+      bool canAttackTarget = false;
+      foreach ((int x, int y) targetSquare in targetPiece.OccupiedSquares())
+      {
+        if (Actions.CanAttackSquare(piece, targetSquare))
+        {
+          canAttackTarget = true;
+          break;
+        }
+      }
+
+      if (canAttackTarget)
+      {
+        foreach ((int x, int y) targetSquare in targetPiece.OccupiedSquares())
+        {
+          highlightedSquares.Add(targetSquare);
+        }
+      }
+    }
+
+    return highlightedSquares;
+  }
+
   private TeamName? GetSquareOwner(int arrayY)
   {
     int centreRow = _board.BoardArray.GetLength(0) / 2;
@@ -437,35 +499,26 @@ internal sealed class Game1 : Game
 
   private Rectangle GetPurchasePanelBounds()
   {
-    int panelHeight = Math.Min(
-      purchasePanelHeight,
-      Math.Max(200, GraphicsDevice.Viewport.Height - 40)
-    );
-
-    return new Rectangle(
-      Math.Max(20, GraphicsDevice.Viewport.Width - purchasePanelWidth - 20),
-      20,
-      purchasePanelWidth,
-      panelHeight
-    );
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.AnchorTopRight(viewport, purchasePanelWidth, purchasePanelHeight, UiTheme.SpaceLg);
   }
 
   private Rectangle GetPreviousPurchaseButtonBounds()
   {
     Rectangle panel = GetPurchasePanelBounds();
-    return new Rectangle(panel.X + 20, panel.Bottom - 115, 60, 40);
+    return new Rectangle(panel.X + UiTheme.SpaceLg, panel.Bottom - 68, 58, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetNextPurchaseButtonBounds()
   {
     Rectangle panel = GetPurchasePanelBounds();
-    return new Rectangle(panel.Right - 80, panel.Bottom - 115, 60, 40);
+    return new Rectangle(panel.Right - UiTheme.SpaceLg - 58, panel.Bottom - 68, 58, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetPurchaseButtonBounds()
   {
     Rectangle panel = GetPurchasePanelBounds();
-    return new Rectangle(panel.X + 100, panel.Bottom - 115, 140, 40);
+    return new Rectangle(panel.X + 98, panel.Bottom - 68, panel.Width - 196, UiTheme.ButtonHeight);
   }
 
   private bool HandlePurchasePanelClick(Point mousePosition)
@@ -496,23 +549,12 @@ internal sealed class Game1 : Game
 
   private void DrawPanel(Rectangle bounds, Color fill, Color border)
   {
-    const int borderThickness = 2;
-    _spriteBatch.Draw(_pixel, bounds, fill);
-    _spriteBatch.Draw(_pixel, new Rectangle(bounds.X, bounds.Y, bounds.Width, borderThickness), border);
-    _spriteBatch.Draw(_pixel, new Rectangle(bounds.X, bounds.Bottom - borderThickness, bounds.Width, borderThickness), border);
-    _spriteBatch.Draw(_pixel, new Rectangle(bounds.X, bounds.Y, borderThickness, bounds.Height), border);
-    _spriteBatch.Draw(_pixel, new Rectangle(bounds.Right - borderThickness, bounds.Y, borderThickness, bounds.Height), border);
+    _ui.Panel(bounds, fill, border);
   }
 
   private void DrawProgressBar(Rectangle bounds, float progress, Color fill)
   {
-    progress = MathHelper.Clamp(progress, 0f, 1f);
-    _spriteBatch.Draw(_pixel, bounds, new Color(8, 10, 15, 220));
-    _spriteBatch.Draw(
-      _pixel,
-      new Rectangle(bounds.X + 2, bounds.Y + 2, (int)((bounds.Width - 4) * progress), bounds.Height - 4),
-      fill
-    );
+    _ui.ProgressBar(bounds, progress, fill);
   }
 
   private void DrawWorldRectangle(Rectangle bounds, Color colour, float layerDepth)
@@ -538,129 +580,65 @@ internal sealed class Game1 : Game
     DrawWorldRectangle(new Rectangle(bounds.Right - thickness, bounds.Y, thickness, bounds.Height), colour, layerDepth);
   }
 
+  private Rectangle GetPieceWorldBounds(Piece piece, int cellSize)
+  {
+    int pieceX = piece.Position.x - _board.MinX;
+    int pieceY = piece.Position.y - _board.MinY;
+    return new Rectangle(
+      pieceX * cellSize,
+      pieceY * cellSize,
+      piece.Definition.Size.x * cellSize,
+      piece.Definition.Size.y * cellSize
+    );
+  }
+
   private void DrawPurchasePanel()
   {
     Rectangle panel = GetPurchasePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     Rectangle previousButton = GetPreviousPurchaseButtonBounds();
     Rectangle nextButton = GetNextPurchaseButtonBounds();
     Rectangle purchaseButton = GetPurchaseButtonBounds();
     PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    Color teamColour = Team.CurrentTurn == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
 
-    DrawPanel(panel, uiPanelColour, _isPurchaseMode ? Color.Gold : uiPanelBorderColour);
+    DrawPanel(panel, UiTheme.Panel, _isPurchaseMode ? UiTheme.Gold : UiTheme.PanelBorder);
+    _ui.Text("PURCHASE PIECE", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Divider(content, content.Y + 30);
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "PURCHASE PIECE",
-      new Vector2(panel.X + 20, panel.Y + 18),
-      Color.Gold
-    );
-    _spriteBatch.Draw(
-      _pixel,
-      new Rectangle(panel.X + 20, panel.Y + 45, panel.Width - 40, 1),
-      uiPanelBorderColour
-    );
-
-    Color previewColour = Team.CurrentTurn == TeamName.Red ? Color.Red : Color.Blue;
-    Rectangle previewBounds = new(panel.X + 20, panel.Y + 55, 80, 80);
-    _spriteBatch.Draw(_pixel, previewBounds, previewColour);
-
+    Rectangle previewBounds = new(content.X, content.Y + 46, 88, 88);
     string label = UiText.BuildPieceLabel(definition);
-    Vector2 labelSize = _pieceLabelFont.MeasureString(label);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      label,
-      new Vector2(
-        previewBounds.Center.X - labelSize.X / 2f,
-        previewBounds.Center.Y - labelSize.Y / 2f
-      ),
-      Color.White
-    );
+    _ui.PiecePreview(previewBounds, teamColour, label);
+    float detailX = previewBounds.Right + UiTheme.SpaceMd;
+    _ui.Text(definition.Type.ToString().ToUpperInvariant(), new Vector2(detailX, previewBounds.Y + 4), UiTheme.TextPrimary);
+    _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
+    _ui.Text($"{definition.Cost} GOLD", new Vector2(detailX, previewBounds.Y + 56), UiTheme.Gold, 0.84f);
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      definition.Type.ToString(),
-      new Vector2(panel.X + 120, panel.Y + 60),
-      Color.White
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      definition.Category.ToString(),
-      new Vector2(panel.X + 120, panel.Y + 84),
-      uiMutedTextColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"Cost: {definition.Cost}",
-      new Vector2(panel.X + 120, panel.Y + 108),
-      Color.Gold
-    );
+    Rectangle statGrid = new(content.X, previewBounds.Bottom + UiTheme.SpaceLg, content.Width, 150);
+    Rectangle leftColumn = UiLayout.HorizontalSlot(statGrid, 2, 0, UiTheme.SpaceSm);
+    Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
+    int statHeight = 44;
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 52, leftColumn.Width, statHeight), "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 52, rightColumn.Width, statHeight), "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 104, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 104, rightColumn.Width, statHeight), "TEAM", Team.CurrentTurn.ToString(), teamColour);
 
-    float statY = panel.Y + 160;
-    _spriteBatch.DrawString(_pieceLabelFont, "HEALTH", new Vector2(panel.X + 20, statY), uiMutedTextColour);
-    _spriteBatch.DrawString(_pieceLabelFont, definition.Health.ToString(), new Vector2(panel.X + 105, statY), Color.White);
-    _spriteBatch.DrawString(_pieceLabelFont, "ATTACK", new Vector2(panel.X + 180, statY), new Color(255, 155, 155));
-    _spriteBatch.DrawString(_pieceLabelFont, definition.Attack.ToString(), new Vector2(panel.X + 266, statY), Color.White);
-
-    _spriteBatch.DrawString(_pieceLabelFont, "MOVE", new Vector2(panel.X + 20, statY + 36), uiMutedTextColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      UiText.FormatAction(definition.Movement),
-      new Vector2(panel.X + 20, statY + 58),
-      Color.White
-    );
-    _spriteBatch.DrawString(_pieceLabelFont, "RANGE", new Vector2(panel.X + 180, statY + 36), uiMutedTextColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      UiText.FormatAction(definition.AttackShape),
-      new Vector2(panel.X + 180, statY + 58),
-      Color.White
-    );
-
-    _spriteBatch.DrawString(_pieceLabelFont, "SIZE", new Vector2(panel.X + 20, statY + 94), uiMutedTextColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"{definition.Size.x} x {definition.Size.y}",
-      new Vector2(panel.X + 82, statY + 94),
-      Color.White
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "BUY, THEN CLICK A SQUARE",
-      new Vector2(panel.X + 20, panel.Bottom - 170),
-      uiMutedTextColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "ON YOUR SIDE.",
-      new Vector2(panel.X + 20, panel.Bottom - 146),
-      uiMutedTextColour
-    );
-
-    _spriteBatch.Draw(_pixel, previousButton, new Color(65, 70, 85));
-    _spriteBatch.Draw(_pixel, nextButton, new Color(65, 70, 85));
-    _spriteBatch.Draw(
-      _pixel,
+    _ui.Text("Buy, then select a square on your side.", new Vector2(content.X, previousButton.Y - 48), UiTheme.TextMuted, 0.76f);
+    DrawMenuButton(previousButton, "<", UiButtonTone.Neutral);
+    DrawMenuButton(nextButton, ">", UiButtonTone.Neutral);
+    DrawMenuButton(
       purchaseButton,
-      _isPurchaseMode ? new Color(135, 65, 65) : new Color(65, 125, 75)
+      _isPurchaseMode ? "CANCEL" : "BUY",
+      _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
+      _isPurchaseMode
     );
-
-    DrawCenteredString("<", previousButton, Color.White);
-    DrawCenteredString(">", nextButton, Color.White);
-    DrawCenteredString(_isPurchaseMode ? "CANCEL" : "BUY", purchaseButton, Color.White);
   }
 
   private void DrawCenteredString(string text, Rectangle bounds, Color colour)
   {
-    Vector2 textSize = _pieceLabelFont.MeasureString(text);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      text,
-      new Vector2(
-        bounds.Center.X - textSize.X / 2f,
-        bounds.Center.Y - textSize.Y / 2f
-      ),
-      colour
-    );
+    _ui.CenterText(text, bounds, colour);
   }
 
   private Matrix CreateCameraTransform()
@@ -682,86 +660,117 @@ internal sealed class Game1 : Game
 
   private Rectangle GetTitleButtonBounds(int index)
   {
-    const int buttonWidth = 280;
-    const int buttonHeight = 50;
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    int buttonWidth = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceXl * 2));
+    int menuTop = viewport.Center.Y - 8;
     return new Rectangle(
-      GraphicsDevice.Viewport.Width / 2 - buttonWidth / 2,
-      GraphicsDevice.Viewport.Height / 2 + index * 65,
+      viewport.Center.X - buttonWidth / 2,
+      menuTop + index * (UiTheme.ButtonHeight + UiTheme.SpaceMd),
       buttonWidth,
-      buttonHeight
+      UiTheme.ButtonHeight
     );
   }
 
   private Rectangle GetSettingsPanelBounds()
   {
-    const int width = 600;
-    const int height = 500;
-    return new Rectangle(
-      GraphicsDevice.Viewport.Width / 2 - width / 2,
-      GraphicsDevice.Viewport.Height / 2 - height / 2,
-      width,
-      height
-    );
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.Centered(viewport, 660, 620, UiTheme.SpaceLg);
   }
 
   private Rectangle GetSettingsBindingBounds(int index)
   {
     Rectangle panel = GetSettingsPanelBounds();
-    return new Rectangle(panel.X + 20, panel.Y + 70 + index * 40, panel.Width - 40, 34);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    int actionCount = Enum.GetValues<BindingAction>().Length;
+    int rowsTop = content.Y + 72;
+    int rowsBottom = GetSettingsRotationButtonBounds().Y - UiTheme.SpaceMd;
+    int rowHeight = Math.Clamp(
+      (rowsBottom - rowsTop - UiTheme.SpaceXs * (actionCount - 1)) / actionCount,
+      30,
+      44
+    );
+    return new Rectangle(
+      content.X,
+      rowsTop + index * (rowHeight + UiTheme.SpaceXs),
+      content.Width,
+      rowHeight
+    );
   }
 
   private Rectangle GetSettingsRotationButtonBounds()
   {
     Rectangle panel = GetSettingsPanelBounds();
-    return new Rectangle(panel.X + 20, panel.Bottom - 105, panel.Width - 40, 38);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(
+      content.X,
+      content.Bottom - UiTheme.ButtonHeight * 2 - UiTheme.SpaceSm,
+      content.Width,
+      UiTheme.ButtonHeight
+    );
   }
 
   private Rectangle GetSettingsBackButtonBounds()
   {
     Rectangle panel = GetSettingsPanelBounds();
-    return new Rectangle(panel.X + 20, panel.Bottom - 55, panel.Width - 40, 38);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetSetupPanelBounds()
   {
-    const int width = 560;
-    const int height = 440;
-    return new Rectangle(
-      GraphicsDevice.Viewport.Width / 2 - width / 2,
-      GraphicsDevice.Viewport.Height / 2 - height / 2,
-      width,
-      height
-    );
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.Centered(viewport, 640, 500, UiTheme.SpaceLg);
   }
 
   private Rectangle GetSetupPreviousButtonBounds()
   {
     Rectangle panel = GetSetupPanelBounds();
-    return new Rectangle(panel.X + 35, panel.Bottom - 105, 80, 44);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, panel.Bottom - 68, 68, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetSetupNextButtonBounds()
   {
     Rectangle panel = GetSetupPanelBounds();
-    return new Rectangle(panel.Right - 115, panel.Bottom - 105, 80, 44);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.Right - 68, panel.Bottom - 68, 68, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetSetupConfirmButtonBounds()
   {
+    Rectangle previous = GetSetupPreviousButtonBounds();
+    Rectangle next = GetSetupNextButtonBounds();
+    return new Rectangle(
+      previous.Right + UiTheme.SpaceSm,
+      previous.Y,
+      Math.Max(1, next.X - previous.Right - UiTheme.SpaceSm * 2),
+      UiTheme.ButtonHeight
+    );
+  }
+
+  private Rectangle GetEconomyRowBounds(int index)
+  {
     Rectangle panel = GetSetupPanelBounds();
-    return new Rectangle(panel.X + 150, panel.Bottom - 105, panel.Width - 300, 44);
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 92 + index * 60, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetEconomyDecreaseButtonBounds(int index)
   {
-    Rectangle panel = GetSetupPanelBounds();
-    return new Rectangle(panel.X + 330, panel.Y + 95 + index * 55, 55, 38);
+    Rectangle row = GetEconomyRowBounds(index);
+    return new Rectangle(row.Right - 204, row.Y, 44, row.Height);
+  }
+
+  private Rectangle GetEconomyValueBounds(int index)
+  {
+    Rectangle row = GetEconomyRowBounds(index);
+    return new Rectangle(row.Right - 152, row.Y, 100, row.Height);
   }
 
   private Rectangle GetEconomyIncreaseButtonBounds(int index)
   {
-    Rectangle panel = GetSetupPanelBounds();
-    return new Rectangle(panel.X + 460, panel.Y + 95 + index * 55, 55, 38);
+    Rectangle row = GetEconomyRowBounds(index);
+    return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
   }
 
   private void UpdateMenu(KeyboardState keyboard, MouseState mouse, bool wasLeftClick)
@@ -884,7 +893,7 @@ internal sealed class Game1 : Game
           PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
           Team setupTeam = _teams.Find(team => team.TeamName == _setupTeam);
           setupTeam.ChooseRoyal(royal.Type);
-          pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(_setupTeam), _setupTeam));
+          pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam));
 
           if (_setupTeam == TeamName.Red)
           {
@@ -908,29 +917,38 @@ internal sealed class Game1 : Game
     }
   }
 
-  private (int x, int y) FindRoyalSpawn(TeamName teamName)
+  private (int x, int y) FindRoyalSpawn(TeamName teamName, PieceDefinition definition)
   {
-    int arrayY = teamName == TeamName.Red
-      ? _board.BoardArray.GetLength(0) - 1
+    int boardHeight = _board.BoardArray.GetLength(0);
+    int firstArrayY = teamName == TeamName.Red
+      ? boardHeight - definition.Size.y
       : 0;
+    int rowStep = teamName == TeamName.Red ? -1 : 1;
     int centreX = _board.BoardArray.GetLength(1) / 2;
 
-    for (int offset = 0; offset < _board.BoardArray.GetLength(1); offset++)
+    for (int rowOffset = 0; rowOffset < boardHeight; rowOffset++)
     {
-      int[] candidateXs = offset == 0
-        ? [centreX]
-        : [centreX - offset, centreX + offset];
-
-      foreach (int arrayX in candidateXs)
+      int arrayY = firstArrayY + rowOffset * rowStep;
+      if (arrayY < 0 || arrayY + definition.Size.y > boardHeight)
       {
-        if (arrayX >= 0 &&
-            arrayX < _board.BoardArray.GetLength(1) &&
-            IsBoardCell(arrayX, arrayY))
+        continue;
+      }
+
+      for (int offset = 0; offset < _board.BoardArray.GetLength(1); offset++)
+      {
+        int[] candidateXs = offset == 0
+          ? [centreX]
+          : [centreX - offset, centreX + offset];
+
+        foreach (int arrayX in candidateXs)
         {
-          var position = (x: arrayX + _board.MinX, y: arrayY + _board.MinY);
-          if (pieceSetup.GetPieceAt(position) == null)
+          if (arrayX >= 0 && arrayX + definition.Size.x <= _board.BoardArray.GetLength(1))
           {
-            return position;
+            var position = (x: arrayX + _board.MinX, y: arrayY + _board.MinY);
+            if (CanPlacePiece(definition, position, teamName))
+            {
+              return position;
+            }
           }
         }
       }
@@ -983,40 +1001,40 @@ internal sealed class Game1 : Game
     };
   }
 
-  private void DrawMenuButton(Rectangle bounds, string label, Color colour)
+  private void DrawMenuButton(
+    Rectangle bounds,
+    string label,
+    UiButtonTone tone,
+    bool selected = false
+  )
   {
-    DrawPanel(bounds, colour, Color.Lerp(colour, Color.White, 0.35f));
-    DrawCenteredString(label, bounds, Color.White);
+    _ui.Button(bounds, label, tone, selected);
   }
 
   private void DrawTitleScreen()
   {
-    Vector2 titleSize = _pieceLabelFont.MeasureString("MEDIEVAL CHESS");
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "MEDIEVAL CHESS",
-      new Vector2(
-        GraphicsDevice.Viewport.Width / 2f - titleSize.X / 2f,
-        GraphicsDevice.Viewport.Height / 2f - 120
-      ),
-      Color.Gold
-    );
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    Rectangle firstButton = GetTitleButtonBounds(0);
+    Rectangle titleBounds = new(viewport.X, Math.Max(UiTheme.SpaceXl, firstButton.Y - 154), viewport.Width, 48);
+    Rectangle subtitleBounds = new(viewport.X, titleBounds.Bottom + UiTheme.SpaceSm, viewport.Width, 24);
 
-    DrawMenuButton(GetTitleButtonBounds(0), "START GAME", new Color(65, 125, 75));
-    DrawMenuButton(GetTitleButtonBounds(1), "SETTINGS", new Color(65, 70, 85));
-    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", new Color(135, 65, 65));
+    _ui.CenterText("MEDIEVAL CHESS", titleBounds, UiTheme.GoldBright, 1.55f);
+    _ui.CenterText("A MEDIEVAL STRATEGY GAME", subtitleBounds, UiTheme.TextMuted, 0.72f);
+    _ui.Divider(new Rectangle(viewport.Center.X - 150, subtitleBounds.Bottom + UiTheme.SpaceMd, 300, 1), subtitleBounds.Bottom + UiTheme.SpaceMd, UiTheme.PanelBorder);
+
+    DrawMenuButton(GetTitleButtonBounds(0), "START GAME", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(1), "SETTINGS", UiButtonTone.Neutral);
+    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawSettingsScreen()
   {
     Rectangle panel = GetSettingsPanelBounds();
-    DrawPanel(panel, uiPanelColour, uiPanelBorderColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "SETTINGS",
-      new Vector2(panel.X + 20, panel.Y + 20),
-      Color.Gold
-    );
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.PanelBorder);
+    _ui.Text("SETTINGS", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("Select a control to assign a new key.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Divider(content, content.Y + 56);
 
     BindingAction[] actions = Enum.GetValues<BindingAction>();
     for (int index = 0; index < actions.Length; index++)
@@ -1024,29 +1042,29 @@ internal sealed class Game1 : Game
       BindingAction action = actions[index];
       Rectangle bounds = GetSettingsBindingBounds(index);
       bool isWaitingForKey = _bindingToChange == action;
-      _spriteBatch.Draw(
-        _pixel,
-        bounds,
-        isWaitingForKey ? new Color(145, 110, 45) : new Color(65, 70, 85)
+      Rectangle keyBounds = new(bounds.Right - 116, bounds.Y + 5, 100, Math.Max(1, bounds.Height - 10));
+      DrawMenuButton(bounds, string.Empty, isWaitingForKey ? UiButtonTone.Accent : UiButtonTone.Neutral, isWaitingForKey);
+      _ui.Text(GetBindingLabel(action), new Vector2(bounds.X + UiTheme.SpaceMd, bounds.Center.Y - 10), UiTheme.TextPrimary, 0.82f);
+      DrawPanel(
+        keyBounds,
+        UiTheme.Panel,
+        isWaitingForKey ? UiTheme.Gold : UiTheme.PanelBorderSubtle
       );
-
-      string text = isWaitingForKey
-        ? $"{GetBindingLabel(action)}: press a key"
-        : $"{GetBindingLabel(action)}: {GetBinding(action)}";
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        text,
-        new Vector2(bounds.X + 10, bounds.Y + 7),
-        Color.White
+      _ui.CenterText(
+        isWaitingForKey ? "PRESS KEY" : GetBinding(action).ToString(),
+        keyBounds,
+        isWaitingForKey ? UiTheme.GoldBright : UiTheme.TextPrimary,
+        0.72f
       );
     }
 
     DrawMenuButton(
       GetSettingsRotationButtonBounds(),
-      _rotateBoard ? "BOARD ROTATION: 90 degrees" : "BOARD ROTATION: 0 degrees",
-      new Color(65, 70, 85)
+      _rotateBoard ? "BOARD ROTATION: 90 DEG" : "BOARD ROTATION: 0 DEG",
+      _rotateBoard ? UiButtonTone.Accent : UiButtonTone.Neutral,
+      _rotateBoard
     );
-    DrawMenuButton(GetSettingsBackButtonBounds(), "BACK", new Color(65, 125, 75));
+    DrawMenuButton(GetSettingsBackButtonBounds(), "BACK", UiButtonTone.Primary);
   }
 
   private void DrawSetupScreen()
@@ -1060,60 +1078,42 @@ internal sealed class Game1 : Game
     }
 
     PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
-    Color teamColour = _setupTeam == TeamName.Red ? Color.Red : Color.Blue;
+    Color teamColour = _setupTeam == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
 
-    DrawPanel(panel, uiPanelColour, teamColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"{_setupTeam} CHOOSE YOUR ROYAL",
-      new Vector2(panel.X + 20, panel.Y + 20),
-      teamColour
-    );
+    DrawPanel(panel, UiTheme.Panel, teamColour);
+    _ui.Text($"{_setupTeam.ToString().ToUpperInvariant()} CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
+    _ui.Text("Your royal is placed on the back row.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Divider(content, content.Y + 56);
 
-    Rectangle preview = new(panel.X + 35, panel.Y + 70, 110, 110);
-    _spriteBatch.Draw(_pixel, preview, teamColour);
+    Rectangle preview = new(content.X, content.Y + 76, 112, 112);
     string label = UiText.BuildPieceLabel(royal);
-    Vector2 labelSize = _pieceLabelFont.MeasureString(label);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      label,
-      new Vector2(preview.Center.X - labelSize.X / 2f, preview.Center.Y - labelSize.Y / 2f),
-      Color.White
-    );
+    _ui.PiecePreview(preview, teamColour, label);
 
-    float statX = panel.X + 180;
-    _spriteBatch.DrawString(_pieceLabelFont, royal.Type.ToString(), new Vector2(statX, panel.Y + 75), Color.White);
-    _spriteBatch.DrawString(_pieceLabelFont, $"Health: {royal.Health}", new Vector2(statX, panel.Y + 105), Color.White);
-    _spriteBatch.DrawString(_pieceLabelFont, $"Attack: {royal.Attack}", new Vector2(statX, panel.Y + 135), Color.White);
-    _spriteBatch.DrawString(_pieceLabelFont, $"Move: {UiText.FormatAction(royal.Movement)}", new Vector2(panel.X + 35, panel.Y + 215), Color.White);
-    _spriteBatch.DrawString(_pieceLabelFont, $"Attack range: {UiText.FormatAction(royal.AttackShape)}", new Vector2(panel.X + 35, panel.Y + 245), Color.White);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "Your royal will spawn on your back row.",
-      new Vector2(panel.X + 35, panel.Y + 295),
-      Color.LightGray
-    );
+    Rectangle details = new(preview.Right + UiTheme.SpaceLg, preview.Y, content.Right - preview.Right - UiTheme.SpaceLg, preview.Height);
+    _ui.Text(royal.Type.ToString().ToUpperInvariant(), new Vector2(details.X, details.Y), UiTheme.TextPrimary);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 30, details.Width, 26), "HEALTH", royal.Health.ToString(), UiTheme.Health);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 58, details.Width, 26), "ATTACK", royal.Attack.ToString(), UiTheme.Attack);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 86, details.Width, 26), "SIZE", $"{royal.Size.x} x {royal.Size.y}", UiTheme.TextPrimary);
 
-    DrawMenuButton(GetSetupPreviousButtonBounds(), "<", new Color(65, 70, 85));
-    DrawMenuButton(GetSetupNextButtonBounds(), ">", new Color(65, 70, 85));
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONFIRM", new Color(65, 125, 75));
+    Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceLg, content.Width, 54);
+    Rectangle moveStat = UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm);
+    Rectangle rangeStat = UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm);
+    _ui.StatBlock(moveStat, "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
+    _ui.StatBlock(rangeStat, "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+
+    DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONFIRM", UiButtonTone.Primary);
   }
 
   private void DrawEconomySetup(Rectangle panel)
   {
-    DrawPanel(panel, uiPanelColour, Color.Gold);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "MATCH ECONOMY",
-      new Vector2(panel.X + 20, panel.Y + 20),
-      Color.Gold
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "Choose the starting resources and unit-death refunds.",
-      new Vector2(panel.X + 20, panel.Y + 55),
-      Color.LightGray
-    );
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("MATCH ECONOMY", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("Set starting resources and unit-death refunds.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Divider(content, content.Y + 56);
 
     string[] labels =
     [
@@ -1130,55 +1130,28 @@ internal sealed class Game1 : Game
 
     for (int index = 0; index < labels.Length; index++)
     {
-      float rowY = panel.Y + 104 + index * 55;
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        labels[index],
-        new Vector2(panel.X + 25, rowY + 7),
-        Color.White
-      );
-      DrawMenuButton(GetEconomyDecreaseButtonBounds(index), "-", new Color(65, 70, 85));
-      DrawMenuButton(GetEconomyIncreaseButtonBounds(index), "+", new Color(65, 70, 85));
-      DrawCenteredString(
-        values[index],
-        new Rectangle(panel.X + 390, (int)rowY, 65, 38),
-        Color.Gold
-      );
+      Rectangle row = GetEconomyRowBounds(index);
+      Rectangle valueBounds = GetEconomyValueBounds(index);
+      DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+      _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
+      DrawMenuButton(GetEconomyDecreaseButtonBounds(index), "-", UiButtonTone.Neutral);
+      DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
+      _ui.CenterText(values[index], valueBounds, UiTheme.GoldBright);
+      DrawMenuButton(GetEconomyIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
     }
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "Refunds are based on the defeated unit's cost.",
-      new Vector2(panel.X + 25, panel.Bottom - 165),
-      Color.LightGray
-    );
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", new Color(65, 125, 75));
+    _ui.Text("Refunds use the defeated unit's cost.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.76f);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 
   private void DrawGameOverScreen()
   {
     string message = $"{_winningTeam} WINS";
-    Vector2 messageSize = _pieceLabelFont.MeasureString(message);
-    Color winnerColour = _winningTeam == TeamName.Red ? Color.Red : Color.Blue;
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      message,
-      new Vector2(
-        GraphicsDevice.Viewport.Width / 2f - messageSize.X / 2f,
-        GraphicsDevice.Viewport.Height / 2f - 80
-      ),
-      winnerColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "The opposing royal has fallen.",
-      new Vector2(
-        GraphicsDevice.Viewport.Width / 2f - _pieceLabelFont.MeasureString("The opposing royal has fallen.").X / 2f,
-        GraphicsDevice.Viewport.Height / 2f - 45
-      ),
-      Color.White
-    );
-    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", new Color(135, 65, 65));
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    Color winnerColour = _winningTeam == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
+    _ui.CenterText("The opposing royal has fallen.", new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
+    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawMenuScreen()
@@ -1192,150 +1165,123 @@ internal sealed class Game1 : Game
     }
   }
 
+  private Rectangle GetStatusPanelBounds()
+  {
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
+    int height = Math.Min(194, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
+    return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
+  }
+
+  private Rectangle GetSelectedPiecePanelBounds()
+  {
+    Rectangle status = GetStatusPanelBounds();
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    int desiredHeight = selectedPiece == null ? 124 : 330;
+    int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
+    return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
+  }
+
   private void DrawStatusPanel()
   {
-    Rectangle panel = new(20, 20, 320, 185);
+    Rectangle panel = GetStatusPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
-    Color turnColour = Team.CurrentTurn == TeamName.Red ? Color.Red : Color.Blue;
+    Color turnColour = Team.CurrentTurn == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
 
-    DrawPanel(panel, uiPanelColour, turnColour);
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"{Team.CurrentTurn.ToString().ToUpperInvariant()} TURN",
-      new Vector2(panel.X + 16, panel.Y + 14),
-      turnColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "ACTION POINTS",
-      new Vector2(panel.X + 16, panel.Y + 48),
-      uiMutedTextColour
-    );
+    DrawPanel(panel, UiTheme.Panel, turnColour);
+    _ui.Text($"{Team.CurrentTurn.ToString().ToUpperInvariant()} TURN", new Vector2(content.X, content.Y), turnColour);
+    _ui.Divider(content, content.Y + 30);
+    _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
 
     for (int index = 0; index < Team.ActionsPerTurn; index++)
     {
-      Rectangle actionPoint = new(panel.X + 16 + index * 34, panel.Y + 74, 26, 12);
+      Rectangle actionPoint = new(content.X + index * 34, content.Y + 66, 26, 12);
       _spriteBatch.Draw(
         _pixel,
         actionPoint,
-        index < currentTeam.ActionPoints ? turnColour : new Color(59, 67, 80)
+        index < currentTeam.ActionPoints ? turnColour : UiTheme.PanelBorderSubtle
       );
     }
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"{currentTeam.ActionPoints}/{Team.ActionsPerTurn} remaining",
-      new Vector2(panel.X + 16, panel.Y + 96),
-      uiMutedTextColour
+    _ui.Text(
+      $"{currentTeam.ActionPoints}/{Team.ActionsPerTurn} REMAINING",
+      new Vector2(content.X + 116, content.Y + 61),
+      UiTheme.TextPrimary,
+      0.76f
     );
 
-    float moneyY = panel.Y + 130;
+    int moneyY = content.Y + 94;
     foreach (Team team in _teams)
     {
-      Color teamColour = team.TeamName == TeamName.Red ? Color.Red : Color.Blue;
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        $"{team.TeamName}: {team.Money}",
-        new Vector2(panel.X + 16, moneyY),
-        teamColour
-      );
-      moneyY += 22;
+      Color teamColour = team.TeamName == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+      Rectangle moneyRow = new(content.X, moneyY, content.Width, 30);
+      DrawPanel(moneyRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+      _ui.LabelValueRow(moneyRow, $"{team.TeamName.ToString().ToUpperInvariant()} GOLD", team.Money.ToString(), teamColour);
+      moneyY += 36;
     }
   }
 
   private void DrawSelectedPiecePanel()
   {
-    Rectangle panel = new(20, 225, 320, selectedPiece == null ? 115 : 270);
-    DrawPanel(panel, uiPanelColour, selectedPiece == null ? uiPanelBorderColour : selectedOutlineColour);
+    Rectangle panel = GetSelectedPiecePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
+    DrawPanel(panel, UiTheme.Panel, selectedPiece == null ? UiTheme.PanelBorder : UiTheme.SelectionOutline);
 
     if (selectedPiece == null)
     {
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        "SELECT A PIECE",
-        new Vector2(panel.X + 16, panel.Y + 16),
-        Color.White
-      );
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        "Gold squares: move",
-        new Vector2(panel.X + 16, panel.Y + 48),
-        new Color(255, 226, 115)
-      );
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        "Red squares: attack",
-        new Vector2(panel.X + 16, panel.Y + 72),
-        new Color(255, 140, 140)
-      );
+      _ui.Text("SELECT A PIECE", new Vector2(content.X, content.Y), UiTheme.TextPrimary);
+      _ui.Divider(content, content.Y + 30);
+      _ui.Text("Gold squares: move", new Vector2(content.X, content.Y + 44), UiTheme.Move, 0.8f);
+      _ui.Text("Red squares: attack", new Vector2(content.X, content.Y + 68), UiTheme.Attack, 0.8f);
       return;
     }
 
-    Color teamColour = selectedPiece.Team == TeamName.Red ? Color.Red : Color.Blue;
-    Rectangle preview = new(panel.X + 16, panel.Y + 48, 62, 62);
-    _spriteBatch.Draw(_pixel, preview, teamColour);
-    string label = UiText.BuildPieceLabel(selectedPiece.Definition);
-    DrawCenteredString(label, preview, Color.White);
+    Color teamColour = selectedPiece.Team == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    _ui.Text("SELECTED PIECE", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Divider(content, content.Y + 30);
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      selectedPiece.Definition.Type.ToString().ToUpperInvariant(),
-      new Vector2(panel.X + 94, panel.Y + 16),
-      Color.White
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      selectedPiece.Team.ToString(),
-      new Vector2(panel.X + 94, panel.Y + 42),
-      teamColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"HP {selectedPiece.CurrentHealth}/{selectedPiece.Definition.Health}",
-      new Vector2(panel.X + 94, panel.Y + 68),
-      Color.White
+    Rectangle preview = new(content.X, content.Y + 46, 72, 72);
+    string label = UiText.BuildPieceLabel(selectedPiece.Definition);
+    _ui.PiecePreview(preview, teamColour, label);
+
+    Rectangle details = new(preview.Right + UiTheme.SpaceMd, preview.Y, content.Right - preview.Right - UiTheme.SpaceMd, preview.Height);
+    _ui.Text(selectedPiece.Definition.Type.ToString().ToUpperInvariant(), new Vector2(details.X, details.Y), UiTheme.TextPrimary);
+    _ui.Text(selectedPiece.Team.ToString(), new Vector2(details.X, details.Y + 26), teamColour, 0.82f);
+    _ui.LabelValueRow(
+      new Rectangle(details.X, details.Y + 47, details.Width, 22),
+      "HEALTH",
+      $"{selectedPiece.CurrentHealth}/{selectedPiece.Definition.Health}",
+      UiTheme.Health
     );
     DrawProgressBar(
-      new Rectangle(panel.X + 94, panel.Y + 94, 180, 12),
+      new Rectangle(details.X, details.Bottom - 10, details.Width, 10),
       selectedPiece.CurrentHealth / (float)Math.Max(1, selectedPiece.Definition.Health),
-      Color.LimeGreen
+      UiTheme.Health
     );
 
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"MOVE: {UiText.FormatAction(selectedPiece.Definition.Movement)}",
-      new Vector2(panel.X + 16, panel.Y + 132),
-      new Color(255, 226, 115)
+    Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceMd, content.Width, 48);
+    _ui.StatBlock(
+      UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm),
+      "MOVE",
+      UiText.FormatAction(selectedPiece.Definition.Movement),
+      UiTheme.Move
     );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"ATTACK: {selectedPiece.Definition.Attack} damage",
-      new Vector2(panel.X + 16, panel.Y + 158),
-      new Color(255, 140, 140)
+    _ui.StatBlock(
+      UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
+      "ATTACK",
+      selectedPiece.Definition.Attack.ToString(),
+      UiTheme.Attack
     );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      $"RANGE: {UiText.FormatAction(selectedPiece.Definition.AttackShape)}",
-      new Vector2(panel.X + 16, panel.Y + 184),
-      uiMutedTextColour
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "LEFT-CLICK gold to move",
-      new Vector2(panel.X + 16, panel.Y + 218),
-      new Color(255, 226, 115)
-    );
-    _spriteBatch.DrawString(
-      _pieceLabelFont,
-      "RIGHT-CLICK red to attack",
-      new Vector2(panel.X + 16, panel.Y + 242),
-      new Color(255, 140, 140)
-    );
+    Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
+    _ui.StatBlock(rangeRow, "ATTACK RANGE", UiText.FormatAction(selectedPiece.Definition.AttackShape), UiTheme.TextPrimary);
+    _ui.Text("LEFT-CLICK gold to move", new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd), UiTheme.Move, 0.78f);
+    _ui.Text("RIGHT-CLICK red to attack", new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.78f);
   }
 
   protected override void Draw(GameTime gameTime)
   {
-    GraphicsDevice.Clear(_screen == Screen.Playing ? Color.CornflowerBlue : Color.Black);
+    GraphicsDevice.Clear(_screen == Screen.Playing ? UiTheme.BoardBackground : UiTheme.MenuBackground);
 
     if (_screen != Screen.Playing)
     {
@@ -1353,12 +1299,12 @@ internal sealed class Game1 : Game
     /* Build Board */
     var BoardArray = _board.BoardArray;
     int cellSize = 64;
-    var validMovementOffsets = selectedPiece == null
-      ? null
-      : Actions.ValidActionSquares(selectedPiece, true);
-    var validAttackOffsets = selectedPiece == null
-      ? null
-      : Actions.ValidActionSquares(selectedPiece, false);
+    HashSet<(int x, int y)> validMovementSquares = selectedPiece == null
+      ? []
+      : GetValidMovementHighlightSquares(selectedPiece);
+    HashSet<(int x, int y)> validAttackSquares = selectedPiece == null
+      ? []
+      : GetValidAttackHighlightSquares(selectedPiece);
 
     for (int y = 0; y < BoardArray.GetLength(0); y++)
     {
@@ -1367,36 +1313,20 @@ internal sealed class Game1 : Game
         if (BoardArray[y, x] == 1)
         {
           var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
-          Piece pieceAtBoardPosition = pieceSetup.GetPieceAt(boardPosition);
-          bool isValidMove =
-            selectedPiece != null &&
-            validMovementOffsets != null &&
-            validMovementOffsets.Contains((
-              boardPosition.x - selectedPiece.Position.x,
-              boardPosition.y - selectedPiece.Position.y
-            )) &&
-            pieceAtBoardPosition == null;
-          bool isValidAttack =
-            selectedPiece != null &&
-            validAttackOffsets != null &&
-            validAttackOffsets.Contains((
-              boardPosition.x - selectedPiece.Position.x,
-              boardPosition.y - selectedPiece.Position.y
-            )) &&
-            pieceAtBoardPosition != null &&
-            pieceAtBoardPosition.Team != selectedPiece.Team;
+          bool isValidMove = validMovementSquares.Contains(boardPosition);
+          bool isValidAttack = validAttackSquares.Contains(boardPosition);
 
           Color baseCellColour =
             (x + y) % 2 == 0
-            ? darkCellColour
-            : lightCellColour;
+            ? UiTheme.DarkBoardCell
+            : UiTheme.LightBoardCell;
           TeamName? squareOwner = GetSquareOwner(y);
           Color territoryColour =
             squareOwner == TeamName.Red
-            ? redTerritoryColour
+            ? UiTheme.RedTerritory
             : squareOwner == TeamName.Blue
-              ? blueTerritoryColour
-              : noMansLandColour;
+              ? UiTheme.BlueTerritory
+              : UiTheme.NoMansLand;
 
           Rectangle cellBounds = new(x * cellSize, y * cellSize, cellSize, cellSize);
           DrawWorldRectangle(
@@ -1407,41 +1337,41 @@ internal sealed class Game1 : Game
 
           if (isValidMove)
           {
-            DrawWorldRectangle(cellBounds, moveOverlayColour, 0.102f);
+            DrawWorldRectangle(cellBounds, UiTheme.MoveOverlay, 0.102f);
           }
 
           if (isValidAttack)
           {
-            DrawWorldRectangle(cellBounds, attackOverlayColour, 0.103f);
+            DrawWorldRectangle(cellBounds, UiTheme.AttackOverlay, 0.103f);
           }
 
-          if (selectedPiece != null && selectedPiece.Position == boardPosition)
-          {
-            DrawWorldOutline(cellBounds, selectedOutlineColour, 0.106f);
-          }
         }
       }
+    }
+
+    if (selectedPiece != null)
+    {
+      DrawWorldOutline(GetPieceWorldBounds(selectedPiece, cellSize), UiTheme.SelectionOutline, 0.106f);
     }
 
     /* Draw Pieces */
 
     foreach (Piece piece in pieceSetup.Pieces)
     {
-      int pieceX = piece.Position.x - _board.MinX;
-      int pieceY = piece.Position.y - _board.MinY;
+      Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
       Color colour;
 
-      if (piece.Team == TeamName.Red) { colour = Color.Red; }
-      else if (piece.Team == TeamName.Blue) { colour = Color.Blue; }
-      else { Console.WriteLine($"{piece} doesnt have a team"); colour = Color.White; }
+      if (piece.Team == TeamName.Red) { colour = UiTheme.TeamRed; }
+      else if (piece.Team == TeamName.Blue) { colour = UiTheme.TeamBlue; }
+      else { Console.WriteLine($"{piece} doesnt have a team"); colour = UiTheme.TextPrimary; }
 
       _spriteBatch.Draw(
           _pixel,
           new Rectangle(
-              pieceX * cellSize + 5,
-              pieceY * cellSize + 5,
-              cellSize - 10,
-              cellSize - 10
+              pieceBounds.X + 5,
+              pieceBounds.Y + 5,
+              pieceBounds.Width - 10,
+              pieceBounds.Height - 10
           ),
           null,
           colour,
@@ -1451,21 +1381,23 @@ internal sealed class Game1 : Game
           0.11f
       );
 
-      int pieceHealthBarWidth = cellSize - 16;
+      DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), 0.111f);
+
+      int pieceHealthBarWidth = pieceBounds.Width - 16;
       float healthRatio = piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health);
       DrawWorldRectangle(
-        new Rectangle(pieceX * cellSize + 8, pieceY * cellSize + cellSize - 12, pieceHealthBarWidth, 5),
-        new Color(10, 12, 16, 220),
+        new Rectangle(pieceBounds.X + 8, pieceBounds.Bottom - 12, pieceHealthBarWidth, 5),
+        UiTheme.Shadow,
         0.121f
       );
       DrawWorldRectangle(
         new Rectangle(
-          pieceX * cellSize + 8,
-          pieceY * cellSize + cellSize - 12,
+          pieceBounds.X + 8,
+          pieceBounds.Bottom - 12,
           (int)(pieceHealthBarWidth * MathHelper.Clamp(healthRatio, 0f, 1f)),
           5
         ),
-        Color.LimeGreen,
+        UiTheme.Health,
         0.122f
       );
 
@@ -1476,10 +1408,10 @@ internal sealed class Game1 : Game
         _pieceLabelFont,
         label,
         new Vector2(
-          pieceX * cellSize + cellSize / 2f - labelSize.X / 2f,
-          pieceY * cellSize + cellSize / 2f - labelSize.Y / 2f
+          pieceBounds.Center.X - labelSize.X / 2f,
+          pieceBounds.Center.Y - labelSize.Y / 2f
         ),
-        Color.White,
+        UiTheme.TextPrimary,
         0f,
         Vector2.Zero,
         1f,
@@ -1494,10 +1426,10 @@ internal sealed class Game1 : Game
         _pieceLabelFont,
         healthText,
         new Vector2(
-          pieceX * cellSize + cellSize / 2f - healthSize.X / 2f,
-          pieceY * cellSize + 6
+          pieceBounds.Center.X - healthSize.X / 2f,
+          pieceBounds.Y + 6
         ),
-        Color.White,
+        UiTheme.TextPrimary,
         0f,
         Vector2.Zero,
         healthScale,

@@ -1,5 +1,6 @@
 namespace MedivalChess.GameBoard;
 
+using System.Collections.Generic;
 using MedivalChess.Player;
 
 internal sealed class Piece
@@ -15,6 +16,26 @@ internal sealed class Piece
     CurrentHealth = Definition.Health;
     Position = position;
     Team = team;
+  }
+
+  internal bool Occupies((int x, int y) position)
+  {
+    return
+      position.x >= Position.x &&
+      position.x < Position.x + Definition.Size.x &&
+      position.y >= Position.y &&
+      position.y < Position.y + Definition.Size.y;
+  }
+
+  internal IEnumerable<(int x, int y)> OccupiedSquares()
+  {
+    for (int y = 0; y < Definition.Size.y; y++)
+    {
+      for (int x = 0; x < Definition.Size.x; x++)
+      {
+        yield return (Position.x + x, Position.y + y);
+      }
+    }
   }
 }
 
@@ -361,7 +382,7 @@ internal static class PieceDefinitions
     (0, Shape.None),
     0,
     160,
-    (2, 2),
+    (3, 2),
     (0, Shape.None),
     0
   );
