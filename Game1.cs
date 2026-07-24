@@ -45,7 +45,7 @@ internal sealed class Game1 : Game
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
   private Piece selectedPiece;
-  private const int noMansLandHalfHeight = 2;
+  private const int noMansLandHalfHeight = 3;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
   private const int purchasePanelHeight = 470;
@@ -449,28 +449,25 @@ internal sealed class Game1 : Game
   {
     HashSet<(int x, int y)> highlightedSquares = [];
 
-    foreach (Piece targetPiece in pieceSetup.Pieces)
+    for (int y = 0; y < _board.BoardArray.GetLength(0); y++)
     {
-      if (targetPiece.Team == piece.Team)
+      for (int x = 0; x < _board.BoardArray.GetLength(1); x++)
       {
-        continue;
-      }
-
-      bool canAttackTarget = false;
-      foreach ((int x, int y) targetSquare in targetPiece.OccupiedSquares())
-      {
-        if (Actions.CanAttackSquare(piece, targetSquare))
+        if (!IsBoardCell(x, y))
         {
-          canAttackTarget = true;
-          break;
+          continue;
         }
-      }
 
-      if (canAttackTarget)
-      {
-        foreach ((int x, int y) targetSquare in targetPiece.OccupiedSquares())
+        var targetPosition = (x: x + _board.MinX, y: y + _board.MinY);
+        Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
+        if (pieceAtTarget?.Team == piece.Team)
         {
-          highlightedSquares.Add(targetSquare);
+          continue;
+        }
+
+        if (Actions.CanAttackSquare(piece, targetPosition))
+        {
+          highlightedSquares.Add(targetPosition);
         }
       }
     }
@@ -598,7 +595,7 @@ internal sealed class Game1 : Game
     Rectangle nextButton = GetNextPurchaseButtonBounds();
     Rectangle purchaseButton = GetPurchaseButtonBounds();
     PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
-    Color teamColour = Team.CurrentTurn == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Color teamColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, _isPurchaseMode ? UiTheme.Gold : UiTheme.PanelBorder);
     _ui.Text("PURCHASE PIECE", new Vector2(content.X, content.Y), UiTheme.Gold);
@@ -621,7 +618,7 @@ internal sealed class Game1 : Game
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 52, leftColumn.Width, statHeight), "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
     _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 52, rightColumn.Width, statHeight), "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 104, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 104, rightColumn.Width, statHeight), "TEAM", Team.CurrentTurn.ToString(), teamColour);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 104, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour);
 
     _ui.Text("Buy, then select a square on your side.", new Vector2(content.X, previousButton.Y - 48), UiTheme.TextMuted, 0.76f);
     DrawMenuButton(previousButton, "<", UiButtonTone.Neutral);
@@ -1076,11 +1073,11 @@ internal sealed class Game1 : Game
     }
 
     PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
-    Color teamColour = _setupTeam == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Color teamColour = UiTheme.GetTeamColour(_setupTeam);
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
 
     DrawPanel(panel, UiTheme.Panel, teamColour);
-    _ui.Text($"{_setupTeam.ToString().ToUpperInvariant()} CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
+    _ui.Text($"{UiText.GetTeamDisplayName(_setupTeam)} CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
     _ui.Text("Your royal is placed on the back row.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
@@ -1144,9 +1141,10 @@ internal sealed class Game1 : Game
 
   private void DrawGameOverScreen()
   {
-    string message = $"{_winningTeam} WINS";
+    TeamName winner = _winningTeam ?? TeamName.Red;
+    string message = $"{UiText.GetTeamDisplayName(winner)} WINS";
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    Color winnerColour = _winningTeam == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Color winnerColour = UiTheme.GetTeamColour(winner);
     _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
     _ui.CenterText("The opposing royal has fallen.", new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
     DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", UiButtonTone.Danger);
@@ -1185,10 +1183,10 @@ internal sealed class Game1 : Game
     Rectangle panel = GetStatusPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
-    Color turnColour = Team.CurrentTurn == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Color turnColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, turnColour);
-    _ui.Text($"{Team.CurrentTurn.ToString().ToUpperInvariant()} TURN", new Vector2(content.X, content.Y), turnColour);
+    _ui.Text($"{UiText.GetTeamDisplayName(Team.CurrentTurn)} TURN", new Vector2(content.X, content.Y), turnColour);
     _ui.Divider(content, content.Y + 30);
     _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
 
@@ -1212,10 +1210,10 @@ internal sealed class Game1 : Game
     int moneyY = content.Y + 94;
     foreach (Team team in _teams)
     {
-      Color teamColour = team.TeamName == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+      Color teamColour = UiTheme.GetTeamColour(team.TeamName);
       Rectangle moneyRow = new(content.X, moneyY, content.Width, 30);
       DrawPanel(moneyRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
-      _ui.LabelValueRow(moneyRow, $"{team.TeamName.ToString().ToUpperInvariant()} GOLD", team.Money.ToString(), teamColour);
+      _ui.LabelValueRow(moneyRow, $"{UiText.GetTeamDisplayName(team.TeamName)} GOLD", team.Money.ToString(), teamColour);
       moneyY += 36;
     }
   }
@@ -1235,7 +1233,7 @@ internal sealed class Game1 : Game
       return;
     }
 
-    Color teamColour = selectedPiece.Team == TeamName.Red ? UiTheme.TeamRed : UiTheme.TeamBlue;
+    Color teamColour = UiTheme.GetTeamColour(selectedPiece.Team);
     _ui.Text("SELECTED PIECE", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Divider(content, content.Y + 30);
 
@@ -1245,7 +1243,7 @@ internal sealed class Game1 : Game
 
     Rectangle details = new(preview.Right + UiTheme.SpaceMd, preview.Y, content.Right - preview.Right - UiTheme.SpaceMd, preview.Height);
     _ui.Text(selectedPiece.Definition.Type.ToString().ToUpperInvariant(), new Vector2(details.X, details.Y), UiTheme.TextPrimary);
-    _ui.Text(selectedPiece.Team.ToString(), new Vector2(details.X, details.Y + 26), teamColour, 0.82f);
+    _ui.Text(UiText.GetTeamDisplayName(selectedPiece.Team), new Vector2(details.X, details.Y + 26), teamColour, 0.82f);
     _ui.LabelValueRow(
       new Rectangle(details.X, details.Y + 47, details.Width, 22),
       "HEALTH",
@@ -1321,9 +1319,9 @@ internal sealed class Game1 : Game
           TeamName? squareOwner = GetSquareOwner(y);
           Color territoryColour =
             squareOwner == TeamName.Red
-            ? UiTheme.RedTerritory
+            ? UiTheme.TeamOrange
             : squareOwner == TeamName.Blue
-              ? UiTheme.BlueTerritory
+              ? UiTheme.TeamPurple
               : UiTheme.NoMansLand;
 
           Rectangle cellBounds = new(x * cellSize, y * cellSize, cellSize, cellSize);
@@ -1340,7 +1338,7 @@ internal sealed class Game1 : Game
 
           if (isValidAttack)
           {
-            DrawWorldRectangle(cellBounds, UiTheme.AttackOverlay, 0.103f);
+            DrawWorldOutline(cellBounds, UiTheme.AttackOutline, 0.103f);
           }
 
         }
@@ -1359,8 +1357,8 @@ internal sealed class Game1 : Game
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
       Color colour;
 
-      if (piece.Team == TeamName.Red) { colour = UiTheme.TeamRed; }
-      else if (piece.Team == TeamName.Blue) { colour = UiTheme.TeamBlue; }
+      if (piece.Team == TeamName.Red) { colour = UiTheme.TeamOrange; }
+      else if (piece.Team == TeamName.Blue) { colour = UiTheme.TeamPurple; }
       else { Console.WriteLine($"{piece} doesnt have a team"); colour = UiTheme.TextPrimary; }
 
       _spriteBatch.Draw(

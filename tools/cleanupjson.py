@@ -1,6 +1,6 @@
 import json
 
-INPUT_FILE = "painted_shape.json"
+INPUT_FILE = r"C:\Users\Remy\Documents\CodingProjects\MonoGameMedivalChess\MedivalChess\tools\painted_shape.json"
 OUTPUT_FILE = "board.json"
 
 

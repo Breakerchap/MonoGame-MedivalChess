@@ -1,4 +1,5 @@
 using MedivalChess.GameBoard;
+using MedivalChess.Player;
 using Xunit;
 
 namespace MedivalChess.Tests;
@@ -59,6 +60,13 @@ public class UiTextTests
   {
     Assert.Equal("2 Line/Diag", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
     Assert.Equal("1 Fwd/Diag", UiText.FormatAction(PieceDefinitions.Peasant.AttackShape));
+  }
+
+  [Fact]
+  public void TeamDisplayNames_UseOrangeAndPurple()
+  {
+    Assert.Equal("ORANGE", UiText.GetTeamDisplayName(TeamName.Red));
+    Assert.Equal("PURPLE", UiText.GetTeamDisplayName(TeamName.Blue));
   }
 
   [Fact]

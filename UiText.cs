@@ -1,4 +1,5 @@
 using MedivalChess.GameBoard;
+using MedivalChess.Player;
 
 namespace MedivalChess;
 
@@ -43,6 +44,11 @@ internal static class UiText
   internal static string BuildAttackDetails(PieceDefinition definition)
   {
     return $"ATTACK  {definition.Attack} damage | {FormatAction(definition.AttackShape)}";
+  }
+
+  internal static string GetTeamDisplayName(TeamName teamName)
+  {
+    return teamName == TeamName.Red ? "ORANGE" : "PURPLE";
   }
 
   internal static string FormatAction((int range, Shape shape) action)
