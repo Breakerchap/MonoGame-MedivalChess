@@ -50,17 +50,38 @@ internal static class Actions
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
     var action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
+    List<(int x, int y)> squares;
 
     switch (action.shape)
     {
       case Shape.Straight:
-        return ShapeFuncs.StraightShape(action.range);
+        squares = ShapeFuncs.StraightShape(action.range);
+        break;
 
       case Shape.Any:
-        return ShapeFuncs.AnyShape(action.range);
+      case Shape.FourSquare:
+        squares = ShapeFuncs.AnyShape(action.range);
+        break;
+
+      case Shape.Forward:
+        squares = ShapeFuncs.ForwardShape(piece.Team, action.range, false);
+        break;
+
+      case Shape.ForwardOrForwardDiagonal:
+        squares = ShapeFuncs.ForwardShape(piece.Team, action.range, true);
+        break;
 
       case Shape.AbsoluteStraightOrDiagonal:
-        return ShapeFuncs.AbsoluteStraightOrDiagonalShape(action.range);
+        squares = ShapeFuncs.AbsoluteStraightOrDiagonalShape(action.range);
+        break;
+
+      case Shape.PierceStraight:
+        squares = ShapeFuncs.StraightShape(action.range);
+        break;
+
+      case Shape.MoveOnEnemy:
+        squares = ShapeFuncs.AnyShape(action.range);
+        break;
 
       case Shape.None:
         return [];
@@ -69,6 +90,13 @@ internal static class Actions
         Console.WriteLine($"Shape: `{action.shape}` not added yet");
         return [];
     }
+
+    if (!isMoving && piece.Definition.MinimumAttackRange > 0)
+    {
+      squares.RemoveAll(square => ShapeFuncs.Distance(square) < piece.Definition.MinimumAttackRange);
+    }
+
+    return squares;
   }
 
   internal static void Attack(Piece attackingPiece, Piece attackedPiece)
@@ -86,9 +114,14 @@ internal static class Actions
   {
     if (piece.CurrentHealth > 0) { return false; }
 
-    attackingTeam.Money += (int)MathF.Round(piece.Definition.Cost * killerRefundMultiplier);
-    defeatedTeam.Money += (int)MathF.Round(piece.Definition.Cost * defeatedTeamRefundMultiplier);
+    attackingTeam.Money += RoundToNearestFive(piece.Definition.Cost * killerRefundMultiplier);
+    defeatedTeam.Money += RoundToNearestFive(piece.Definition.Cost * defeatedTeamRefundMultiplier);
     return true;
+  }
+
+  private static int RoundToNearestFive(float amount)
+  {
+    return (int)MathF.Round(amount / 5f, MidpointRounding.AwayFromZero) * 5;
   }
 }
 
@@ -112,18 +145,38 @@ internal static class ShapeFuncs
   {
     List<(int x, int y)> validSquares = new();
 
-    for (int x = -range; x <= range; x++)
+    for (int distance = 1; distance <= range; distance++)
     {
-      for (int y = -range; y <= range; y++)
+      validSquares.Add((distance, 0));
+      validSquares.Add((-distance, 0));
+      validSquares.Add((0, distance));
+      validSquares.Add((0, -distance));
+    }
+
+    return validSquares;
+  }
+
+  internal static List<(int x, int y)> ForwardShape(TeamName team, int range, bool includeDiagonals)
+  {
+    List<(int x, int y)> validSquares = new();
+    int direction = team == TeamName.Red ? -1 : 1;
+
+    for (int distance = 1; distance <= range; distance++)
+    {
+      validSquares.Add((0, direction * distance));
+      if (includeDiagonals)
       {
-        if (Math.Abs(x) + Math.Abs(y) <= range)
-        {
-          validSquares.Add((x, y));
-        }
+        validSquares.Add((-distance, direction * distance));
+        validSquares.Add((distance, direction * distance));
       }
     }
 
     return validSquares;
+  }
+
+  internal static int Distance((int x, int y) offset)
+  {
+    return Math.Max(Math.Abs(offset.x), Math.Abs(offset.y));
   }
 
   internal static List<(int x, int y)> AbsoluteStraightOrDiagonalShape(int range)

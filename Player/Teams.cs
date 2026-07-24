@@ -61,5 +61,5 @@ internal sealed class Team
 
 internal enum TeamName
 {
-  Red, Blue
+  Red, Blue, Neutral
 }

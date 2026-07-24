@@ -34,6 +34,7 @@ internal static class UiTheme
 
   internal static readonly Color TeamOrange = new(209, 125, 54);
   internal static readonly Color TeamPurple = new(139, 92, 181);
+  internal static readonly Color NeutralUnit = new(137, 145, 153);
   internal static readonly Color Health = new(105, 185, 112);
   internal static readonly Color Attack = new(221, 116, 108);
   internal static readonly Color Move = new(230, 202, 103);
@@ -41,12 +42,16 @@ internal static class UiTheme
   internal static readonly Color DarkBoardCell = new(116, 83, 59);
   internal static readonly Color LightBoardCell = new(197, 174, 136);
   internal static readonly Color NoMansLand = new(112, 112, 104);
+  internal static readonly Color Road = new(111, 91, 62);
+  internal static readonly Color Barricade = new(91, 69, 49);
   internal static readonly Color MoveOverlay = new(232, 202, 86, 138);
   internal static readonly Color AttackOutline = new(222, 91, 84, 145);
   internal static readonly Color SelectionOutline = new(246, 214, 123);
 
   internal static Color GetTeamColour(TeamName teamName)
   {
-    return teamName == TeamName.Red ? TeamOrange : TeamPurple;
+    return teamName == TeamName.Red
+      ? TeamOrange
+      : teamName == TeamName.Blue ? TeamPurple : NeutralUnit;
   }
 }

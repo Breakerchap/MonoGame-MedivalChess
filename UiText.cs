@@ -48,7 +48,7 @@ internal static class UiText
 
   internal static string GetTeamDisplayName(TeamName teamName)
   {
-    return teamName == TeamName.Red ? "ORANGE" : "PURPLE";
+    return teamName == TeamName.Red ? "ORANGE" : teamName == TeamName.Blue ? "PURPLE" : "NEUTRAL";
   }
 
   internal static string FormatAction((int range, Shape shape) action)

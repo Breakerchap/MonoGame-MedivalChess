@@ -16,7 +16,8 @@ internal sealed class PieceSetup
 
   internal Piece GetPieceAt((int x, int y) position)
   {
-    return _pieces.Find(piece => piece.Occupies(position));
+    return _pieces.Find(piece => piece.AttachedTo == null && piece.Occupies(position))
+      ?? _pieces.Find(piece => piece.Occupies(position));
   }
 
   internal bool IsFootprintClear(
@@ -42,12 +43,79 @@ internal sealed class PieceSetup
 
   internal bool RemovePiece(Piece piece)
   {
+    foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
+    {
+      attachedPiece.AttachedTo = null;
+      attachedPiece.AttachmentKind = AttachmentKind.None;
+    }
+
+    if (piece.AttachedTo != null)
+    {
+      piece.AttachedTo = null;
+      piece.AttachmentKind = AttachmentKind.None;
+    }
+
+    foreach (Piece candidate in _pieces)
+    {
+      if (candidate.MarkedTarget == piece)
+      {
+        candidate.MarkedTarget = null;
+      }
+    }
+
     return _pieces.Remove(piece);
   }
 
   internal void AddPiece(Piece piece)
   {
     _pieces.Add(piece);
+  }
+
+  internal void MovePiece(Piece piece, (int x, int y) destination)
+  {
+    var displacement = (
+      x: destination.x - piece.Position.x,
+      y: destination.y - piece.Position.y
+    );
+    piece.Position = destination;
+
+    foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
+    {
+      attachedPiece.Position = attachedPiece.AttachmentKind == AttachmentKind.Towed
+        ? (attachedPiece.Position.x + displacement.x, attachedPiece.Position.y + displacement.y)
+        : destination;
+    }
+  }
+
+  internal void Attach(Piece attachment, Piece host, AttachmentKind kind)
+  {
+    attachment.AttachedTo = host;
+    attachment.AttachmentKind = kind;
+    if (kind != AttachmentKind.Towed)
+    {
+      attachment.Position = host.Position;
+    }
+  }
+
+  internal Piece GetAttachedPiece(Piece host, AttachmentKind kind)
+  {
+    return _pieces.Find(piece => piece.AttachedTo == host && piece.AttachmentKind == kind);
+  }
+
+  internal void ReplacePiece(Piece existingPiece, Piece replacement)
+  {
+    int index = _pieces.IndexOf(existingPiece);
+    if (index < 0)
+    {
+      return;
+    }
+
+    foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == existingPiece))
+    {
+      attachedPiece.AttachedTo = replacement;
+    }
+
+    _pieces[index] = replacement;
   }
 
   internal List<Team> CreateTeams()
