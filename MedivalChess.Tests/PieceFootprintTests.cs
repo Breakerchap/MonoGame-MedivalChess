@@ -36,9 +36,9 @@ public class PieceFootprintTests
     Piece catapult = new(PieceDefinitions.Catapult, (5, 5), TeamName.Red);
     Piece cannon = new(PieceDefinitions.Cannon, (5, 5), TeamName.Blue);
 
-    Assert.True(Actions.IsValidMovementDestination(catapult, (4, 4)));
-    Assert.True(Actions.IsValidMovementDestination(catapult, (6, 5)));
-    Assert.False(Actions.IsValidMovementDestination(catapult, (7, 5)));
+    Assert.True(Actions.IsValidMovementDestination(catapult, (3, 3)));
+    Assert.True(Actions.IsValidMovementDestination(catapult, (7, 5)));
+    Assert.False(Actions.IsValidMovementDestination(catapult, (6, 5)));
 
     Assert.True(Actions.CanAttackSquare(cannon, (5, 10)));
     Assert.False(Actions.CanAttackSquare(cannon, (5, 11)));

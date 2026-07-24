@@ -8,16 +8,27 @@ internal static class Actions
 {
   internal static bool IsValidMovementDestination(Piece piece, (int x, int y) destination)
   {
-    if (destination == piece.Position)
+    return ValidMovementDestinations(piece).Contains(destination);
+  }
+
+  internal static List<(int x, int y)> ValidMovementDestinations(Piece piece)
+  {
+    List<(int x, int y)> destinations = [];
+
+    foreach ((int x, int y) offset in ValidActionSquares(piece, true))
     {
-      return false;
+      if (offset == (0, 0))
+      {
+        continue;
+      }
+
+      destinations.Add((
+        piece.Position.x + offset.x * piece.Definition.Size.x,
+        piece.Position.y + offset.y * piece.Definition.Size.y
+      ));
     }
 
-    var offset = (
-      x: destination.x - piece.Position.x,
-      y: destination.y - piece.Position.y
-    );
-    return ValidActionSquares(piece, true).Contains(offset);
+    return destinations;
   }
 
   internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)

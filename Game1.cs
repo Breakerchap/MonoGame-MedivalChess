@@ -426,11 +426,9 @@ internal sealed class Game1 : Game
   {
     HashSet<(int x, int y)> highlightedSquares = [];
 
-    foreach ((int x, int y) offset in Actions.ValidActionSquares(piece, true))
+    foreach ((int x, int y) destination in Actions.ValidMovementDestinations(piece))
     {
-      var destination = (x: piece.Position.x + offset.x, y: piece.Position.y + offset.y);
-      if (!Actions.IsValidMovementDestination(piece, destination) ||
-          !CanPlacePiece(piece.Definition, destination, null, piece))
+      if (!CanPlacePiece(piece.Definition, destination, null, piece))
       {
         continue;
       }
