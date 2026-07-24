@@ -69,7 +69,7 @@ public class UpdatedRulesTests
     setup.AddPiece(cannon);
 
     setup.Attach(guard, soldier, AttachmentKind.Guard);
-    setup.Attach(cannon, ox, AttachmentKind.Towed);
+    Assert.True(setup.Attach(cannon, ox, AttachmentKind.Towed));
     setup.MovePiece(soldier, (5, 4));
     setup.MovePiece(ox, (9, 4));
 
@@ -83,7 +83,27 @@ public class UpdatedRulesTests
   }
 
   [Fact]
-  public void UpdatedEconomy_UsesOneActivationAndRoundsRewardsToFive()
+  public void Ox_CanHaveOnlyOneCarriedOrTowedUnit()
+  {
+    PieceSetup setup = new();
+    Piece ox = new(PieceDefinitions.Ox, (4, 4), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Soldier, (4, 3), TeamName.Red);
+    Piece knight = new(PieceDefinitions.Knight, (3, 4), TeamName.Red);
+    setup.AddPiece(ox);
+    setup.AddPiece(soldier);
+    setup.AddPiece(knight);
+
+    Assert.True(setup.Attach(soldier, ox, AttachmentKind.Carried));
+    Assert.False(setup.Attach(knight, ox, AttachmentKind.Carried));
+    Assert.Same(ox, soldier.AttachedTo);
+    Assert.Null(knight.AttachedTo);
+
+    setup.Detach(soldier);
+    Assert.True(setup.Attach(knight, ox, AttachmentKind.Carried));
+  }
+
+  [Fact]
+  public void UpdatedEconomy_UsesThreeActionTurnsAndRoundsRewardsToFive()
   {
     Team attacker = new(TeamName.Red, null, 0);
     Team defeated = new(TeamName.Blue, null, 0);

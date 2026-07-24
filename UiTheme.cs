@@ -44,6 +44,11 @@ internal static class UiTheme
   internal static readonly Color NoMansLand = new(112, 112, 104);
   internal static readonly Color Road = new(111, 91, 62);
   internal static readonly Color Barricade = new(91, 69, 49);
+  internal static readonly Color Forest = new(52, 92, 64, 205);
+  internal static readonly Color ForestDark = new(32, 65, 44, 230);
+  internal static readonly Color Lake = new(47, 105, 144, 230);
+  internal static readonly Color LakeHighlight = new(97, 169, 199, 180);
+  internal static readonly Color River = new(79, 150, 188, 235);
   internal static readonly Color MoveOverlay = new(232, 202, 86, 138);
   internal static readonly Color AttackOutline = new(222, 91, 84, 145);
   internal static readonly Color SelectionOutline = new(246, 214, 123);

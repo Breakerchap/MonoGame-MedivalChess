@@ -36,16 +36,28 @@ internal sealed class Game1 : Game
     RoyalSelection
   }
 
+  private sealed class MovementAnimation
+  {
+    internal const float SecondsPerStep = 0.11f;
+
+    internal Piece Piece { get; init; }
+    internal List<(int x, int y)> Path { get; init; }
+    internal float ElapsedSeconds { get; set; }
+    internal float Duration => Path.Count * SecondsPerStep;
+  }
+
   private readonly GraphicsDeviceManager _graphics;
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
   private SpriteFont _pieceLabelFont;
   private UiRenderer _ui;
   private Board _board;
+  private BattlefieldTerrain _terrain;
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
   private Piece selectedPiece;
   private Piece _cavalierAwaitingAttack;
+  private MovementAnimation _movementAnimation;
   private readonly HashSet<(int x, int y)> _roads = [];
   private readonly Dictionary<(int x, int y), int> _barricades = [];
   private const int noMansLandHalfHeight = 3;
@@ -58,6 +70,7 @@ internal sealed class Game1 : Game
   private KeyboardState _previousKeyboardState;
   private bool _isPurchaseMode;
   private int _selectedPurchaseIndex;
+  private int _selectedTeacherDefinitionIndex;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
@@ -91,6 +104,7 @@ internal sealed class Game1 : Game
   protected override void Initialize()
   {
     _board = new Board();
+    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
 
     pieceSetup.AddPieces();
     _teams = pieceSetup.CreateTeams();
@@ -122,6 +136,15 @@ internal sealed class Game1 : Game
     if (_screen != Screen.Playing)
     {
       UpdateMenu(keyboard, mouse, wasLeftClick);
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
+
+    if (_movementAnimation != null)
+    {
+      UpdateMovementAnimation(deltaTime);
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -208,8 +231,12 @@ internal sealed class Game1 : Game
 
     bool clickedPurchasePanel =
       wasLeftClick && HandlePurchasePanelClick(mouse.Position);
+    bool clickedTeacherPanel =
+      wasLeftClick && HandleTeacherChoiceClick(mouse.Position);
+    bool clickedOxCarryPanel =
+      wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedTeacherPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -284,36 +311,20 @@ internal sealed class Game1 : Game
             arrayY < _board.BoardArray.GetLength(0) &&
             _board.BoardArray[arrayY, arrayX] == 1;
 
-          bool isValidMove =
-            isBoardCell &&
-            Actions.IsValidMovementDestination(selectedPiece, targetPosition) &&
-            CanMovePiece(selectedPiece, targetPosition);
-
-          if (isValidMove)
+          Dictionary<(int x, int y), List<(int x, int y)>> movementPaths =
+            GetMovementPaths(selectedPiece);
+          if (isBoardCell && movementPaths.TryGetValue(targetPosition, out List<(int x, int y)> path))
           {
-            var previousPosition = selectedPiece.Position;
-            MovePieceWithCompanions(selectedPiece, targetPosition);
-
-            if (selectedPiece.Definition.Type == PieceType.Elephant)
+            if (selectedPiece.AttachedTo != null &&
+                selectedPiece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
             {
-              DamageElephantCrossedUnits(selectedPiece, previousPosition);
+              pieceSetup.Detach(selectedPiece);
             }
 
-            Console.WriteLine(
-              $"Moved piece to ({boardX}, {boardY})."
-            );
-
-            if (selectedPiece.Definition.Type == PieceType.Cavalier)
-            {
-              _cavalierAwaitingAttack = selectedPiece;
-            }
-            else
-            {
-              CompleteAction();
-            }
+            BeginMovementAnimation(selectedPiece, path);
           }
 
-          if (_cavalierAwaitingAttack != selectedPiece)
+          if (_movementAnimation == null && _cavalierAwaitingAttack != selectedPiece)
           {
             selectedPiece = null;
           }
@@ -333,7 +344,7 @@ internal sealed class Game1 : Game
           bool isValidAttack =
             isBoardCell &&
             Actions.CanAttackSquare(selectedPiece, targetPosition) &&
-            HasClearDirectAttackPath(selectedPiece, targetPosition) &&
+            HasClearAttackPath(selectedPiece, targetPosition) &&
             ((selectedPiece.Definition.Attack > 0 &&
               ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
                _barricades.ContainsKey(targetPosition))) ||
@@ -487,12 +498,7 @@ internal sealed class Game1 : Game
         int arrayX = position.x - _board.MinX + x;
         int arrayY = position.y - _board.MinY + y;
 
-        if (!IsBoardCell(arrayX, arrayY))
-        {
-          return false;
-        }
-
-        if (_barricades.ContainsKey((position.x + x, position.y + y)))
+        if (!IsTraversableTerrainSquare((position.x + x, position.y + y)))
         {
           return false;
         }
@@ -507,17 +513,142 @@ internal sealed class Game1 : Game
     return pieceSetup.IsFootprintClear(definition, position, ignoredPiece);
   }
 
-  private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
+  private bool IsTraversableTerrainSquare((int x, int y) position)
   {
-    HashSet<(int x, int y)> highlightedSquares = [];
+    return
+      IsBoardCell(position.x - _board.MinX, position.y - _board.MinY) &&
+      !_terrain.IsLake(position) &&
+      !_barricades.ContainsKey(position);
+  }
 
-    foreach ((int x, int y) destination in Actions.ValidMovementDestinations(piece))
+  private Dictionary<(int x, int y), List<(int x, int y)>> GetMovementPaths(Piece piece)
+  {
+    return MovementPathfinder.FindPaths(
+      piece,
+      destination => CanLandPieceAt(piece, destination),
+      destination => CanTravelThroughPosition(piece, destination),
+      destination => GetMovementCost(piece, destination),
+      (from, to) => CrossesRiver(piece, from, to)
+    );
+  }
+
+  private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
+  {
+    if (!CanPlacePiece(piece.Definition, destination, null, piece))
     {
-      if (!CanMovePiece(piece, destination))
+      return false;
+    }
+
+    Piece towedPiece = pieceSetup.GetAttachedPiece(piece, AttachmentKind.Towed);
+    if (towedPiece == null)
+    {
+      return true;
+    }
+
+    var towedDestination = (
+      x: towedPiece.Position.x + destination.x - piece.Position.x,
+      y: towedPiece.Position.y + destination.y - piece.Position.y
+    );
+    return
+      CanPlacePiece(towedPiece.Definition, towedDestination, null, towedPiece) &&
+      !FootprintsOverlap(piece.Definition, destination, towedPiece.Definition, towedDestination);
+  }
+
+  private bool CanTravelThroughPosition(Piece piece, (int x, int y) destination)
+  {
+    foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
+    {
+      if (!IsTraversableTerrainSquare(occupiedSquare))
+      {
+        return false;
+      }
+
+      Piece blockingPiece = pieceSetup.GetPieceAt(occupiedSquare);
+      if (blockingPiece == null || blockingPiece == piece)
       {
         continue;
       }
 
+      if (piece.Definition.Type != PieceType.Elephant ||
+          blockingPiece.Team == piece.Team ||
+          blockingPiece.Definition.Size != (1, 1))
+      {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private int GetMovementCost(Piece piece, (int x, int y) destination)
+  {
+    foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
+    {
+      if (_terrain.IsForest(occupiedSquare) && !_roads.Contains(occupiedSquare))
+      {
+        return 2;
+      }
+    }
+
+    return 1;
+  }
+
+  private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
+  {
+    foreach ((int x, int y) fromSquare in OccupiedSquares(piece.Definition, from))
+    {
+      var toSquare = (
+        x: fromSquare.x + to.x - from.x,
+        y: fromSquare.y + to.y - from.y
+      );
+      if (CrossesRiverBetweenSquares(fromSquare, toSquare))
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private bool CrossesRiverBetweenSquares((int x, int y) from, (int x, int y) to)
+  {
+    int deltaX = to.x - from.x;
+    int deltaY = to.y - from.y;
+    int steps = Math.Max(Math.Abs(deltaX), Math.Abs(deltaY));
+    var current = from;
+
+    for (int step = 1; step <= steps; step++)
+    {
+      var next = (
+        x: from.x + (int)MathF.Round(deltaX * step / (float)steps),
+        y: from.y + (int)MathF.Round(deltaY * step / (float)steps)
+      );
+
+      if (next.x != current.x && next.y != current.y)
+      {
+        if (_terrain.HasRiverBetween(current, (next.x, current.y)) ||
+            _terrain.HasRiverBetween(current, (current.x, next.y)))
+        {
+          return true;
+        }
+      }
+      else if (_terrain.HasRiverBetween(current, next))
+      {
+        return true;
+      }
+
+      current = next;
+    }
+
+    return false;
+  }
+
+  private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
+  {
+    HashSet<(int x, int y)> highlightedSquares = [];
+
+    foreach ((int x, int y) destination in GetMovementPaths(piece).Keys)
+    {
       for (int footprintY = 0; footprintY < piece.Definition.Size.y; footprintY++)
       {
         for (int footprintX = 0; footprintX < piece.Definition.Size.x; footprintX++)
@@ -550,7 +681,7 @@ internal sealed class Game1 : Game
           continue;
         }
 
-        if (Actions.CanAttackSquare(piece, targetPosition) && HasClearDirectAttackPath(piece, targetPosition))
+        if (Actions.CanAttackSquare(piece, targetPosition) && HasClearAttackPath(piece, targetPosition))
         {
           highlightedSquares.Add(targetPosition);
         }
@@ -560,9 +691,9 @@ internal sealed class Game1 : Game
     return highlightedSquares;
   }
 
-  private void SelectPiece(Piece piece)
+  private void SelectPiece(Piece piece, bool allowAttachedPiece = false)
   {
-    if (piece.AttachedTo != null)
+    if (piece.AttachedTo != null && !allowAttachedPiece)
     {
       return;
     }
@@ -637,6 +768,11 @@ internal sealed class Game1 : Game
       damage = Math.Max(5, damage - 5);
     }
 
+    if (IsPieceInForest(damagedPiece))
+    {
+      damage = Math.Max(1, damage - 3);
+    }
+
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
 
@@ -694,7 +830,7 @@ internal sealed class Game1 : Game
         targetPiece.Definition.Category != PieceCategory.Royal &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
-      PieceDefinition replacementDefinition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+      PieceDefinition replacementDefinition = PieceDefinitions.Purchasable[_selectedTeacherDefinitionIndex];
       Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
       int conversionCost = Math.Max(0, replacementDefinition.Cost - targetPiece.Definition.Cost);
       if (replacementDefinition.Category != PieceCategory.Royal &&
@@ -753,6 +889,8 @@ internal sealed class Game1 : Game
         targetPiece.Team == actor.Team &&
         targetPiece != actor &&
         targetPiece.AttachedTo == null &&
+        pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) == null &&
+        pieceSetup.GetAttachedPiece(actor, AttachmentKind.Towed) == null &&
         (targetPiece.Definition.Size == (1, 1) || targetPiece.Definition.Category == PieceCategory.Mechanical) &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
@@ -765,75 +903,6 @@ internal sealed class Game1 : Game
     }
 
     return false;
-  }
-
-  private bool CanMovePiece(Piece piece, (int x, int y) destination)
-  {
-    if (!CanPlacePiece(piece.Definition, destination, null, piece))
-    {
-      return false;
-    }
-
-    if (!HasClearMovementPath(piece, destination, piece.Definition.Type == PieceType.Elephant))
-    {
-      return false;
-    }
-
-    Piece towedPiece = pieceSetup.GetAttachedPiece(piece, AttachmentKind.Towed);
-    if (towedPiece != null)
-    {
-      var towedDestination = (
-        x: towedPiece.Position.x + destination.x - piece.Position.x,
-        y: towedPiece.Position.y + destination.y - piece.Position.y
-      );
-
-      if (!CanPlacePiece(towedPiece.Definition, towedDestination, null, towedPiece) ||
-          FootprintsOverlap(piece.Definition, destination, towedPiece.Definition, towedDestination) ||
-          !HasClearMovementPath(towedPiece, towedDestination, false))
-      {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  private bool HasClearMovementPath(Piece piece, (int x, int y) destination, bool mayCrossEnemyOneByOne)
-  {
-    int deltaX = destination.x - piece.Position.x;
-    int deltaY = destination.y - piece.Position.y;
-    int steps = Math.Max(Math.Abs(deltaX), Math.Abs(deltaY));
-
-    for (int step = 1; step < steps; step++)
-    {
-      var intermediatePosition = (
-        x: piece.Position.x + (int)MathF.Round(deltaX * step / (float)steps),
-        y: piece.Position.y + (int)MathF.Round(deltaY * step / (float)steps)
-      );
-
-      foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, intermediatePosition))
-      {
-        if (_barricades.ContainsKey(occupiedSquare))
-        {
-          return false;
-        }
-
-        Piece crossedPiece = pieceSetup.GetPieceAt(occupiedSquare);
-        if (crossedPiece == null || crossedPiece == piece)
-        {
-          continue;
-        }
-
-        if (!mayCrossEnemyOneByOne ||
-            crossedPiece.Team == piece.Team ||
-            crossedPiece.Definition.Size != (1, 1))
-        {
-          return false;
-        }
-      }
-    }
-
-    return true;
   }
 
   private static IEnumerable<(int x, int y)> OccupiedSquares(
@@ -899,6 +968,64 @@ internal sealed class Game1 : Game
       if (CanPlacePiece(companion.Definition, companionDestination, null, companion))
       {
         pieceSetup.MovePiece(companion, companionDestination);
+      }
+    }
+  }
+
+  private void BeginMovementAnimation(Piece piece, List<(int x, int y)> path)
+  {
+    _movementAnimation = new MovementAnimation
+    {
+      Piece = piece,
+      Path = path
+    };
+  }
+
+  private void UpdateMovementAnimation(float deltaTime)
+  {
+    _movementAnimation.ElapsedSeconds += deltaTime;
+    if (_movementAnimation.ElapsedSeconds < _movementAnimation.Duration)
+    {
+      return;
+    }
+
+    MovementAnimation completedAnimation = _movementAnimation;
+    _movementAnimation = null;
+    Piece movedPiece = completedAnimation.Piece;
+    (int x, int y) destination = completedAnimation.Path[^1];
+    MovePieceWithCompanions(movedPiece, destination);
+
+    if (movedPiece.Definition.Type == PieceType.Elephant)
+    {
+      DamageElephantCrossedUnits(movedPiece, completedAnimation.Path);
+    }
+
+    Console.WriteLine($"Moved {movedPiece.Definition.Type} to ({destination.x}, {destination.y}).");
+    if (movedPiece.Definition.Type == PieceType.Cavalier)
+    {
+      selectedPiece = movedPiece;
+      _cavalierAwaitingAttack = movedPiece;
+    }
+    else
+    {
+      selectedPiece = null;
+      CompleteAction();
+    }
+  }
+
+  private void DamageElephantCrossedUnits(Piece elephant, IReadOnlyList<(int x, int y)> path)
+  {
+    HashSet<Piece> damagedPieces = [];
+    for (int pathIndex = 0; pathIndex < path.Count - 1; pathIndex++)
+    {
+      foreach ((int x, int y) occupiedSquare in OccupiedSquares(elephant.Definition, path[pathIndex]))
+      {
+        Piece crossedPiece = pieceSetup.GetPieceAt(occupiedSquare);
+        if (crossedPiece != null && crossedPiece.Team != elephant.Team &&
+            crossedPiece.Definition.Size == (1, 1) && damagedPieces.Add(crossedPiece))
+        {
+          ResolveDamage(elephant, crossedPiece, 10);
+        }
       }
     }
   }
@@ -1011,6 +1138,11 @@ internal sealed class Game1 : Game
           break;
         }
 
+        if (_terrain.IsForest(position))
+        {
+          break;
+        }
+
         Piece target = pieceSetup.GetPieceAt(position);
         if (target != null && target.Team != attacker.Team)
         {
@@ -1040,6 +1172,97 @@ internal sealed class Game1 : Game
     {
       _barricades.Remove(position);
       Console.WriteLine("Barricade destroyed.");
+    }
+  }
+
+  private bool IsPieceInForest(Piece piece)
+  {
+    foreach ((int x, int y) occupiedSquare in piece.OccupiedSquares())
+    {
+      if (_terrain.IsForest(occupiedSquare))
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
+  {
+    return HasClearDirectAttackPath(attacker, targetPosition) &&
+      HasClearForestPathForRangedAttack(attacker, targetPosition);
+  }
+
+  private bool HasClearForestPathForRangedAttack(Piece attacker, (int x, int y) targetPosition)
+  {
+    bool isRangedAttacker =
+      attacker.Definition.Category == PieceCategory.Ranged ||
+      attacker.Definition.Type is PieceType.Princess or PieceType.Cannon or PieceType.Ballista;
+    if (!isRangedAttacker)
+    {
+      return true;
+    }
+
+    foreach ((int x, int y) origin in attacker.OccupiedSquares())
+    {
+      var offset = (x: targetPosition.x - origin.x, y: targetPosition.y - origin.y);
+      if (!Actions.ValidActionSquares(attacker, false).Contains(offset))
+      {
+        continue;
+      }
+
+      bool pathIsClear = true;
+      foreach ((int x, int y) square in SquaresBetween(origin, targetPosition))
+      {
+        if (_terrain.IsForest(square))
+        {
+          pathIsClear = false;
+          break;
+        }
+      }
+
+      if (pathIsClear)
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private static IEnumerable<(int x, int y)> SquaresBetween(
+    (int x, int y) start,
+    (int x, int y) end
+  )
+  {
+    int x = start.x;
+    int y = start.y;
+    int deltaX = Math.Abs(end.x - start.x);
+    int deltaY = Math.Abs(end.y - start.y);
+    int stepX = Math.Sign(end.x - start.x);
+    int stepY = Math.Sign(end.y - start.y);
+    int error = deltaX - deltaY;
+
+    while (x != end.x || y != end.y)
+    {
+      int doubledError = error * 2;
+      if (doubledError > -deltaY)
+      {
+        error -= deltaY;
+        x += stepX;
+      }
+
+      if (doubledError < deltaX)
+      {
+        error += deltaX;
+        y += stepY;
+      }
+
+      if (x != end.x || y != end.y)
+      {
+        yield return (x, y);
+      }
     }
   }
 
@@ -1157,6 +1380,45 @@ internal sealed class Game1 : Game
     return true;
   }
 
+  private bool HandleTeacherChoiceClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Teacher ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetTeacherPreviousButtonBounds().Contains(mousePosition))
+    {
+      _selectedTeacherDefinitionIndex =
+        (_selectedTeacherDefinitionIndex - 1 + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
+    }
+    else if (GetTeacherNextButtonBounds().Contains(mousePosition))
+    {
+      _selectedTeacherDefinitionIndex =
+        (_selectedTeacherDefinitionIndex + 1) % PieceDefinitions.Purchasable.Length;
+    }
+
+    return true;
+  }
+
+  private bool HandleOxCarryPanelClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Ox ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    Piece cargo = GetOxCargo(selectedPiece);
+    if (cargo != null && GetOxCargoButtonBounds().Contains(mousePosition))
+    {
+      SelectPiece(cargo, true);
+    }
+
+    return true;
+  }
+
   private void DrawPanel(Rectangle bounds, Color fill, Color border)
   {
     _ui.Panel(bounds, fill, border);
@@ -1192,14 +1454,54 @@ internal sealed class Game1 : Game
 
   private Rectangle GetPieceWorldBounds(Piece piece, int cellSize)
   {
-    int pieceX = piece.Position.x - _board.MinX;
-    int pieceY = piece.Position.y - _board.MinY;
+    Vector2 renderedPosition = GetRenderedPosition(piece);
+    int pieceX = (int)MathF.Round((renderedPosition.X - _board.MinX) * cellSize);
+    int pieceY = (int)MathF.Round((renderedPosition.Y - _board.MinY) * cellSize);
     return new Rectangle(
-      pieceX * cellSize,
-      pieceY * cellSize,
+      pieceX,
+      pieceY,
       piece.Definition.Size.x * cellSize,
       piece.Definition.Size.y * cellSize
     );
+  }
+
+  private Vector2 GetRenderedPosition(Piece piece)
+  {
+    if (_movementAnimation == null)
+    {
+      return new Vector2(piece.Position.x, piece.Position.y);
+    }
+
+    Piece animatedPiece = _movementAnimation.Piece;
+    bool followsAnimatedPiece =
+      piece == animatedPiece ||
+      (piece.AttachedTo == animatedPiece &&
+       piece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed);
+    if (!followsAnimatedPiece)
+    {
+      return new Vector2(piece.Position.x, piece.Position.y);
+    }
+
+    float pathProgress = _movementAnimation.ElapsedSeconds / MovementAnimation.SecondsPerStep;
+    int segmentIndex = Math.Min((int)pathProgress, _movementAnimation.Path.Count - 1);
+    float segmentProgress = MathHelper.Clamp(pathProgress - segmentIndex, 0f, 1f);
+    (int x, int y) segmentStart = segmentIndex == 0
+      ? animatedPiece.Position
+      : _movementAnimation.Path[segmentIndex - 1];
+    (int x, int y) segmentEnd = _movementAnimation.Path[segmentIndex];
+    Vector2 animatedPosition = Vector2.Lerp(
+      new Vector2(segmentStart.x, segmentStart.y),
+      new Vector2(segmentEnd.x, segmentEnd.y),
+      segmentProgress
+    );
+
+    if (piece == animatedPiece)
+    {
+      return animatedPosition;
+    }
+
+    return new Vector2(piece.Position.x, piece.Position.y) +
+      animatedPosition - new Vector2(animatedPiece.Position.x, animatedPiece.Position.y);
   }
 
   private void DrawPurchasePanel()
@@ -1791,9 +2093,41 @@ internal sealed class Game1 : Game
   {
     Rectangle status = GetStatusPanelBounds();
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    int desiredHeight = selectedPiece == null ? 124 : 354;
+    int desiredHeight = selectedPiece == null
+      ? 124
+      : selectedPiece.Definition.Type is PieceType.Teacher or PieceType.Ox ? 438 : 354;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
+  }
+
+  private Rectangle GetTeacherChoiceBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    return new Rectangle(content.X, content.Y + 326, content.Width, 70);
+  }
+
+  private Rectangle GetTeacherPreviousButtonBounds()
+  {
+    Rectangle row = GetTeacherChoiceBounds();
+    return new Rectangle(row.X, row.Y + 28, 42, 34);
+  }
+
+  private Rectangle GetTeacherNextButtonBounds()
+  {
+    Rectangle row = GetTeacherChoiceBounds();
+    return new Rectangle(row.Right - 42, row.Y + 28, 42, 34);
+  }
+
+  private Rectangle GetTeacherChoiceValueBounds()
+  {
+    Rectangle row = GetTeacherChoiceBounds();
+    return new Rectangle(row.X + 50, row.Y + 28, row.Width - 100, 34);
+  }
+
+  private Rectangle GetOxCargoButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    return new Rectangle(content.X, content.Y + 346, content.Width, UiTheme.ButtonHeight);
   }
 
   private void DrawStatusPanel()
@@ -1806,7 +2140,7 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, turnColour);
     _ui.Text($"{UiText.GetTeamDisplayName(Team.CurrentTurn)} TURN", new Vector2(content.X, content.Y), turnColour);
     _ui.Divider(content, content.Y + 30);
-    _ui.Text("ACTIVATION", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
+    _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
 
     for (int index = 0; index < Team.ActionsPerTurn; index++)
     {
@@ -1819,7 +2153,7 @@ internal sealed class Game1 : Game
     }
 
     _ui.Text(
-      currentTeam.ActionPoints > 0 ? "READY" : "ACTIVATED",
+      $"{currentTeam.ActionPoints}/{Team.ActionsPerTurn} REMAINING",
       new Vector2(content.X + 116, content.Y + 61),
       UiTheme.TextPrimary,
       0.76f
@@ -1891,7 +2225,57 @@ internal sealed class Game1 : Game
     _ui.StatBlock(rangeRow, "ATTACK RANGE", UiText.FormatAction(selectedPiece.Definition.AttackShape), UiTheme.TextPrimary);
     _ui.Text("LEFT-CLICK gold to move", new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd), UiTheme.Move, 0.78f);
     _ui.Text(GetSelectedPieceControlHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.72f);
+
+    if (selectedPiece.Definition.Type == PieceType.Teacher)
+    {
+      DrawTeacherChoiceControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.Ox)
+    {
+      DrawOxCarryControls();
+      return;
+    }
+
     _ui.Text(GetSelectedPieceAbilityHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 44), UiTheme.TextMuted, 0.66f);
+  }
+
+  private void DrawTeacherChoiceControls()
+  {
+    Rectangle row = GetTeacherChoiceBounds();
+    Rectangle choiceValue = GetTeacherChoiceValueBounds();
+    PieceDefinition choice = PieceDefinitions.Purchasable[_selectedTeacherDefinitionIndex];
+
+    _ui.Text("CONVERT ADJACENT FRIENDLY INTO", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetTeacherPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(choiceValue, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText($"{choice.Type.ToString().ToUpperInvariant()}  {choice.Cost} GOLD", choiceValue, UiTheme.TextPrimary, 0.7f);
+    DrawMenuButton(GetTeacherNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text("RIGHT-CLICK the target to convert it", new Vector2(row.X, row.Bottom + 6), UiTheme.TextMuted, 0.68f);
+  }
+
+  private void DrawOxCarryControls()
+  {
+    Piece cargo = GetOxCargo(selectedPiece);
+    if (cargo == null)
+    {
+      _ui.Text("CARGO BAY EMPTY", new Vector2(GetOxCargoButtonBounds().X, GetOxCargoButtonBounds().Y - 26), UiTheme.TextMuted, 0.74f);
+      _ui.Text("RIGHT-CLICK a friendly 1x1 to carry", new Vector2(GetOxCargoButtonBounds().X, GetOxCargoButtonBounds().Y + 4), UiTheme.TextMuted, 0.68f);
+      return;
+    }
+
+    string cargoKind = cargo.AttachmentKind == AttachmentKind.Towed ? "TOWING" : "CARRYING";
+    Rectangle button = GetOxCargoButtonBounds();
+    _ui.Text($"{cargoKind}: {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(button.X, button.Y - 26), UiTheme.Gold, 0.74f);
+    DrawMenuButton(button, "SELECT CARGO", UiButtonTone.Accent);
+    _ui.Text("Cargo may attack. Moving it dismounts it.", new Vector2(button.X, button.Bottom + 6), UiTheme.TextMuted, 0.64f);
+  }
+
+  private Piece GetOxCargo(Piece ox)
+  {
+    return pieceSetup.GetAttachedPiece(ox, AttachmentKind.Carried) ??
+      pieceSetup.GetAttachedPiece(ox, AttachmentKind.Towed);
   }
 
   private static string GetSelectedPieceControlHint(Piece piece)
@@ -1903,6 +2287,12 @@ internal sealed class Game1 : Game
 
   private static string GetSelectedPieceAbilityHint(Piece piece)
   {
+    if (piece.AttachedTo?.Definition.Type == PieceType.Ox &&
+        piece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
+    {
+      return "RIDING: attack normally; moving dismounts you";
+    }
+
     return piece.Definition.Type switch
     {
       PieceType.Cavalier => "SPECIAL: move, then attack before ending activation",
@@ -1978,6 +2368,55 @@ internal sealed class Game1 : Game
             0.1f
           );
 
+          if (_terrain.IsLake(boardPosition))
+          {
+            DrawWorldRectangle(cellBounds, UiTheme.Lake, 0.101f);
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X + 11, cellBounds.Y + 14, cellBounds.Width - 28, 3),
+              UiTheme.LakeHighlight,
+              0.102f
+            );
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X + 24, cellBounds.Y + 35, cellBounds.Width - 34, 3),
+              UiTheme.LakeHighlight,
+              0.102f
+            );
+          }
+          else if (_terrain.IsForest(boardPosition))
+          {
+            DrawWorldRectangle(cellBounds, UiTheme.Forest, 0.101f);
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X + 12, cellBounds.Y + 10, 14, 24),
+              UiTheme.ForestDark,
+              0.102f
+            );
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.Right - 26, cellBounds.Bottom - 34, 14, 24),
+              UiTheme.ForestDark,
+              0.102f
+            );
+          }
+
+          var rightPosition = (x: boardPosition.x + 1, y: boardPosition.y);
+          var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
+          if (_terrain.HasRiverBetween(boardPosition, rightPosition))
+          {
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.Right - 3, cellBounds.Y, 6, cellBounds.Height),
+              UiTheme.River,
+              0.105f
+            );
+          }
+
+          if (_terrain.HasRiverBetween(boardPosition, belowPosition))
+          {
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X, cellBounds.Bottom - 3, cellBounds.Width, 6),
+              UiTheme.River,
+              0.105f
+            );
+          }
+
           if (_roads.Contains(boardPosition))
           {
             DrawWorldRectangle(
@@ -2021,6 +2460,28 @@ internal sealed class Game1 : Game
     {
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
       Color colour = UiTheme.GetTeamColour(piece.Team);
+
+      if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
+      {
+        Rectangle hostBounds = GetPieceWorldBounds(piece.AttachedTo, cellSize);
+        Rectangle cargoBadge = new(hostBounds.Right - 30, hostBounds.Y + 6, 24, 24);
+        DrawWorldRectangle(cargoBadge, colour, 0.125f);
+        DrawWorldOutline(cargoBadge, UiTheme.TextPrimary, 0.126f);
+        string cargoLabel = UiText.BuildPieceLabel(piece.Definition);
+        Vector2 cargoLabelSize = _pieceLabelFont.MeasureString(cargoLabel) * 0.48f;
+        _spriteBatch.DrawString(
+          _pieceLabelFont,
+          cargoLabel,
+          new Vector2(cargoBadge.Center.X - cargoLabelSize.X / 2f, cargoBadge.Center.Y - cargoLabelSize.Y / 2f),
+          UiTheme.TextPrimary,
+          0f,
+          Vector2.Zero,
+          0.48f,
+          SpriteEffects.None,
+          0.127f
+        );
+        continue;
+      }
 
       _spriteBatch.Draw(
           _pixel,

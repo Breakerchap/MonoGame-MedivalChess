@@ -15,9 +15,12 @@ internal sealed class BoardData
 
 internal sealed class Board
 {
+  private readonly HashSet<(int x, int y)> _cells = [];
+
   internal int[,] BoardArray { get; }
   internal int MinX { get; }
   internal int MinY { get; }
+  internal IReadOnlyCollection<(int x, int y)> Cells => _cells;
 
   internal Board()
   {
@@ -60,7 +63,13 @@ internal sealed class Board
       int y = cell[1] - MinY;
 
       BoardArray[y, x] = 1;
+      _cells.Add((cell[0], cell[1]));
     }
+  }
+
+  internal bool ContainsCell((int x, int y) position)
+  {
+    return _cells.Contains(position);
   }
 
   public override string ToString()

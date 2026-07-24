@@ -87,14 +87,31 @@ internal sealed class PieceSetup
     }
   }
 
-  internal void Attach(Piece attachment, Piece host, AttachmentKind kind)
+  internal bool Attach(Piece attachment, Piece host, AttachmentKind kind)
   {
+    bool isCargo = kind is AttachmentKind.Carried or AttachmentKind.Towed;
+    if (isCargo && _pieces.Exists(candidate =>
+      candidate.AttachedTo == host &&
+      candidate.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed))
+    {
+      return false;
+    }
+
+    Detach(attachment);
     attachment.AttachedTo = host;
     attachment.AttachmentKind = kind;
     if (kind != AttachmentKind.Towed)
     {
       attachment.Position = host.Position;
     }
+
+    return true;
+  }
+
+  internal void Detach(Piece piece)
+  {
+    piece.AttachedTo = null;
+    piece.AttachmentKind = AttachmentKind.None;
   }
 
   internal Piece GetAttachedPiece(Piece host, AttachmentKind kind)
@@ -109,6 +126,9 @@ internal sealed class PieceSetup
     {
       return;
     }
+
+    replacement.AttachedTo = existingPiece.AttachedTo;
+    replacement.AttachmentKind = existingPiece.AttachmentKind;
 
     foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == existingPiece))
     {

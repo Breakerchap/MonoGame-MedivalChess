@@ -6,6 +6,28 @@ namespace MedivalChess.GameBoard;
 
 internal static class Actions
 {
+  internal static List<(int x, int y)> ValidMovementStepDirections(Piece piece)
+  {
+    return piece.Definition.Movement.shape switch
+    {
+      Shape.Straight => ShapeFuncs.StraightShape(1),
+      Shape.Any =>
+      [
+        (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (1, -1), (-1, 1), (-1, -1)
+      ],
+      Shape.Forward => ShapeFuncs.ForwardShape(piece.Team, 1, false),
+      Shape.ForwardOrForwardDiagonal => ShapeFuncs.ForwardShape(piece.Team, 1, true),
+      Shape.AbsoluteStraightOrDiagonal => ShapeFuncs.AbsoluteStraightOrDiagonalShape(1),
+      Shape.MoveOnEnemy =>
+      [
+        (1, 0), (-1, 0), (0, 1), (0, -1),
+        (1, 1), (1, -1), (-1, 1), (-1, -1)
+      ],
+      _ => []
+    };
+  }
+
   internal static bool IsValidMovementDestination(Piece piece, (int x, int y) destination)
   {
     return ValidMovementDestinations(piece).Contains(destination);
