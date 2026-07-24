@@ -55,6 +55,11 @@ internal static class Actions
 
   internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)
   {
+    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    {
+      return false;
+    }
+
     List<(int x, int y)> attackOffsets = ValidActionSquares(piece, false);
 
     foreach ((int x, int y) origin in piece.OccupiedSquares())

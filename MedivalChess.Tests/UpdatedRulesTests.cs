@@ -24,7 +24,7 @@ public class UpdatedRulesTests
     AssertDefinition(PieceDefinitions.Ox, PieceCategory.Transport, 4, Shape.Any, 5, 25, (1, 1), 1, Shape.Forward, 35);
     AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 15, (1, 1), 1, Shape.Straight, 35);
     AssertDefinition(PieceDefinitions.Ballista, PieceCategory.Mechanical, 1, Shape.Straight, 25, 20, (2, 2), 5, Shape.PierceStraight, 55, 2);
-    AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 1, Shape.Any, 60);
+    AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 1, Shape.MoveOnEnemy, 60);
     AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Any, 10, 25, (1, 1), 1, Shape.Any, 30);
     AssertDefinition(PieceDefinitions.Mercenary, PieceCategory.Melee, 3, Shape.Any, 25, 20, (1, 1), 1, Shape.Any, 45);
     AssertDefinition(PieceDefinitions.King, PieceCategory.Royal, 1, Shape.Any, 15, 120, (1, 1), 1, Shape.Any, 0);

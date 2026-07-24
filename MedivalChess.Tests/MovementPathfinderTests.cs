@@ -101,6 +101,40 @@ public class MovementPathfinderTests
   }
 
   [Fact]
+  public void Elephant_AttacksByMovingOverAnEnemyInsteadOfUsingARightClickAttack()
+  {
+    Piece elephant = new(PieceDefinitions.Elephant, (0, 0), TeamName.Red);
+
+    var paths = MovementPathfinder.FindPaths(
+      elephant,
+      destination => destination != (0, 2),
+      _ => true,
+      _ => 1,
+      (_, _) => false
+    );
+
+    Assert.Equal(Shape.MoveOnEnemy, elephant.Definition.AttackShape.shape);
+    Assert.False(Actions.CanAttackSquare(elephant, (2, 0)));
+    Assert.Equal([(0, 2), (0, 4)], paths[(0, 4)]);
+  }
+
+  [Fact]
+  public void LargePiece_WithTwoMovementCanReachThreeTilesAway()
+  {
+    Piece elephant = new(PieceDefinitions.Elephant, (0, 0), TeamName.Red);
+
+    var paths = MovementPathfinder.FindPaths(
+      elephant,
+      _ => true,
+      (_, _) => true,
+      _ => 1,
+      (_, _) => false
+    );
+
+    Assert.True(paths.ContainsKey((0, 3)));
+  }
+
+  [Fact]
   public void Terrain_TracksForestsLakesAndRiversByTileOrEdge()
   {
     BattlefieldTerrain terrain = new(

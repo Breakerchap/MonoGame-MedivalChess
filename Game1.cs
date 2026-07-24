@@ -5,6 +5,7 @@ using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace MedivalChess;
 
@@ -258,7 +259,7 @@ internal sealed class Game1 : Game
           SelectPiece(pieceAtTarget);
         }
       }
-      else if (pieceAtTarget == selectedPiece && targetPosition == selectedPiece.Position)
+      else if (pieceAtTarget == selectedPiece && selectedPiece.Occupies(targetPosition))
       {
         if (_cavalierAwaitingAttack == selectedPiece)
         {
@@ -279,7 +280,8 @@ internal sealed class Game1 : Game
         pieceAtTarget != null &&
         pieceAtTarget != selectedPiece &&
         pieceAtTarget.Team == Team.CurrentTurn &&
-        pieceAtTarget.AttachedTo == null
+        pieceAtTarget.AttachedTo == null &&
+        !TryGetMovementPathAt(selectedPiece, targetPosition, out _)
       )
       {
         SelectPiece(pieceAtTarget);
@@ -311,9 +313,7 @@ internal sealed class Game1 : Game
             arrayY < _board.BoardArray.GetLength(0) &&
             _board.BoardArray[arrayY, arrayX] == 1;
 
-          Dictionary<(int x, int y), List<(int x, int y)>> movementPaths =
-            GetMovementPaths(selectedPiece);
-          if (isBoardCell && movementPaths.TryGetValue(targetPosition, out List<(int x, int y)> path))
+          if (isBoardCell && TryGetMovementPathAt(selectedPiece, targetPosition, out List<(int x, int y)> path))
           {
             if (selectedPiece.AttachedTo != null &&
                 selectedPiece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
@@ -526,14 +526,44 @@ internal sealed class Game1 : Game
     return MovementPathfinder.FindPaths(
       piece,
       destination => CanLandPieceAt(piece, destination),
-      destination => CanTravelThroughPosition(piece, destination),
+      (from, destination) => CanTravelThroughPosition(piece, from, destination),
       destination => GetMovementCost(piece, destination),
       (from, to) => CrossesRiver(piece, from, to)
     );
   }
 
+  private bool TryGetMovementPathAt(
+    Piece piece,
+    (int x, int y) clickedSquare,
+    out List<(int x, int y)> path
+  )
+  {
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = GetMovementPaths(piece);
+    if (paths.TryGetValue(clickedSquare, out path))
+    {
+      return true;
+    }
+
+    foreach (((int x, int y) destination, List<(int x, int y)> candidatePath) in paths)
+    {
+      if (FootprintContains(piece.Definition, destination, clickedSquare))
+      {
+        path = candidatePath;
+        return true;
+      }
+    }
+
+    path = null;
+    return false;
+  }
+
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
   {
+    if (piece.Definition.Type == PieceType.Elephant)
+    {
+      return IsFootprintOnBoard(piece.Definition, destination);
+    }
+
     if (!CanPlacePiece(piece.Definition, destination, null, piece))
     {
       return false;
@@ -554,25 +584,32 @@ internal sealed class Game1 : Game
       !FootprintsOverlap(piece.Definition, destination, towedPiece.Definition, towedDestination);
   }
 
-  private bool CanTravelThroughPosition(Piece piece, (int x, int y) destination)
+  private bool CanTravelThroughPosition(
+    Piece piece,
+    (int x, int y) from,
+    (int x, int y) destination
+  )
   {
-    foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
+    if (piece.Definition.Type == PieceType.Elephant)
     {
-      if (!IsTraversableTerrainSquare(occupiedSquare))
-      {
-        return false;
-      }
+      return IsFootprintOnBoard(piece.Definition, destination);
+    }
 
-      Piece blockingPiece = pieceSetup.GetPieceAt(occupiedSquare);
-      if (blockingPiece == null || blockingPiece == piece)
+    foreach ((int x, int y) position in PositionsBetween(from, destination))
+    {
+      foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        continue;
-      }
+        if (!IsTraversableTerrainSquare(occupiedSquare))
+        {
+          return false;
+        }
 
-      if (piece.Definition.Type != PieceType.Elephant ||
-          blockingPiece.Team == piece.Team ||
-          blockingPiece.Definition.Size != (1, 1))
-      {
+        Piece blockingPiece = pieceSetup.GetPieceAt(occupiedSquare);
+        if (blockingPiece == null || blockingPiece == piece)
+        {
+          continue;
+        }
+
         return false;
       }
     }
@@ -582,6 +619,11 @@ internal sealed class Game1 : Game
 
   private int GetMovementCost(Piece piece, (int x, int y) destination)
   {
+    if (piece.Definition.Type == PieceType.Elephant)
+    {
+      return 1;
+    }
+
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       if (_terrain.IsForest(occupiedSquare) && !_roads.Contains(occupiedSquare))
@@ -595,6 +637,11 @@ internal sealed class Game1 : Game
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
+    if (piece.Definition.Type == PieceType.Elephant)
+    {
+      return false;
+    }
+
     foreach ((int x, int y) fromSquare in OccupiedSquares(piece.Definition, from))
     {
       var toSquare = (
@@ -664,6 +711,36 @@ internal sealed class Game1 : Game
   private HashSet<(int x, int y)> GetValidAttackHighlightSquares(Piece piece)
   {
     HashSet<(int x, int y)> highlightedSquares = [];
+
+    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    {
+      Dictionary<(int x, int y), List<(int x, int y)>> movementPaths = GetMovementPaths(piece);
+      foreach (Piece target in pieceSetup.Pieces)
+      {
+        if (target == piece || target.AttachedTo != null || target.Team == piece.Team)
+        {
+          continue;
+        }
+
+        bool canMoveOverTarget = movementPaths.Values.Any(path =>
+          path.Any(step => FootprintsOverlap(
+            piece.Definition,
+            step,
+            target.Definition,
+            target.Position
+          ))
+        );
+        if (canMoveOverTarget)
+        {
+          foreach ((int x, int y) occupiedSquare in target.OccupiedSquares())
+          {
+            highlightedSquares.Add(occupiedSquare);
+          }
+        }
+      }
+
+      return highlightedSquares;
+    }
 
     for (int y = 0; y < _board.BoardArray.GetLength(0); y++)
     {
@@ -919,6 +996,40 @@ internal sealed class Game1 : Game
     }
   }
 
+  private bool IsFootprintOnBoard(PieceDefinition definition, (int x, int y) position)
+  {
+    return OccupiedSquares(definition, position).All(square =>
+      IsBoardCell(square.x - _board.MinX, square.y - _board.MinY)
+    );
+  }
+
+  private static bool FootprintContains(
+    PieceDefinition definition,
+    (int x, int y) position,
+    (int x, int y) square
+  )
+  {
+    return square.x >= position.x &&
+      square.x < position.x + definition.Size.x &&
+      square.y >= position.y &&
+      square.y < position.y + definition.Size.y;
+  }
+
+  private static IEnumerable<(int x, int y)> PositionsBetween(
+    (int x, int y) from,
+    (int x, int y) destination
+  )
+  {
+    int steps = Math.Max(Math.Abs(destination.x - from.x), Math.Abs(destination.y - from.y));
+    for (int step = 1; step <= steps; step++)
+    {
+      yield return (
+        from.x + (int)MathF.Round((destination.x - from.x) * step / (float)steps),
+        from.y + (int)MathF.Round((destination.y - from.y) * step / (float)steps)
+      );
+    }
+  }
+
   private static bool FootprintsOverlap(
     PieceDefinition firstDefinition,
     (int x, int y) firstPosition,
@@ -993,12 +1104,13 @@ internal sealed class Game1 : Game
     _movementAnimation = null;
     Piece movedPiece = completedAnimation.Piece;
     (int x, int y) destination = completedAnimation.Path[^1];
-    MovePieceWithCompanions(movedPiece, destination);
 
-    if (movedPiece.Definition.Type == PieceType.Elephant)
+    if (movedPiece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
     {
-      DamageElephantCrossedUnits(movedPiece, completedAnimation.Path);
+      AttackUnitsMovedOver(movedPiece, completedAnimation.Path);
     }
+
+    MovePieceWithCompanions(movedPiece, destination);
 
     Console.WriteLine($"Moved {movedPiece.Definition.Type} to ({destination.x}, {destination.y}).");
     if (movedPiece.Definition.Type == PieceType.Cavalier)
@@ -1013,51 +1125,27 @@ internal sealed class Game1 : Game
     }
   }
 
-  private void DamageElephantCrossedUnits(Piece elephant, IReadOnlyList<(int x, int y)> path)
+  private void AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
   {
     HashSet<Piece> damagedPieces = [];
-    for (int pathIndex = 0; pathIndex < path.Count - 1; pathIndex++)
+    foreach (Piece crossedPiece in new List<Piece>(pieceSetup.Pieces))
     {
-      foreach ((int x, int y) occupiedSquare in OccupiedSquares(elephant.Definition, path[pathIndex]))
+      if (crossedPiece == attacker ||
+          crossedPiece.AttachedTo != null ||
+          crossedPiece.Team == attacker.Team)
       {
-        Piece crossedPiece = pieceSetup.GetPieceAt(occupiedSquare);
-        if (crossedPiece != null && crossedPiece.Team != elephant.Team &&
-            crossedPiece.Definition.Size == (1, 1) && damagedPieces.Add(crossedPiece))
-        {
-          ResolveDamage(elephant, crossedPiece, 10);
-        }
+        continue;
       }
-    }
-  }
 
-  private void DamageElephantCrossedUnits(Piece elephant, (int x, int y) previousPosition)
-  {
-    int deltaX = elephant.Position.x - previousPosition.x;
-    int deltaY = elephant.Position.y - previousPosition.y;
-    int steps = Math.Max(Math.Abs(deltaX), Math.Abs(deltaY));
-    HashSet<Piece> damagedPieces = [];
-
-    for (int step = 1; step < steps; step++)
-    {
-      var intermediatePosition = (
-        x: previousPosition.x + (int)MathF.Round(deltaX * step / (float)steps),
-        y: previousPosition.y + (int)MathF.Round(deltaY * step / (float)steps)
-      );
-
-      for (int y = 0; y < elephant.Definition.Size.y; y++)
+      bool wasMovedOver = path.Any(step => FootprintsOverlap(
+        attacker.Definition,
+        step,
+        crossedPiece.Definition,
+        crossedPiece.Position
+      ));
+      if (wasMovedOver && damagedPieces.Add(crossedPiece))
       {
-        for (int x = 0; x < elephant.Definition.Size.x; x++)
-        {
-          Piece crossedPiece = pieceSetup.GetPieceAt((
-            intermediatePosition.x + x,
-            intermediatePosition.y + y
-          ));
-          if (crossedPiece != null && crossedPiece.Team != elephant.Team &&
-              crossedPiece.Definition.Size == (1, 1) && damagedPieces.Add(crossedPiece))
-          {
-            ResolveDamage(elephant, crossedPiece, 10);
-          }
-        }
+        ResolveDamage(attacker, crossedPiece);
       }
     }
   }
@@ -2280,6 +2368,11 @@ internal sealed class Game1 : Game
 
   private static string GetSelectedPieceControlHint(Piece piece)
   {
+    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    {
+      return "MOVE over red squares to attack";
+    }
+
     return piece.Definition.Type is PieceType.Spy or PieceType.Teacher or PieceType.Engineer or PieceType.Guard or PieceType.Ox
       ? "RIGHT-CLICK to use special"
       : "RIGHT-CLICK red to attack";
@@ -2301,7 +2394,7 @@ internal sealed class Game1 : Game
       PieceType.Ox => "SPECIAL: carry 1x1 or tow Mechanical",
       PieceType.Engineer => "SPECIAL: empty square is Road; Shift is Barricade",
       PieceType.Ballista => "SPECIAL: attack pierces a straight line",
-      PieceType.Elephant => "SPECIAL: cross enemy 1x1 units for 10 damage",
+      PieceType.Elephant => "SPECIAL: move over enemy 1x1 units to attack",
       PieceType.Guard => "SPECIAL: attach to protect a friendly unit",
       PieceType.Mercenary => "SPECIAL: rivals can outbid this unit for double",
       PieceType.King => "AURA: adjacent friendlies take 5 less damage",

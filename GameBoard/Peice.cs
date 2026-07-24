@@ -339,7 +339,7 @@ internal static class PieceDefinitions
     15,
     50,
     (2, 2),
-    (1, Shape.Any),
+    (1, Shape.MoveOnEnemy),
     60
   );
 
