@@ -441,6 +441,15 @@ internal static class PieceDefinitions
     Palace, Baron, Emissary
   ];
 
+  internal static readonly PieceDefinition[] Encyclopedia =
+  [
+    Soldier, Defender, Archer, Scout, Spearman, Peasant,
+    Knight, Crossbowman, Cavalier, Chariot, Cannon, Spy,
+    Catapult, FieldHospital, Ambulance, Teacher, Ox, Engineer,
+    Ballista, Elephant, Guard, Mercenary, Assassin,
+    King, Princess, Palace, Baron, Emissary
+  ];
+
   internal static readonly PieceDefinition[] Purchasable =
   [
     Soldier, Defender, Archer, Spearman, Knight,

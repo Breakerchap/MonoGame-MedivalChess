@@ -28,6 +28,16 @@ public class UiTextTests
   }
 
   [Fact]
+  public void Encyclopedia_IncludesEveryDefinedPieceType()
+  {
+    Assert.Equal(Enum.GetValues<PieceType>().Length, PieceDefinitions.Encyclopedia.Length);
+    Assert.Equal(
+      PieceDefinitions.Encyclopedia.Length,
+      PieceDefinitions.Encyclopedia.Select(definition => definition.Type).Distinct().Count()
+    );
+  }
+
+  [Fact]
   public void PieceLabels_MatchTheRequestedAbbreviations()
   {
     (PieceDefinition definition, string label)[] expected =

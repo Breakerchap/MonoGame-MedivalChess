@@ -17,6 +17,8 @@ internal sealed class Game1 : Game
     Settings,
     Setup,
     Playing,
+    Pause,
+    Encyclopedia,
     GameOver
   }
 
@@ -81,6 +83,8 @@ internal sealed class Game1 : Game
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
   private TeamName? _winningTeam;
   private BindingAction? _bindingToChange;
+  private Screen _settingsReturnScreen = Screen.Title;
+  private int _encyclopediaIndex;
   private bool _rotateBoard;
   private Keys _moveUpKey = Keys.W;
   private Keys _moveDownKey = Keys.S;
@@ -133,10 +137,22 @@ internal sealed class Game1 : Game
     bool wasLeftClick =
       mouse.LeftButton == ButtonState.Pressed &&
       _previousMouseState.LeftButton == ButtonState.Released;
+    bool wasEscapePressed =
+      keyboard.IsKeyDown(Keys.Escape) &&
+      !_previousKeyboardState.IsKeyDown(Keys.Escape);
+
+    if (_screen == Screen.Playing && wasEscapePressed)
+    {
+      _screen = Screen.Pause;
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
 
     if (_screen != Screen.Playing)
     {
-      UpdateMenu(keyboard, mouse, wasLeftClick);
+      UpdateMenu(keyboard, mouse, wasLeftClick, wasEscapePressed);
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -155,18 +171,27 @@ internal sealed class Game1 : Game
     float cameraSpeed = 500f;
     float zoomSpeed = 1f;
 
-    // Move camera
+    Vector2 cameraInput = Vector2.Zero;
     if (keyboard.IsKeyDown(_moveLeftKey))
-      _cameraPosition.X -= cameraSpeed * deltaTime / _zoom;
+      cameraInput.X -= 1f;
 
     if (keyboard.IsKeyDown(_moveRightKey))
-      _cameraPosition.X += cameraSpeed * deltaTime / _zoom;
+      cameraInput.X += 1f;
 
     if (keyboard.IsKeyDown(_moveUpKey))
-      _cameraPosition.Y -= cameraSpeed * deltaTime / _zoom;
+      cameraInput.Y -= 1f;
 
     if (keyboard.IsKeyDown(_moveDownKey))
-      _cameraPosition.Y += cameraSpeed * deltaTime / _zoom;
+      cameraInput.Y += 1f;
+
+    if (cameraInput != Vector2.Zero)
+    {
+      Vector2 worldCameraInput = Vector2.Transform(
+        cameraInput,
+        Matrix.Invert(GetBoardRotationTransform())
+      );
+      _cameraPosition += worldCameraInput * cameraSpeed * deltaTime / _zoom;
+    }
 
     Matrix cameraTransform = CreateCameraTransform();
 
@@ -1540,6 +1565,70 @@ internal sealed class Game1 : Game
     DrawWorldRectangle(new Rectangle(bounds.Right - thickness, bounds.Y, thickness, bounds.Height), colour, layerDepth);
   }
 
+  private void DrawWorldPieceText(Matrix cameraTransform, int cellSize)
+  {
+    float textRotation = _rotateBoard ? MathHelper.PiOver2 : 0f;
+    foreach (Piece piece in pieceSetup.Pieces)
+    {
+      if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
+      {
+        Rectangle hostBounds = GetPieceWorldBounds(piece.AttachedTo, cellSize);
+        Rectangle cargoBadge = new(hostBounds.Right - 30, hostBounds.Y + 6, 24, 24);
+        DrawRotatedWorldText(
+          UiText.BuildPieceLabel(piece.Definition),
+          new Vector2(cargoBadge.Center.X, cargoBadge.Center.Y),
+          0.48f,
+          Vector2.One * 0.5f,
+          textRotation,
+          cameraTransform
+        );
+        continue;
+      }
+
+      Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
+      DrawRotatedWorldText(
+        UiText.BuildPieceLabel(piece.Definition),
+        new Vector2(pieceBounds.Center.X, pieceBounds.Center.Y),
+        1f,
+        Vector2.One * 0.5f,
+        textRotation,
+        cameraTransform
+      );
+      DrawRotatedWorldText(
+        $"HP {piece.CurrentHealth}",
+        new Vector2(pieceBounds.Center.X, pieceBounds.Y + 6),
+        0.6f,
+        new Vector2(0.5f, 0f),
+        textRotation,
+        cameraTransform
+      );
+    }
+  }
+
+  private void DrawRotatedWorldText(
+    string text,
+    Vector2 worldAnchor,
+    float scale,
+    Vector2 originRatio,
+    float rotation,
+    Matrix cameraTransform
+  )
+  {
+    Vector2 textSize = _pieceLabelFont.MeasureString(text);
+    Vector2 origin = textSize * originRatio;
+    _spriteBatch.DrawString(
+      _pieceLabelFont,
+      text,
+      Vector2.Transform(worldAnchor, cameraTransform),
+      UiTheme.TextPrimary,
+      rotation,
+      origin,
+      scale * _zoom,
+      SpriteEffects.None,
+      0f
+    );
+  }
+
   private Rectangle GetPieceWorldBounds(Piece piece, int cellSize)
   {
     Vector2 renderedPosition = GetRenderedPosition(piece);
@@ -1650,15 +1739,16 @@ internal sealed class Game1 : Game
       GraphicsDevice.Viewport.Width / 2f,
       GraphicsDevice.Viewport.Height / 2f
     );
-    Matrix rotation = _rotateBoard
-      ? Matrix.CreateRotationZ(MathHelper.PiOver2)
-      : Matrix.Identity;
-
     return
       Matrix.CreateTranslation(-_cameraPosition.X, -_cameraPosition.Y, 0)
-      * rotation
+      * GetBoardRotationTransform()
       * Matrix.CreateScale(_zoom)
       * Matrix.CreateTranslation(screenCentre.X, screenCentre.Y, 0);
+  }
+
+  private Matrix GetBoardRotationTransform()
+  {
+    return _rotateBoard ? Matrix.CreateRotationZ(MathHelper.PiOver2) : Matrix.Identity;
   }
 
   private Rectangle GetTitleButtonBounds(int index)
@@ -1719,6 +1809,49 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
   }
 
+  private Rectangle GetPausePanelBounds()
+  {
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.Centered(viewport, 460, 430, UiTheme.SpaceLg);
+  }
+
+  private Rectangle GetPauseButtonBounds(int index)
+  {
+    Rectangle panel = GetPausePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    int top = content.Y + 98;
+    return new Rectangle(
+      content.X,
+      top + index * (UiTheme.ButtonHeight + UiTheme.SpaceSm),
+      content.Width,
+      UiTheme.ButtonHeight
+    );
+  }
+
+  private Rectangle GetEncyclopediaPanelBounds()
+  {
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.Centered(viewport, 980, 700, UiTheme.SpaceLg);
+  }
+
+  private Rectangle GetEncyclopediaPreviousButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetEncyclopediaPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 58, 62, 38);
+  }
+
+  private Rectangle GetEncyclopediaNextButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetEncyclopediaPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.Right - 62, content.Y + 58, 62, 38);
+  }
+
+  private Rectangle GetEncyclopediaBackButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetEncyclopediaPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.Right - 150, content.Bottom - UiTheme.ButtonHeight, 150, UiTheme.ButtonHeight);
+  }
+
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
@@ -1776,8 +1909,35 @@ internal sealed class Game1 : Game
     return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
   }
 
-  private void UpdateMenu(KeyboardState keyboard, MouseState mouse, bool wasLeftClick)
+  private void UpdateMenu(
+    KeyboardState keyboard,
+    MouseState mouse,
+    bool wasLeftClick,
+    bool wasEscapePressed
+  )
   {
+    if (wasEscapePressed)
+    {
+      if (_bindingToChange.HasValue)
+      {
+        _bindingToChange = null;
+        return;
+      }
+
+      switch (_screen)
+      {
+        case Screen.Pause:
+          _screen = Screen.Playing;
+          return;
+        case Screen.Encyclopedia:
+          _screen = Screen.Pause;
+          return;
+        case Screen.Settings when _settingsReturnScreen == Screen.Pause:
+          _screen = Screen.Pause;
+          return;
+      }
+    }
+
     if (_screen == Screen.Settings && _bindingToChange.HasValue)
     {
       foreach (Keys key in keyboard.GetPressedKeys())
@@ -1815,6 +1975,7 @@ internal sealed class Game1 : Game
         }
         else if (GetTitleButtonBounds(1).Contains(mousePosition))
         {
+          _settingsReturnScreen = Screen.Title;
           _screen = Screen.Settings;
         }
         else if (GetTitleButtonBounds(2).Contains(mousePosition))
@@ -1839,7 +2000,44 @@ internal sealed class Game1 : Game
         }
         else if (GetSettingsBackButtonBounds().Contains(mousePosition))
         {
-          _screen = Screen.Title;
+          _screen = _settingsReturnScreen;
+        }
+        break;
+
+      case Screen.Pause:
+        if (GetPauseButtonBounds(0).Contains(mousePosition))
+        {
+          _screen = Screen.Playing;
+        }
+        else if (GetPauseButtonBounds(1).Contains(mousePosition))
+        {
+          _settingsReturnScreen = Screen.Pause;
+          _screen = Screen.Settings;
+        }
+        else if (GetPauseButtonBounds(2).Contains(mousePosition))
+        {
+          _screen = Screen.Encyclopedia;
+        }
+        else if (GetPauseButtonBounds(3).Contains(mousePosition))
+        {
+          Exit();
+        }
+        break;
+
+      case Screen.Encyclopedia:
+        if (GetEncyclopediaPreviousButtonBounds().Contains(mousePosition))
+        {
+          _encyclopediaIndex =
+            (_encyclopediaIndex - 1 + PieceDefinitions.Encyclopedia.Length) % PieceDefinitions.Encyclopedia.Length;
+        }
+        else if (GetEncyclopediaNextButtonBounds().Contains(mousePosition))
+        {
+          _encyclopediaIndex =
+            (_encyclopediaIndex + 1) % PieceDefinitions.Encyclopedia.Length;
+        }
+        else if (GetEncyclopediaBackButtonBounds().Contains(mousePosition))
+        {
+          _screen = Screen.Pause;
         }
         break;
 
@@ -2067,7 +2265,11 @@ internal sealed class Game1 : Game
       _rotateBoard ? UiButtonTone.Accent : UiButtonTone.Neutral,
       _rotateBoard
     );
-    DrawMenuButton(GetSettingsBackButtonBounds(), "BACK", UiButtonTone.Primary);
+    DrawMenuButton(
+      GetSettingsBackButtonBounds(),
+      _settingsReturnScreen == Screen.Pause ? "BACK TO PAUSE" : "BACK",
+      UiButtonTone.Primary
+    );
   }
 
   private void DrawSetupScreen()
@@ -2147,6 +2349,139 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 
+  private void DrawPauseScreen()
+  {
+    Rectangle panel = GetPausePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.CenterText("PAUSED", new Rectangle(content.X, content.Y, content.Width, 30), UiTheme.GoldBright, 1.15f);
+    _ui.CenterText("The battlefield is waiting for you.", new Rectangle(content.X, content.Y + 38, content.Width, 22), UiTheme.TextMuted, 0.74f);
+    _ui.Divider(content, content.Y + 74);
+
+    DrawMenuButton(GetPauseButtonBounds(0), "RESUME", UiButtonTone.Primary);
+    DrawMenuButton(GetPauseButtonBounds(1), "SETTINGS", UiButtonTone.Neutral);
+    DrawMenuButton(GetPauseButtonBounds(2), "ENCYCLOPEDIA", UiButtonTone.Accent);
+    DrawMenuButton(GetPauseButtonBounds(3), "EXIT GAME", UiButtonTone.Danger);
+    _ui.CenterText("ESC resumes", new Rectangle(content.X, content.Bottom - 24, content.Width, 18), UiTheme.TextDim, 0.66f);
+  }
+
+  private void DrawEncyclopediaScreen()
+  {
+    Rectangle panel = GetEncyclopediaPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    PieceDefinition definition = PieceDefinitions.Encyclopedia[_encyclopediaIndex];
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("FIELD ENCYCLOPEDIA", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("Unit stats and core battlefield rules", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
+    _ui.Divider(content, content.Y + 50);
+
+    Rectangle previous = GetEncyclopediaPreviousButtonBounds();
+    Rectangle next = GetEncyclopediaNextButtonBounds();
+    Rectangle selection = new(previous.Right + UiTheme.SpaceSm, previous.Y, next.X - previous.Right - UiTheme.SpaceSm * 2, previous.Height);
+    DrawMenuButton(previous, "<", UiButtonTone.Neutral);
+    DrawPanel(selection, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    _ui.CenterText(
+      $"{_encyclopediaIndex + 1}/{PieceDefinitions.Encyclopedia.Length}  {GetPieceDisplayName(definition.Type)}",
+      selection,
+      UiTheme.TextPrimary,
+      0.76f
+    );
+    DrawMenuButton(next, ">", UiButtonTone.Neutral);
+
+    Rectangle backButton = GetEncyclopediaBackButtonBounds();
+    Rectangle rules = new(content.X, backButton.Y - 154, content.Width, 132);
+    Rectangle unitCard = new(content.X, selection.Bottom + UiTheme.SpaceLg, content.Width, Math.Max(120, rules.Y - selection.Bottom - UiTheme.SpaceLg * 2));
+    DrawPanel(unitCard, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+
+    int cardPadding = Math.Min(UiTheme.SpaceLg, Math.Max(UiTheme.SpaceSm, unitCard.Height / 8));
+    int previewSize = Math.Clamp(unitCard.Height - cardPadding * 2, 58, 106);
+    Rectangle preview = new(unitCard.X + cardPadding, unitCard.Y + cardPadding, previewSize, previewSize);
+    _ui.PiecePreview(preview, UiTheme.Gold, UiText.BuildPieceLabel(definition));
+
+    Rectangle details = new(
+      preview.Right + cardPadding,
+      unitCard.Y + cardPadding,
+      Math.Max(1, unitCard.Right - preview.Right - cardPadding * 2),
+      unitCard.Height - cardPadding * 2
+    );
+    _ui.Text(GetPieceDisplayName(definition.Type), new Vector2(details.X, details.Y), UiTheme.TextPrimary);
+    _ui.Text(definition.Category.ToString().ToUpperInvariant(), new Vector2(details.X, details.Y + 26), UiTheme.Gold, 0.72f);
+
+    int statsY = details.Y + 48;
+    int statHeight = Math.Clamp((details.Bottom - statsY - UiTheme.SpaceSm - 20) / 2, 28, 42);
+    Rectangle statRowOne = new(details.X, statsY, details.Width, statHeight);
+    Rectangle statRowTwo = new(details.X, statsY + statHeight + UiTheme.SpaceSm, details.Width, statHeight);
+    Rectangle statOne = UiLayout.HorizontalSlot(statRowOne, 3, 0, UiTheme.SpaceXs);
+    Rectangle statTwo = UiLayout.HorizontalSlot(statRowOne, 3, 1, UiTheme.SpaceXs);
+    Rectangle statThree = UiLayout.HorizontalSlot(statRowOne, 3, 2, UiTheme.SpaceXs);
+    Rectangle statFour = UiLayout.HorizontalSlot(statRowTwo, 3, 0, UiTheme.SpaceXs);
+    Rectangle statFive = UiLayout.HorizontalSlot(statRowTwo, 3, 1, UiTheme.SpaceXs);
+    Rectangle statSix = UiLayout.HorizontalSlot(statRowTwo, 3, 2, UiTheme.SpaceXs);
+    _ui.StatBlock(statOne, "HEALTH", definition.Health.ToString(), UiTheme.Health);
+    _ui.StatBlock(statTwo, "ATTACK", definition.Attack.ToString(), UiTheme.Attack);
+    _ui.StatBlock(statThree, "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
+    _ui.StatBlock(statFour, "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
+    _ui.StatBlock(statFive, "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
+    _ui.StatBlock(statSix, "COST", definition.Cost == 0 ? "START" : definition.Cost.ToString(), UiTheme.GoldBright);
+
+    int abilityY = statRowTwo.Bottom + 5;
+    if (abilityY + 16 <= details.Bottom)
+    {
+      _ui.Text(GetEncyclopediaAbilityText(definition.Type), new Vector2(details.X, abilityY), UiTheme.TextMuted, 0.64f);
+    }
+
+    DrawPanel(rules, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    _ui.Text("BASIC RULES", new Vector2(rules.X + UiTheme.SpaceMd, rules.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.76f);
+    string[] ruleLines =
+    [
+      "Three actions per turn: move, attack, or purchase a unit.",
+      "Gold squares are valid moves; red outlines mark possible attacks.",
+      "Forests slow units and block ranged attacks.",
+      "Rivers use remaining movement; lakes cannot be crossed.",
+      "Destroy the enemy royal to win. Buy units with team money."
+    ];
+    for (int index = 0; index < ruleLines.Length; index++)
+    {
+      _ui.Text(ruleLines[index], new Vector2(rules.X + UiTheme.SpaceMd, rules.Y + 34 + index * 18), UiTheme.TextMuted, 0.62f);
+    }
+
+    DrawMenuButton(backButton, "BACK TO PAUSE", UiButtonTone.Primary);
+  }
+
+  private static string GetPieceDisplayName(PieceType type)
+  {
+    return type switch
+    {
+      PieceType.FieldHospital => "FIELD HOSPITAL",
+      PieceType.Crossbowman => "CROSSBOWMAN",
+      PieceType.Spearman => "SPEAR-MAN",
+      PieceType.Knight => "KNIGHT (SWORD)",
+      _ => type.ToString().ToUpperInvariant()
+    };
+  }
+
+  private static string GetEncyclopediaAbilityText(PieceType type)
+  {
+    return type switch
+    {
+      PieceType.Cavalier => "Can move and attack before spending its action.",
+      PieceType.Spy => "Marks an enemy to increase damage dealt to it.",
+      PieceType.Catapult => "Attacks a four-square area at range.",
+      PieceType.Teacher => "Can convert an adjacent friendly unit.",
+      PieceType.Ox => "Carries one friendly unit or tows one Mechanical unit.",
+      PieceType.Engineer => "Builds roads or barricades on empty squares.",
+      PieceType.Ballista => "Its attack pierces enemies in a straight line.",
+      PieceType.Elephant => "Ignores terrain and tramples enemy units it moves over.",
+      PieceType.Guard => "Attaches to a friendly unit and takes damage for it.",
+      PieceType.Mercenary => "An enemy can outbid its current owner for double its last bid.",
+      PieceType.King => "Adjacent allies take less damage.",
+      PieceType.Palace => "Generates gold at the start of each round.",
+      PieceType.Baron => "Adjacent allies deal more damage.",
+      PieceType.Emissary => "Moves up to two adjacent 1x1 allies with it.",
+      _ => "Use its movement, attack range, and size to control the battlefield."
+    };
+  }
+
   private void DrawGameOverScreen()
   {
     TeamName winner = _winningTeam ?? TeamName.Red;
@@ -2165,8 +2500,16 @@ internal sealed class Game1 : Game
       case Screen.Title: DrawTitleScreen(); break;
       case Screen.Settings: DrawSettingsScreen(); break;
       case Screen.Setup: DrawSetupScreen(); break;
+      case Screen.Pause: DrawPauseScreen(); break;
+      case Screen.Encyclopedia: DrawEncyclopediaScreen(); break;
       case Screen.GameOver: DrawGameOverScreen(); break;
     }
+  }
+
+  private bool IsInGameOverlayScreen()
+  {
+    return _screen is Screen.Pause or Screen.Encyclopedia ||
+      (_screen == Screen.Settings && _settingsReturnScreen == Screen.Pause);
   }
 
   private Rectangle GetStatusPanelBounds()
@@ -2407,9 +2750,10 @@ internal sealed class Game1 : Game
 
   protected override void Draw(GameTime gameTime)
   {
-    GraphicsDevice.Clear(_screen == Screen.Playing ? UiTheme.BoardBackground : UiTheme.MenuBackground);
+    bool drawsGameView = _screen == Screen.Playing || IsInGameOverlayScreen();
+    GraphicsDevice.Clear(drawsGameView ? UiTheme.BoardBackground : UiTheme.MenuBackground);
 
-    if (_screen != Screen.Playing)
+    if (!drawsGameView)
     {
       _spriteBatch.Begin();
       DrawMenuScreen();
@@ -2560,19 +2904,6 @@ internal sealed class Game1 : Game
         Rectangle cargoBadge = new(hostBounds.Right - 30, hostBounds.Y + 6, 24, 24);
         DrawWorldRectangle(cargoBadge, colour, 0.125f);
         DrawWorldOutline(cargoBadge, UiTheme.TextPrimary, 0.126f);
-        string cargoLabel = UiText.BuildPieceLabel(piece.Definition);
-        Vector2 cargoLabelSize = _pieceLabelFont.MeasureString(cargoLabel) * 0.48f;
-        _spriteBatch.DrawString(
-          _pieceLabelFont,
-          cargoLabel,
-          new Vector2(cargoBadge.Center.X - cargoLabelSize.X / 2f, cargoBadge.Center.Y - cargoLabelSize.Y / 2f),
-          UiTheme.TextPrimary,
-          0f,
-          Vector2.Zero,
-          0.48f,
-          SpriteEffects.None,
-          0.127f
-        );
         continue;
       }
 
@@ -2612,50 +2943,26 @@ internal sealed class Game1 : Game
         0.122f
       );
 
-      string label = UiText.BuildPieceLabel(piece.Definition);
-      Vector2 labelSize = _pieceLabelFont.MeasureString(label);
-
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        label,
-        new Vector2(
-          pieceBounds.Center.X - labelSize.X / 2f,
-          pieceBounds.Center.Y - labelSize.Y / 2f
-        ),
-        UiTheme.TextPrimary,
-        0f,
-        Vector2.Zero,
-        1f,
-        SpriteEffects.None,
-        0.12f
-      );
-
-      string healthText = $"HP {piece.CurrentHealth}";
-      const float healthScale = 0.6f;
-      Vector2 healthSize = _pieceLabelFont.MeasureString(healthText) * healthScale;
-      _spriteBatch.DrawString(
-        _pieceLabelFont,
-        healthText,
-        new Vector2(
-          pieceBounds.Center.X - healthSize.X / 2f,
-          pieceBounds.Y + 6
-        ),
-        UiTheme.TextPrimary,
-        0f,
-        Vector2.Zero,
-        healthScale,
-        SpriteEffects.None,
-        0.13f
-      );
     }
 
     _spriteBatch.End();
 
     _spriteBatch.Begin();
 
-    DrawStatusPanel();
-    DrawSelectedPiecePanel();
-    DrawPurchasePanel();
+    DrawWorldPieceText(cameraTransform, cellSize);
+
+    if (_screen == Screen.Playing)
+    {
+      DrawStatusPanel();
+      DrawSelectedPiecePanel();
+      DrawPurchasePanel();
+    }
+    else
+    {
+      Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+      _spriteBatch.Draw(_pixel, viewport, new Color(5, 9, 14, 176));
+      DrawMenuScreen();
+    }
 
     _spriteBatch.End();
 
