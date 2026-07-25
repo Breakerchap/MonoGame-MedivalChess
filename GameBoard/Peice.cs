@@ -319,7 +319,7 @@ internal static class PieceDefinitions
     0,
     15,
     (1, 1),
-    (1, Shape.Straight),
+    (1, Shape.Any),
     35
   );
 

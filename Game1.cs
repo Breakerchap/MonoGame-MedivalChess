@@ -74,6 +74,14 @@ internal sealed class Game1 : Game
     Heavy
   }
 
+  private enum EngineerAbility
+  {
+    Road,
+    Barrier,
+    Mine,
+    Demolish
+  }
+
   private sealed class MovementAnimation
   {
     internal const float SecondsPerStep = 0.11f;
@@ -98,6 +106,9 @@ internal sealed class Game1 : Game
   private MovementAnimation _movementAnimation;
   private readonly HashSet<(int x, int y)> _roads = [];
   private readonly Dictionary<(int x, int y), int> _barricades = [];
+  private readonly Dictionary<(int x, int y), TeamName> _mines = [];
+  private readonly HashSet<(int x, int y)> _restoredLakeTiles = [];
+  private readonly HashSet<TileEdge> _riverBridges = [];
   private const int noMansLandHalfHeight = 3;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
@@ -110,6 +121,7 @@ internal sealed class Game1 : Game
   private bool _isPurchaseMode;
   private int _selectedPurchaseIndex;
   private int _selectedTeacherDefinitionIndex;
+  private EngineerAbility _selectedEngineerAbility;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
@@ -319,10 +331,12 @@ internal sealed class Game1 : Game
       wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
     bool clickedTeacherPanel =
       wasLeftClick && HandleTeacherChoiceClick(mouse.Position);
+    bool clickedEngineerPanel =
+      wasLeftClick && HandleEngineerAbilityClick(mouse.Position);
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedTeacherPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedTeacherPanel && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -1076,7 +1090,7 @@ internal sealed class Game1 : Game
   {
     return
       IsBoardCell(position.x - _board.MinX, position.y - _board.MinY) &&
-      !_terrain.IsLake(position) &&
+      (!_terrain.IsLake(position) || _restoredLakeTiles.Contains(position)) &&
       !_barricades.ContainsKey(position);
   }
 
@@ -1189,15 +1203,25 @@ internal sealed class Game1 : Game
       return 1;
     }
 
+    int cost = 0;
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       if (_terrain.IsForest(occupiedSquare) && !_roads.Contains(occupiedSquare))
       {
-        return 2;
+        cost = Math.Max(cost, 2);
+      }
+      else if (_roads.Contains(occupiedSquare) && !_terrain.IsForest(occupiedSquare))
+      {
+        // A road built along open ground costs no movement points.
+        cost = Math.Max(cost, 0);
+      }
+      else
+      {
+        cost = Math.Max(cost, 1);
       }
     }
 
-    return 1;
+    return cost;
   }
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
@@ -1238,13 +1262,17 @@ internal sealed class Game1 : Game
 
       if (next.x != current.x && next.y != current.y)
       {
-        if (_terrain.HasRiverBetween(current, (next.x, current.y)) ||
-            _terrain.HasRiverBetween(current, (current.x, next.y)))
+        var horizontalThenVertical = (x: next.x, y: current.y);
+        var verticalThenHorizontal = (x: current.x, y: next.y);
+        if (HasUnbridgedRiverBetween(current, horizontalThenVertical) ||
+            HasUnbridgedRiverBetween(horizontalThenVertical, next) ||
+            HasUnbridgedRiverBetween(current, verticalThenHorizontal) ||
+            HasUnbridgedRiverBetween(verticalThenHorizontal, next))
         {
           return true;
         }
       }
-      else if (_terrain.HasRiverBetween(current, next))
+      else if (HasUnbridgedRiverBetween(current, next))
       {
         return true;
       }
@@ -1253,6 +1281,17 @@ internal sealed class Game1 : Game
     }
 
     return false;
+  }
+
+  private bool HasUnbridgedRiverBetween((int x, int y) first, (int x, int y) second)
+  {
+    TileEdge edge = TileEdge.Between(first, second);
+    return _terrain.HasRiverBetween(first, second) && !_riverBridges.Contains(edge);
+  }
+
+  private bool HasRiverBridgeBetween((int x, int y) first, (int x, int y) second)
+  {
+    return _riverBridges.Contains(TileEdge.Between(first, second));
   }
 
   private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
@@ -1283,6 +1322,20 @@ internal sealed class Game1 : Game
     if (piece.HasAttackedThisTurn ||
         (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy && piece.HasMovedThisTurn))
     {
+      return highlightedSquares;
+    }
+
+    if (piece.Definition.Type == PieceType.Engineer)
+    {
+      foreach ((int x, int y) boardPosition in _board.Cells)
+      {
+        Piece targetPiece = pieceSetup.GetPieceAt(boardPosition);
+        if (CanUseEngineerAbilityAt(piece, boardPosition, targetPiece))
+        {
+          highlightedSquares.Add(boardPosition);
+        }
+      }
+
       return highlightedSquares;
     }
 
@@ -1427,6 +1480,18 @@ internal sealed class Game1 : Game
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
 
+    HandlePieceDestroyed(damagedPiece, attacker.Team);
+  }
+
+  private void ResolveMineDamage(Piece target, TeamName mineOwner)
+  {
+    target.CurrentHealth -= 40;
+    Console.WriteLine($"Mine dealt 40 damage to {target.Definition.Type}.");
+    HandlePieceDestroyed(target, mineOwner);
+  }
+
+  private void HandlePieceDestroyed(Piece damagedPiece, TeamName? attackingTeamName)
+  {
     if (damagedPiece.CurrentHealth > 0)
     {
       return;
@@ -1438,26 +1503,28 @@ internal sealed class Game1 : Game
       return;
     }
 
-    Team attackingTeam = _teams.Find(team => team.TeamName == attacker.Team);
-    Team defeatedTeam = _teams.Find(team => team.TeamName == damagedPiece.Team);
-    if (Actions.HandlePieceDeath(
-      damagedPiece,
-      attackingTeam,
-      defeatedTeam,
-      _killerRefundMultiplier,
-      _defeatedTeamRefundMultiplier
-    ))
+    if (attackingTeamName is TeamName attackerName && attackerName != damagedPiece.Team)
     {
-      pieceSetup.RemovePiece(damagedPiece);
-      if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Regicide)
-      {
-        _winningTeam = attacker.Team;
-        _screen = Screen.GameOver;
-      }
-      else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Escort)
-      {
-        RespawnEscortRoyal(damagedPiece);
-      }
+      Team attackingTeam = _teams.Find(team => team.TeamName == attackerName);
+      Team defeatedTeam = _teams.Find(team => team.TeamName == damagedPiece.Team);
+      Actions.HandlePieceDeath(
+        damagedPiece,
+        attackingTeam,
+        defeatedTeam,
+        _killerRefundMultiplier,
+        _defeatedTeamRefundMultiplier
+      );
+    }
+
+    pieceSetup.RemovePiece(damagedPiece);
+    if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Regicide)
+    {
+      _winningTeam = damagedPiece.Team == TeamName.Red ? TeamName.Blue : TeamName.Red;
+      _screen = Screen.GameOver;
+    }
+    else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Escort)
+    {
+      RespawnEscortRoyal(damagedPiece);
     }
   }
 
@@ -1522,24 +1589,9 @@ internal sealed class Game1 : Game
       }
     }
 
-    if (actor.Definition.Type == PieceType.Engineer &&
-        targetPiece == null &&
-        Actions.CanAttackSquare(actor, targetPosition) &&
-        IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY) &&
-        !_roads.Contains(targetPosition) &&
-        !_barricades.ContainsKey(targetPosition))
+    if (actor.Definition.Type == PieceType.Engineer)
     {
-      if (keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift))
-      {
-        _barricades[targetPosition] = 20;
-      }
-      else
-      {
-        _roads.Add(targetPosition);
-      }
-
-      CompleteAction();
-      return true;
+      return TryUseEngineerAbility(actor, targetPosition, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.Guard &&
@@ -1574,6 +1626,146 @@ internal sealed class Game1 : Game
     }
 
     return false;
+  }
+
+  private bool TryUseEngineerAbility(
+    Piece engineer,
+    (int x, int y) targetPosition,
+    Piece targetPiece
+  )
+  {
+    if (engineer.HasAttackedThisTurn ||
+        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return false;
+    }
+
+    bool improvementChanged = _selectedEngineerAbility switch
+    {
+      EngineerAbility.Road => TryBuildRoad(engineer, targetPosition, targetPiece),
+      EngineerAbility.Barrier => TryBuildBarrier(targetPosition, targetPiece),
+      EngineerAbility.Mine => TryBuildMine(engineer, targetPosition, targetPiece),
+      EngineerAbility.Demolish => TryDemolishImprovement(engineer, targetPosition),
+      _ => false
+    };
+    if (!improvementChanged)
+    {
+      return false;
+    }
+
+    engineer.HasAttackedThisTurn = true;
+    CompleteAction();
+    return true;
+  }
+
+  private bool CanUseEngineerAbilityAt(
+    Piece engineer,
+    (int x, int y) targetPosition,
+    Piece targetPiece
+  )
+  {
+    if (engineer.HasAttackedThisTurn ||
+        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return false;
+    }
+
+    return _selectedEngineerAbility switch
+    {
+      EngineerAbility.Road => targetPiece is null && !IsEngineeringImprovementAt(targetPosition) &&
+        (HasUnbridgedRiverBetween(engineer.Position, targetPosition) ||
+         (_terrain.IsLake(targetPosition) && !_restoredLakeTiles.Contains(targetPosition)) ||
+         IsTraversableTerrainSquare(targetPosition)),
+      EngineerAbility.Barrier or EngineerAbility.Mine => targetPiece is null &&
+        !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
+      EngineerAbility.Demolish => IsEngineeringImprovementAt(targetPosition) ||
+        HasRiverBridgeBetween(engineer.Position, targetPosition),
+      _ => false
+    };
+  }
+
+  private bool TryBuildRoad(Piece engineer, (int x, int y) targetPosition, Piece targetPiece)
+  {
+    if (targetPiece != null || IsEngineeringImprovementAt(targetPosition))
+    {
+      return false;
+    }
+
+    if (HasUnbridgedRiverBetween(engineer.Position, targetPosition))
+    {
+      _riverBridges.Add(TileEdge.Between(engineer.Position, targetPosition));
+      Console.WriteLine("Engineer built a bridge across the river.");
+      return true;
+    }
+
+    if (_terrain.IsLake(targetPosition) && !_restoredLakeTiles.Contains(targetPosition))
+    {
+      _restoredLakeTiles.Add(targetPosition);
+      Console.WriteLine("Engineer built a bridge across the lake.");
+      return true;
+    }
+
+    if (!IsTraversableTerrainSquare(targetPosition))
+    {
+      return false;
+    }
+
+    _roads.Add(targetPosition);
+    Console.WriteLine(_terrain.IsForest(targetPosition)
+      ? "Engineer built a road through the forest."
+      : "Engineer built a road across open ground.");
+    return true;
+  }
+
+  private bool TryBuildBarrier((int x, int y) targetPosition, Piece targetPiece)
+  {
+    if (targetPiece != null || IsEngineeringImprovementAt(targetPosition) ||
+        !IsTraversableTerrainSquare(targetPosition))
+    {
+      return false;
+    }
+
+    _barricades[targetPosition] = 60;
+    Console.WriteLine("Engineer built a 60 HP barrier.");
+    return true;
+  }
+
+  private bool TryBuildMine(Piece engineer, (int x, int y) targetPosition, Piece targetPiece)
+  {
+    if (targetPiece != null || IsEngineeringImprovementAt(targetPosition) ||
+        !IsTraversableTerrainSquare(targetPosition))
+    {
+      return false;
+    }
+
+    _mines[targetPosition] = engineer.Team;
+    Console.WriteLine("Engineer placed a mine.");
+    return true;
+  }
+
+  private bool TryDemolishImprovement(Piece engineer, (int x, int y) targetPosition)
+  {
+    bool removed = _roads.Remove(targetPosition) ||
+      _barricades.Remove(targetPosition) ||
+      _mines.Remove(targetPosition) ||
+      _restoredLakeTiles.Remove(targetPosition) ||
+      _riverBridges.Remove(TileEdge.Between(engineer.Position, targetPosition));
+    if (removed)
+    {
+      Console.WriteLine("Engineer demolished an improvement.");
+    }
+
+    return removed;
+  }
+
+  private bool IsEngineeringImprovementAt((int x, int y) position)
+  {
+    return _roads.Contains(position) ||
+      _barricades.ContainsKey(position) ||
+      _mines.ContainsKey(position) ||
+      _restoredLakeTiles.Contains(position);
   }
 
   private static IEnumerable<(int x, int y)> OccupiedSquares(
@@ -1706,6 +1898,13 @@ internal sealed class Game1 : Game
     }
 
     MovePieceWithCompanions(movedPiece, destination);
+    TriggerMinesAlongMovement(movedPiece, completedAnimation.Path);
+
+    if (_screen == Screen.GameOver || !pieceSetup.Pieces.Contains(movedPiece))
+    {
+      selectedPiece = null;
+      return;
+    }
 
     Console.WriteLine($"Moved {movedPiece.Definition.Type} to ({destination.x}, {destination.y}).");
     if (HasEscortVictory(movedPiece))
@@ -1766,6 +1965,54 @@ internal sealed class Game1 : Game
     }
 
     return damagedPieces.Count > 0;
+  }
+
+  private void TriggerMinesAlongMovement(Piece movingPiece, IReadOnlyList<(int x, int y)> path)
+  {
+    if (movingPiece.Definition.Type == PieceType.Engineer)
+    {
+      return;
+    }
+
+    List<((int x, int y) position, TeamName owner)> triggeredMines = [];
+    foreach ((int x, int y) step in path)
+    {
+      foreach ((int x, int y) occupiedSquare in OccupiedSquares(movingPiece.Definition, step))
+      {
+        if (_mines.TryGetValue(occupiedSquare, out TeamName owner) && owner != movingPiece.Team)
+        {
+          triggeredMines.Add((occupiedSquare, owner));
+        }
+      }
+    }
+
+    foreach (((int x, int y) position, TeamName owner) mine in triggeredMines.Distinct())
+    {
+      _mines.Remove(mine.position);
+      ExplodeMine(mine.position, mine.owner, movingPiece);
+      if (_screen == Screen.GameOver)
+      {
+        return;
+      }
+    }
+  }
+
+  private void ExplodeMine((int x, int y) position, TeamName owner, Piece movingPiece)
+  {
+    HashSet<Piece> affectedPieces = pieceSetup.Pieces
+      .Where(piece => piece.OccupiedSquares().Any(square =>
+        Math.Abs(square.x - position.x) <= 1 && Math.Abs(square.y - position.y) <= 1))
+      .ToHashSet();
+    affectedPieces.Add(movingPiece);
+
+    Console.WriteLine($"Mine exploded at ({position.x}, {position.y}).");
+    foreach (Piece affectedPiece in affectedPieces.ToArray())
+    {
+      if (pieceSetup.Pieces.Contains(affectedPiece))
+      {
+        ResolveMineDamage(affectedPiece, owner);
+      }
+    }
   }
 
   private bool CanUseAreaAttack(Piece piece, (int x, int y) targetPosition)
@@ -1897,7 +2144,21 @@ internal sealed class Game1 : Game
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
     return HasClearDirectAttackPath(attacker, targetPosition) &&
-      HasClearForestPathForRangedAttack(attacker, targetPosition);
+      HasClearForestPathForRangedAttack(attacker, targetPosition) &&
+      HasClearBarrierPath(attacker, targetPosition);
+  }
+
+  private bool HasClearBarrierPath(Piece attacker, (int x, int y) targetPosition)
+  {
+    foreach ((int x, int y) origin in attacker.OccupiedSquares())
+    {
+      if (!SquaresBetween(origin, targetPosition).Any(_barricades.ContainsKey))
+      {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private bool HasClearForestPathForRangedAttack(Piece attacker, (int x, int y) targetPosition)
@@ -2124,6 +2385,31 @@ internal sealed class Game1 : Game
     if (cargo != null && GetOxCargoButtonBounds().Contains(mousePosition))
     {
       SelectPiece(cargo, true);
+    }
+
+    return true;
+  }
+
+  private bool HandleEngineerAbilityClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Engineer ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      _selectedEngineerAbility = (EngineerAbility)(
+        ((int)_selectedEngineerAbility - 1 + Enum.GetValues<EngineerAbility>().Length) %
+        Enum.GetValues<EngineerAbility>().Length
+      );
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      _selectedEngineerAbility = (EngineerAbility)(
+        ((int)_selectedEngineerAbility + 1) % Enum.GetValues<EngineerAbility>().Length
+      );
     }
 
     return true;
@@ -2758,6 +3044,9 @@ internal sealed class Game1 : Game
     _terrain = BattlefieldTerrain.CreateRandom(_board, terrainSeed, CreateTerrainGenerationSettings(forestDensity, waterwayDensity));
     _roads.Clear();
     _barricades.Clear();
+    _mines.Clear();
+    _restoredLakeTiles.Clear();
+    _riverBridges.Clear();
   }
 
   private static TerrainGenerationSettings CreateTerrainGenerationSettings(
@@ -2825,6 +3114,7 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
     _selectedTeacherDefinitionIndex = 0;
+    _selectedEngineerAbility = EngineerAbility.Road;
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
     _conquestWinScore = 15;
@@ -2857,6 +3147,7 @@ internal sealed class Game1 : Game
     _initialBuyTurnsPerTeam = 4;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
+    _selectedEngineerAbility = EngineerAbility.Road;
     _onlineHostingSetup = onlineHost;
     _onlineMatchConfiguration = null;
     Team.ResetTurn();
@@ -3965,7 +4256,7 @@ internal sealed class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int desiredHeight = selectedPiece == null
       ? 124
-      : selectedPiece.Definition.Type is PieceType.Teacher or PieceType.Ox ? 438 : 354;
+      : selectedPiece.Definition.Type is PieceType.Teacher or PieceType.Engineer or PieceType.Ox ? 438 : 354;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
   }
@@ -3998,6 +4289,30 @@ internal sealed class Game1 : Game
   {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
     return new Rectangle(content.X, content.Y + 346, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetEngineerAbilityBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    return new Rectangle(content.X, content.Y + 326, content.Width, 82);
+  }
+
+  private Rectangle GetEngineerPreviousButtonBounds()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    return new Rectangle(row.X, row.Y + 28, 42, 34);
+  }
+
+  private Rectangle GetEngineerNextButtonBounds()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    return new Rectangle(row.Right - 42, row.Y + 28, 42, 34);
+  }
+
+  private Rectangle GetEngineerAbilityValueBounds()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    return new Rectangle(row.X + 50, row.Y + 28, row.Width - 100, 34);
   }
 
   private void DrawStatusPanel()
@@ -4162,12 +4477,21 @@ internal sealed class Game1 : Game
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
-      "ATTACK",
-      selectedPiece.HasAttackedThisTurn ? "USED" : selectedPiece.Definition.Attack.ToString(),
+      selectedPiece.Definition.Type == PieceType.Engineer ? "ABILITY" : "ATTACK",
+      selectedPiece.HasAttackedThisTurn
+        ? "USED"
+        : selectedPiece.Definition.Type == PieceType.Engineer
+          ? _selectedEngineerAbility.ToString().ToUpperInvariant()
+          : selectedPiece.Definition.Attack.ToString(),
       selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
-    _ui.StatBlock(rangeRow, "ATTACK RANGE", UiText.FormatAction(selectedPiece.Definition.AttackShape), UiTheme.TextPrimary);
+    _ui.StatBlock(
+      rangeRow,
+      selectedPiece.Definition.Type == PieceType.Engineer ? "BUILD RANGE" : "ATTACK RANGE",
+      UiText.FormatAction(selectedPiece.Definition.AttackShape),
+      UiTheme.TextPrimary
+    );
     _ui.Text(
       selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
       new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd),
@@ -4179,6 +4503,12 @@ internal sealed class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.Teacher)
     {
       DrawTeacherChoiceControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.Engineer)
+    {
+      DrawEngineerAbilityControls();
       return;
     }
 
@@ -4222,6 +4552,26 @@ internal sealed class Game1 : Game
     _ui.Text("Cargo may attack. Moving it dismounts it.", new Vector2(button.X, button.Bottom + 6), UiTheme.TextMuted, 0.64f);
   }
 
+  private void DrawEngineerAbilityControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    (string title, string detail) = _selectedEngineerAbility switch
+    {
+      EngineerAbility.Barrier => ("BARRIER", "60 HP wall; blocks movement and attacks."),
+      EngineerAbility.Mine => ("MINE", "Enemy trigger: 3 x 3 blast for 40 damage."),
+      EngineerAbility.Demolish => ("DEMOLISH", "Instantly removes any Engineer improvement."),
+      _ => ("ROAD", "Forest costs 1; open road costs 0; bridges water.")
+    };
+
+    _ui.Text("ENGINEER ABILITY", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(title, valueBounds, UiTheme.TextPrimary, 0.74f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.58f);
+  }
+
   private Piece GetOxCargo(Piece ox)
   {
     return pieceSetup.GetAttachedPiece(ox, AttachmentKind.Carried) ??
@@ -4230,6 +4580,11 @@ internal sealed class Game1 : Game
 
   private static string GetSelectedPieceControlHint(Piece piece)
   {
+    if (piece.Definition.Type == PieceType.Engineer)
+    {
+      return piece.HasAttackedThisTurn ? "ABILITY USED THIS TURN" : "RIGHT-CLICK to build or demolish";
+    }
+
     if (piece.HasAttackedThisTurn)
     {
       return "ATTACK USED THIS TURN";
@@ -4259,7 +4614,7 @@ internal sealed class Game1 : Game
       PieceType.Spy => "SPECIAL: mark an enemy for +10 damage",
       PieceType.Teacher => "SPECIAL: change adjacent friendly unit",
       PieceType.Ox => "SPECIAL: carry 1x1 or tow Mechanical",
-      PieceType.Engineer => "SPECIAL: empty square is Road; Shift is Barricade",
+      PieceType.Engineer => "SPECIAL: road, barrier, mine, or demolish",
       PieceType.Ballista => "SPECIAL: attack pierces a straight line",
       PieceType.Elephant => "SPECIAL: move over enemy 1x1 units to attack",
       PieceType.Guard => "SPECIAL: attach to protect a friendly unit",
@@ -4364,6 +4719,15 @@ internal sealed class Game1 : Game
             );
           }
 
+          if (_restoredLakeTiles.Contains(boardPosition))
+          {
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X + 5, cellBounds.Center.Y - 7, cellBounds.Width - 10, 14),
+              UiTheme.Bridge,
+              0.106f
+            );
+          }
+
           var rightPosition = (x: boardPosition.x + 1, y: boardPosition.y);
           var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
           if (_terrain.HasRiverBetween(boardPosition, rightPosition))
@@ -4373,6 +4737,14 @@ internal sealed class Game1 : Game
               UiTheme.River,
               0.105f
             );
+            if (HasRiverBridgeBetween(boardPosition, rightPosition))
+            {
+              DrawWorldRectangle(
+                new Rectangle(cellBounds.Right - 7, cellBounds.Y + 6, 14, cellBounds.Height - 12),
+                UiTheme.Bridge,
+                0.106f
+              );
+            }
           }
 
           if (_terrain.HasRiverBetween(boardPosition, belowPosition))
@@ -4382,15 +4754,37 @@ internal sealed class Game1 : Game
               UiTheme.River,
               0.105f
             );
+            if (HasRiverBridgeBetween(boardPosition, belowPosition))
+            {
+              DrawWorldRectangle(
+                new Rectangle(cellBounds.X + 6, cellBounds.Bottom - 7, cellBounds.Width - 12, 14),
+                UiTheme.Bridge,
+                0.106f
+              );
+            }
           }
 
           if (_roads.Contains(boardPosition))
           {
+            bool roadIsInForest = _terrain.IsForest(boardPosition);
             DrawWorldRectangle(
-              new Rectangle(cellBounds.X, cellBounds.Center.Y - 5, cellBounds.Width, 10),
-              UiTheme.Road,
+              new Rectangle(
+                roadIsInForest ? cellBounds.X + 6 : cellBounds.X,
+                cellBounds.Center.Y - (roadIsInForest ? 8 : 5),
+                roadIsInForest ? cellBounds.Width - 12 : cellBounds.Width,
+                roadIsInForest ? 16 : 10
+              ),
+              roadIsInForest ? UiTheme.ForestRoad : UiTheme.Road,
               0.101f
             );
+            if (roadIsInForest)
+            {
+              DrawWorldRectangle(
+                new Rectangle(cellBounds.X + 8, cellBounds.Center.Y - 2, cellBounds.Width - 16, 4),
+                UiTheme.RoadHighlight,
+                0.102f
+              );
+            }
           }
 
           if (_barricades.ContainsKey(boardPosition))
@@ -4399,6 +4793,26 @@ internal sealed class Game1 : Game
               new Rectangle(cellBounds.X + 8, cellBounds.Y + 16, cellBounds.Width - 16, cellBounds.Height - 32),
               UiTheme.Barricade,
               0.11f
+            );
+            int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / 60;
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.X + 8, cellBounds.Bottom - 13, barrierHealthWidth, 3),
+              UiTheme.Health,
+              0.111f
+            );
+          }
+
+          if (_mines.TryGetValue(boardPosition, out TeamName mineOwner))
+          {
+            DrawWorldRectangle(
+              new Rectangle(cellBounds.Center.X - 7, cellBounds.Center.Y - 7, 14, 14),
+              UiTheme.GetTeamColour(mineOwner),
+              0.111f
+            );
+            DrawWorldOutline(
+              new Rectangle(cellBounds.Center.X - 9, cellBounds.Center.Y - 9, 18, 18),
+              UiTheme.MineOutline,
+              0.112f
             );
           }
 
