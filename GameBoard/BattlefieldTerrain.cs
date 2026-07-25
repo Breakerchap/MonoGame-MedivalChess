@@ -45,6 +45,16 @@ internal sealed class TerrainGenerationSettings
   internal double AdditionalRiverChance { get; init; } = 0.4;
   internal int MinimumRiverLength { get; init; } = 7;
   internal int MinimumRiverSeparation { get; init; } = 4;
+  // Rivers favour side-to-side routes near the battlefield centre, away from royal spawn lanes.
+  internal int RiverRoyalSpawnClearance { get; init; } = 6;
+  internal int RiverMiddleBandHalfHeight { get; init; } = 5;
+  internal int RiverMiddleWeightExponent { get; init; } = 4;
+  internal double RiverFarEdgePreference { get; init; } = 0.8;
+  internal int RiverFarEdgeTolerance { get; init; } = 2;
+  internal int RiverMinimumDetours { get; init; } = 1;
+  internal int RiverMaximumDetours { get; init; } = 2;
+  internal int RiverMinimumDetourLength { get; init; } = 1;
+  internal int RiverMaximumDetourLength { get; init; } = 2;
   internal int MaximumRiverTargetsPerOutlet { get; init; } = 12;
   internal int MinimumMeanderLegLength { get; init; } = 5;
   internal int MinimumMeanderDetour { get; init; } = 1;
@@ -134,8 +144,12 @@ internal sealed class BattlefieldTerrain
       AddForestCluster(board, random, forests, origin, edgeDistances, settings);
     }
 
+    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board);
     List<(int x, int y)> lakeCandidates = (deepInterior.Count > 0 ? deepInterior : protectedInterior)
-      .Where(position => !forests.Contains(position))
+      .Where(position =>
+        !forests.Contains(position) &&
+        !IsNearRoyalSpawn(position, royalSpawns, settings.RiverRoyalSpawnClearance)
+      )
       .ToList();
     int desiredRiverCount =
       cells.Count >= settings.LargeBoardCellCount && random.NextDouble() < settings.AdditionalRiverChance
@@ -182,7 +196,7 @@ internal sealed class BattlefieldTerrain
     HashSet<TileEdge> rivers = [];
     foreach (HashSet<(int x, int y)> lake in lakeGroups)
     {
-      TryAddRiverFromLake(board, random, lake, lakes, rivers, settings);
+      TryAddRiverFromLake(board, random, lake, lakes, rivers, royalSpawns, settings);
     }
 
     forests.ExceptWith(lakes);
@@ -216,6 +230,75 @@ internal sealed class BattlefieldTerrain
     }
 
     return distances;
+  }
+
+  private static List<(int x, int y)> GetRoyalSpawnPositions(Board board)
+  {
+    int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
+    return
+    [
+      (centreX, board.MinY),
+      (centreX, board.MinY + board.BoardArray.GetLength(0) - 1)
+    ];
+  }
+
+  private static (int minX, int maxX, int minY, int maxY) GetBoardBounds(Board board)
+  {
+    return (
+      board.MinX,
+      board.MinX + board.BoardArray.GetLength(1) - 1,
+      board.MinY,
+      board.MinY + board.BoardArray.GetLength(0) - 1
+    );
+  }
+
+  private static bool IsNearRoyalSpawn(
+    (int x, int y) position,
+    IReadOnlyList<(int x, int y)> royalSpawns,
+    int clearance
+  )
+  {
+    return royalSpawns.Any(spawn => ManhattanDistance(position, spawn) <= clearance);
+  }
+
+  private static bool IsNearRoyalSpawn(
+    RiverSegment segment,
+    IReadOnlyList<(int x, int y)> royalSpawns,
+    int clearance
+  )
+  {
+    return IsNearRoyalSpawn(segment.Edge.First, royalSpawns, clearance) ||
+      IsNearRoyalSpawn(segment.Edge.Second, royalSpawns, clearance);
+  }
+
+  private static bool IsSideToSideRiverTarget(
+    (int x, int y) vertex,
+    (int minX, int maxX, int minY, int maxY) bounds,
+    TerrainGenerationSettings settings
+  )
+  {
+    bool reachesLeftOrRight = vertex.x <= bounds.minX + 1 || vertex.x >= bounds.maxX;
+    int centreY = (bounds.minY + bounds.maxY) / 2;
+    return reachesLeftOrRight &&
+      Math.Abs(vertex.y - centreY) <= settings.RiverMiddleBandHalfHeight;
+  }
+
+  private static int GetRiverTargetWeight(
+    (int x, int y) vertex,
+    (int x, int y) start,
+    (int minX, int maxX, int minY, int maxY) bounds,
+    TerrainGenerationSettings settings
+  )
+  {
+    int centreY = (bounds.minY + bounds.maxY) / 2;
+    int closeness = settings.RiverMiddleBandHalfHeight - Math.Abs(vertex.y - centreY) + 1;
+    int weight = 1;
+    for (int exponent = 0; exponent < settings.RiverMiddleWeightExponent; exponent++)
+    {
+      weight *= Math.Max(1, closeness);
+    }
+
+    return weight * Math.Max(1, Math.Abs(vertex.x - start.x));
   }
 
   private static void AddForestCluster(
@@ -295,13 +378,16 @@ internal sealed class BattlefieldTerrain
     IReadOnlySet<(int x, int y)> sourceLake,
     IReadOnlySet<(int x, int y)> allLakes,
     HashSet<TileEdge> rivers,
+    IReadOnlyList<(int x, int y)> royalSpawns,
     TerrainGenerationSettings settings
   )
   {
+    (int minX, int maxX, int minY, int maxY) bounds = GetBoardBounds(board);
     List<RiverSegment> segments = GetRiverSegments(board);
     List<RiverSegment> outlets = segments
       .Where(segment =>
         sourceLake.Contains(segment.Edge.First) != sourceLake.Contains(segment.Edge.Second) &&
+        !IsNearRoyalSpawn(segment, royalSpawns, settings.RiverRoyalSpawnClearance) &&
         IsFarEnoughFromExistingRivers(segment.Edge, rivers, settings)
       )
       .ToList();
@@ -314,6 +400,7 @@ internal sealed class BattlefieldTerrain
           segment.Edge != outlet.Edge &&
           !allLakes.Contains(segment.Edge.First) &&
           !allLakes.Contains(segment.Edge.Second) &&
+          !IsNearRoyalSpawn(segment, royalSpawns, settings.RiverRoyalSpawnClearance) &&
           IsFarEnoughFromExistingRivers(segment.Edge, rivers, settings)
         )
         .ToList();
@@ -329,13 +416,31 @@ internal sealed class BattlefieldTerrain
         List<(int x, int y)> targets = graph.Keys
           .Where(vertex =>
             IsBoardBoundaryVertex(board, vertex) &&
+            IsSideToSideRiverTarget(vertex, bounds, settings) &&
+            !IsNearRoyalSpawn(vertex, royalSpawns, settings.RiverRoyalSpawnClearance) &&
+            (settings.RiverMinimumDetours == 0 ||
+              Math.Abs(vertex.y - start.y) >= settings.RiverMinimumDetourLength) &&
+            Math.Abs(vertex.y - start.y) <= settings.RiverMaximumDetourLength &&
             ManhattanDistance(start, vertex) >= settings.MinimumRiverLength - 1
           )
           .ToList();
-        Shuffle(random, targets);
 
-        foreach ((int x, int y) target in targets.Take(settings.MaximumRiverTargetsPerOutlet))
+        for (int targetAttempt = 0;
+             targetAttempt < settings.MaximumRiverTargetsPerOutlet && targets.Count > 0;
+             targetAttempt++)
         {
+          int farthestDistance = targets.Max(vertex => Math.Abs(vertex.x - start.x));
+          List<(int x, int y)> preferredTargets = random.NextDouble() < settings.RiverFarEdgePreference
+            ? targets.Where(vertex =>
+              Math.Abs(vertex.x - start.x) >= farthestDistance - settings.RiverFarEdgeTolerance
+            ).ToList()
+            : targets;
+          (int x, int y) target = PickWeighted(
+            random,
+            preferredTargets,
+            vertex => GetRiverTargetWeight(vertex, start, bounds, settings)
+          );
+          targets.Remove(target);
           List<RiverSegment> route = FindMeanderingRoute(graph, random, start, target, settings);
           if (route.Count + 1 < settings.MinimumRiverLength ||
               !route.All(segment => IsFarEnoughFromExistingRivers(segment.Edge, rivers, settings)))
@@ -365,47 +470,115 @@ internal sealed class BattlefieldTerrain
     TerrainGenerationSettings settings
   )
   {
-    int directDistance = ManhattanDistance(start, target);
-    List<(int x, int y)> waypoints = graph.Keys
-      .Where(vertex =>
-      {
-        int startDistance = ManhattanDistance(start, vertex);
-        int targetDistance = ManhattanDistance(vertex, target);
-        int detour = startDistance + targetDistance - directDistance;
-        return startDistance >= settings.MinimumMeanderLegLength &&
-          targetDistance >= settings.MinimumMeanderLegLength &&
-          detour >= settings.MinimumMeanderDetour &&
-          detour <= settings.MaximumMeanderDetour;
-      })
-      .ToList();
-    Shuffle(random, waypoints);
-
-    foreach ((int x, int y) waypoint in waypoints.Take(settings.MaximumMeanderWaypointAttempts))
+    int minimumDetours = Math.Max(0, settings.RiverMinimumDetours);
+    int maximumDetours = Math.Max(minimumDetours, settings.RiverMaximumDetours);
+    int detourCount = random.Next(minimumDetours, maximumDetours + 1);
+    if (detourCount > 0)
     {
-      List<RiverSegment> firstLeg = FindShortestRoute(graph, random, start, waypoint);
-      if (firstLeg.Count == 0)
+      List<(int x, int y)> waypointTargets = [];
+      if (detourCount == 1)
       {
-        continue;
+        waypointTargets.Add(((start.x + target.x) / 2, target.y));
+      }
+      else
+      {
+        int travelDirection = Math.Sign(target.x - start.x);
+        int verticalDirection = target.y == start.y
+          ? (random.Next(2) == 0 ? -1 : 1)
+          : Math.Sign(target.y - start.y);
+        int detourLength = random.Next(
+          settings.RiverMinimumDetourLength,
+          settings.RiverMaximumDetourLength + 1
+        );
+        int firstY = target.y == start.y
+          ? start.y + verticalDirection * detourLength
+          : start.y + verticalDirection * Math.Min(detourLength, Math.Abs(target.y - start.y));
+        waypointTargets.Add((
+          start.x + travelDirection * Math.Max(1, Math.Abs(target.x - start.x) / 3),
+          firstY
+        ));
+        waypointTargets.Add((
+          start.x + travelDirection * Math.Max(2, Math.Abs(target.x - start.x) * 2 / 3),
+          target.y
+        ));
       }
 
-      HashSet<TileEdge> firstLegEdges = [.. firstLeg.Select(segment => segment.Edge)];
-      List<RiverSegment> secondLeg = FindShortestRoute(
-        graph,
-        random,
-        waypoint,
-        target,
-        firstLegEdges
-      );
-      if (secondLeg.Count == 0)
+      List<RiverSegment> route = [];
+      HashSet<TileEdge> usedEdges = [];
+      (int x, int y) cursor = start;
+      bool routeSucceeded = true;
+      foreach ((int x, int y) waypointTarget in waypointTargets.Append(target))
       {
-        continue;
+        (int x, int y)? waypoint = graph.Keys
+          .Where(vertex => Math.Abs(vertex.x - waypointTarget.x) <= 1 && vertex.y == waypointTarget.y)
+          .OrderBy(vertex => Math.Abs(vertex.x - waypointTarget.x))
+          .Select(vertex => ((int x, int y)?)vertex)
+          .FirstOrDefault();
+        if (!waypoint.HasValue)
+        {
+          routeSucceeded = false;
+          break;
+        }
+
+        List<RiverSegment> leg = FindFlowingLeg(graph, cursor, waypoint.Value, usedEdges);
+        if (leg.Count == 0)
+        {
+          routeSucceeded = false;
+          break;
+        }
+
+        route.AddRange(leg);
+        usedEdges.UnionWith(leg.Select(segment => segment.Edge));
+        cursor = waypoint.Value;
       }
 
-      firstLeg.AddRange(secondLeg);
-      return firstLeg;
+      if (routeSucceeded && cursor == target)
+      {
+        return route;
+      }
     }
 
-    return FindShortestRoute(graph, random, start, target);
+    return FindFlowingLeg(graph, start, target);
+  }
+
+  private static List<RiverSegment> FindFlowingLeg(
+    IReadOnlyDictionary<(int x, int y), List<RiverSegment>> graph,
+    (int x, int y) start,
+    (int x, int y) target,
+    IReadOnlySet<TileEdge> excludedEdges = null
+  )
+  {
+    List<RiverSegment> route = [];
+    HashSet<(int x, int y)> visited = [start];
+    (int x, int y) current = start;
+    bool preferHorizontal = Math.Abs(target.x - start.x) >= Math.Abs(target.y - start.y);
+
+    while (current != target)
+    {
+      List<(RiverSegment segment, (int x, int y) next)> options = graph[current]
+        .Where(segment => excludedEdges?.Contains(segment.Edge) != true)
+        .Select(segment => (segment, segment.Start == current ? segment.End : segment.Start))
+        .Where(option => !visited.Contains(option.Item2))
+        .Where(option => ManhattanDistance(option.Item2, target) < ManhattanDistance(current, target))
+        .OrderBy(option => preferHorizontal
+          ? Math.Abs(option.Item2.x - target.x)
+          : Math.Abs(option.Item2.y - target.y))
+        .ThenBy(option => preferHorizontal
+          ? Math.Abs(option.Item2.y - target.y)
+          : Math.Abs(option.Item2.x - target.x))
+        .ToList();
+      if (options.Count == 0)
+      {
+        return [];
+      }
+
+      (RiverSegment segment, (int x, int y) next) option = options[0];
+      route.Add(option.segment);
+      visited.Add(option.next);
+      current = option.next;
+    }
+
+    return route;
   }
 
   private static List<RiverSegment> FindShortestRoute(
