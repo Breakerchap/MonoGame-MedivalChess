@@ -71,11 +71,6 @@ internal sealed class PieceSetup
     _pieces.Add(piece);
   }
 
-  internal void ClearPieces()
-  {
-    _pieces.Clear();
-  }
-
   internal void MovePiece(Piece piece, (int x, int y) destination)
   {
     var displacement = (

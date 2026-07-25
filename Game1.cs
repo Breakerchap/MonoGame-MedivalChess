@@ -35,23 +35,8 @@ internal sealed class Game1 : Game
 
   private enum SetupStage
   {
-    Battlefield,
     Economy,
     RoyalSelection
-  }
-
-  private enum BoardSize
-  {
-    Small,
-    Medium,
-    Large
-  }
-
-  private enum TerrainDensity
-  {
-    Light,
-    Standard,
-    Heavy
   }
 
   private sealed class MovementAnimation
@@ -92,16 +77,10 @@ internal sealed class Game1 : Game
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
-  private SetupStage _setupStage = SetupStage.Battlefield;
-  private BoardSize _selectedBoardSize = BoardSize.Medium;
-  private TerrainDensity _forestDensity = TerrainDensity.Standard;
-  private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
+  private SetupStage _setupStage = SetupStage.Economy;
   private int _startingCash = Globals.StartingCash;
   private float _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
-  private int _initialBuysPerTurn = 2;
-  private int _initialBuyTurnsPerTeam = 4;
-  private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
   private BindingAction? _bindingToChange;
   private Screen _settingsReturnScreen = Screen.Title;
@@ -258,7 +237,7 @@ internal sealed class Game1 : Game
       keyboard.IsKeyDown(Keys.Down) &&
       !_previousKeyboardState.IsKeyDown(Keys.Down);
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null)
+    if (wasPurchaseModeToggle)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -266,24 +245,24 @@ internal sealed class Game1 : Game
 
     if (_isPurchaseMode && wasPreviousPurchasePressed)
     {
-      CyclePurchaseSelection(-1);
+      _selectedPurchaseIndex =
+        (_selectedPurchaseIndex - 1 + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
     }
 
     if (_isPurchaseMode && wasNextPurchasePressed)
     {
-      CyclePurchaseSelection(1);
+      _selectedPurchaseIndex =
+        (_selectedPurchaseIndex + 1) % PieceDefinitions.Purchasable.Length;
     }
 
     bool clickedPurchasePanel =
       wasLeftClick && HandlePurchasePanelClick(mouse.Position);
-    bool clickedInitialBuyStop =
-      wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
     bool clickedTeacherPanel =
       wasLeftClick && HandleTeacherChoiceClick(mouse.Position);
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedTeacherPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedTeacherPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -450,15 +429,10 @@ internal sealed class Game1 : Game
     Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
     Piece targetPiece = pieceSetup.GetPieceAt(targetPosition);
 
-    if (targetPiece?.Definition.Type == PieceType.Mercenary &&
+    if (definition.Type == PieceType.Mercenary &&
+        targetPiece?.Definition.Type == PieceType.Mercenary &&
         targetPiece.Team != Team.CurrentTurn)
     {
-      if (_initialBuyPhase != null)
-      {
-        Console.WriteLine("Mercenaries can only be bought off during the normal action phase.");
-        return;
-      }
-
       long buyoutCost = targetPiece.NextMercenaryBid;
       if (buyoutCost > int.MaxValue || buyingTeam.Money < buyoutCost)
       {
@@ -471,117 +445,32 @@ internal sealed class Game1 : Game
       previousOwner.Money += (int)buyoutCost;
       targetPiece.Team = Team.CurrentTurn;
       targetPiece.LastBid = (int)buyoutCost;
+      _isPurchaseMode = false;
 
       Console.WriteLine($"{Team.CurrentTurn} bought the Mercenary for {buyoutCost} gold.");
-      CompletePurchase();
-      return;
-    }
-
-    if (_initialBuyPhase != null && definition.Type == PieceType.Mercenary)
-    {
-      Console.WriteLine("Mercenaries cannot be bought during the initial buy phase.");
+      CompleteAction();
       return;
     }
 
     bool canPlace =
-      (definition.Type == PieceType.Mercenary
-        ? CanPlaceMercenary(targetPosition)
-        : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
+      CanPlacePiece(definition, targetPosition, Team.CurrentTurn) &&
       buyingTeam.Money >= definition.Cost;
 
     if (!canPlace)
     {
-      Console.WriteLine(definition.Type == PieceType.Mercenary
-        ? "Mercenaries must be placed on an empty edge square in No-Man's-Land."
-        : "Pieces must be placed on an empty square on your side of the board.");
+      Console.WriteLine("Pieces must be placed on an empty square on your side of the board.");
       return;
     }
 
     Piece boughtPiece = Team.BuyPiece(definition, buyingTeam, targetPosition);
     pieceSetup.AddPiece(boughtPiece);
+    _isPurchaseMode = false;
 
     Console.WriteLine(
       $"Bought and placed {definition.Type} at ({targetPosition.x}, {targetPosition.y})."
     );
 
-    CompletePurchase();
-  }
-
-  private void StartInitialBuyPhase()
-  {
-    _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam);
-    if (PieceDefinitions.Purchasable[_selectedPurchaseIndex].Type == PieceType.Mercenary)
-    {
-      CyclePurchaseSelection(1);
-    }
-    Team.ResetTurn();
-    Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
-    _isPurchaseMode = true;
-    selectedPiece = null;
-    _cavalierAwaitingAttack = null;
-    _screen = Screen.Playing;
-    Console.WriteLine("Initial buy phase started.");
-  }
-
-  private void CyclePurchaseSelection(int direction)
-  {
-    for (int attempts = 0; attempts < PieceDefinitions.Purchasable.Length; attempts++)
-    {
-      _selectedPurchaseIndex =
-        (_selectedPurchaseIndex + direction + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
-      if (_initialBuyPhase == null ||
-          PieceDefinitions.Purchasable[_selectedPurchaseIndex].Type != PieceType.Mercenary)
-      {
-        return;
-      }
-    }
-  }
-
-  private void CompletePurchase()
-  {
-    if (_initialBuyPhase == null)
-    {
-      _isPurchaseMode = false;
-      CompleteAction();
-      return;
-    }
-
-    _initialBuyPhase.RecordPurchase();
-    UpdateInitialBuyPhaseState();
-  }
-
-  private void UpdateInitialBuyPhaseState()
-  {
-    if (_initialBuyPhase.IsComplete)
-    {
-      _initialBuyPhase = null;
-      _isPurchaseMode = false;
-      selectedPiece = null;
-      Team.ResetTurn();
-      foreach (Team team in _teams)
-      {
-        team.ActionPoints = Team.ActionsPerTurn;
-      }
-
-      Console.WriteLine("Initial buy phase complete. The match has started.");
-      return;
-    }
-
-    Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
-    _isPurchaseMode = true;
-    selectedPiece = null;
-  }
-
-  private bool HandleInitialBuyStopClick(Point mousePosition)
-  {
-    if (_initialBuyPhase == null || !GetInitialBuyStopButtonBounds().Contains(mousePosition))
-    {
-      return false;
-    }
-
-    _initialBuyPhase.StopCurrentBuyer();
-    UpdateInitialBuyPhaseState();
-    return true;
+    CompleteAction();
   }
 
   private void CompleteAction()
@@ -647,21 +536,6 @@ internal sealed class Game1 : Game
     }
 
     return pieceSetup.IsFootprintClear(definition, position, ignoredPiece);
-  }
-
-  private bool CanPlaceMercenary((int x, int y) position)
-  {
-    int arrayX = position.x - _board.MinX;
-    int arrayY = position.y - _board.MinY;
-    if (!IsTraversableTerrainSquare(position) || GetSquareOwner(arrayY).HasValue)
-    {
-      return false;
-    }
-
-    (int x, int y)[] adjacentOffsets = [(0, -1), (1, 0), (0, 1), (-1, 0)];
-    bool isBoardEdge = adjacentOffsets.Any(offset =>
-      !IsBoardCell(arrayX + offset.x, arrayY + offset.y));
-    return isBoardEdge && pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
   }
 
   private bool IsTraversableTerrainSquare((int x, int y) position)
@@ -998,7 +872,7 @@ internal sealed class Game1 : Game
 
     if (IsPieceInForest(damagedPiece))
     {
-      damage = Math.Max(1, damage - _terrain.ForestDamageReduction);
+      damage = Math.Max(1, damage - 3);
     }
 
     damagedPiece.CurrentHealth -= damage;
@@ -1602,19 +1476,18 @@ internal sealed class Game1 : Game
 
     if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
     {
-      CyclePurchaseSelection(-1);
+      _selectedPurchaseIndex =
+        (_selectedPurchaseIndex - 1 + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
     }
     else if (GetNextPurchaseButtonBounds().Contains(mousePosition))
     {
-      CyclePurchaseSelection(1);
+      _selectedPurchaseIndex =
+        (_selectedPurchaseIndex + 1) % PieceDefinitions.Purchasable.Length;
     }
     else if (GetPurchaseButtonBounds().Contains(mousePosition))
     {
-      if (_initialBuyPhase == null)
-      {
-        _isPurchaseMode = !_isPurchaseMode;
-        selectedPiece = null;
-      }
+      _isPurchaseMode = !_isPurchaseMode;
+      selectedPiece = null;
     }
 
     return true;
@@ -1819,7 +1692,7 @@ internal sealed class Game1 : Game
     Color teamColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, _isPurchaseMode ? UiTheme.Gold : UiTheme.PanelBorder);
-    _ui.Text(_initialBuyPhase == null ? "PURCHASE PIECE" : "INITIAL PURCHASE", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("PURCHASE PIECE", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Divider(content, content.Y + 30);
 
     Rectangle previewBounds = new(content.X, content.Y + 46, 88, 88);
@@ -1842,19 +1715,15 @@ internal sealed class Game1 : Game
     _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 104, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour);
 
     string purchaseHint = definition.Type == PieceType.Mercenary
-      ? _initialBuyPhase != null
-        ? "Mercenaries are unavailable during the initial buy phase."
-        : "Place on a No-Man's-Land edge, or outbid a rival for +10 gold."
-      : _initialBuyPhase != null
-        ? $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} bought. Select a square on your side."
-        : "Buy, then select a square. Click a rival Mercenary to buy it off.";
+      ? "Buy on your side, or outbid a rival Mercenary."
+      : "Buy, then select a square on your side.";
     _ui.Text(purchaseHint, new Vector2(content.X, previousButton.Y - 48), UiTheme.TextMuted, 0.76f);
     DrawMenuButton(previousButton, "<", UiButtonTone.Neutral);
     DrawMenuButton(nextButton, ">", UiButtonTone.Neutral);
     DrawMenuButton(
       purchaseButton,
-      _initialBuyPhase != null ? "BUY MODE" : _isPurchaseMode ? "CANCEL" : "BUY",
-      _initialBuyPhase != null ? UiButtonTone.Accent : _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
+      _isPurchaseMode ? "CANCEL" : "BUY",
+      _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
       _isPurchaseMode
     );
   }
@@ -1986,7 +1855,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    return UiLayout.Centered(viewport, 640, 620, UiTheme.SpaceLg);
+    return UiLayout.Centered(viewport, 640, 500, UiTheme.SpaceLg);
   }
 
   private Rectangle GetSetupPreviousButtonBounds()
@@ -2038,90 +1907,6 @@ internal sealed class Game1 : Game
   {
     Rectangle row = GetEconomyRowBounds(index);
     return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
-  }
-
-  private Rectangle GetBattlefieldRowBounds(int index) => GetEconomyRowBounds(index);
-
-  private Rectangle GetBattlefieldDecreaseButtonBounds(int index) => GetEconomyDecreaseButtonBounds(index);
-
-  private Rectangle GetBattlefieldValueBounds(int index) => GetEconomyValueBounds(index);
-
-  private Rectangle GetBattlefieldIncreaseButtonBounds(int index) => GetEconomyIncreaseButtonBounds(index);
-
-  private string GetBoardFileName()
-  {
-    return _selectedBoardSize switch
-    {
-      BoardSize.Small => "board_small.json",
-      BoardSize.Large => "board_large.json",
-      _ => "board_medium.json"
-    };
-  }
-
-  private void ApplyBattlefieldSetup()
-  {
-    _board = new Board(GetBoardFileName());
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next(), new TerrainGenerationSettings
-    {
-      MinimumForestGroups = _forestDensity switch
-      {
-        TerrainDensity.Light => 2,
-        TerrainDensity.Heavy => 6,
-        _ => 4
-      },
-      MaximumForestGroups = _forestDensity switch
-      {
-        TerrainDensity.Light => 3,
-        TerrainDensity.Heavy => 8,
-        _ => 6
-      },
-      MinimumForestClusterSize = _forestDensity == TerrainDensity.Light ? 2 : 3,
-      MaximumForestClusterSize = _forestDensity switch
-      {
-        TerrainDensity.Light => 4,
-        TerrainDensity.Heavy => 8,
-        _ => 6
-      },
-      LargeBoardCellCount = _waterwayDensity switch
-      {
-        TerrainDensity.Light => int.MaxValue,
-        TerrainDensity.Heavy => 0,
-        _ => 300
-      },
-      AdditionalRiverChance = _waterwayDensity switch
-      {
-        TerrainDensity.Light => 0,
-        TerrainDensity.Heavy => 1,
-        _ => 0.4
-      }
-    });
-    _roads.Clear();
-    _barricades.Clear();
-  }
-
-  private void ReturnToTitle()
-  {
-    pieceSetup.ClearPieces();
-    _teams = pieceSetup.CreateTeams();
-    _board = new Board();
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
-    _roads.Clear();
-    _barricades.Clear();
-    selectedPiece = null;
-    _cavalierAwaitingAttack = null;
-    _movementAnimation = null;
-    _initialBuyPhase = null;
-    _isPurchaseMode = false;
-    _selectedPurchaseIndex = 0;
-    _selectedTeacherDefinitionIndex = 0;
-    _winningTeam = null;
-    _setupTeam = TeamName.Red;
-    _selectedRoyalIndex = 0;
-    _setupStage = SetupStage.Battlefield;
-    _cameraPosition = Vector2.Zero;
-    _zoom = 1f;
-    Team.ResetTurn();
-    _screen = Screen.Title;
   }
 
   private void UpdateMenu(
@@ -2181,16 +1966,10 @@ internal sealed class Game1 : Game
           _screen = Screen.Setup;
           _setupTeam = TeamName.Red;
           _selectedRoyalIndex = 0;
-          _setupStage = SetupStage.Battlefield;
-          _selectedBoardSize = BoardSize.Medium;
-          _forestDensity = TerrainDensity.Standard;
-          _waterwayDensity = TerrainDensity.Standard;
+          _setupStage = SetupStage.Economy;
           _startingCash = Globals.StartingCash;
           _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
           _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
-          _initialBuysPerTurn = 2;
-          _initialBuyTurnsPerTeam = 4;
-          _initialBuyPhase = null;
           _isPurchaseMode = false;
           Team.ResetTurn();
         }
@@ -2241,7 +2020,7 @@ internal sealed class Game1 : Game
         }
         else if (GetPauseButtonBounds(3).Contains(mousePosition))
         {
-          ReturnToTitle();
+          Exit();
         }
         break;
 
@@ -2263,39 +2042,7 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.Setup:
-        if (_setupStage == SetupStage.Battlefield)
-        {
-          if (GetBattlefieldDecreaseButtonBounds(0).Contains(mousePosition))
-          {
-            _selectedBoardSize = (BoardSize)Math.Max((int)BoardSize.Small, (int)_selectedBoardSize - 1);
-          }
-          else if (GetBattlefieldIncreaseButtonBounds(0).Contains(mousePosition))
-          {
-            _selectedBoardSize = (BoardSize)Math.Min((int)BoardSize.Large, (int)_selectedBoardSize + 1);
-          }
-          else if (GetBattlefieldDecreaseButtonBounds(1).Contains(mousePosition))
-          {
-            _forestDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_forestDensity - 1);
-          }
-          else if (GetBattlefieldIncreaseButtonBounds(1).Contains(mousePosition))
-          {
-            _forestDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_forestDensity + 1);
-          }
-          else if (GetBattlefieldDecreaseButtonBounds(2).Contains(mousePosition))
-          {
-            _waterwayDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_waterwayDensity - 1);
-          }
-          else if (GetBattlefieldIncreaseButtonBounds(2).Contains(mousePosition))
-          {
-            _waterwayDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_waterwayDensity + 1);
-          }
-          else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
-          {
-            ApplyBattlefieldSetup();
-            _setupStage = SetupStage.Economy;
-          }
-        }
-        else if (_setupStage == SetupStage.Economy)
+        if (_setupStage == SetupStage.Economy)
         {
           if (GetEconomyDecreaseButtonBounds(0).Contains(mousePosition))
           {
@@ -2320,22 +2067,6 @@ internal sealed class Game1 : Game
           else if (GetEconomyIncreaseButtonBounds(2).Contains(mousePosition))
           {
             _defeatedTeamRefundMultiplier = AdjustRefundMultiplier(_defeatedTeamRefundMultiplier, 0.1f);
-          }
-          else if (GetEconomyDecreaseButtonBounds(3).Contains(mousePosition))
-          {
-            _initialBuysPerTurn = Math.Max(1, _initialBuysPerTurn - 1);
-          }
-          else if (GetEconomyIncreaseButtonBounds(3).Contains(mousePosition))
-          {
-            _initialBuysPerTurn++;
-          }
-          else if (GetEconomyDecreaseButtonBounds(4).Contains(mousePosition))
-          {
-            _initialBuyTurnsPerTeam = Math.Max(1, _initialBuyTurnsPerTeam - 1);
-          }
-          else if (GetEconomyIncreaseButtonBounds(4).Contains(mousePosition))
-          {
-            _initialBuyTurnsPerTeam++;
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
@@ -2372,7 +2103,8 @@ internal sealed class Game1 : Game
           }
           else
           {
-            StartInitialBuyPhase();
+            Team.ResetTurn();
+            _screen = Screen.Playing;
           }
         }
         break;
@@ -2544,12 +2276,6 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetSetupPanelBounds();
 
-    if (_setupStage == SetupStage.Battlefield)
-    {
-      DrawBattlefieldSetup(panel);
-      return;
-    }
-
     if (_setupStage == SetupStage.Economy)
     {
       DrawEconomySetup(panel);
@@ -2586,62 +2312,25 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONFIRM", UiButtonTone.Primary);
   }
 
-  private void DrawBattlefieldSetup(Rectangle panel)
-  {
-    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.Text("BATTLEFIELD SETUP", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Choose the battlefield before setting the match economy.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
-    _ui.Divider(content, content.Y + 56);
-
-    string[] labels = ["Board size", "Forest density", "Waterways"];
-    string[] values =
-    [
-      _selectedBoardSize.ToString(),
-      _forestDensity.ToString(),
-      _waterwayDensity.ToString()
-    ];
-
-    for (int index = 0; index < labels.Length; index++)
-    {
-      Rectangle row = GetBattlefieldRowBounds(index);
-      Rectangle valueBounds = GetBattlefieldValueBounds(index);
-      DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
-      _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
-      DrawMenuButton(GetBattlefieldDecreaseButtonBounds(index), "-", UiButtonTone.Neutral);
-      DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
-      _ui.CenterText(values[index].ToUpperInvariant(), valueBounds, UiTheme.GoldBright, 0.76f);
-      DrawMenuButton(GetBattlefieldIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
-    }
-
-    _ui.Text("Light waterways use one river; heavy waterways use two.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 58), UiTheme.TextMuted, 0.68f);
-    _ui.Text("Forests are always denser away from the edge.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), UiTheme.TextMuted, 0.68f);
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
-  }
-
   private void DrawEconomySetup(Rectangle panel)
   {
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("MATCH ECONOMY", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Set economy and the pre-game purchase phase.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Text("Set starting resources and unit-death refunds.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
     string[] labels =
     [
       "Starting cash",
       "Killer refund",
-      "Defeated team refund",
-      "Buys per buy turn",
-      "Buy turns per team"
+      "Defeated team refund"
     ];
     string[] values =
     [
       _startingCash.ToString(),
       $"{_killerRefundMultiplier:0.0}x",
-      $"{_defeatedTeamRefundMultiplier:0.0}x",
-      _initialBuysPerTurn.ToString(),
-      _initialBuyTurnsPerTeam.ToString()
+      $"{_defeatedTeamRefundMultiplier:0.0}x"
     ];
 
     for (int index = 0; index < labels.Length; index++)
@@ -2656,7 +2345,7 @@ internal sealed class Game1 : Game
       DrawMenuButton(GetEconomyIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
     }
 
-    _ui.Text("Buy turns alternate. A player may stop buying early.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.72f);
+    _ui.Text("Refunds use the defeated unit's cost.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.76f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 
@@ -2672,7 +2361,7 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetPauseButtonBounds(0), "RESUME", UiButtonTone.Primary);
     DrawMenuButton(GetPauseButtonBounds(1), "SETTINGS", UiButtonTone.Neutral);
     DrawMenuButton(GetPauseButtonBounds(2), "ENCYCLOPEDIA", UiButtonTone.Accent);
-    DrawMenuButton(GetPauseButtonBounds(3), "EXIT TO TITLE", UiButtonTone.Danger);
+    DrawMenuButton(GetPauseButtonBounds(3), "EXIT GAME", UiButtonTone.Danger);
     _ui.CenterText("ESC resumes", new Rectangle(content.X, content.Bottom - 24, content.Width, 18), UiTheme.TextDim, 0.66f);
   }
 
@@ -2784,7 +2473,7 @@ internal sealed class Game1 : Game
       PieceType.Ballista => "Its attack pierces enemies in a straight line.",
       PieceType.Elephant => "Ignores terrain and tramples enemy units it moves over.",
       PieceType.Guard => "Attaches to a friendly unit and takes damage for it.",
-      PieceType.Mercenary => "Place on a No-Man's-Land edge. An enemy can buy it for its last bid plus 10 gold.",
+      PieceType.Mercenary => "An enemy can outbid its current owner for double its last bid.",
       PieceType.King => "Adjacent allies take less damage.",
       PieceType.Palace => "Generates gold at the start of each round.",
       PieceType.Baron => "Adjacent allies deal more damage.",
@@ -2827,16 +2516,8 @@ internal sealed class Game1 : Game
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
-    int desiredHeight = _initialBuyPhase == null ? 194 : 260;
-    int height = Math.Min(desiredHeight, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
+    int height = Math.Min(194, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
     return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
-  }
-
-  private Rectangle GetInitialBuyStopButtonBounds()
-  {
-    Rectangle panel = GetStatusPanelBounds();
-    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetSelectedPiecePanelBounds()
@@ -2888,39 +2569,6 @@ internal sealed class Game1 : Game
     Color turnColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, turnColour);
-
-    if (_initialBuyPhase != null)
-    {
-      int buyTurnNumber = _initialBuyPhase.GetBuyTurnsUsed(Team.CurrentTurn) + 1;
-      _ui.Text("INITIAL BUY PHASE", new Vector2(content.X, content.Y), UiTheme.Gold);
-      _ui.Divider(content, content.Y + 30);
-      _ui.Text(
-        $"{UiText.GetTeamDisplayName(Team.CurrentTurn)} BUY TURN {buyTurnNumber}/{_initialBuyPhase.BuyTurnsPerTeam}",
-        new Vector2(content.X, content.Y + 43),
-        turnColour,
-        0.7f
-      );
-      _ui.Text(
-        $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} UNITS THIS TURN",
-        new Vector2(content.X, content.Y + 66),
-        UiTheme.TextPrimary,
-        0.72f
-      );
-
-      int initialMoneyY = content.Y + 100;
-      foreach (Team team in _teams)
-      {
-        Color teamColour = UiTheme.GetTeamColour(team.TeamName);
-        Rectangle moneyRow = new(content.X, initialMoneyY, content.Width, 30);
-        DrawPanel(moneyRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
-        _ui.LabelValueRow(moneyRow, $"{UiText.GetTeamDisplayName(team.TeamName)} GOLD", team.Money.ToString(), teamColour);
-        initialMoneyY += 36;
-      }
-
-      DrawMenuButton(GetInitialBuyStopButtonBounds(), "STOP BUYING", UiButtonTone.Danger);
-      return;
-    }
-
     _ui.Text($"{UiText.GetTeamDisplayName(Team.CurrentTurn)} TURN", new Vector2(content.X, content.Y), turnColour);
     _ui.Divider(content, content.Y + 30);
     _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
@@ -2961,15 +2609,8 @@ internal sealed class Game1 : Game
 
     if (selectedPiece == null)
     {
-      _ui.Text(_initialBuyPhase == null ? "SELECT A PIECE" : "INITIAL PURCHASE", new Vector2(content.X, content.Y), UiTheme.TextPrimary);
+      _ui.Text("SELECT A PIECE", new Vector2(content.X, content.Y), UiTheme.TextPrimary);
       _ui.Divider(content, content.Y + 30);
-      if (_initialBuyPhase != null)
-      {
-        _ui.Text("Choose a unit from the right panel.", new Vector2(content.X, content.Y + 44), UiTheme.Gold, 0.76f);
-        _ui.Text("Use STOP BUYING when this team is done.", new Vector2(content.X, content.Y + 68), UiTheme.TextMuted, 0.68f);
-        return;
-      }
-
       _ui.Text("Gold squares: move", new Vector2(content.X, content.Y + 44), UiTheme.Move, 0.8f);
       _ui.Text("Red squares: attack", new Vector2(content.X, content.Y + 68), UiTheme.Attack, 0.8f);
       return;
@@ -3098,7 +2739,7 @@ internal sealed class Game1 : Game
       PieceType.Ballista => "SPECIAL: attack pierces a straight line",
       PieceType.Elephant => "SPECIAL: move over enemy 1x1 units to attack",
       PieceType.Guard => "SPECIAL: attach to protect a friendly unit",
-      PieceType.Mercenary => "SPECIAL: rivals can buy this unit for its last bid +10",
+      PieceType.Mercenary => "SPECIAL: rivals can outbid this unit for double",
       PieceType.King => "AURA: adjacent friendlies take 5 less damage",
       PieceType.Palace => "AURA: gains 10 gold at the start of each round",
       PieceType.Baron => "AURA: adjacent friendlies deal +5 damage",
