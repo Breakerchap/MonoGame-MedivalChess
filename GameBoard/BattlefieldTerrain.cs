@@ -56,10 +56,6 @@ internal sealed class TerrainGenerationSettings
   internal int RiverMinimumDetourLength { get; init; } = 1;
   internal int RiverMaximumDetourLength { get; init; } = 2;
   internal int MaximumRiverTargetsPerOutlet { get; init; } = 12;
-  internal int MinimumMeanderLegLength { get; init; } = 5;
-  internal int MinimumMeanderDetour { get; init; } = 1;
-  internal int MaximumMeanderDetour { get; init; } = 2;
-  internal int MaximumMeanderWaypointAttempts { get; init; } = 10;
 }
 
 internal sealed class BattlefieldTerrain
@@ -578,64 +574,6 @@ internal sealed class BattlefieldTerrain
       current = option.next;
     }
 
-    return route;
-  }
-
-  private static List<RiverSegment> FindShortestRoute(
-    IReadOnlyDictionary<(int x, int y), List<RiverSegment>> graph,
-    Random random,
-    (int x, int y) start,
-    (int x, int y) target,
-    IReadOnlySet<TileEdge> excludedEdges = null
-  )
-  {
-    Queue<(int x, int y)> frontier = [];
-    Dictionary<(int x, int y), ((int x, int y) Previous, RiverSegment Segment)> previous = [];
-    HashSet<(int x, int y)> visited = [start];
-    frontier.Enqueue(start);
-
-    while (frontier.TryDequeue(out (int x, int y) current))
-    {
-      if (current == target)
-      {
-        break;
-      }
-
-      List<RiverSegment> options = [.. graph[current]];
-      Shuffle(random, options);
-      foreach (RiverSegment segment in options)
-      {
-        if (excludedEdges?.Contains(segment.Edge) == true)
-        {
-          continue;
-        }
-
-        (int x, int y) next = segment.Start == current ? segment.End : segment.Start;
-        if (!visited.Add(next))
-        {
-          continue;
-        }
-
-        previous[next] = (current, segment);
-        frontier.Enqueue(next);
-      }
-    }
-
-    if (!previous.ContainsKey(target))
-    {
-      return [];
-    }
-
-    List<RiverSegment> route = [];
-    var cursor = target;
-    while (cursor != start)
-    {
-      ((int x, int y) previousVertex, RiverSegment segment) = previous[cursor];
-      route.Add(segment);
-      cursor = previousVertex;
-    }
-
-    route.Reverse();
     return route;
   }
 

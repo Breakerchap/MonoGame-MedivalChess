@@ -15,5 +15,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\MedivalChess.csproj" />
+    <ProjectReference Include="..\MedivalChess.Server\MedivalChess.Server.csproj" />
   </ItemGroup>
 </Project>

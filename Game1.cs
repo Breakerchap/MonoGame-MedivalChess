@@ -7,6 +7,7 @@ using MedivalChess.Shared;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace MedivalChess;
 
@@ -101,6 +102,7 @@ internal sealed class Game1 : Game
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
   private const int purchasePanelHeight = 470;
+  private int _terrainSeed;
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
   private MouseState _previousMouseState;
@@ -138,13 +140,15 @@ internal sealed class Game1 : Game
   private Keys _zoomOutKey = Keys.Q;
   private Keys _buyKey = Keys.B;
   private OnlineMatchClient _onlineClient;
-  private string _onlineStatus = "OFFLINE  F6: HOST  F7: JOIN";
+  private string _onlineStatus = "OFFLINE";
   private string _onlineServerUrl = "http://localhost:5057";
   private string _onlineJoinCode = string.Empty;
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
-  private bool _hostOnlineAfterSetup;
   private bool _onlineWaitingForOpponent;
   private bool _onlineRoyalChoicePending;
+  private bool _onlineHostingSetup;
+  private NetworkMatchConfiguration _onlineMatchConfiguration;
+  private DateTimeOffset _nextOnlineJoinAttemptAt;
   private string _onlineError = string.Empty;
 
   internal Game1()
@@ -163,7 +167,8 @@ internal sealed class Game1 : Game
   protected override void Initialize()
   {
     _board = new Board();
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
+    _terrainSeed = Random.Shared.Next();
+    _terrain = BattlefieldTerrain.CreateRandom(_board, _terrainSeed);
 
     pieceSetup.AddPieces();
     _teams = pieceSetup.CreateTeams();
@@ -194,19 +199,7 @@ internal sealed class Game1 : Game
     bool wasEscapePressed =
       keyboard.IsKeyDown(Keys.Escape) &&
       !_previousKeyboardState.IsKeyDown(Keys.Escape);
-    bool wasHostPressed = keyboard.IsKeyDown(Keys.F6) && !_previousKeyboardState.IsKeyDown(Keys.F6);
-    bool wasJoinPressed = keyboard.IsKeyDown(Keys.F7) && !_previousKeyboardState.IsKeyDown(Keys.F7);
-
-    _onlineClient?.DrainStates(ApplyOnlineState);
-    if (_screen == Screen.Playing && wasHostPressed)
-    {
-      _ = HostOnlineMatchAsync();
-    }
-
-    if (_screen == Screen.Playing && wasJoinPressed)
-    {
-      _ = JoinOnlineMatchAsync();
-    }
+    _onlineClient?.DrainStates(ApplyOnlineState, error => _onlineError = error);
 
     if (_screen == Screen.Playing && wasEscapePressed)
     {
@@ -618,11 +611,6 @@ internal sealed class Game1 : Game
       }
 
       Console.WriteLine("Initial buy phase complete. The match has started.");
-      if (_hostOnlineAfterSetup)
-      {
-        _hostOnlineAfterSetup = false;
-        _ = HostOnlineMatchAsync();
-      }
       return;
     }
 
@@ -716,7 +704,7 @@ internal sealed class Game1 : Game
       (team == NetworkTeam.Red ? Team.CurrentTurn == TeamName.Red : Team.CurrentTurn == TeamName.Blue);
   }
 
-  private async System.Threading.Tasks.Task HostOnlineMatchAsync()
+  private async System.Threading.Tasks.Task HostOnlineMatchAsync(NetworkMatchConfiguration configuration)
   {
     if (_onlineClient != null)
     {
@@ -733,11 +721,12 @@ internal sealed class Game1 : Game
 
     try
     {
+      _onlineError = string.Empty;
       _onlineClient = new OnlineMatchClient(serverUrl);
       _onlineWaitingForOpponent = true;
       _onlineStatus = "CREATING PRIVATE ROOM...";
       _screen = Screen.OnlineWaiting;
-      RoomJoinResult result = await _onlineClient.HostAsync(new CreateGameRequest([]));
+      RoomJoinResult result = await _onlineClient.HostAsync(new CreateGameRequest(configuration));
       if (!result.Accepted)
       {
         Console.WriteLine($"Could not host room: {result.Error}");
@@ -755,9 +744,13 @@ internal sealed class Game1 : Game
     catch (Exception exception)
     {
       Console.WriteLine($"Could not connect to match server: {exception.Message}");
+      if (_onlineClient != null)
+      {
+        await _onlineClient.DisposeAsync();
+      }
       _onlineClient = null;
       _onlineWaitingForOpponent = false;
-      _onlineError = "Could not reach the local match server.";
+      _onlineError = "Could not reach the match server.";
       _screen = Screen.OnlineLobby;
     }
   }
@@ -777,6 +770,14 @@ internal sealed class Game1 : Game
       return;
     }
 
+    if (DateTimeOffset.UtcNow < _nextOnlineJoinAttemptAt)
+    {
+      _onlineError = "Please wait half a second before trying another room code.";
+      return;
+    }
+
+    _nextOnlineJoinAttemptAt = DateTimeOffset.UtcNow.AddMilliseconds(500);
+
     if (!TryGetOnlineServerUrl(out string serverUrl))
     {
       _onlineError = "Enter a valid http:// or https:// server URL.";
@@ -785,6 +786,7 @@ internal sealed class Game1 : Game
 
     try
     {
+      _onlineError = string.Empty;
       _onlineClient = new OnlineMatchClient(serverUrl);
       RoomJoinResult result = await _onlineClient.JoinAsync(joinCode);
       if (!result.Accepted)
@@ -793,7 +795,7 @@ internal sealed class Game1 : Game
         await _onlineClient.DisposeAsync();
         _onlineClient = null;
         _onlineError = result.Error ?? "Could not join that room.";
-        _screen = Screen.OnlineLobby;
+        _screen = Screen.OnlineJoin;
         return;
       }
 
@@ -803,7 +805,13 @@ internal sealed class Game1 : Game
     catch (Exception exception)
     {
       Console.WriteLine($"Could not connect to match server: {exception.Message}");
+      if (_onlineClient != null)
+      {
+        await _onlineClient.DisposeAsync();
+      }
       _onlineClient = null;
+      _onlineError = "Could not reach the match server.";
+      _screen = Screen.OnlineJoin;
     }
   }
 
@@ -851,6 +859,10 @@ internal sealed class Game1 : Game
 
   private void ApplyOnlineState(NetworkGameState state)
   {
+    ApplyOnlineConfiguration(state.Configuration);
+    ApplyOnlineTeamStates(state.Teams);
+    ApplyOnlinePieces(state.Pieces);
+
     if (_onlineWaitingForOpponent && state.PlayerCount < 2)
     {
       return;
@@ -860,8 +872,8 @@ internal sealed class Game1 : Game
     {
       _onlineWaitingForOpponent = false;
       NetworkTeam? localTeam = _onlineClient?.Team;
-      bool hasChosenRoyal = localTeam is NetworkTeam team && state.Pieces.Any(piece =>
-        piece.Team == team && PieceDefinitions.Royals.Any(royal => royal.Type.ToString() == piece.Type));
+      bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
+        teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
       _onlineRoyalChoicePending = hasChosenRoyal;
       _onlineStatus = hasChosenRoyal
         ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
@@ -870,8 +882,72 @@ internal sealed class Game1 : Game
       return;
     }
 
+    Team.SetCurrentTurn(state.CurrentTurn == NetworkTeam.Red ? TeamName.Red : TeamName.Blue);
+    selectedPiece = null;
+    _movementAnimation = null;
+    _initialBuyPhase = null;
+    _isPurchaseMode = false;
+    _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
+    _onlineWaitingForOpponent = false;
+    _onlineRoyalChoicePending = false;
+    _screen = Screen.Playing;
+  }
+
+  private void ApplyOnlineConfiguration(NetworkMatchConfiguration configuration)
+  {
+    if (_onlineMatchConfiguration is not null && _onlineMatchConfiguration.Equals(configuration))
+    {
+      return;
+    }
+
+    if (!Enum.TryParse(configuration.BoardSize, out BoardSize boardSize) ||
+        !Enum.TryParse(configuration.ForestDensity, out TerrainDensity forestDensity) ||
+        !Enum.TryParse(configuration.WaterwayDensity, out TerrainDensity waterwayDensity) ||
+        !Enum.TryParse(configuration.GameMode, out GameMode gameMode))
+    {
+      _onlineError = "The room sent unsupported match settings.";
+      return;
+    }
+
+    _onlineMatchConfiguration = configuration;
+    _selectedBoardSize = boardSize;
+    _forestDensity = forestDensity;
+    _waterwayDensity = waterwayDensity;
+    _gameMode = gameMode;
+    _startingCash = configuration.StartingCash;
+    _killerRefundMultiplier = configuration.KillerRefundMultiplier;
+    _defeatedTeamRefundMultiplier = configuration.DefeatedTeamRefundMultiplier;
+    _initialBuysPerTurn = configuration.InitialBuysPerTurn;
+    _initialBuyTurnsPerTeam = configuration.InitialBuyTurnsPerTeam;
+    _conquestWinScore = configuration.ConquestWinScore;
+    ConfigureBattlefield(boardSize, forestDensity, waterwayDensity, configuration.TerrainSeed);
+  }
+
+  private void ApplyOnlineTeamStates(IReadOnlyList<NetworkTeamState> teamStates)
+  {
+    foreach (NetworkTeamState state in teamStates)
+    {
+      TeamName teamName = state.Team == NetworkTeam.Red ? TeamName.Red : TeamName.Blue;
+      Team team = _teams.Find(candidate => candidate.TeamName == teamName);
+      if (team is null)
+      {
+        continue;
+      }
+
+      team.Money = state.Money;
+      team.ActionPoints = state.ActionsRemaining;
+      team.ClearRoyal();
+      if (Enum.TryParse(state.ChosenRoyal, out PieceType royal))
+      {
+        team.ChooseRoyal(royal);
+      }
+    }
+  }
+
+  private void ApplyOnlinePieces(IReadOnlyList<NetworkPiece> pieces)
+  {
     pieceSetup.ClearPieces();
-    foreach (NetworkPiece networkPiece in state.Pieces)
+    foreach (NetworkPiece networkPiece in pieces)
     {
       if (!Enum.TryParse(networkPiece.Type, out PieceType pieceType))
       {
@@ -879,7 +955,7 @@ internal sealed class Game1 : Game
       }
 
       PieceDefinition definition = PieceDefinitions.Encyclopedia.FirstOrDefault(candidate => candidate.Type == pieceType);
-      if (definition == null)
+      if (definition is null)
       {
         continue;
       }
@@ -895,17 +971,6 @@ internal sealed class Game1 : Game
       };
       pieceSetup.AddPiece(piece);
     }
-
-    Team.SetCurrentTurn(state.CurrentTurn == NetworkTeam.Red ? TeamName.Red : TeamName.Blue);
-    selectedPiece = null;
-    _movementAnimation = null;
-    _initialBuyPhase = null;
-    _isPurchaseMode = false;
-    _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
-    _onlineWaitingForOpponent = false;
-    _onlineRoyalChoicePending = false;
-    _onlineRoyalChoicePending = false;
-    _screen = Screen.Playing;
   }
 
   private bool TryGetOnlineServerUrl(out string serverUrl)
@@ -913,7 +978,9 @@ internal sealed class Game1 : Game
     serverUrl = _onlineServerUrl.Trim();
     if (!serverUrl.Contains("://", StringComparison.Ordinal))
     {
-      serverUrl = $"https://{serverUrl}";
+      bool isLocalServer = serverUrl.StartsWith("localhost", StringComparison.OrdinalIgnoreCase) ||
+        serverUrl.StartsWith("127.0.0.1", StringComparison.Ordinal);
+      serverUrl = $"{(isLocalServer ? "http" : "https")}://{serverUrl}";
     }
 
     if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out Uri uri) ||
@@ -2315,6 +2382,7 @@ internal sealed class Game1 : Game
         value = value[..^1];
       }
       SetOnlineInputValue(value);
+      _onlineError = string.Empty;
       return;
     }
 
@@ -2324,8 +2392,101 @@ internal sealed class Game1 : Game
         ? char.ToUpperInvariant(character)
         : character;
       SetOnlineInputValue(value);
+      _onlineError = string.Empty;
     }
   }
+
+  private void PasteOnlineInput()
+  {
+    if (!TryGetClipboardText(out string clipboardText))
+    {
+      _onlineError = "Could not read text from the clipboard.";
+      return;
+    }
+
+    string value = _onlineInputFocus == OnlineInputField.ServerUrl
+      ? clipboardText.Trim()
+      : ExtractRoomCodeFromClipboard(clipboardText);
+    int maximumLength = _onlineInputFocus == OnlineInputField.ServerUrl ? 160 : 5;
+    SetOnlineInputValue(value[..Math.Min(value.Length, maximumLength)]);
+    _onlineError = string.Empty;
+  }
+
+  private static string ExtractRoomCodeFromClipboard(string clipboardText)
+  {
+    string[] candidates = clipboardText
+      .Split((char[])null, StringSplitOptions.RemoveEmptyEntries)
+      .Select(token => new string(token.Where(char.IsLetterOrDigit).ToArray()))
+      .ToArray();
+    string exactCode = candidates.FirstOrDefault(candidate => candidate.Length == 5);
+    return (exactCode ?? new string(clipboardText.Where(char.IsLetterOrDigit).Take(5).ToArray())).ToUpperInvariant();
+  }
+
+  private static bool TryGetClipboardText(out string clipboardText)
+  {
+    clipboardText = string.Empty;
+    if (!OperatingSystem.IsWindows())
+    {
+      return false;
+    }
+
+    try
+    {
+      if (!OpenClipboard(IntPtr.Zero))
+      {
+        return false;
+      }
+
+      try
+      {
+        IntPtr handle = GetClipboardData(13); // CF_UNICODETEXT
+        if (handle == IntPtr.Zero)
+        {
+          return false;
+        }
+
+        IntPtr pointer = GlobalLock(handle);
+        if (pointer == IntPtr.Zero)
+        {
+          return false;
+        }
+
+        try
+        {
+          clipboardText = Marshal.PtrToStringUni(pointer) ?? string.Empty;
+        }
+        finally
+        {
+          GlobalUnlock(handle);
+        }
+      }
+      finally
+      {
+        CloseClipboard();
+      }
+
+      return !string.IsNullOrWhiteSpace(clipboardText);
+    }
+    catch (Exception)
+    {
+      return false;
+    }
+  }
+
+  [DllImport("user32.dll", SetLastError = true)]
+  private static extern bool OpenClipboard(IntPtr windowHandle);
+
+  [DllImport("user32.dll", SetLastError = true)]
+  private static extern bool CloseClipboard();
+
+  [DllImport("user32.dll", SetLastError = true)]
+  private static extern IntPtr GetClipboardData(uint format);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern IntPtr GlobalLock(IntPtr handle);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool GlobalUnlock(IntPtr handle);
 
   private void SetOnlineInputValue(string value)
   {
@@ -2532,9 +2693,9 @@ internal sealed class Game1 : Game
 
   private Rectangle GetBattlefieldIncreaseButtonBounds(int index) => GetEconomyIncreaseButtonBounds(index);
 
-  private string GetBoardFileName()
+  private static string GetBoardFileName(BoardSize boardSize)
   {
-    return _selectedBoardSize switch
+    return boardSize switch
     {
       BoardSize.Small => "board_small.json",
       BoardSize.Large => "board_large.json",
@@ -2544,43 +2705,62 @@ internal sealed class Game1 : Game
 
   private void ApplyBattlefieldSetup()
   {
-    _board = new Board(GetBoardFileName());
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next(), new TerrainGenerationSettings
+    ConfigureBattlefield(_selectedBoardSize, _forestDensity, _waterwayDensity, Random.Shared.Next());
+  }
+
+  private void ConfigureBattlefield(
+    BoardSize boardSize,
+    TerrainDensity forestDensity,
+    TerrainDensity waterwayDensity,
+    int terrainSeed
+  )
+  {
+    _terrainSeed = terrainSeed;
+    _board = new Board(GetBoardFileName(boardSize));
+    _terrain = BattlefieldTerrain.CreateRandom(_board, terrainSeed, CreateTerrainGenerationSettings(forestDensity, waterwayDensity));
+    _roads.Clear();
+    _barricades.Clear();
+  }
+
+  private static TerrainGenerationSettings CreateTerrainGenerationSettings(
+    TerrainDensity forestDensity,
+    TerrainDensity waterwayDensity
+  )
+  {
+    return new TerrainGenerationSettings
     {
-      MinimumForestGroups = _forestDensity switch
+      MinimumForestGroups = forestDensity switch
       {
         TerrainDensity.Light => 2,
         TerrainDensity.Heavy => 6,
         _ => 4
       },
-      MaximumForestGroups = _forestDensity switch
+      MaximumForestGroups = forestDensity switch
       {
         TerrainDensity.Light => 3,
         TerrainDensity.Heavy => 8,
         _ => 6
       },
-      MinimumForestClusterSize = _forestDensity == TerrainDensity.Light ? 2 : 3,
-      MaximumForestClusterSize = _forestDensity switch
+      MinimumForestClusterSize = forestDensity == TerrainDensity.Light ? 2 : 3,
+      MaximumForestClusterSize = forestDensity switch
       {
         TerrainDensity.Light => 4,
         TerrainDensity.Heavy => 8,
         _ => 6
       },
-      LargeBoardCellCount = _waterwayDensity switch
+      LargeBoardCellCount = waterwayDensity switch
       {
         TerrainDensity.Light => int.MaxValue,
         TerrainDensity.Heavy => 0,
         _ => 300
       },
-      AdditionalRiverChance = _waterwayDensity switch
+      AdditionalRiverChance = waterwayDensity switch
       {
         TerrainDensity.Light => 0,
         TerrainDensity.Heavy => 1,
         _ => 0.4
       }
-    });
-    _roads.Clear();
-    _barricades.Clear();
+    };
   }
 
   private void ReturnToTitle()
@@ -2592,12 +2772,14 @@ internal sealed class Game1 : Game
     }
 
     _onlineWaitingForOpponent = false;
+    _onlineRoyalChoicePending = false;
+    _onlineHostingSetup = false;
+    _onlineMatchConfiguration = null;
+    _onlineError = string.Empty;
+    _onlineStatus = "OFFLINE";
     pieceSetup.ClearPieces();
     _teams = pieceSetup.CreateTeams();
-    _board = new Board();
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
-    _roads.Clear();
-    _barricades.Clear();
+    ConfigureBattlefield(BoardSize.Medium, TerrainDensity.Standard, TerrainDensity.Standard, Random.Shared.Next());
     selectedPiece = null;
     _cavalierAwaitingAttack = null;
     _movementAnimation = null;
@@ -2618,7 +2800,7 @@ internal sealed class Game1 : Game
     _screen = Screen.Title;
   }
 
-  private void BeginMatchSetup(bool hostOnlineAfterSetup)
+  private void BeginMatchSetup(bool onlineHost = false)
   {
     _screen = Screen.Setup;
     _setupTeam = TeamName.Red;
@@ -2637,7 +2819,8 @@ internal sealed class Game1 : Game
     _initialBuyTurnsPerTeam = 4;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
-    _hostOnlineAfterSetup = hostOnlineAfterSetup;
+    _onlineHostingSetup = onlineHost;
+    _onlineMatchConfiguration = null;
     Team.ResetTurn();
   }
 
@@ -2645,16 +2828,30 @@ internal sealed class Game1 : Game
   {
     pieceSetup.ClearPieces();
     _teams = pieceSetup.CreateTeams();
-    _board = new Board();
-    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
-    _roads.Clear();
-    _barricades.Clear();
+    ConfigureBattlefield(_selectedBoardSize, _forestDensity, _waterwayDensity, _terrainSeed);
     selectedPiece = null;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedRoyalIndex = 0;
     _onlineRoyalChoicePending = false;
     Team.ResetTurn();
+  }
+
+  private NetworkMatchConfiguration BuildOnlineMatchConfiguration()
+  {
+    return new NetworkMatchConfiguration(
+      _selectedBoardSize.ToString(),
+      _forestDensity.ToString(),
+      _waterwayDensity.ToString(),
+      _gameMode.ToString(),
+      _terrainSeed,
+      _startingCash,
+      _killerRefundMultiplier,
+      _defeatedTeamRefundMultiplier,
+      _initialBuysPerTurn,
+      _initialBuyTurnsPerTeam,
+      _conquestWinScore
+    );
   }
 
   private void UpdateMenu(
@@ -2719,11 +2916,16 @@ internal sealed class Game1 : Game
 
     if (_screen is Screen.OnlineLobby or Screen.OnlineJoin)
     {
+      bool controlHeld = keyboard.IsKeyDown(Keys.LeftControl) || keyboard.IsKeyDown(Keys.RightControl);
       foreach (Keys key in keyboard.GetPressedKeys())
       {
         if (!_previousKeyboardState.IsKeyDown(key))
         {
-          if (key == Keys.Enter && _screen == Screen.OnlineJoin &&
+          if (key == Keys.V && controlHeld)
+          {
+            PasteOnlineInput();
+          }
+          else if (key == Keys.Enter && _screen == Screen.OnlineJoin &&
               _onlineInputFocus == OnlineInputField.JoinCode && _onlineJoinCode.Length > 0)
           {
             _ = JoinOnlineMatchAsync(_onlineJoinCode);
@@ -2748,7 +2950,7 @@ internal sealed class Game1 : Game
       case Screen.Title:
         if (GetTitleButtonBounds(0).Contains(mousePosition))
         {
-          BeginMatchSetup(false);
+          BeginMatchSetup();
         }
         else if (GetTitleButtonBounds(1).Contains(mousePosition))
         {
@@ -2772,8 +2974,7 @@ internal sealed class Game1 : Game
         }
         else if (GetOnlineButtonBounds(0).Contains(mousePosition))
         {
-          PrepareOnlineRoom();
-          _ = HostOnlineMatchAsync();
+          BeginMatchSetup(onlineHost: true);
         }
         else if (GetOnlineButtonBounds(1).Contains(mousePosition))
         {
@@ -3001,7 +3202,17 @@ internal sealed class Game1 : Game
               team.ActionPoints = Team.ActionsPerTurn;
             }
 
-            _setupStage = SetupStage.RoyalSelection;
+            if (_onlineHostingSetup)
+            {
+              _onlineMatchConfiguration = BuildOnlineMatchConfiguration();
+              PrepareOnlineRoom();
+              _onlineHostingSetup = false;
+              _ = HostOnlineMatchAsync(_onlineMatchConfiguration);
+            }
+            else
+            {
+              _setupStage = SetupStage.RoyalSelection;
+            }
           }
         }
         else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
@@ -3031,16 +3242,7 @@ internal sealed class Game1 : Game
           }
           else
           {
-            if (_hostOnlineAfterSetup)
-            {
-              _hostOnlineAfterSetup = false;
-              _screen = Screen.Playing;
-              _ = HostOnlineMatchAsync();
-            }
-            else
-            {
-              StartInitialBuyPhase();
-            }
+            StartInitialBuyPhase();
           }
         }
         break;
@@ -3229,6 +3431,7 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("ONLINE MULTIPLAYER", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Text("Enter the server link, then host a room or join one.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    _ui.Text("Click a field, then press Ctrl+V to paste.", new Vector2(content.X, content.Y + 51), UiTheme.TextDim, 0.56f);
     DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     if (!string.IsNullOrWhiteSpace(_onlineError))
     {
@@ -3248,6 +3451,7 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("JOIN PRIVATE ROOM", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Text("Enter the same server link and room code as the host.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    _ui.Text("Click a field, then press Ctrl+V to paste.", new Vector2(content.X, content.Y + 51), UiTheme.TextDim, 0.56f);
     DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     DrawPanel(codeBounds, UiTheme.PanelRaised, _onlineInputFocus == OnlineInputField.JoinCode ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
     _ui.CenterText(string.IsNullOrEmpty(_onlineJoinCode) ? "ROOM CODE" : _onlineJoinCode, codeBounds, string.IsNullOrEmpty(_onlineJoinCode) ? UiTheme.TextDim : UiTheme.GoldBright, 1.1f);
@@ -3430,7 +3634,12 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("CHOOSE GAME MODE", new Vector2(content.X, content.Y), UiTheme.Gold);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Select the victory condition before configuring the battlefield.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
+    _ui.Text(
+      _onlineHostingSetup ? "Choose the rules other players will use in this private room." : "Select the victory condition before configuring the battlefield.",
+      new Vector2(content.X, content.Y + 28),
+      UiTheme.TextMuted,
+      0.74f
+    );
     _ui.Divider(content, content.Y + 56);
 
     Rectangle modeCard = new(content.X, content.Y + 86, content.Width, 216);
@@ -3517,7 +3726,7 @@ internal sealed class Game1 : Game
       ? "Conquest control resolves after each team's three actions."
       : "Buy turns alternate. A player may stop buying early.";
     _ui.Text(economyHint, new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.72f);
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), _onlineHostingSetup ? "HOST ROOM" : "CONTINUE", UiButtonTone.Primary);
   }
 
   private void DrawPauseScreen()

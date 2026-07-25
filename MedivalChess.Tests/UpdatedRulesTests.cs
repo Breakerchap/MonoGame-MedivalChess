@@ -27,7 +27,7 @@ public class UpdatedRulesTests
     AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 1, Shape.MoveOnEnemy, 60);
     AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Any, 10, 25, (1, 1), 1, Shape.Any, 30);
     AssertDefinition(PieceDefinitions.Mercenary, PieceCategory.Melee, 3, Shape.Any, 25, 20, (1, 1), 1, Shape.Any, 45);
-    AssertDefinition(PieceDefinitions.King, PieceCategory.Royal, 1, Shape.Any, 15, 120, (1, 1), 1, Shape.Any, 0);
+    AssertDefinition(PieceDefinitions.King, PieceCategory.Royal, 1, Shape.Straight, 15, 120, (1, 1), 1, Shape.Any, 0);
     AssertDefinition(PieceDefinitions.Princess, PieceCategory.Royal, 1, Shape.Any, 15, 80, (1, 1), 3, Shape.Any, 0, 1);
     AssertDefinition(PieceDefinitions.Palace, PieceCategory.Royal, 0, Shape.None, 0, 160, (3, 2), 0, Shape.None, 0);
     AssertDefinition(PieceDefinitions.Baron, PieceCategory.Royal, 1, Shape.Any, 5, 100, (1, 1), 1, Shape.Any, 0);

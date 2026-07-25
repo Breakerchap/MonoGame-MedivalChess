@@ -9,10 +9,12 @@ namespace MedivalChess;
 internal sealed class OnlineMatchClient : IAsyncDisposable
 {
   private readonly ConcurrentQueue<NetworkGameState> _pendingStates = new();
+  private readonly ConcurrentQueue<string> _pendingErrors = new();
   private readonly HubConnection _connection;
 
   internal NetworkTeam? Team { get; private set; }
   internal string JoinCode { get; private set; }
+  internal string ReconnectToken { get; private set; }
 
   internal OnlineMatchClient(string serverUrl)
   {
@@ -21,6 +23,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
       .WithAutomaticReconnect()
       .Build();
     _connection.On<NetworkGameState>("StateUpdated", state => _pendingStates.Enqueue(state));
+    _connection.Reconnected += RejoinRoomAfterReconnectAsync;
   }
 
   internal async Task<RoomJoinResult> HostAsync(CreateGameRequest request)
@@ -31,10 +34,13 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return result;
   }
 
-  internal async Task<RoomJoinResult> JoinAsync(string joinCode)
+  internal async Task<RoomJoinResult> JoinAsync(string joinCode, string reconnectToken = null)
   {
     await _connection.StartAsync();
-    RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>("JoinGame", new JoinGameRequest(joinCode));
+    RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
+      "JoinGame",
+      new JoinGameRequest(joinCode, reconnectToken)
+    );
     Accept(result);
     return result;
   }
@@ -49,11 +55,44 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType));
   }
 
-  internal void DrainStates(Action<NetworkGameState> apply)
+  internal void DrainStates(Action<NetworkGameState> apply, Action<string> reportError = null)
   {
+    while (_pendingErrors.TryDequeue(out string error))
+    {
+      reportError?.Invoke(error);
+    }
+
     while (_pendingStates.TryDequeue(out NetworkGameState state))
     {
       apply(state);
+    }
+  }
+
+  private async Task RejoinRoomAfterReconnectAsync(string connectionId)
+  {
+    if (string.IsNullOrWhiteSpace(JoinCode) || string.IsNullOrWhiteSpace(ReconnectToken))
+    {
+      return;
+    }
+
+    try
+    {
+      RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
+        "JoinGame",
+        new JoinGameRequest(JoinCode, ReconnectToken)
+      );
+      if (result.Accepted)
+      {
+        Accept(result);
+      }
+      else
+      {
+        _pendingErrors.Enqueue(result.Error ?? "Could not reconnect to the room.");
+      }
+    }
+    catch (Exception exception)
+    {
+      _pendingErrors.Enqueue($"Could not reconnect to the room: {exception.Message}");
     }
   }
 
@@ -66,6 +105,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
 
     Team = result.Team;
     JoinCode = result.JoinCode;
+    ReconnectToken = result.ReconnectToken;
     if (result.State is not null)
     {
       _pendingStates.Enqueue(result.State);

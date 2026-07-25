@@ -1,0 +1,139 @@
+using MedivalChess.Server;
+using MedivalChess.Shared;
+using Xunit;
+
+namespace MedivalChess.Tests;
+
+public sealed class OnlineMatchTests
+{
+  private static readonly NetworkMatchConfiguration DefaultConfiguration = new(
+    "Medium",
+    "Standard",
+    "Standard",
+    "Regicide",
+    481516,
+    400,
+    0.5f,
+    0f,
+    2,
+    4,
+    15
+  );
+
+  [Fact]
+  public void ChosenRoyalsSpawnOnTheDefaultMediumBoardBackRows()
+  {
+    MatchStore matches = new();
+    RoomJoinResult created = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    Assert.True(created.Accepted);
+    Assert.NotNull(created.JoinCode);
+    Assert.Empty(created.State!.Pieces);
+
+    RoomJoinResult joined = matches.Join("guest", new JoinGameRequest(created.JoinCode!));
+    Assert.True(joined.Accepted);
+
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    ActionResult completedSetup = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+    Assert.True(completedSetup.Accepted);
+    Assert.True(completedSetup.State!.MatchReady);
+
+    foreach (NetworkPiece royal in completedSetup.State.Pieces)
+    {
+      Assert.Equal(0, royal.X);
+      Assert.Equal(royal.Team == NetworkTeam.Red ? 12 : -12, royal.Y);
+    }
+  }
+
+  [Fact]
+  public void ServerStoresHostConfigurationAndInitialTeamState()
+  {
+    NetworkMatchConfiguration configuration = DefaultConfiguration with
+    {
+      BoardSize = "Large",
+      ForestDensity = "Heavy",
+      WaterwayDensity = "Light",
+      GameMode = "Conquest",
+      TerrainSeed = 12345,
+      StartingCash = 900,
+      ConquestWinScore = 22
+    };
+    MatchStore matches = new();
+
+    RoomJoinResult created = matches.Create("host", new CreateGameRequest(configuration));
+
+    Assert.True(created.Accepted);
+    Assert.Equal(configuration, created.State!.Configuration);
+    Assert.Single(created.State.Teams);
+    Assert.Equal(900, created.State.Teams[0].Money);
+    Assert.Equal(3, created.State.Teams[0].ActionsRemaining);
+  }
+
+  [Fact]
+  public void ReconnectTokenRestoresTheSamePlayerAndTeam()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+
+    matches.Disconnect("host");
+    RoomJoinResult reconnected = matches.Join(
+      "host-reconnected",
+      new JoinGameRequest(host.JoinCode!, host.ReconnectToken)
+    );
+
+    Assert.True(guest.Accepted);
+    Assert.True(reconnected.Accepted);
+    Assert.Equal(host.Team, reconnected.Team);
+    Assert.Equal(host.ReconnectToken, reconnected.ReconnectToken);
+    Assert.Equal(2, reconnected.State!.PlayerCount);
+  }
+
+  [Fact]
+  public void InvalidMatchConfigurationIsRejected()
+  {
+    MatchStore matches = new();
+    RoomJoinResult created = matches.Create(
+      "host",
+      new CreateGameRequest(DefaultConfiguration with { GameMode = "Not a mode" })
+    );
+
+    Assert.False(created.Accepted);
+    Assert.NotNull(created.Error);
+  }
+
+  [Fact]
+  public void ServerRejectsWrongOwnerAndKingDiagonalMoves()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("King"));
+    Assert.True(ready.Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    NetworkPiece redKing = ready.State!.Pieces.Single(piece => piece.Team == NetworkTeam.Red);
+
+    ActionResult wrongOwner = matches.TryMove(blueConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
+    ActionResult diagonalKingMove = matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y + 1));
+    ActionResult straightKingMove = matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
+
+    Assert.False(wrongOwner.Accepted);
+    Assert.False(diagonalKingMove.Accepted);
+    Assert.True(straightKingMove.Accepted);
+  }
+
+  [Fact]
+  public void ServerThrottlesRepeatedRoomCodeAttempts()
+  {
+    MatchStore matches = new();
+
+    RoomJoinResult firstAttempt = matches.Join("guest", new JoinGameRequest("XXXXX"));
+    RoomJoinResult secondAttempt = matches.Join("guest", new JoinGameRequest("YYYYY"));
+
+    Assert.False(firstAttempt.Accepted);
+    Assert.False(secondAttempt.Accepted);
+    Assert.Contains("half a second", secondAttempt.Error!);
+  }
+}

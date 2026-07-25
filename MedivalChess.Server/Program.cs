@@ -5,6 +5,7 @@ string port = Environment.GetEnvironmentVariable("PORT") ?? "5057";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<MatchStore>();
+builder.Services.AddHostedService<RoomCleanupService>();
 
 var app = builder.Build();
 app.MapGet("/", () => Results.Ok(new { service = "Crown & Siege match server", status = "online" }));
