@@ -136,7 +136,7 @@ public class UpdatedRulesTests
     Assert.Contains(PieceDefinitions.Mercenary, PieceDefinitions.Purchasable);
     Assert.DoesNotContain(PieceDefinitions.Mercenary, PieceDefinitions.Royals);
     Assert.Equal(45, mercenary.LastBid);
-    Assert.Equal(90, mercenary.NextMercenaryBid);
+    Assert.Equal(55, mercenary.NextMercenaryBid);
     Assert.Equal(23, PieceDefinitions.All.Length);
   }
 
