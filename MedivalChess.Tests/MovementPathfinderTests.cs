@@ -172,6 +172,30 @@ public class MovementPathfinderTests
   }
 
   [Fact]
+  public void GeneratedRivers_StayClearOfRoyalSpawnAreas()
+  {
+    Board board = new();
+    (int x, int y)[] royalSpawns =
+    [
+      (board.MinX + board.BoardArray.GetLength(1) / 2, board.MinY),
+      (board.MinX + board.BoardArray.GetLength(1) / 2, board.MinY + board.BoardArray.GetLength(0) - 1)
+    ];
+
+    for (int seed = 0; seed < 20; seed++)
+    {
+      BattlefieldTerrain terrain = BattlefieldTerrain.CreateRandom(board, seed);
+      Assert.All(terrain.Rivers, edge =>
+      {
+        Assert.All(new[] { edge.First, edge.Second }, riverTile =>
+          Assert.All(royalSpawns, spawn =>
+            Assert.True(Math.Abs(riverTile.x - spawn.x) + Math.Abs(riverTile.y - spawn.y) > 6)
+          )
+        );
+      });
+    }
+  }
+
+  [Fact]
   public void GeneratedForests_AreWeightedTowardTheBoardInterior()
   {
     Board board = new();

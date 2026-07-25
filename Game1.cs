@@ -38,6 +38,12 @@ internal sealed class Game1 : Game
     Buy
   }
 
+  private enum OnlineInputField
+  {
+    ServerUrl,
+    JoinCode
+  }
+
   private enum SetupStage
   {
     Mode,
@@ -133,7 +139,9 @@ internal sealed class Game1 : Game
   private Keys _buyKey = Keys.B;
   private OnlineMatchClient _onlineClient;
   private string _onlineStatus = "OFFLINE  F6: HOST  F7: JOIN";
+  private string _onlineServerUrl = "http://localhost:5057";
   private string _onlineJoinCode = string.Empty;
+  private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
   private bool _hostOnlineAfterSetup;
   private bool _onlineWaitingForOpponent;
   private bool _onlineRoyalChoicePending;
@@ -716,9 +724,16 @@ internal sealed class Game1 : Game
       return;
     }
 
+    if (!TryGetOnlineServerUrl(out string serverUrl))
+    {
+      _onlineError = "Enter a valid http:// or https:// server URL.";
+      _screen = Screen.OnlineLobby;
+      return;
+    }
+
     try
     {
-      _onlineClient = new OnlineMatchClient(GetOnlineServerUrl());
+      _onlineClient = new OnlineMatchClient(serverUrl);
       _onlineWaitingForOpponent = true;
       _onlineStatus = "CREATING PRIVATE ROOM...";
       _screen = Screen.OnlineWaiting;
@@ -755,16 +770,22 @@ internal sealed class Game1 : Game
       return;
     }
 
-    string joinCode = requestedJoinCode ?? Environment.GetEnvironmentVariable("CROWN_SIEGE_JOIN_CODE");
+    string joinCode = requestedJoinCode ?? _onlineJoinCode;
     if (string.IsNullOrWhiteSpace(joinCode))
     {
-      Console.WriteLine("Set CROWN_SIEGE_JOIN_CODE before pressing F7.");
+      _onlineError = "Enter the five-character room code.";
+      return;
+    }
+
+    if (!TryGetOnlineServerUrl(out string serverUrl))
+    {
+      _onlineError = "Enter a valid http:// or https:// server URL.";
       return;
     }
 
     try
     {
-      _onlineClient = new OnlineMatchClient(GetOnlineServerUrl());
+      _onlineClient = new OnlineMatchClient(serverUrl);
       RoomJoinResult result = await _onlineClient.JoinAsync(joinCode);
       if (!result.Accepted)
       {
@@ -887,9 +908,22 @@ internal sealed class Game1 : Game
     _screen = Screen.Playing;
   }
 
-  private static string GetOnlineServerUrl()
+  private bool TryGetOnlineServerUrl(out string serverUrl)
   {
-    return Environment.GetEnvironmentVariable("CROWN_SIEGE_SERVER_URL") ?? "http://localhost:5057";
+    serverUrl = _onlineServerUrl.Trim();
+    if (!serverUrl.Contains("://", StringComparison.Ordinal))
+    {
+      serverUrl = $"https://{serverUrl}";
+    }
+
+    if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out Uri uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+    {
+      return false;
+    }
+
+    serverUrl = serverUrl.TrimEnd('/');
+    return true;
   }
 
   private static float AdjustRefundMultiplier(float multiplier, float adjustment)
@@ -2229,31 +2263,37 @@ internal sealed class Game1 : Game
   private Rectangle GetOnlinePanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    return UiLayout.Centered(viewport, 560, 390, UiTheme.SpaceLg);
+    return UiLayout.Centered(viewport, 560, 470, UiTheme.SpaceLg);
   }
 
   private Rectangle GetOnlineButtonBounds(int index)
   {
     Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 126 + index * (UiTheme.ButtonHeight + UiTheme.SpaceSm), content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 174 + index * (UiTheme.ButtonHeight + UiTheme.SpaceSm), content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetOnlineServerUrlBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 76, content.Width, 56);
   }
 
   private Rectangle GetOnlineJoinCodeBounds()
   {
     Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 106, content.Width, 48);
+    return new Rectangle(content.X, content.Y + 152, content.Width, 52);
   }
 
   private Rectangle GetOnlineJoinButtonBounds()
   {
     Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 178, content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 226, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetOnlineBackButtonBounds()
   {
     Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 238, content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 286, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetOnlineWaitingCancelButtonBounds()
@@ -2262,7 +2302,44 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
   }
 
-  private static bool TryGetJoinCodeCharacter(Keys key, out char character)
+  private void UpdateOnlineTextInput(Keys key, bool shiftHeld)
+  {
+    string value = _onlineInputFocus == OnlineInputField.ServerUrl
+      ? _onlineServerUrl
+      : _onlineJoinCode;
+    int maximumLength = _onlineInputFocus == OnlineInputField.ServerUrl ? 160 : 5;
+    if (key == Keys.Back)
+    {
+      if (value.Length > 0)
+      {
+        value = value[..^1];
+      }
+      SetOnlineInputValue(value);
+      return;
+    }
+
+    if (value.Length < maximumLength && TryGetOnlineInputCharacter(key, shiftHeld, out char character))
+    {
+      value += _onlineInputFocus == OnlineInputField.JoinCode
+        ? char.ToUpperInvariant(character)
+        : character;
+      SetOnlineInputValue(value);
+    }
+  }
+
+  private void SetOnlineInputValue(string value)
+  {
+    if (_onlineInputFocus == OnlineInputField.ServerUrl)
+    {
+      _onlineServerUrl = value;
+    }
+    else
+    {
+      _onlineJoinCode = value;
+    }
+  }
+
+  private static bool TryGetOnlineInputCharacter(Keys key, bool shiftHeld, out char character)
   {
     string name = key.ToString();
     if (name.Length == 1 && char.IsLetterOrDigit(name[0]))
@@ -2271,8 +2348,28 @@ internal sealed class Game1 : Game
       return true;
     }
 
-    character = default;
-    return false;
+    character = key switch
+    {
+      Keys.OemPeriod => '.',
+      Keys.OemMinus => '-',
+      Keys.OemSemicolon => shiftHeld ? ':' : ';',
+      Keys.OemQuestion => shiftHeld ? '?' : '/',
+      _ => default
+    };
+    return character != default;
+  }
+
+  private void DrawOnlineServerUrlField(Rectangle bounds)
+  {
+    bool isFocused = _onlineInputFocus == OnlineInputField.ServerUrl;
+    DrawPanel(bounds, UiTheme.PanelRaised, isFocused ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
+    _ui.Text("MATCH SERVER URL", new Vector2(bounds.X + UiTheme.SpaceMd, bounds.Y + 5), UiTheme.TextMuted, 0.58f);
+    _ui.Text(
+      string.IsNullOrWhiteSpace(_onlineServerUrl) ? "https://your-server.onrender.com" : _onlineServerUrl,
+      new Vector2(bounds.X + UiTheme.SpaceMd, bounds.Y + 28),
+      string.IsNullOrWhiteSpace(_onlineServerUrl) ? UiTheme.TextDim : UiTheme.TextPrimary,
+      0.63f
+    );
   }
 
   private Rectangle GetSettingsPanelBounds()
@@ -2620,23 +2717,20 @@ internal sealed class Game1 : Game
       }
     }
 
-    if (_screen == Screen.OnlineJoin)
+    if (_screen is Screen.OnlineLobby or Screen.OnlineJoin)
     {
       foreach (Keys key in keyboard.GetPressedKeys())
       {
         if (!_previousKeyboardState.IsKeyDown(key))
         {
-          if (key == Keys.Back && _onlineJoinCode.Length > 0)
-          {
-            _onlineJoinCode = _onlineJoinCode[..^1];
-          }
-          else if (key == Keys.Enter && _onlineJoinCode.Length > 0)
+          if (key == Keys.Enter && _screen == Screen.OnlineJoin &&
+              _onlineInputFocus == OnlineInputField.JoinCode && _onlineJoinCode.Length > 0)
           {
             _ = JoinOnlineMatchAsync(_onlineJoinCode);
           }
-          else if (_onlineJoinCode.Length < 5 && TryGetJoinCodeCharacter(key, out char character))
+          else
           {
-            _onlineJoinCode += character;
+            UpdateOnlineTextInput(key, keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift));
           }
         }
       }
@@ -2672,7 +2766,11 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.OnlineLobby:
-        if (GetOnlineButtonBounds(0).Contains(mousePosition))
+        if (GetOnlineServerUrlBounds().Contains(mousePosition))
+        {
+          _onlineInputFocus = OnlineInputField.ServerUrl;
+        }
+        else if (GetOnlineButtonBounds(0).Contains(mousePosition))
         {
           PrepareOnlineRoom();
           _ = HostOnlineMatchAsync();
@@ -2680,6 +2778,7 @@ internal sealed class Game1 : Game
         else if (GetOnlineButtonBounds(1).Contains(mousePosition))
         {
           _onlineJoinCode = string.Empty;
+          _onlineInputFocus = OnlineInputField.JoinCode;
           _screen = Screen.OnlineJoin;
         }
         else if (GetOnlineButtonBounds(2).Contains(mousePosition))
@@ -2689,7 +2788,15 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.OnlineJoin:
-        if (GetOnlineJoinButtonBounds().Contains(mousePosition) && _onlineJoinCode.Length > 0)
+        if (GetOnlineServerUrlBounds().Contains(mousePosition))
+        {
+          _onlineInputFocus = OnlineInputField.ServerUrl;
+        }
+        else if (GetOnlineJoinCodeBounds().Contains(mousePosition))
+        {
+          _onlineInputFocus = OnlineInputField.JoinCode;
+        }
+        else if (GetOnlineJoinButtonBounds().Contains(mousePosition) && _onlineJoinCode.Length > 0)
         {
           _ = JoinOnlineMatchAsync(_onlineJoinCode);
         }
@@ -3121,13 +3228,13 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("ONLINE MULTIPLAYER", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Host prepares a match locally, then shares the room code.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
-    _ui.Text("The server must already be running.", new Vector2(content.X, content.Y + 54), UiTheme.TextMuted, 0.7f);
+    _ui.Text("Enter the server link, then host a room or join one.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     if (!string.IsNullOrWhiteSpace(_onlineError))
     {
-      _ui.Text(_onlineError, new Vector2(content.X, content.Y + 78), UiTheme.Attack, 0.68f);
+      _ui.Text(_onlineError, new Vector2(content.X, content.Y + 142), UiTheme.Attack, 0.64f);
     }
-    _ui.Divider(content, content.Y + 82);
+    _ui.Divider(content, content.Y + 158);
     DrawMenuButton(GetOnlineButtonBounds(0), "HOST NEW ROOM", UiButtonTone.Primary);
     DrawMenuButton(GetOnlineButtonBounds(1), "JOIN ROOM", UiButtonTone.Accent);
     DrawMenuButton(GetOnlineButtonBounds(2), "BACK", UiButtonTone.Neutral);
@@ -3140,9 +3247,14 @@ internal sealed class Game1 : Game
     Rectangle codeBounds = GetOnlineJoinCodeBounds();
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("JOIN PRIVATE ROOM", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Type the five-character room code, then press Enter.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
-    DrawPanel(codeBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.Text("Enter the same server link and room code as the host.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
+    DrawPanel(codeBounds, UiTheme.PanelRaised, _onlineInputFocus == OnlineInputField.JoinCode ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
     _ui.CenterText(string.IsNullOrEmpty(_onlineJoinCode) ? "ROOM CODE" : _onlineJoinCode, codeBounds, string.IsNullOrEmpty(_onlineJoinCode) ? UiTheme.TextDim : UiTheme.GoldBright, 1.1f);
+    if (!string.IsNullOrWhiteSpace(_onlineError))
+    {
+      _ui.Text(_onlineError, new Vector2(content.X, codeBounds.Bottom + 4), UiTheme.Attack, 0.56f);
+    }
     DrawMenuButton(GetOnlineJoinButtonBounds(), "JOIN", UiButtonTone.Primary);
     DrawMenuButton(GetOnlineBackButtonBounds(), "BACK", UiButtonTone.Neutral);
   }
