@@ -118,10 +118,13 @@ public sealed class OnlineMatchTests
     ActionResult wrongOwner = matches.TryMove(blueConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
     ActionResult diagonalKingMove = matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y + 1));
     ActionResult straightKingMove = matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
+    ActionResult secondMove = matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X + 2, redKing.Y));
 
     Assert.False(wrongOwner.Accepted);
     Assert.False(diagonalKingMove.Accepted);
     Assert.True(straightKingMove.Accepted);
+    Assert.False(secondMove.Accepted);
+    Assert.Contains("already moved", secondMove.Error!);
   }
 
   [Fact]

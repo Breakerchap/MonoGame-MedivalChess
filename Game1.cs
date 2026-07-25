@@ -436,6 +436,7 @@ internal sealed class Game1 : Game
 
           bool isValidAttack =
             isBoardCell &&
+            !selectedPiece.HasAttackedThisTurn &&
             Actions.CanAttackSquare(selectedPiece, targetPosition) &&
             HasClearAttackPath(selectedPiece, targetPosition) &&
             ((selectedPiece.Definition.Attack > 0 &&
@@ -461,6 +462,8 @@ internal sealed class Game1 : Game
             {
               ResolveDamage(selectedPiece, pieceAtTarget);
             }
+
+            selectedPiece.HasAttackedThisTurn = true;
 
             Console.WriteLine(
               $"Attacked at ({boardX}, {boardY})."
@@ -609,6 +612,8 @@ internal sealed class Game1 : Game
       {
         team.ActionPoints = Team.ActionsPerTurn;
       }
+      ResetPieceTurnActions(TeamName.Red);
+      ResetPieceTurnActions(TeamName.Blue);
 
       Console.WriteLine("Initial buy phase complete. The match has started.");
       return;
@@ -643,6 +648,7 @@ internal sealed class Game1 : Game
       }
 
       Team.AdvanceTurn();
+      ResetPieceTurnActions(Team.CurrentTurn);
       if (Team.CurrentTurn == TeamName.Red)
       {
         foreach (Piece palace in pieceSetup.Pieces)
@@ -653,6 +659,18 @@ internal sealed class Game1 : Game
             palaceTeam.Money += 10;
           }
         }
+      }
+    }
+  }
+
+  private void ResetPieceTurnActions(TeamName teamName)
+  {
+    foreach (Piece piece in pieceSetup.Pieces)
+    {
+      if (piece.Team == teamName)
+      {
+        piece.HasMovedThisTurn = false;
+        piece.HasAttackedThisTurn = false;
       }
     }
   }
@@ -967,7 +985,9 @@ internal sealed class Game1 : Game
       )
       {
         NetworkId = networkPiece.Id,
-        CurrentHealth = networkPiece.Health
+        CurrentHealth = networkPiece.Health,
+        HasMovedThisTurn = networkPiece.HasMovedThisTurn,
+        HasAttackedThisTurn = networkPiece.HasAttackedThisTurn
       };
       pieceSetup.AddPiece(piece);
     }
@@ -1077,6 +1097,12 @@ internal sealed class Game1 : Game
     out List<(int x, int y)> path
   )
   {
+    if (piece.HasMovedThisTurn)
+    {
+      path = null;
+      return false;
+    }
+
     Dictionary<(int x, int y), List<(int x, int y)>> paths = GetMovementPaths(piece);
     if (paths.TryGetValue(clickedSquare, out path))
     {
@@ -1232,6 +1258,10 @@ internal sealed class Game1 : Game
   private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
   {
     HashSet<(int x, int y)> highlightedSquares = [];
+    if (piece.HasMovedThisTurn)
+    {
+      return highlightedSquares;
+    }
 
     foreach ((int x, int y) destination in GetMovementPaths(piece).Keys)
     {
@@ -1250,6 +1280,11 @@ internal sealed class Game1 : Game
   private HashSet<(int x, int y)> GetValidAttackHighlightSquares(Piece piece)
   {
     HashSet<(int x, int y)> highlightedSquares = [];
+    if (piece.HasAttackedThisTurn ||
+        (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy && piece.HasMovedThisTurn))
+    {
+      return highlightedSquares;
+    }
 
     if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
     {
@@ -1664,9 +1699,10 @@ internal sealed class Game1 : Game
     Piece movedPiece = completedAnimation.Piece;
     (int x, int y) destination = completedAnimation.Path[^1];
 
-    if (movedPiece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    if (movedPiece.Definition.AttackShape.shape == Shape.MoveOnEnemy &&
+        AttackUnitsMovedOver(movedPiece, completedAnimation.Path))
     {
-      AttackUnitsMovedOver(movedPiece, completedAnimation.Path);
+      movedPiece.HasAttackedThisTurn = true;
     }
 
     MovePieceWithCompanions(movedPiece, destination);
@@ -1705,7 +1741,7 @@ internal sealed class Game1 : Game
     return piece.OccupiedSquares().Any(square => square.y == enemyBackRow);
   }
 
-  private void AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
+  private bool AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
   {
     HashSet<Piece> damagedPieces = [];
     foreach (Piece crossedPiece in new List<Piece>(pieceSetup.Pieces))
@@ -1728,6 +1764,8 @@ internal sealed class Game1 : Game
         ResolveDamage(attacker, crossedPiece);
       }
     }
+
+    return damagedPieces.Count > 0;
   }
 
   private bool CanUseAreaAttack(Piece piece, (int x, int y) targetPosition)
@@ -4119,18 +4157,23 @@ internal sealed class Game1 : Game
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm),
       "MOVE",
-      UiText.FormatAction(selectedPiece.Definition.Movement),
-      UiTheme.Move
+      selectedPiece.HasMovedThisTurn ? "USED" : UiText.FormatAction(selectedPiece.Definition.Movement),
+      selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
       "ATTACK",
-      selectedPiece.Definition.Attack.ToString(),
-      UiTheme.Attack
+      selectedPiece.HasAttackedThisTurn ? "USED" : selectedPiece.Definition.Attack.ToString(),
+      selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
     _ui.StatBlock(rangeRow, "ATTACK RANGE", UiText.FormatAction(selectedPiece.Definition.AttackShape), UiTheme.TextPrimary);
-    _ui.Text("LEFT-CLICK gold to move", new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd), UiTheme.Move, 0.78f);
+    _ui.Text(
+      selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
+      new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd),
+      selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move,
+      0.78f
+    );
     _ui.Text(GetSelectedPieceControlHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.72f);
 
     if (selectedPiece.Definition.Type == PieceType.Teacher)
@@ -4187,6 +4230,11 @@ internal sealed class Game1 : Game
 
   private static string GetSelectedPieceControlHint(Piece piece)
   {
+    if (piece.HasAttackedThisTurn)
+    {
+      return "ATTACK USED THIS TURN";
+    }
+
     if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
     {
       return "MOVE over red squares to attack";

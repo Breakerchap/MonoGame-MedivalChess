@@ -179,6 +179,11 @@ public sealed class MatchStore
       }
 
       NetworkPiece piece = foundMatch.Pieces[index];
+      if (piece.HasMovedThisTurn)
+      {
+        return new(false, "That unit has already moved this turn.", foundMatch.State());
+      }
+
       if (!NetworkBoardRules.Contains(foundMatch.Configuration, request.ToX, request.ToY) ||
           foundMatch.Pieces.Any(other => other.Id != piece.Id && other.X == request.ToX && other.Y == request.ToY))
       {
@@ -190,12 +195,13 @@ public sealed class MatchStore
         return new(false, "That move is outside the unit's movement rule.", foundMatch.State());
       }
 
-      foundMatch.Pieces[index] = piece with { X = request.ToX, Y = request.ToY };
+      foundMatch.Pieces[index] = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true };
       player.ActionsRemaining--;
       if (player.ActionsRemaining <= 0)
       {
         player.ActionsRemaining = ActionsPerTurn;
         foundMatch.CurrentTurn = foundMatch.CurrentTurn == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
+        ResetTurnActions(foundMatch, foundMatch.CurrentTurn);
       }
 
       foundMatch.Version++;
@@ -369,6 +375,18 @@ public sealed class MatchStore
   {
     "King", "Princess", "Palace", "Baron", "Emissary"
   };
+
+  private static void ResetTurnActions(Match match, NetworkTeam team)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Team == team)
+      {
+        match.Pieces[index] = piece with { HasMovedThisTurn = false, HasAttackedThisTurn = false };
+      }
+    }
+  }
 
   private sealed class PlayerSlot(string? connectionId, NetworkTeam team, int money)
   {

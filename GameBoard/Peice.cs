@@ -22,6 +22,8 @@ internal sealed class Piece
   internal Piece AttachedTo { get; set; }
   internal AttachmentKind AttachmentKind { get; set; }
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
+  internal bool HasMovedThisTurn { get; set; }
+  internal bool HasAttackedThisTurn { get; set; }
   internal long NextMercenaryBid => (long)LastBid + 10;
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)

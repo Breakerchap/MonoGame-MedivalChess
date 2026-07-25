@@ -6,7 +6,16 @@ public enum NetworkTeam
   Blue
 }
 
-public sealed record NetworkPiece(string Id, string Type, NetworkTeam Team, int X, int Y, int Health);
+public sealed record NetworkPiece(
+  string Id,
+  string Type,
+  NetworkTeam Team,
+  int X,
+  int Y,
+  int Health,
+  bool HasMovedThisTurn = false,
+  bool HasAttackedThisTurn = false
+);
 
 public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal);
 

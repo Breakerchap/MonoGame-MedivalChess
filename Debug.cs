@@ -83,12 +83,14 @@ internal sealed class PieceSetup
       y: destination.y - piece.Position.y
     );
     piece.Position = destination;
+    piece.HasMovedThisTurn = true;
 
     foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
     {
       attachedPiece.Position = attachedPiece.AttachmentKind == AttachmentKind.Towed
         ? (attachedPiece.Position.x + displacement.x, attachedPiece.Position.y + displacement.y)
         : destination;
+      attachedPiece.HasMovedThisTurn = true;
     }
   }
 
