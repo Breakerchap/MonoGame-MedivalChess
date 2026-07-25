@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,6 +15,10 @@ internal sealed class Game1 : Game
   private enum Screen
   {
     Title,
+    OnlineLobby,
+    OnlineJoin,
+    OnlineWaiting,
+    OnlineRoyalSelection,
     Settings,
     Setup,
     Playing,
@@ -114,12 +119,20 @@ internal sealed class Game1 : Game
   private Keys _zoomInKey = Keys.E;
   private Keys _zoomOutKey = Keys.Q;
   private Keys _buyKey = Keys.B;
+  private OnlineMatchClient _onlineClient;
+  private string _onlineStatus = "OFFLINE  F6: HOST  F7: JOIN";
+  private string _onlineJoinCode = string.Empty;
+  private bool _hostOnlineAfterSetup;
+  private bool _onlineWaitingForOpponent;
+  private bool _onlineRoyalChoicePending;
+  private string _onlineError = string.Empty;
 
   internal Game1()
   {
     _graphics = new GraphicsDeviceManager(this);
     Content.RootDirectory = "Content";
     IsMouseVisible = true;
+    Window.Title = "Crown & Siege";
 
     _graphics.PreferredBackBufferWidth = 2560;
     _graphics.PreferredBackBufferHeight = 1440;
@@ -161,6 +174,19 @@ internal sealed class Game1 : Game
     bool wasEscapePressed =
       keyboard.IsKeyDown(Keys.Escape) &&
       !_previousKeyboardState.IsKeyDown(Keys.Escape);
+    bool wasHostPressed = keyboard.IsKeyDown(Keys.F6) && !_previousKeyboardState.IsKeyDown(Keys.F6);
+    bool wasJoinPressed = keyboard.IsKeyDown(Keys.F7) && !_previousKeyboardState.IsKeyDown(Keys.F7);
+
+    _onlineClient?.DrainStates(ApplyOnlineState);
+    if (_screen == Screen.Playing && wasHostPressed)
+    {
+      _ = HostOnlineMatchAsync();
+    }
+
+    if (_screen == Screen.Playing && wasJoinPressed)
+    {
+      _ = JoinOnlineMatchAsync();
+    }
 
     if (_screen == Screen.Playing && wasEscapePressed)
     {
@@ -258,7 +284,7 @@ internal sealed class Game1 : Game
       keyboard.IsKeyDown(Keys.Down) &&
       !_previousKeyboardState.IsKeyDown(Keys.Down);
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null)
+    if (wasPurchaseModeToggle && _initialBuyPhase == null && _onlineClient == null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -291,7 +317,7 @@ internal sealed class Game1 : Game
       var targetPosition = (x: boardX, y: boardY);
       Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
 
-      if (_isPurchaseMode)
+      if (_isPurchaseMode && _onlineClient == null)
       {
         if (wasLeftClick)
         {
@@ -300,7 +326,7 @@ internal sealed class Game1 : Game
       }
       else if (selectedPiece == null)
       {
-        if (pieceAtTarget?.Team == Team.CurrentTurn && pieceAtTarget.AttachedTo == null)
+        if (pieceAtTarget?.Team == Team.CurrentTurn && pieceAtTarget.AttachedTo == null && IsOnlineLocalTurn())
         {
           SelectPiece(pieceAtTarget);
         }
@@ -334,7 +360,7 @@ internal sealed class Game1 : Game
       }
       else
       {
-        bool usedSpecialAbility = wasRightClick &&
+        bool usedSpecialAbility = _onlineClient == null && wasRightClick &&
           TryUseSpecialAbility(selectedPiece, targetPosition, pieceAtTarget, keyboard);
 
         if (usedSpecialAbility)
@@ -367,7 +393,15 @@ internal sealed class Game1 : Game
               pieceSetup.Detach(selectedPiece);
             }
 
-            BeginMovementAnimation(selectedPiece, path);
+            if (_onlineClient != null)
+            {
+              _ = SendOnlineMoveAsync(selectedPiece, targetPosition);
+              selectedPiece = null;
+            }
+            else
+            {
+              BeginMovementAnimation(selectedPiece, path);
+            }
           }
 
           if (_movementAnimation == null && _cavalierAwaitingAttack != selectedPiece)
@@ -375,7 +409,7 @@ internal sealed class Game1 : Game
             selectedPiece = null;
           }
         }
-        else if (wasRightClick)
+        else if (wasRightClick && _onlineClient == null)
         {
           int arrayX = targetPosition.x - _board.MinX;
           int arrayY = targetPosition.y - _board.MinY;
@@ -564,6 +598,11 @@ internal sealed class Game1 : Game
       }
 
       Console.WriteLine("Initial buy phase complete. The match has started.");
+      if (_hostOnlineAfterSetup)
+      {
+        _hostOnlineAfterSetup = false;
+        _ = HostOnlineMatchAsync();
+      }
       return;
     }
 
@@ -603,6 +642,201 @@ internal sealed class Game1 : Game
         }
       }
     }
+  }
+
+  private bool IsOnlineLocalTurn()
+  {
+    if (_onlineClient == null)
+    {
+      return true;
+    }
+
+    return _onlineClient.Team is NetworkTeam team &&
+      (team == NetworkTeam.Red ? Team.CurrentTurn == TeamName.Red : Team.CurrentTurn == TeamName.Blue);
+  }
+
+  private async System.Threading.Tasks.Task HostOnlineMatchAsync()
+  {
+    if (_onlineClient != null)
+    {
+      Console.WriteLine("Already connected to an online room.");
+      return;
+    }
+
+    try
+    {
+      _onlineClient = new OnlineMatchClient(GetOnlineServerUrl());
+      _onlineWaitingForOpponent = true;
+      _onlineStatus = "CREATING PRIVATE ROOM...";
+      _screen = Screen.OnlineWaiting;
+      RoomJoinResult result = await _onlineClient.HostAsync(new CreateGameRequest([]));
+      if (!result.Accepted)
+      {
+        Console.WriteLine($"Could not host room: {result.Error}");
+        await _onlineClient.DisposeAsync();
+        _onlineClient = null;
+        _onlineWaitingForOpponent = false;
+        _onlineError = result.Error ?? "Could not create a room.";
+        _screen = Screen.OnlineLobby;
+        return;
+      }
+
+      _onlineStatus = $"ONLINE {result.Team}  ROOM: {result.JoinCode}";
+      Console.WriteLine($"Online room created. Join code: {result.JoinCode}");
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Could not connect to match server: {exception.Message}");
+      _onlineClient = null;
+      _onlineWaitingForOpponent = false;
+      _onlineError = "Could not reach the local match server.";
+      _screen = Screen.OnlineLobby;
+    }
+  }
+
+  private async System.Threading.Tasks.Task JoinOnlineMatchAsync(string requestedJoinCode = null)
+  {
+    if (_onlineClient != null)
+    {
+      Console.WriteLine("Already connected to an online room.");
+      return;
+    }
+
+    string joinCode = requestedJoinCode ?? Environment.GetEnvironmentVariable("CROWN_SIEGE_JOIN_CODE");
+    if (string.IsNullOrWhiteSpace(joinCode))
+    {
+      Console.WriteLine("Set CROWN_SIEGE_JOIN_CODE before pressing F7.");
+      return;
+    }
+
+    try
+    {
+      _onlineClient = new OnlineMatchClient(GetOnlineServerUrl());
+      RoomJoinResult result = await _onlineClient.JoinAsync(joinCode);
+      if (!result.Accepted)
+      {
+        Console.WriteLine($"Could not join room: {result.Error}");
+        await _onlineClient.DisposeAsync();
+        _onlineClient = null;
+        _onlineError = result.Error ?? "Could not join that room.";
+        _screen = Screen.OnlineLobby;
+        return;
+      }
+
+      _onlineStatus = $"ONLINE {result.Team}  ROOM: {result.JoinCode}";
+      Console.WriteLine($"Joined online room {result.JoinCode} as {result.Team}.");
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Could not connect to match server: {exception.Message}");
+      _onlineClient = null;
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineMoveAsync(Piece piece, (int x, int y) destination)
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.MoveAsync(piece.NetworkId, destination.x, destination.y);
+      if (!result.Accepted)
+      {
+        Console.WriteLine($"Move rejected: {result.Error}");
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Move could not be sent: {exception.Message}");
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineRoyalChoiceAsync()
+  {
+    if (_onlineClient == null || _onlineRoyalChoicePending)
+    {
+      return;
+    }
+
+    _onlineRoyalChoicePending = true;
+    try
+    {
+      PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
+      ActionResult result = await _onlineClient.ChooseRoyalAsync(royal.Type.ToString());
+      if (!result.Accepted)
+      {
+        _onlineRoyalChoicePending = false;
+        _onlineError = result.Error ?? "Could not choose that royal.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Royal choice could not be sent: {exception.Message}");
+      _onlineRoyalChoicePending = false;
+      _onlineError = "Could not send royal choice.";
+    }
+  }
+
+  private void ApplyOnlineState(NetworkGameState state)
+  {
+    if (_onlineWaitingForOpponent && state.PlayerCount < 2)
+    {
+      return;
+    }
+
+    if (!state.MatchReady)
+    {
+      _onlineWaitingForOpponent = false;
+      NetworkTeam? localTeam = _onlineClient?.Team;
+      bool hasChosenRoyal = localTeam is NetworkTeam team && state.Pieces.Any(piece =>
+        piece.Team == team && PieceDefinitions.Royals.Any(royal => royal.Type.ToString() == piece.Type));
+      _onlineRoyalChoicePending = hasChosenRoyal;
+      _onlineStatus = hasChosenRoyal
+        ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
+        : $"ONLINE ROYAL SETUP  ROOM: {state.JoinCode}";
+      _screen = Screen.OnlineRoyalSelection;
+      return;
+    }
+
+    pieceSetup.ClearPieces();
+    foreach (NetworkPiece networkPiece in state.Pieces)
+    {
+      if (!Enum.TryParse(networkPiece.Type, out PieceType pieceType))
+      {
+        continue;
+      }
+
+      PieceDefinition definition = PieceDefinitions.Encyclopedia.FirstOrDefault(candidate => candidate.Type == pieceType);
+      if (definition == null)
+      {
+        continue;
+      }
+
+      Piece piece = new(
+        definition,
+        (networkPiece.X, networkPiece.Y),
+        networkPiece.Team == NetworkTeam.Red ? TeamName.Red : TeamName.Blue
+      )
+      {
+        NetworkId = networkPiece.Id,
+        CurrentHealth = networkPiece.Health
+      };
+      pieceSetup.AddPiece(piece);
+    }
+
+    Team.SetCurrentTurn(state.CurrentTurn == NetworkTeam.Red ? TeamName.Red : TeamName.Blue);
+    selectedPiece = null;
+    _movementAnimation = null;
+    _initialBuyPhase = null;
+    _isPurchaseMode = false;
+    _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
+    _onlineWaitingForOpponent = false;
+    _onlineRoyalChoicePending = false;
+    _onlineRoyalChoicePending = false;
+    _screen = Screen.Playing;
+  }
+
+  private static string GetOnlineServerUrl()
+  {
+    return Environment.GetEnvironmentVariable("CROWN_SIEGE_SERVER_URL") ?? "http://localhost:5057";
   }
 
   private static float AdjustRefundMultiplier(float multiplier, float adjustment)
@@ -1895,6 +2129,49 @@ internal sealed class Game1 : Game
     );
   }
 
+  private Rectangle GetOnlinePanelBounds()
+  {
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    return UiLayout.Centered(viewport, 560, 390, UiTheme.SpaceLg);
+  }
+
+  private Rectangle GetOnlineButtonBounds(int index)
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 126 + index * (UiTheme.ButtonHeight + UiTheme.SpaceSm), content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetOnlineJoinCodeBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 106, content.Width, 48);
+  }
+
+  private Rectangle GetOnlineJoinButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 178, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetOnlineBackButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 238, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private static bool TryGetJoinCodeCharacter(Keys key, out char character)
+  {
+    string name = key.ToString();
+    if (name.Length == 1 && char.IsLetterOrDigit(name[0]))
+    {
+      character = name[0];
+      return true;
+    }
+
+    character = default;
+    return false;
+  }
+
   private Rectangle GetSettingsPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
@@ -2101,6 +2378,13 @@ internal sealed class Game1 : Game
 
   private void ReturnToTitle()
   {
+    if (_onlineClient != null)
+    {
+      _ = _onlineClient.DisposeAsync().AsTask();
+      _onlineClient = null;
+    }
+
+    _onlineWaitingForOpponent = false;
     pieceSetup.ClearPieces();
     _teams = pieceSetup.CreateTeams();
     _board = new Board();
@@ -2122,6 +2406,42 @@ internal sealed class Game1 : Game
     _zoom = 1f;
     Team.ResetTurn();
     _screen = Screen.Title;
+  }
+
+  private void BeginMatchSetup(bool hostOnlineAfterSetup)
+  {
+    _screen = Screen.Setup;
+    _setupTeam = TeamName.Red;
+    _selectedRoyalIndex = 0;
+    _setupStage = SetupStage.Battlefield;
+    _selectedBoardSize = BoardSize.Medium;
+    _forestDensity = TerrainDensity.Standard;
+    _waterwayDensity = TerrainDensity.Standard;
+    _startingCash = Globals.StartingCash;
+    _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
+    _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
+    _initialBuysPerTurn = 2;
+    _initialBuyTurnsPerTeam = 4;
+    _initialBuyPhase = null;
+    _isPurchaseMode = false;
+    _hostOnlineAfterSetup = hostOnlineAfterSetup;
+    Team.ResetTurn();
+  }
+
+  private void PrepareOnlineRoom()
+  {
+    pieceSetup.ClearPieces();
+    _teams = pieceSetup.CreateTeams();
+    _board = new Board();
+    _terrain = BattlefieldTerrain.CreateRandom(_board, Random.Shared.Next());
+    _roads.Clear();
+    _barricades.Clear();
+    selectedPiece = null;
+    _initialBuyPhase = null;
+    _isPurchaseMode = false;
+    _selectedRoyalIndex = 0;
+    _onlineRoyalChoicePending = false;
+    Team.ResetTurn();
   }
 
   private void UpdateMenu(
@@ -2150,6 +2470,15 @@ internal sealed class Game1 : Game
         case Screen.Settings when _settingsReturnScreen == Screen.Pause:
           _screen = Screen.Pause;
           return;
+        case Screen.OnlineJoin:
+          _screen = Screen.OnlineLobby;
+          return;
+        case Screen.OnlineLobby:
+          _screen = Screen.Title;
+          return;
+        case Screen.OnlineWaiting:
+          ReturnToTitle();
+          return;
       }
     }
 
@@ -2166,6 +2495,28 @@ internal sealed class Game1 : Game
       }
     }
 
+    if (_screen == Screen.OnlineJoin)
+    {
+      foreach (Keys key in keyboard.GetPressedKeys())
+      {
+        if (!_previousKeyboardState.IsKeyDown(key))
+        {
+          if (key == Keys.Back && _onlineJoinCode.Length > 0)
+          {
+            _onlineJoinCode = _onlineJoinCode[..^1];
+          }
+          else if (key == Keys.Enter && _onlineJoinCode.Length > 0)
+          {
+            _ = JoinOnlineMatchAsync(_onlineJoinCode);
+          }
+          else if (_onlineJoinCode.Length < 5 && TryGetJoinCodeCharacter(key, out char character))
+          {
+            _onlineJoinCode += character;
+          }
+        }
+      }
+    }
+
     if (!wasLeftClick)
     {
       return;
@@ -2178,30 +2529,65 @@ internal sealed class Game1 : Game
       case Screen.Title:
         if (GetTitleButtonBounds(0).Contains(mousePosition))
         {
-          _screen = Screen.Setup;
-          _setupTeam = TeamName.Red;
-          _selectedRoyalIndex = 0;
-          _setupStage = SetupStage.Battlefield;
-          _selectedBoardSize = BoardSize.Medium;
-          _forestDensity = TerrainDensity.Standard;
-          _waterwayDensity = TerrainDensity.Standard;
-          _startingCash = Globals.StartingCash;
-          _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
-          _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
-          _initialBuysPerTurn = 2;
-          _initialBuyTurnsPerTeam = 4;
-          _initialBuyPhase = null;
-          _isPurchaseMode = false;
-          Team.ResetTurn();
+          BeginMatchSetup(false);
         }
         else if (GetTitleButtonBounds(1).Contains(mousePosition))
+        {
+          _screen = Screen.OnlineLobby;
+        }
+        else if (GetTitleButtonBounds(2).Contains(mousePosition))
         {
           _settingsReturnScreen = Screen.Title;
           _screen = Screen.Settings;
         }
-        else if (GetTitleButtonBounds(2).Contains(mousePosition))
+        else if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
           Exit();
+        }
+        break;
+
+      case Screen.OnlineLobby:
+        if (GetOnlineButtonBounds(0).Contains(mousePosition))
+        {
+          PrepareOnlineRoom();
+          _ = HostOnlineMatchAsync();
+        }
+        else if (GetOnlineButtonBounds(1).Contains(mousePosition))
+        {
+          _onlineJoinCode = string.Empty;
+          _screen = Screen.OnlineJoin;
+        }
+        else if (GetOnlineButtonBounds(2).Contains(mousePosition))
+        {
+          _screen = Screen.Title;
+        }
+        break;
+
+      case Screen.OnlineJoin:
+        if (GetOnlineJoinButtonBounds().Contains(mousePosition) && _onlineJoinCode.Length > 0)
+        {
+          _ = JoinOnlineMatchAsync(_onlineJoinCode);
+        }
+        else if (GetOnlineBackButtonBounds().Contains(mousePosition))
+        {
+          _screen = Screen.OnlineLobby;
+        }
+        break;
+
+      case Screen.OnlineRoyalSelection:
+        if (GetSetupPreviousButtonBounds().Contains(mousePosition))
+        {
+          _selectedRoyalIndex =
+            (_selectedRoyalIndex - 1 + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
+        }
+        else if (GetSetupNextButtonBounds().Contains(mousePosition))
+        {
+          _selectedRoyalIndex =
+            (_selectedRoyalIndex + 1) % PieceDefinitions.Royals.Length;
+        }
+        else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
+        {
+          _ = SendOnlineRoyalChoiceAsync();
         }
         break;
 
@@ -2372,13 +2758,22 @@ internal sealed class Game1 : Game
           }
           else
           {
-            StartInitialBuyPhase();
+            if (_hostOnlineAfterSetup)
+            {
+              _hostOnlineAfterSetup = false;
+              _screen = Screen.Playing;
+              _ = HostOnlineMatchAsync();
+            }
+            else
+            {
+              StartInitialBuyPhase();
+            }
           }
         }
         break;
 
       case Screen.GameOver:
-        if (GetTitleButtonBounds(2).Contains(mousePosition))
+        if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
           Exit();
         }
@@ -2487,13 +2882,94 @@ internal sealed class Game1 : Game
     Rectangle titleBounds = new(viewport.X, Math.Max(UiTheme.SpaceXl, firstButton.Y - 154), viewport.Width, 48);
     Rectangle subtitleBounds = new(viewport.X, titleBounds.Bottom + UiTheme.SpaceSm, viewport.Width, 24);
 
-    _ui.CenterText("MEDIEVAL CHESS", titleBounds, UiTheme.GoldBright, 1.55f);
+    _ui.CenterText("CROWN & SIEGE", titleBounds, UiTheme.GoldBright, 1.55f);
     _ui.CenterText("A MEDIEVAL STRATEGY GAME", subtitleBounds, UiTheme.TextMuted, 0.72f);
     _ui.Divider(new Rectangle(viewport.Center.X - 150, subtitleBounds.Bottom + UiTheme.SpaceMd, 300, 1), subtitleBounds.Bottom + UiTheme.SpaceMd, UiTheme.PanelBorder);
 
     DrawMenuButton(GetTitleButtonBounds(0), "START GAME", UiButtonTone.Primary);
-    DrawMenuButton(GetTitleButtonBounds(1), "SETTINGS", UiButtonTone.Neutral);
-    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(1), "ONLINE MULTIPLAYER", UiButtonTone.Accent);
+    DrawMenuButton(GetTitleButtonBounds(2), "SETTINGS", UiButtonTone.Neutral);
+    DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);
+  }
+
+  private void DrawOnlineLobbyScreen()
+  {
+    Rectangle panel = GetOnlinePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("ONLINE MULTIPLAYER", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("Host prepares a match locally, then shares the room code.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    _ui.Text("The server must already be running.", new Vector2(content.X, content.Y + 54), UiTheme.TextMuted, 0.7f);
+    if (!string.IsNullOrWhiteSpace(_onlineError))
+    {
+      _ui.Text(_onlineError, new Vector2(content.X, content.Y + 78), UiTheme.Attack, 0.68f);
+    }
+    _ui.Divider(content, content.Y + 82);
+    DrawMenuButton(GetOnlineButtonBounds(0), "HOST NEW ROOM", UiButtonTone.Primary);
+    DrawMenuButton(GetOnlineButtonBounds(1), "JOIN ROOM", UiButtonTone.Accent);
+    DrawMenuButton(GetOnlineButtonBounds(2), "BACK", UiButtonTone.Neutral);
+  }
+
+  private void DrawOnlineJoinScreen()
+  {
+    Rectangle panel = GetOnlinePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    Rectangle codeBounds = GetOnlineJoinCodeBounds();
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("JOIN PRIVATE ROOM", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("Type the five-character room code, then press Enter.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    DrawPanel(codeBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(string.IsNullOrEmpty(_onlineJoinCode) ? "ROOM CODE" : _onlineJoinCode, codeBounds, string.IsNullOrEmpty(_onlineJoinCode) ? UiTheme.TextDim : UiTheme.GoldBright, 1.1f);
+    DrawMenuButton(GetOnlineJoinButtonBounds(), "JOIN", UiButtonTone.Primary);
+    DrawMenuButton(GetOnlineBackButtonBounds(), "BACK", UiButtonTone.Neutral);
+  }
+
+  private void DrawOnlineWaitingScreen()
+  {
+    Rectangle panel = GetOnlinePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    string roomCode = string.IsNullOrWhiteSpace(_onlineClient?.JoinCode) ? "-----" : _onlineClient.JoinCode;
+    string team = _onlineClient?.Team?.ToString().ToUpperInvariant() ?? "";
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.CenterText("PRIVATE ROOM CREATED", new Rectangle(content.X, content.Y, content.Width, 30), UiTheme.GoldBright, 1.05f);
+    _ui.CenterText("SHARE THIS ROOM CODE", new Rectangle(content.X, content.Y + 64, content.Width, 22), UiTheme.TextMuted, 0.76f);
+    _ui.CenterText(roomCode, new Rectangle(content.X, content.Y + 94, content.Width, 52), UiTheme.GoldBright, 1.45f);
+    _ui.CenterText($"YOU WILL PLAY {team}", new Rectangle(content.X, content.Y + 166, content.Width, 24), UiTheme.TextPrimary, 0.82f);
+    _ui.CenterText("Waiting for another player to join...", new Rectangle(content.X, content.Y + 214, content.Width, 22), UiTheme.TextMuted, 0.74f);
+    _ui.CenterText("ESC cancels", new Rectangle(content.X, content.Bottom - 22, content.Width, 18), UiTheme.TextDim, 0.66f);
+  }
+
+  private void DrawOnlineRoyalSelectionScreen()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
+    TeamName localTeam = _onlineClient?.Team == NetworkTeam.Blue ? TeamName.Blue : TeamName.Red;
+    Color teamColour = UiTheme.GetTeamColour(localTeam);
+    bool waitingForOpponent = _onlineRoyalChoicePending;
+
+    DrawPanel(panel, UiTheme.Panel, teamColour);
+    _ui.Text(waitingForOpponent ? "ROYAL CHOSEN" : "CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
+    _ui.Text(
+      waitingForOpponent ? "Waiting for the other player to choose theirs." : "You choose only your own royal. It is placed on your back row.",
+      new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
+    _ui.Divider(content, content.Y + 56);
+
+    Rectangle preview = new(content.X, content.Y + 76, 112, 112);
+    _ui.PiecePreview(preview, teamColour, UiText.BuildPieceLabel(royal));
+    Rectangle details = new(preview.Right + UiTheme.SpaceLg, preview.Y, content.Right - preview.Right - UiTheme.SpaceLg, preview.Height);
+    _ui.Text(royal.Type.ToString().ToUpperInvariant(), new Vector2(details.X, details.Y), UiTheme.TextPrimary);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 30, details.Width, 26), "HEALTH", royal.Health.ToString(), UiTheme.Health);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 58, details.Width, 26), "ATTACK", royal.Attack.ToString(), UiTheme.Attack);
+    _ui.LabelValueRow(new Rectangle(details.X, details.Y + 86, details.Width, 26), "SIZE", $"{royal.Size.x} x {royal.Size.y}", UiTheme.TextPrimary);
+
+    Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceLg, content.Width, 54);
+    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm), "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
+    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm), "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+
+    DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), waitingForOpponent ? "WAITING..." : "CONFIRM ROYAL", waitingForOpponent ? UiButtonTone.Neutral : UiButtonTone.Primary, waitingForOpponent);
   }
 
   private void DrawSettingsScreen()
@@ -2801,7 +3277,7 @@ internal sealed class Game1 : Game
     Color winnerColour = UiTheme.GetTeamColour(winner);
     _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
     _ui.CenterText("The opposing royal has fallen.", new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
-    DrawMenuButton(GetTitleButtonBounds(2), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawMenuScreen()
@@ -2809,6 +3285,10 @@ internal sealed class Game1 : Game
     switch (_screen)
     {
       case Screen.Title: DrawTitleScreen(); break;
+      case Screen.OnlineLobby: DrawOnlineLobbyScreen(); break;
+      case Screen.OnlineJoin: DrawOnlineJoinScreen(); break;
+      case Screen.OnlineWaiting: DrawOnlineWaitingScreen(); break;
+      case Screen.OnlineRoyalSelection: DrawOnlineRoyalSelectionScreen(); break;
       case Screen.Settings: DrawSettingsScreen(); break;
       case Screen.Setup: DrawSetupScreen(); break;
       case Screen.Pause: DrawPauseScreen(); break;
@@ -2827,7 +3307,7 @@ internal sealed class Game1 : Game
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
-    int desiredHeight = _initialBuyPhase == null ? 194 : 260;
+    int desiredHeight = _initialBuyPhase == null ? (_onlineClient == null ? 194 : 226) : 260;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
     return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
   }
@@ -2950,6 +3430,12 @@ internal sealed class Game1 : Game
       DrawPanel(moneyRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
       _ui.LabelValueRow(moneyRow, $"{UiText.GetTeamDisplayName(team.TeamName)} GOLD", team.Money.ToString(), teamColour);
       moneyY += 36;
+    }
+
+    if (_onlineClient != null)
+    {
+      string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
+      _ui.Text($"ONLINE  ROOM: {roomCode}", new Vector2(content.X, content.Bottom - 18), UiTheme.Gold, 0.68f);
     }
   }
 
