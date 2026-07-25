@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: crown-and-siege-server
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerfilePath: ./MedivalChess.Server/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeployTrigger: commit
