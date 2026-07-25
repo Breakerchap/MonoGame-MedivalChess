@@ -42,6 +42,11 @@ internal sealed class Team
     ChosenRoyal = royal;
   }
 
+  internal void ClearRoyal()
+  {
+    ChosenRoyal = null;
+  }
+
   internal bool SpendAction()
   {
     ActionPoints--;

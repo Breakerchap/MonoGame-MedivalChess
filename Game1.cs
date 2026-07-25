@@ -40,9 +40,17 @@ internal sealed class Game1 : Game
 
   private enum SetupStage
   {
+    Mode,
     Battlefield,
     Economy,
     RoyalSelection
+  }
+
+  private enum GameMode
+  {
+    Regicide,
+    Conquest,
+    Escort
   }
 
   private enum BoardSize
@@ -97,7 +105,7 @@ internal sealed class Game1 : Game
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
-  private SetupStage _setupStage = SetupStage.Battlefield;
+  private SetupStage _setupStage = SetupStage.Mode;
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
@@ -108,6 +116,10 @@ internal sealed class Game1 : Game
   private int _initialBuyTurnsPerTeam = 4;
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
+  private GameMode _gameMode = GameMode.Regicide;
+  private int _conquestWinScore = 15;
+  // Negative pressure moves toward Orange; positive pressure moves toward Purple.
+  private int _conquestScore;
   private BindingAction? _bindingToChange;
   private Screen _settingsReturnScreen = Screen.Title;
   private int _encyclopediaIndex;
@@ -629,6 +641,11 @@ internal sealed class Game1 : Game
 
     if (currentTeam.SpendAction())
     {
+      if (ApplyConquestPressure(Team.CurrentTurn))
+      {
+        return;
+      }
+
       Team.AdvanceTurn();
       if (Team.CurrentTurn == TeamName.Red)
       {
@@ -642,6 +659,42 @@ internal sealed class Game1 : Game
         }
       }
     }
+  }
+
+  private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
+  {
+    if (_gameMode != GameMode.Conquest || teamThatFinishedTurn != TeamName.Blue)
+    {
+      return false;
+    }
+
+    int orangePieces = GetConquestOccupyingPieceCount(TeamName.Red);
+    int purplePieces = GetConquestOccupyingPieceCount(TeamName.Blue);
+    int netPressure = purplePieces - orangePieces;
+    if (netPressure == 0)
+    {
+      return false;
+    }
+
+    _conquestScore += netPressure;
+    _conquestScore = Math.Clamp(_conquestScore, -_conquestWinScore, _conquestWinScore);
+
+    if (Math.Abs(_conquestScore) < _conquestWinScore)
+    {
+      return false;
+    }
+
+    _winningTeam = _conquestScore < 0 ? TeamName.Red : TeamName.Blue;
+    _screen = Screen.GameOver;
+    selectedPiece = null;
+    return true;
+  }
+
+  private int GetConquestOccupyingPieceCount(TeamName team)
+  {
+    return pieceSetup.Pieces.Count(piece =>
+      piece.Team == team && piece.AttachmentKind == AttachmentKind.None &&
+      piece.OccupiedSquares().Any(IsConquestSquare));
   }
 
   private bool IsOnlineLocalTurn()
@@ -1260,12 +1313,32 @@ internal sealed class Game1 : Game
     ))
     {
       pieceSetup.RemovePiece(damagedPiece);
-      if (damagedPiece.Definition.Category == PieceCategory.Royal)
+      if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Regicide)
       {
         _winningTeam = attacker.Team;
         _screen = Screen.GameOver;
       }
+      else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Escort)
+      {
+        RespawnEscortRoyal(damagedPiece);
+      }
     }
+  }
+
+  private void RespawnEscortRoyal(Piece defeatedRoyal)
+  {
+    if (defeatedRoyal.Definition.Type == PieceType.Palace)
+    {
+      return;
+    }
+
+    Piece respawnedRoyal = new(
+      defeatedRoyal.Definition,
+      FindRoyalSpawn(defeatedRoyal.Team, defeatedRoyal.Definition),
+      defeatedRoyal.Team
+    );
+    pieceSetup.AddPiece(respawnedRoyal);
+    Console.WriteLine($"{defeatedRoyal.Team}'s royal has respawned at the back line.");
   }
 
   private bool TryUseSpecialAbility(
@@ -1498,6 +1571,14 @@ internal sealed class Game1 : Game
     MovePieceWithCompanions(movedPiece, destination);
 
     Console.WriteLine($"Moved {movedPiece.Definition.Type} to ({destination.x}, {destination.y}).");
+    if (HasEscortVictory(movedPiece))
+    {
+      _winningTeam = movedPiece.Team;
+      _screen = Screen.GameOver;
+      selectedPiece = null;
+      return;
+    }
+
     if (movedPiece.Definition.Type == PieceType.Cavalier)
     {
       selectedPiece = movedPiece;
@@ -1508,6 +1589,19 @@ internal sealed class Game1 : Game
       selectedPiece = null;
       CompleteAction();
     }
+  }
+
+  private bool HasEscortVictory(Piece piece)
+  {
+    if (_gameMode != GameMode.Escort || piece.Definition.Category != PieceCategory.Royal)
+    {
+      return false;
+    }
+
+    int enemyBackRow = piece.Team == TeamName.Red
+      ? _board.MinY
+      : _board.MinY + _board.BoardArray.GetLength(0) - 1;
+    return piece.OccupiedSquares().Any(square => square.y == enemyBackRow);
   }
 
   private void AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
@@ -1789,13 +1883,16 @@ internal sealed class Game1 : Game
   private TeamName? GetSquareOwner(int arrayY)
   {
     int centreRow = _board.BoardArray.GetLength(0) / 2;
+    int halfHeight = _gameMode == GameMode.Conquest
+      ? noMansLandHalfHeight + 1
+      : noMansLandHalfHeight;
 
-    if (arrayY < centreRow - noMansLandHalfHeight)
+    if (arrayY < centreRow - halfHeight)
     {
       return TeamName.Blue;
     }
 
-    if (arrayY > centreRow + noMansLandHalfHeight)
+    if (arrayY > centreRow + halfHeight)
     {
       return TeamName.Red;
     }
@@ -2159,6 +2256,12 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Y + 238, content.Width, UiTheme.ButtonHeight);
   }
 
+  private Rectangle GetOnlineWaitingCancelButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetOnlinePanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
+  }
+
   private static bool TryGetJoinCodeCharacter(Keys key, out char character)
   {
     string name = key.ToString();
@@ -2271,6 +2374,13 @@ internal sealed class Game1 : Game
     Rectangle panel = GetSetupPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     return new Rectangle(content.X, panel.Bottom - 68, 68, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetSetupBackButtonBounds()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.Right - 96, content.Y - 2, 96, 30);
   }
 
   private Rectangle GetSetupNextButtonBounds()
@@ -2399,9 +2509,12 @@ internal sealed class Game1 : Game
     _selectedPurchaseIndex = 0;
     _selectedTeacherDefinitionIndex = 0;
     _winningTeam = null;
+    _gameMode = GameMode.Regicide;
+    _conquestWinScore = 15;
+    _conquestScore = 0;
     _setupTeam = TeamName.Red;
     _selectedRoyalIndex = 0;
-    _setupStage = SetupStage.Battlefield;
+    _setupStage = SetupStage.Mode;
     _cameraPosition = Vector2.Zero;
     _zoom = 1f;
     Team.ResetTurn();
@@ -2413,7 +2526,10 @@ internal sealed class Game1 : Game
     _screen = Screen.Setup;
     _setupTeam = TeamName.Red;
     _selectedRoyalIndex = 0;
-    _setupStage = SetupStage.Battlefield;
+    _setupStage = SetupStage.Mode;
+    _gameMode = GameMode.Regicide;
+    _conquestWinScore = 15;
+    _conquestScore = 0;
     _selectedBoardSize = BoardSize.Medium;
     _forestDensity = TerrainDensity.Standard;
     _waterwayDensity = TerrainDensity.Standard;
@@ -2470,6 +2586,9 @@ internal sealed class Game1 : Game
         case Screen.Settings when _settingsReturnScreen == Screen.Pause:
           _screen = Screen.Pause;
           return;
+        case Screen.Settings:
+          _screen = _settingsReturnScreen;
+          return;
         case Screen.OnlineJoin:
           _screen = Screen.OnlineLobby;
           return;
@@ -2478,6 +2597,12 @@ internal sealed class Game1 : Game
           return;
         case Screen.OnlineWaiting:
           ReturnToTitle();
+          return;
+        case Screen.OnlineRoyalSelection:
+          ReturnToTitle();
+          return;
+        case Screen.Setup:
+          NavigateSetupBack();
           return;
       }
     }
@@ -2574,8 +2699,19 @@ internal sealed class Game1 : Game
         }
         break;
 
+      case Screen.OnlineWaiting:
+        if (GetOnlineWaitingCancelButtonBounds().Contains(mousePosition))
+        {
+          ReturnToTitle();
+        }
+        break;
+
       case Screen.OnlineRoyalSelection:
-        if (GetSetupPreviousButtonBounds().Contains(mousePosition))
+        if (GetSetupBackButtonBounds().Contains(mousePosition))
+        {
+          ReturnToTitle();
+        }
+        else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
         {
           _selectedRoyalIndex =
             (_selectedRoyalIndex - 1 + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
@@ -2649,7 +2785,26 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.Setup:
-        if (_setupStage == SetupStage.Battlefield)
+        if (GetSetupBackButtonBounds().Contains(mousePosition))
+        {
+          NavigateSetupBack();
+        }
+        else if (_setupStage == SetupStage.Mode)
+        {
+          if (GetSetupPreviousButtonBounds().Contains(mousePosition))
+          {
+            _gameMode = (GameMode)(((int)_gameMode - 1 + Enum.GetValues<GameMode>().Length) % Enum.GetValues<GameMode>().Length);
+          }
+          else if (GetSetupNextButtonBounds().Contains(mousePosition))
+          {
+            _gameMode = (GameMode)(((int)_gameMode + 1) % Enum.GetValues<GameMode>().Length);
+          }
+          else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
+          {
+            _setupStage = SetupStage.Battlefield;
+          }
+        }
+        else if (_setupStage == SetupStage.Battlefield)
         {
           if (GetBattlefieldDecreaseButtonBounds(0).Contains(mousePosition))
           {
@@ -2723,6 +2878,14 @@ internal sealed class Game1 : Game
           {
             _initialBuyTurnsPerTeam++;
           }
+          else if (_gameMode == GameMode.Conquest && GetEconomyDecreaseButtonBounds(5).Contains(mousePosition))
+          {
+            _conquestWinScore = Math.Max(1, _conquestWinScore - 1);
+          }
+          else if (_gameMode == GameMode.Conquest && GetEconomyIncreaseButtonBounds(5).Contains(mousePosition))
+          {
+            _conquestWinScore++;
+          }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
             foreach (Team team in _teams)
@@ -2736,17 +2899,20 @@ internal sealed class Game1 : Game
         }
         else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
         {
-          _selectedRoyalIndex =
-            (_selectedRoyalIndex - 1 + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
+          _selectedRoyalIndex = GetNextSelectableRoyalIndex(_selectedRoyalIndex, -1);
         }
         else if (GetSetupNextButtonBounds().Contains(mousePosition))
         {
-          _selectedRoyalIndex =
-            (_selectedRoyalIndex + 1) % PieceDefinitions.Royals.Length;
+          _selectedRoyalIndex = GetNextSelectableRoyalIndex(_selectedRoyalIndex, 1);
         }
         else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
         {
           PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
+          if (_gameMode == GameMode.Escort && royal.Type == PieceType.Palace)
+          {
+            _selectedRoyalIndex = GetNextSelectableRoyalIndex(_selectedRoyalIndex, 1);
+            return;
+          }
           Team setupTeam = _teams.Find(team => team.TeamName == _setupTeam);
           setupTeam.ChooseRoyal(royal.Type);
           pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam));
@@ -2773,7 +2939,11 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.GameOver:
-        if (GetTitleButtonBounds(3).Contains(mousePosition))
+        if (GetTitleButtonBounds(2).Contains(mousePosition))
+        {
+          ReturnToTitle();
+        }
+        else if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
           Exit();
         }
@@ -2819,6 +2989,59 @@ internal sealed class Game1 : Game
     }
 
     throw new InvalidOperationException("Could not find an empty royal spawn square.");
+  }
+
+  private int GetNextSelectableRoyalIndex(int currentIndex, int direction)
+  {
+    for (int offset = 1; offset <= PieceDefinitions.Royals.Length; offset++)
+    {
+      int index = (currentIndex + direction * offset + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
+      if (_gameMode != GameMode.Escort || PieceDefinitions.Royals[index].Type != PieceType.Palace)
+      {
+        return index;
+      }
+    }
+
+    return currentIndex;
+  }
+
+  private void NavigateSetupBack()
+  {
+    switch (_setupStage)
+    {
+      case SetupStage.Mode:
+        ReturnToTitle();
+        break;
+      case SetupStage.Battlefield:
+        _setupStage = SetupStage.Mode;
+        break;
+      case SetupStage.Economy:
+        _setupStage = SetupStage.Battlefield;
+        break;
+      case SetupStage.RoyalSelection when _setupTeam == TeamName.Blue:
+        Piece redRoyal = pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.Team == TeamName.Red && piece.Definition.Category == PieceCategory.Royal);
+        if (redRoyal != null)
+        {
+          pieceSetup.RemovePiece(redRoyal);
+          _teams.Find(team => team.TeamName == TeamName.Red).ClearRoyal();
+        }
+        _setupTeam = TeamName.Red;
+        _selectedRoyalIndex = 0;
+        break;
+      default:
+        _setupStage = SetupStage.Economy;
+        break;
+    }
+  }
+
+  private bool IsConquestSquare((int x, int y) position)
+  {
+    int centreX = _board.MinX + _board.BoardArray.GetLength(1) / 2;
+    int centreY = _board.MinY + _board.BoardArray.GetLength(0) / 2;
+    return Math.Abs(position.x - centreX) <= 1 &&
+      Math.Abs(position.y - centreY) <= 1 &&
+      IsBoardCell(position.x - _board.MinX, position.y - _board.MinY);
   }
 
   private Keys GetBinding(BindingAction action)
@@ -2936,7 +3159,7 @@ internal sealed class Game1 : Game
     _ui.CenterText(roomCode, new Rectangle(content.X, content.Y + 94, content.Width, 52), UiTheme.GoldBright, 1.45f);
     _ui.CenterText($"YOU WILL PLAY {team}", new Rectangle(content.X, content.Y + 166, content.Width, 24), UiTheme.TextPrimary, 0.82f);
     _ui.CenterText("Waiting for another player to join...", new Rectangle(content.X, content.Y + 214, content.Width, 22), UiTheme.TextMuted, 0.74f);
-    _ui.CenterText("ESC cancels", new Rectangle(content.X, content.Bottom - 22, content.Width, 18), UiTheme.TextDim, 0.66f);
+    DrawMenuButton(GetOnlineWaitingCancelButtonBounds(), "CANCEL", UiButtonTone.Neutral);
   }
 
   private void DrawOnlineRoyalSelectionScreen()
@@ -2950,6 +3173,7 @@ internal sealed class Game1 : Game
 
     DrawPanel(panel, UiTheme.Panel, teamColour);
     _ui.Text(waitingForOpponent ? "ROYAL CHOSEN" : "CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text(
       waitingForOpponent ? "Waiting for the other player to choose theirs." : "You choose only your own royal. It is placed on your back row.",
       new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
@@ -3020,6 +3244,12 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetSetupPanelBounds();
 
+    if (_setupStage == SetupStage.Mode)
+    {
+      DrawModeSetup(panel);
+      return;
+    }
+
     if (_setupStage == SetupStage.Battlefield)
     {
       DrawBattlefieldSetup(panel);
@@ -3038,6 +3268,7 @@ internal sealed class Game1 : Game
 
     DrawPanel(panel, UiTheme.Panel, teamColour);
     _ui.Text($"{UiText.GetTeamDisplayName(_setupTeam)} CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text("Your royal is placed on the back row.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
@@ -3062,11 +3293,52 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONFIRM", UiButtonTone.Primary);
   }
 
+  private void DrawModeSetup(Rectangle panel)
+  {
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    (string title, string objective, string detail) = _gameMode switch
+    {
+      GameMode.Conquest => (
+        "CONQUEST",
+        "Hold the centre 3 x 3 objective to move the control bar toward your side.",
+        $"Win at {_conquestWinScore} control. Royals may fall without ending the match."
+      ),
+      GameMode.Escort => (
+        "ESCORT",
+        "Get your royal onto the enemy back edge before the opposing royal does.",
+        "A defeated royal respawns at its own back edge. Palace is unavailable."
+      ),
+      _ => (
+        "REGICIDE",
+        "Destroy the opposing royal to win the battle.",
+        "The classic Crown & Siege match."
+      )
+    };
+
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("CHOOSE GAME MODE", new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
+    _ui.Text("Select the victory condition before configuring the battlefield.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
+    _ui.Divider(content, content.Y + 56);
+
+    Rectangle modeCard = new(content.X, content.Y + 86, content.Width, 216);
+    DrawPanel(modeCard, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    _ui.CenterText(title, new Rectangle(modeCard.X, modeCard.Y + 26, modeCard.Width, 34), UiTheme.GoldBright, 1.08f);
+    _ui.CenterText(objective, new Rectangle(modeCard.X + UiTheme.SpaceLg, modeCard.Y + 82, modeCard.Width - UiTheme.SpaceXl * 2, 42), UiTheme.TextPrimary, 0.72f);
+    _ui.CenterText(detail, new Rectangle(modeCard.X + UiTheme.SpaceLg, modeCard.Y + 146, modeCard.Width - UiTheme.SpaceXl * 2, 40), UiTheme.TextMuted, 0.68f);
+    _ui.CenterText($"{(int)_gameMode + 1}/{Enum.GetValues<GameMode>().Length}", new Rectangle(modeCard.X, modeCard.Bottom - 30, modeCard.Width, 18), UiTheme.TextDim, 0.64f);
+
+    DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
+  }
+
   private void DrawBattlefieldSetup(Rectangle panel)
   {
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("BATTLEFIELD SETUP", new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text("Choose the battlefield before setting the match economy.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
@@ -3100,27 +3372,24 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("MATCH ECONOMY", new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text("Set economy and the pre-game purchase phase.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
-    string[] labels =
-    [
-      "Starting cash",
-      "Killer refund",
-      "Defeated team refund",
-      "Buys per buy turn",
-      "Buy turns per team"
+    List<string> labels = [
+      "Starting cash", "Killer refund", "Defeated team refund", "Buys per buy turn", "Buy turns per team"
     ];
-    string[] values =
-    [
-      _startingCash.ToString(),
-      $"{_killerRefundMultiplier:0.0}x",
-      $"{_defeatedTeamRefundMultiplier:0.0}x",
-      _initialBuysPerTurn.ToString(),
-      _initialBuyTurnsPerTeam.ToString()
+    List<string> values = [
+      _startingCash.ToString(), $"{_killerRefundMultiplier:0.0}x", $"{_defeatedTeamRefundMultiplier:0.0}x",
+      _initialBuysPerTurn.ToString(), _initialBuyTurnsPerTeam.ToString()
     ];
+    if (_gameMode == GameMode.Conquest)
+    {
+      labels.Add("Conquest control to win");
+      values.Add(_conquestWinScore.ToString());
+    }
 
-    for (int index = 0; index < labels.Length; index++)
+    for (int index = 0; index < labels.Count; index++)
     {
       Rectangle row = GetEconomyRowBounds(index);
       Rectangle valueBounds = GetEconomyValueBounds(index);
@@ -3132,7 +3401,10 @@ internal sealed class Game1 : Game
       DrawMenuButton(GetEconomyIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
     }
 
-    _ui.Text("Buy turns alternate. A player may stop buying early.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.72f);
+    string economyHint = _gameMode == GameMode.Conquest
+      ? "Conquest control resolves after each team's three actions."
+      : "Buy turns alternate. A player may stop buying early.";
+    _ui.Text(economyHint, new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.72f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 
@@ -3273,10 +3545,17 @@ internal sealed class Game1 : Game
   {
     TeamName winner = _winningTeam ?? TeamName.Red;
     string message = $"{UiText.GetTeamDisplayName(winner)} WINS";
+    string reason = _gameMode switch
+    {
+      GameMode.Conquest => "Their control pushed the conquest bar to its side.",
+      GameMode.Escort => "Their royal reached the opposing back edge.",
+      _ => "The opposing royal has fallen."
+    };
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     Color winnerColour = UiTheme.GetTeamColour(winner);
     _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
-    _ui.CenterText("The opposing royal has fallen.", new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
+    _ui.CenterText(reason, new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
+    DrawMenuButton(GetTitleButtonBounds(2), "RETURN TO TITLE", UiButtonTone.Primary);
     DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);
   }
 
@@ -3307,7 +3586,9 @@ internal sealed class Game1 : Game
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
-    int desiredHeight = _initialBuyPhase == null ? (_onlineClient == null ? 194 : 226) : 260;
+    int desiredHeight = _initialBuyPhase == null
+      ? _gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)
+      : 260;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
     return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
   }
@@ -3437,6 +3718,35 @@ internal sealed class Game1 : Game
       string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
       _ui.Text($"ONLINE  ROOM: {roomCode}", new Vector2(content.X, content.Bottom - 18), UiTheme.Gold, 0.68f);
     }
+
+    if (_gameMode == GameMode.Conquest)
+    {
+      DrawConquestControlBar(new Rectangle(content.X, content.Y + 174, content.Width, 48));
+    }
+  }
+
+  private void DrawConquestControlBar(Rectangle bounds)
+  {
+    _ui.Text("CONQUEST CONTROL", new Vector2(bounds.X, bounds.Y), UiTheme.Gold, 0.7f);
+    Rectangle bar = new(bounds.X, bounds.Y + 22, bounds.Width, 14);
+    DrawPanel(bar, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+
+    int centre = bar.Center.X;
+    int halfWidth = Math.Max(1, bar.Width / 2 - 3);
+    float ratio = MathHelper.Clamp(Math.Abs(_conquestScore) / (float)Math.Max(1, _conquestWinScore), 0f, 1f);
+    int fillWidth = (int)MathF.Round(halfWidth * ratio);
+    if (_conquestScore < 0)
+    {
+      _spriteBatch.Draw(_pixel, new Rectangle(centre - fillWidth, bar.Y + 3, fillWidth, bar.Height - 6), UiTheme.TeamOrange);
+    }
+    else if (_conquestScore > 0)
+    {
+      _spriteBatch.Draw(_pixel, new Rectangle(centre, bar.Y + 3, fillWidth, bar.Height - 6), UiTheme.TeamPurple);
+    }
+
+    _spriteBatch.Draw(_pixel, new Rectangle(centre - 1, bar.Y + 1, 2, bar.Height - 2), UiTheme.GoldBright);
+    _ui.Text($"ORANGE  {Math.Max(0, -_conquestScore)}/{_conquestWinScore}", new Vector2(bounds.X, bounds.Bottom - 10), UiTheme.TeamOrange, 0.54f);
+    _ui.Text($"PURPLE  {Math.Max(0, _conquestScore)}/{_conquestWinScore}", new Vector2(bounds.Right - 104, bounds.Bottom - 10), UiTheme.TeamPurple, 0.54f);
   }
 
   private void DrawSelectedPiecePanel()
@@ -3649,6 +3959,12 @@ internal sealed class Game1 : Game
             Color.Lerp(baseCellColour, territoryColour, territoryTintAmount),
             0.1f
           );
+
+          if (_gameMode == GameMode.Conquest && IsConquestSquare(boardPosition))
+          {
+            DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0.101f);
+            DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0.102f);
+          }
 
           if (_terrain.IsLake(boardPosition))
           {
