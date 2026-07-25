@@ -30,6 +30,8 @@ internal sealed class TerrainGenerationSettings
   internal int MaximumForestClusterSize { get; init; } = 6;
   internal int ForestEdgeClearance { get; init; } = 1;
   internal int ForestInteriorWeightExponent { get; init; } = 2;
+  // Units standing in a forest take this much less damage (minimum damage remains 1).
+  internal int ForestDamageReduction { get; init; } = 3;
 
   // Lakes
   internal int LakeSourceEdgeClearance { get; init; } = 2;
@@ -65,17 +67,20 @@ internal sealed class BattlefieldTerrain
   internal IReadOnlySet<(int x, int y)> Forests => _forests;
   internal IReadOnlySet<(int x, int y)> Lakes => _lakes;
   internal IReadOnlySet<TileEdge> Rivers => _rivers;
+  internal int ForestDamageReduction { get; }
   internal static TerrainGenerationSettings DefaultGenerationSettings { get; } = new();
 
   internal BattlefieldTerrain(
     IEnumerable<(int x, int y)> forests = null,
     IEnumerable<(int x, int y)> lakes = null,
-    IEnumerable<TileEdge> rivers = null
+    IEnumerable<TileEdge> rivers = null,
+    int forestDamageReduction = 3
   )
   {
     _forests = forests == null ? [] : [.. forests];
     _lakes = lakes == null ? [] : [.. lakes];
     _rivers = rivers == null ? [] : [.. rivers];
+    ForestDamageReduction = Math.Max(0, forestDamageReduction);
   }
 
   internal bool IsForest((int x, int y) position) => _forests.Contains(position);
@@ -181,7 +186,7 @@ internal sealed class BattlefieldTerrain
     }
 
     forests.ExceptWith(lakes);
-    return new BattlefieldTerrain(forests, lakes, rivers);
+    return new BattlefieldTerrain(forests, lakes, rivers, settings.ForestDamageReduction);
   }
 
   private static Dictionary<(int x, int y), int> GetEdgeDistances(Board board)

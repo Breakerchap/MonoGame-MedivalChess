@@ -22,17 +22,17 @@ internal sealed class Board
   internal int MinY { get; }
   internal IReadOnlyCollection<(int x, int y)> Cells => _cells;
 
-  internal Board()
+  internal Board(string boardFileName = "board_medium.json")
   {
-    string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", "board.json");
+    string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", boardFileName);
     if (!File.Exists(boardPath))
     {
-      boardPath = Path.Combine(Directory.GetCurrentDirectory(), "GameBoard", "board.json");
+      boardPath = Path.Combine(Directory.GetCurrentDirectory(), "GameBoard", boardFileName);
     }
 
     if (!File.Exists(boardPath))
     {
-      throw new FileNotFoundException("Could not find board.json. Expected at GameBoard/board.json", boardPath);
+      throw new FileNotFoundException($"Could not find {boardFileName}. Expected it at GameBoard/{boardFileName}", boardPath);
     }
 
     string json = File.ReadAllText(boardPath);
@@ -43,7 +43,7 @@ internal sealed class Board
 
     if (data?.Cells == null || data.Cells.Count == 0)
     {
-      throw new InvalidDataException("board.json does not contain any cells.");
+      throw new InvalidDataException($"{boardFileName} does not contain any cells.");
     }
 
     MinX = data.Cells.Min(cell => cell[0]);

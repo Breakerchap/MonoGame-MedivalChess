@@ -32,6 +32,11 @@ internal sealed class Team
     CurrentTurn = TeamName.Red;
   }
 
+  internal static void SetCurrentTurn(TeamName teamName)
+  {
+    CurrentTurn = teamName;
+  }
+
   internal void ChooseRoyal(PieceType royal)
   {
     ChosenRoyal = royal;

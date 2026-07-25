@@ -21,7 +21,7 @@ internal sealed class Piece
   internal Piece MarkedTarget { get; set; }
   internal Piece AttachedTo { get; set; }
   internal AttachmentKind AttachmentKind { get; set; }
-  internal long NextMercenaryBid => (long)LastBid * 2;
+  internal long NextMercenaryBid => (long)LastBid + 10;
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
@@ -379,7 +379,7 @@ internal static class PieceDefinitions
   internal static readonly PieceDefinition King = new(
     PieceType.King,
     PieceCategory.Royal,
-    (1, Shape.Any),
+    (1, Shape.Straight),
     15,
     120,
     (1, 1),

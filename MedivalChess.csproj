@@ -28,7 +28,7 @@
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
   </ItemGroup>
   <ItemGroup> 
-  <None Update="GameBoard\board.json"> 
+  <None Update="GameBoard\board_*.json">
   <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> 
   <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory> 
   </None> 
