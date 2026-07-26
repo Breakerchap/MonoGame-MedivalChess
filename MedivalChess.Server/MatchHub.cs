@@ -51,6 +51,28 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> PurchaseInitialUnit(PurchaseRequest request)
+  {
+    ActionResult result = matches.PurchaseInitialUnit(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
+  public async Task<ActionResult> StopInitialBuying()
+  {
+    ActionResult result = matches.StopInitialBuying(Context.ConnectionId);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public override Task OnDisconnectedAsync(Exception? exception)
   {
     matches.Disconnect(Context.ConnectionId);
@@ -167,6 +189,11 @@ public sealed class MatchStore
         return new(false, "Both players must choose a royal first.", foundMatch.State());
       }
 
+      if (foundMatch.InitialBuy is { IsComplete: false })
+      {
+        return new(false, "Finish the initial buy phase before moving units.", foundMatch.State());
+      }
+
       if (player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "It is not your turn.", foundMatch.State());
@@ -246,6 +273,88 @@ public sealed class MatchStore
       (int x, int y) spawn = NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, width, height);
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), request.RoyalType, player.Team, spawn.x, spawn.y, health));
       player.ChosenRoyal = request.RoyalType;
+      if (foundMatch.MatchReady)
+      {
+        foundMatch.InitialBuy ??= new OpeningBuyPhase(
+          foundMatch.Configuration.InitialBuysPerTurn,
+          foundMatch.Configuration.InitialBuyTurnsPerTeam
+        );
+        foundMatch.CurrentTurn = foundMatch.InitialBuy.CurrentTeam;
+      }
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult PurchaseInitialUnit(string connectionId, PurchaseRequest request)
+  {
+    if (request is null || string.IsNullOrWhiteSpace(request.PieceType))
+    {
+      return new(false, "Choose a unit and placement square.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      OpeningBuyPhase? buyPhase = foundMatch.InitialBuy;
+      if (player is null || buyPhase is null || buyPhase.IsComplete)
+      {
+        return new(false, "The initial buy phase is not active.", foundMatch.State());
+      }
+
+      if (player.Team != buyPhase.CurrentTeam)
+      {
+        return new(false, "It is not your initial buy turn.", foundMatch.State());
+      }
+
+      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit))
+      {
+        return new(false, "That unit is not available during the initial buy phase.", foundMatch.State());
+      }
+
+      if (player.Money < unit.Cost ||
+          !NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, request.X, request.Y, unit.Width, unit.Height) ||
+          foundMatch.Pieces.Any(piece => FootprintsOverlap(piece, request.X, request.Y, unit.Width, unit.Height)))
+      {
+        return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
+      }
+
+      player.Money -= unit.Cost;
+      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
+      buyPhase.RecordPurchase();
+      foundMatch.CurrentTurn = buyPhase.IsComplete ? NetworkTeam.Red : buyPhase.CurrentTeam;
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult StopInitialBuying(string connectionId)
+  {
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      OpeningBuyPhase? buyPhase = foundMatch.InitialBuy;
+      if (player is null || buyPhase is null || buyPhase.IsComplete || player.Team != buyPhase.CurrentTeam)
+      {
+        return new(false, "It is not your initial buy turn.", foundMatch.State());
+      }
+
+      buyPhase.StopCurrentBuyer();
+      foundMatch.CurrentTurn = buyPhase.IsComplete ? NetworkTeam.Red : buyPhase.CurrentTeam;
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -376,6 +485,54 @@ public sealed class MatchStore
     "King", "Princess", "Palace", "Baron", "Emissary"
   };
 
+  private sealed record UnitPurchaseInfo(string Type, int Cost, int Health, int Width = 1, int Height = 1);
+
+  private static bool TryGetPurchasableUnit(string type, out UnitPurchaseInfo unit)
+  {
+    UnitPurchaseInfo? found = type switch
+    {
+      "Soldier" => new(type, 20, 15),
+      "Defender" => new(type, 20, 30),
+      "Archer" => new(type, 25, 10),
+      "Spearman" => new(type, 20, 15),
+      "Knight" => new(type, 40, 25),
+      "Crossbowman" => new(type, 40, 15),
+      "Cavalier" => new(type, 40, 20),
+      "Chariot" => new(type, 35, 25),
+      "Cannon" => new(type, 40, 25, 1, 2),
+      "Spy" => new(type, 35, 15),
+      "Catapult" => new(type, 50, 20, 2, 2),
+      "Teacher" => new(type, 30, 10),
+      "Ox" => new(type, 40, 25),
+      "Engineer" => new(type, 45, 15),
+      "Ballista" => new(type, 55, 20, 2, 2),
+      "Elephant" => new(type, 55, 50, 2, 2),
+      "Guard" => new(type, 25, 25),
+      _ => null
+    };
+    if (found is null)
+    {
+      unit = null!;
+      return false;
+    }
+
+    unit = found;
+    return true;
+  }
+
+  private static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
+  {
+    (int existingWidth, int existingHeight) = existing.Type switch
+    {
+      "Palace" => (3, 2),
+      "Cannon" => (1, 2),
+      "Catapult" or "Ballista" or "Elephant" => (2, 2),
+      _ => (1, 1)
+    };
+    return existing.X < x + width && existing.X + existingWidth > x &&
+      existing.Y < y + height && existing.Y + existingHeight > y;
+  }
+
   private static void ResetTurnActions(Match match, NetworkTeam team)
   {
     for (int index = 0; index < match.Pieces.Count; index++)
@@ -408,6 +565,7 @@ public sealed class MatchStore
     internal PlayerSlot? Guest { get; set; }
     internal List<PlayerSlot> Players => Guest is null ? [Host] : [Host, Guest];
     internal List<NetworkPiece> Pieces { get; } = [];
+    internal OpeningBuyPhase? InitialBuy { get; set; }
     internal NetworkTeam CurrentTurn { get; set; } = NetworkTeam.Red;
     internal long Version { get; set; }
     internal DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
@@ -424,9 +582,81 @@ public sealed class MatchStore
       Configuration,
       Version,
       Guest is null ? 1 : 2,
-      MatchReady
+      MatchReady,
+      InitialBuy?.ToNetworkState()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
+  }
+
+  private sealed class OpeningBuyPhase(int purchasesPerTurn, int buyTurnsPerTeam)
+  {
+    private int _redBuyTurnsUsed;
+    private int _blueBuyTurnsUsed;
+    private bool _redStopped;
+    private bool _blueStopped;
+
+    internal NetworkTeam CurrentTeam { get; private set; } = NetworkTeam.Red;
+    internal int PurchasesThisTurn { get; private set; }
+    internal int PurchasesPerTurn { get; } = Math.Max(1, purchasesPerTurn);
+    internal int BuyTurnsPerTeam { get; } = Math.Max(1, buyTurnsPerTeam);
+    internal bool IsComplete { get; private set; }
+
+    internal void RecordPurchase()
+    {
+      PurchasesThisTurn++;
+      if (PurchasesThisTurn >= PurchasesPerTurn)
+      {
+        FinishCurrentTurn(false);
+      }
+    }
+
+    internal void StopCurrentBuyer() => FinishCurrentTurn(true);
+
+    internal NetworkInitialBuyState ToNetworkState() => new(
+      CurrentTeam,
+      PurchasesThisTurn,
+      PurchasesPerTurn,
+      _redBuyTurnsUsed,
+      _blueBuyTurnsUsed,
+      BuyTurnsPerTeam,
+      _redStopped,
+      _blueStopped,
+      IsComplete
+    );
+
+    private void FinishCurrentTurn(bool stopped)
+    {
+      if (IsComplete)
+      {
+        return;
+      }
+
+      if (CurrentTeam == NetworkTeam.Red)
+      {
+        if (stopped) _redStopped = true; else _redBuyTurnsUsed++;
+      }
+      else
+      {
+        if (stopped) _blueStopped = true; else _blueBuyTurnsUsed++;
+      }
+
+      PurchasesThisTurn = 0;
+      if (!CanKeepBuying(NetworkTeam.Red) && !CanKeepBuying(NetworkTeam.Blue))
+      {
+        IsComplete = true;
+        return;
+      }
+
+      NetworkTeam other = CurrentTeam == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
+      if (CanKeepBuying(other))
+      {
+        CurrentTeam = other;
+      }
+    }
+
+    private bool CanKeepBuying(NetworkTeam team) => team == NetworkTeam.Red
+      ? !_redStopped && _redBuyTurnsUsed < BuyTurnsPerTeam
+      : !_blueStopped && _blueBuyTurnsUsed < BuyTurnsPerTeam;
   }
 }
 
@@ -452,6 +682,33 @@ internal static class NetworkBoardRules
       minX + (boardWidth - width) / 2,
       team == NetworkTeam.Red ? minY + boardHeight - height : minY
     );
+  }
+
+  internal static bool CanPlaceForTeam(
+    NetworkMatchConfiguration configuration,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height
+  )
+  {
+    (int minX, int minY, int boardWidth, int boardHeight) = GetBounds(configuration);
+    int centreRow = boardHeight / 2;
+    int noMansLandHalfHeight = configuration.GameMode == "Conquest" ? 4 : 3;
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    {
+      int arrayY = y + offsetY - minY;
+      bool ownedByTeam = team == NetworkTeam.Red
+        ? arrayY > centreRow + noMansLandHalfHeight
+        : arrayY < centreRow - noMansLandHalfHeight;
+      if (!ownedByTeam)
+      {
+        return false;
+      }
+    }
+
+    return x >= minX && x + width <= minX + boardWidth && y >= minY && y + height <= minY + boardHeight;
   }
 }
 

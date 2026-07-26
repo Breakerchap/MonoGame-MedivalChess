@@ -24,6 +24,27 @@ internal sealed class InitialBuyPhase
     BuyTurnsPerTeam = Math.Max(1, buyTurnsPerTeam);
   }
 
+  internal InitialBuyPhase(
+    int purchasesPerTurn,
+    int buyTurnsPerTeam,
+    TeamName currentTeam,
+    int purchasesThisTurn,
+    int redBuyTurnsUsed,
+    int blueBuyTurnsUsed,
+    bool redStopped,
+    bool blueStopped,
+    bool isComplete
+  ) : this(purchasesPerTurn, buyTurnsPerTeam)
+  {
+    CurrentTeam = currentTeam;
+    PurchasesThisTurn = purchasesThisTurn;
+    _buyTurnsUsed[TeamName.Red] = redBuyTurnsUsed;
+    _buyTurnsUsed[TeamName.Blue] = blueBuyTurnsUsed;
+    if (redStopped) _stoppedTeams.Add(TeamName.Red);
+    if (blueStopped) _stoppedTeams.Add(TeamName.Blue);
+    IsComplete = isComplete;
+  }
+
   internal int GetBuyTurnsUsed(TeamName team) => _buyTurnsUsed[team];
 
   internal bool HasStopped(TeamName team) => _stoppedTeams.Contains(team);

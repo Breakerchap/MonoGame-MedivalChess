@@ -55,6 +55,19 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType));
   }
 
+  internal async Task<ActionResult> PurchaseInitialUnitAsync(string pieceType, int x, int y)
+  {
+    return await _connection.InvokeAsync<ActionResult>(
+      "PurchaseInitialUnit",
+      new PurchaseRequest(pieceType, x, y)
+    );
+  }
+
+  internal async Task<ActionResult> StopInitialBuyingAsync()
+  {
+    return await _connection.InvokeAsync<ActionResult>("StopInitialBuying");
+  }
+
   internal void DrainStates(Action<NetworkGameState> apply, Action<string> reportError = null)
   {
     while (_pendingErrors.TryDequeue(out string error))

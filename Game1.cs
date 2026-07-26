@@ -344,7 +344,7 @@ internal sealed class Game1 : Game
       var targetPosition = (x: boardX, y: boardY);
       Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
 
-      if (_isPurchaseMode && _onlineClient == null)
+      if (_isPurchaseMode)
       {
         if (wasLeftClick)
         {
@@ -511,6 +511,24 @@ internal sealed class Game1 : Game
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
     PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    if (_onlineClient != null)
+    {
+      if (!IsOnlineLocalTurn())
+      {
+        _onlineError = "It is not your initial buy turn.";
+        return;
+      }
+
+      if (definition.Type == PieceType.Mercenary)
+      {
+        Console.WriteLine("Mercenaries are unavailable during the initial buy phase.");
+        return;
+      }
+
+      _ = SendOnlineInitialPurchaseAsync(definition, targetPosition);
+      return;
+    }
+
     Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
     Piece targetPiece = pieceSetup.GetPieceAt(targetPosition);
 
@@ -645,8 +663,21 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    _initialBuyPhase.StopCurrentBuyer();
-    UpdateInitialBuyPhaseState();
+    if (_onlineClient != null)
+    {
+      if (!IsOnlineLocalTurn())
+      {
+        _onlineError = "It is not your initial buy turn.";
+        return false;
+      }
+
+      _ = SendOnlineStopInitialBuyingAsync();
+    }
+    else
+    {
+      _initialBuyPhase.StopCurrentBuyer();
+      UpdateInitialBuyPhaseState();
+    }
     return true;
   }
 
@@ -889,6 +920,43 @@ internal sealed class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlineInitialPurchaseAsync(
+    PieceDefinition definition,
+    (int x, int y) position
+  )
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.PurchaseInitialUnitAsync(definition.Type.ToString(), position.x, position.y);
+      if (!result.Accepted)
+      {
+        _onlineError = result.Error ?? "That purchase was rejected.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Initial purchase could not be sent: {exception.Message}");
+      _onlineError = "Could not send the initial purchase.";
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineStopInitialBuyingAsync()
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.StopInitialBuyingAsync();
+      if (!result.Accepted)
+      {
+        _onlineError = result.Error ?? "Could not stop buying.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Stop buying could not be sent: {exception.Message}");
+      _onlineError = "Could not stop buying.";
+    }
+  }
+
   private void ApplyOnlineState(NetworkGameState state)
   {
     ApplyOnlineConfiguration(state.Configuration);
@@ -911,6 +979,29 @@ internal sealed class Game1 : Game
         ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
         : $"ONLINE ROYAL SETUP  ROOM: {state.JoinCode}";
       _screen = Screen.OnlineRoyalSelection;
+      return;
+    }
+
+    if (state.InitialBuy is { IsComplete: false } initialBuy)
+    {
+      _initialBuyPhase = new InitialBuyPhase(
+        initialBuy.PurchasesPerTurn,
+        initialBuy.BuyTurnsPerTeam,
+        initialBuy.CurrentTeam == NetworkTeam.Red ? TeamName.Red : TeamName.Blue,
+        initialBuy.PurchasesThisTurn,
+        initialBuy.RedBuyTurnsUsed,
+        initialBuy.BlueBuyTurnsUsed,
+        initialBuy.RedStopped,
+        initialBuy.BlueStopped,
+        initialBuy.IsComplete
+      );
+      Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
+      selectedPiece = null;
+      _isPurchaseMode = true;
+      _onlineStatus = $"ONLINE INITIAL PURCHASE  ROOM: {state.JoinCode}";
+      _onlineWaitingForOpponent = false;
+      _onlineRoyalChoicePending = false;
+      _screen = Screen.Playing;
       return;
     }
 
@@ -2835,6 +2926,16 @@ internal sealed class Game1 : Game
 
     character = key switch
     {
+      Keys.D0 or Keys.NumPad0 => '0',
+      Keys.D1 or Keys.NumPad1 => '1',
+      Keys.D2 or Keys.NumPad2 => '2',
+      Keys.D3 or Keys.NumPad3 => '3',
+      Keys.D4 or Keys.NumPad4 => '4',
+      Keys.D5 or Keys.NumPad5 => '5',
+      Keys.D6 or Keys.NumPad6 => '6',
+      Keys.D7 or Keys.NumPad7 => '7',
+      Keys.D8 or Keys.NumPad8 => '8',
+      Keys.D9 or Keys.NumPad9 => '9',
       Keys.OemPeriod => '.',
       Keys.OemMinus => '-',
       Keys.OemSemicolon => shiftHeld ? ':' : ';',

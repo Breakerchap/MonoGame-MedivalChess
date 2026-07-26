@@ -33,6 +33,18 @@ public sealed record NetworkMatchConfiguration(
   int ConquestWinScore
 );
 
+public sealed record NetworkInitialBuyState(
+  NetworkTeam CurrentTeam,
+  int PurchasesThisTurn,
+  int PurchasesPerTurn,
+  int RedBuyTurnsUsed,
+  int BlueBuyTurnsUsed,
+  int BuyTurnsPerTeam,
+  bool RedStopped,
+  bool BlueStopped,
+  bool IsComplete
+);
+
 public sealed record NetworkGameState(
   string JoinCode,
   NetworkTeam CurrentTurn,
@@ -41,7 +53,8 @@ public sealed record NetworkGameState(
   NetworkMatchConfiguration Configuration,
   long Version,
   int PlayerCount,
-  bool MatchReady
+  bool MatchReady,
+  NetworkInitialBuyState? InitialBuy = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
@@ -49,6 +62,8 @@ public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
 public sealed record JoinGameRequest(string JoinCode, string? ReconnectToken = null);
 
 public sealed record MoveRequest(string PieceId, int ToX, int ToY);
+
+public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
 public sealed record RoyalSelectionRequest(string RoyalType);
 

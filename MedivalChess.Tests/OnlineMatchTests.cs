@@ -113,6 +113,8 @@ public sealed class OnlineMatchTests
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    Assert.True(matches.StopInitialBuying(redConnection).Accepted);
+    Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
     NetworkPiece redKing = ready.State!.Pieces.Single(piece => piece.Team == NetworkTeam.Red);
 
     ActionResult wrongOwner = matches.TryMove(blueConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
@@ -138,5 +140,33 @@ public sealed class OnlineMatchTests
     Assert.False(firstAttempt.Accepted);
     Assert.False(secondAttempt.Accepted);
     Assert.Contains("half a second", secondAttempt.Error!);
+  }
+
+  [Fact]
+  public void InitialBuyPhaseAlternatesPurchasesAndStartsTheMatchAfterStopping()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
+    {
+      InitialBuysPerTurn = 1,
+      InitialBuyTurnsPerTeam = 1,
+      StartingCash = 100
+    }));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+    Assert.True(ready.State!.InitialBuy is { IsComplete: false });
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    ActionResult redPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Soldier", 0, 8));
+    ActionResult bluePurchase = matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Archer", 0, -8));
+
+    Assert.True(guest.Accepted);
+    Assert.True(redPurchase.Accepted);
+    Assert.True(bluePurchase.Accepted);
+    Assert.True(bluePurchase.State!.InitialBuy!.IsComplete);
+    Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+    Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Archer" && piece.Team == NetworkTeam.Blue);
   }
 }

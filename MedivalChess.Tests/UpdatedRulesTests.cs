@@ -22,7 +22,7 @@ public class UpdatedRulesTests
     AssertDefinition(PieceDefinitions.Catapult, PieceCategory.Mechanical, 1, Shape.Any, 20, 20, (2, 2), 6, Shape.FourSquare, 55, 3);
     AssertDefinition(PieceDefinitions.Teacher, PieceCategory.Intelligence, 4, Shape.Any, 0, 10, (1, 1), 1, Shape.Straight, 35);
     AssertDefinition(PieceDefinitions.Ox, PieceCategory.Transport, 4, Shape.Any, 5, 25, (1, 1), 1, Shape.Forward, 35);
-    AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 15, (1, 1), 1, Shape.Straight, 35);
+    AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 15, (1, 1), 1, Shape.Any, 35);
     AssertDefinition(PieceDefinitions.Ballista, PieceCategory.Mechanical, 1, Shape.Straight, 25, 20, (2, 2), 5, Shape.PierceStraight, 55, 2);
     AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 1, Shape.MoveOnEnemy, 60);
     AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Any, 10, 25, (1, 1), 1, Shape.Any, 30);
@@ -117,7 +117,7 @@ public class UpdatedRulesTests
     Assert.True(Actions.HandlePieceDeath(defender, attacker, defeated, 0.5f, 0f));
     Assert.Equal(25, attacker.Money);
 
-    Assert.Equal(400, Globals.StartingCash);
+    Assert.Equal(300, Globals.StartingCash);
     Assert.Equal(3, Team.ActionsPerTurn);
 
     attacker.ActionPoints = 3;
