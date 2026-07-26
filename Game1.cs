@@ -155,7 +155,7 @@ internal sealed class Game1 : Game
   private Keys _buyKey = Keys.B;
   private OnlineMatchClient _onlineClient;
   private string _onlineStatus = "OFFLINE";
-  private string _onlineServerUrl = "http://localhost:5057";
+  private string _onlineServerUrl = "https://crown-and-siege-server.onrender.com";
   private string _onlineJoinCode = string.Empty;
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
   private bool _onlineWaitingForOpponent;
@@ -994,7 +994,6 @@ internal sealed class Game1 : Game
     ApplyOnlineConfiguration(state.Configuration);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlinePieces(state.Pieces);
-    BeginOnlineMovementAnimation(state.Pieces, previousPositions);
 
     if (_onlineWaitingForOpponent && state.PlayerCount < 2)
     {
@@ -1035,18 +1034,19 @@ internal sealed class Game1 : Game
       _onlineWaitingForOpponent = false;
       _onlineRoyalChoicePending = false;
       _screen = Screen.Playing;
+      _movementAnimation = null;
       return;
     }
 
     Team.SetCurrentTurn(state.CurrentTurn == NetworkTeam.Red ? TeamName.Red : TeamName.Blue);
     selectedPiece = null;
-    _movementAnimation = null;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
     _onlineWaitingForOpponent = false;
     _onlineRoyalChoicePending = false;
     _screen = Screen.Playing;
+    BeginOnlineMovementAnimation(state.Pieces, previousPositions);
   }
 
   private void ApplyOnlineConfiguration(NetworkMatchConfiguration configuration)
