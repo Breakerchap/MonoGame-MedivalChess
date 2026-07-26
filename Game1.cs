@@ -2026,17 +2026,31 @@ internal sealed class Game1 : Game
       {
         Piece = piece,
         StartPosition = previous,
-        Path = BuildOnlineAnimationPath(previous, (networkPiece.X, networkPiece.Y)),
+        Path = BuildOnlineAnimationPath(piece, previous, (networkPiece.X, networkPiece.Y)),
         IsAuthoritativeSnapshot = true
       };
       return;
     }
   }
 
-  private static List<(int x, int y)> BuildOnlineAnimationPath((int x, int y) from, (int x, int y) to)
+  private static List<(int x, int y)> BuildOnlineAnimationPath(
+    Piece piece,
+    (int x, int y) from,
+    (int x, int y) to
+  )
   {
     List<(int x, int y)> path = [];
     (int x, int y) current = from;
+    bool canMoveDiagonally = piece.Definition.Movement.shape is
+      Shape.Any or Shape.AbsoluteStraightOrDiagonal or Shape.ForwardOrForwardDiagonal;
+
+    while (canMoveDiagonally && current.x != to.x && current.y != to.y)
+    {
+      current.x += Math.Sign(to.x - current.x);
+      current.y += Math.Sign(to.y - current.y);
+      path.Add(current);
+    }
+
     while (current.x != to.x)
     {
       current.x += Math.Sign(to.x - current.x);
@@ -2627,7 +2641,8 @@ internal sealed class Game1 : Game
 
   private void DrawWorldPieceText(Matrix cameraTransform, int cellSize)
   {
-    float textRotation = GetBoardRotationAngle();
+    // The board geometry rotates with the camera; labels stay upright for readability.
+    const float textRotation = 0f;
     foreach (Piece piece in pieceSetup.Pieces)
     {
       if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
