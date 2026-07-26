@@ -50,6 +50,11 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("AttemptMove", new MoveRequest(pieceId, x, y));
   }
 
+  internal async Task<ActionResult> AttackAsync(string attackerId, string targetId)
+  {
+    return await _connection.InvokeAsync<ActionResult>("AttemptAttack", new AttackRequest(attackerId, targetId));
+  }
+
   internal async Task<ActionResult> ChooseRoyalAsync(string royalType)
   {
     return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType));

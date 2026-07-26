@@ -40,6 +40,17 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> AttemptAttack(AttackRequest request)
+  {
+    ActionResult result = matches.TryAttack(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public async Task<ActionResult> ChooseRoyal(RoyalSelectionRequest request)
   {
     ActionResult result = matches.ChooseRoyal(Context.ConnectionId, request);
@@ -236,6 +247,75 @@ public sealed class MatchStore
       foundMatch.Pieces[index] = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true };
       SpendAction(foundMatch, player);
 
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult TryAttack(string connectionId, AttackRequest request)
+  {
+    if (request is null || string.IsNullOrWhiteSpace(request.AttackerId) || string.IsNullOrWhiteSpace(request.TargetId))
+    {
+      return new(false, "Choose an attacking unit and an enemy target.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false })
+      {
+        return new(false, "The match is not ready for attacks.", foundMatch.State());
+      }
+
+      if (player is null || player.Team != foundMatch.CurrentTurn)
+      {
+        return new(false, "It is not your turn.", foundMatch.State());
+      }
+
+      int attackerIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.AttackerId);
+      int targetIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.TargetId);
+      if (attackerIndex < 0 || targetIndex < 0)
+      {
+        return new(false, "That unit is no longer on the board.", foundMatch.State());
+      }
+
+      NetworkPiece attacker = foundMatch.Pieces[attackerIndex];
+      NetworkPiece target = foundMatch.Pieces[targetIndex];
+      if (attacker.Team != player.Team || target.Team == player.Team || attacker.HasAttackedThisTurn)
+      {
+        return new(false, "That attack is not available.", foundMatch.State());
+      }
+
+      if (!NetworkAttackRules.IsLegal(attacker, target))
+      {
+        return new(false, "That target is outside the unit's attack pattern.", foundMatch.State());
+      }
+
+      int damage = NetworkAttackRules.GetDamage(attacker.Type);
+      if (damage <= 0)
+      {
+        return new(false, "That unit cannot make a direct attack.", foundMatch.State());
+      }
+
+      foundMatch.Pieces[attackerIndex] = attacker with { HasAttackedThisTurn = true };
+      int remainingHealth = target.Health - damage;
+      if (remainingHealth <= 0)
+      {
+        foundMatch.Pieces.RemoveAt(targetIndex);
+      }
+      else
+      {
+        foundMatch.Pieces[targetIndex] = target with { Health = remainingHealth };
+      }
+
+      SpendAction(foundMatch, player);
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -819,5 +899,55 @@ internal static class NetworkMovementRules
       _ => (2, false)
     };
     return straight ? (dx == 0 || dy == 0) && dx + dy <= range : Math.Max(dx, dy) <= range;
+  }
+}
+
+internal static class NetworkAttackRules
+{
+  private enum Pattern { None, Any, Straight, Forward, ForwardDiagonal }
+
+  internal static int GetDamage(string type) => type switch
+  {
+    "Soldier" => 10, "Defender" => 5, "Archer" => 10, "Scout" => 5,
+    "Spearman" => 15, "Peasant" => 5, "Knight" => 20, "Crossbowman" => 20,
+    "Cavalier" => 15, "Chariot" => 15, "Cannon" => 30, "Catapult" => 20,
+    "Ox" => 5, "Ballista" => 25, "Guard" => 10, "Mercenary" => 25,
+    "Assassin" => 30, "King" => 15, "Princess" => 15, "Baron" => 5, "Emissary" => 5,
+    _ => 0
+  };
+
+  internal static bool IsLegal(NetworkPiece attacker, NetworkPiece target)
+  {
+    (int range, int minimumRange, Pattern pattern) = attacker.Type switch
+    {
+      "Soldier" or "Defender" => (1, 1, Pattern.Straight),
+      "Archer" => (4, 2, Pattern.Any),
+      "Scout" => (1, 1, Pattern.Straight),
+      "Spearman" or "Peasant" => (1, 1, Pattern.ForwardDiagonal),
+      "Knight" or "Cavalier" or "Guard" or "Mercenary" or "Assassin" or "King" or "Baron" or "Emissary" => (1, 1, Pattern.Any),
+      "Crossbowman" or "Princess" => (attacker.Type == "Princess" ? 3 : 3, 1, Pattern.Any),
+      "Chariot" => (1, 1, Pattern.Straight),
+      "Cannon" => (5, 2, Pattern.Straight),
+      "Catapult" => (6, 3, Pattern.Any),
+      "Ox" => (1, 1, Pattern.Forward),
+      "Ballista" => (5, 2, Pattern.Straight),
+      _ => (0, 0, Pattern.None)
+    };
+    int dx = target.X - attacker.X;
+    int dy = target.Y - attacker.Y;
+    int distance = Math.Max(Math.Abs(dx), Math.Abs(dy));
+    if (distance < minimumRange || distance > range)
+    {
+      return false;
+    }
+
+    return pattern switch
+    {
+      Pattern.Any => true,
+      Pattern.Straight => dx == 0 || dy == 0,
+      Pattern.Forward => dx == 0 && dy == (attacker.Team == NetworkTeam.Red ? -distance : distance),
+      Pattern.ForwardDiagonal => dy == (attacker.Team == NetworkTeam.Red ? -distance : distance) && Math.Abs(dx) <= distance,
+      _ => false
+    };
   }
 }

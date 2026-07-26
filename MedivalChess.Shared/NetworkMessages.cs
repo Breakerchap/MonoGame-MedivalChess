@@ -63,6 +63,8 @@ public sealed record JoinGameRequest(string JoinCode, string? ReconnectToken = n
 
 public sealed record MoveRequest(string PieceId, int ToX, int ToY);
 
+public sealed record AttackRequest(string AttackerId, string TargetId);
+
 public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
 public sealed record RoyalSelectionRequest(string RoyalType);

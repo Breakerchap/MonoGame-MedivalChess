@@ -172,8 +172,8 @@ internal sealed class Game1 : Game
     IsMouseVisible = true;
     Window.Title = "Crown & Siege";
 
-    _graphics.PreferredBackBufferWidth = 2560;
-    _graphics.PreferredBackBufferHeight = 1440;
+    _graphics.PreferredBackBufferWidth = 1920;
+    _graphics.PreferredBackBufferHeight = 1080;
 
     Window.AllowUserResizing = true;
   }
@@ -438,8 +438,24 @@ internal sealed class Game1 : Game
             selectedPiece = null;
           }
         }
-        else if (wasRightClick && _onlineClient == null)
+        else if (wasRightClick)
         {
+          if (_onlineClient != null)
+          {
+            bool canSendOnlineAttack =
+              pieceAtTarget is not null &&
+              pieceAtTarget.Team != selectedPiece.Team &&
+              !selectedPiece.HasAttackedThisTurn &&
+              selectedPiece.Definition.Attack > 0 &&
+              Actions.CanAttackSquare(selectedPiece, targetPosition);
+            if (canSendOnlineAttack)
+            {
+              _ = SendOnlineAttackAsync(selectedPiece, pieceAtTarget);
+            }
+            selectedPiece = null;
+          }
+          else
+          {
           int arrayX = targetPosition.x - _board.MinX;
           int arrayY = targetPosition.y - _board.MinY;
 
@@ -500,6 +516,7 @@ internal sealed class Game1 : Game
           }
 
           selectedPiece = null;
+          }
         }
       }
     }
@@ -900,6 +917,23 @@ internal sealed class Game1 : Game
     catch (Exception exception)
     {
       Console.WriteLine($"Move could not be sent: {exception.Message}");
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineAttackAsync(Piece attacker, Piece target)
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.AttackAsync(attacker.NetworkId, target.NetworkId);
+      if (!result.Accepted)
+      {
+        _onlineError = result.Error ?? "That attack was rejected.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Attack could not be sent: {exception.Message}");
+      _onlineError = "Could not send the attack.";
     }
   }
 
