@@ -2641,43 +2641,89 @@ internal sealed class Game1 : Game
 
   private void DrawWorldPieceText(Matrix cameraTransform, int cellSize)
   {
-    // The board geometry rotates with the camera; labels stay upright for readability.
+    // Piece information is a screen-space overlay, so it always reads upright.
     const float textRotation = 0f;
     foreach (Piece piece in pieceSetup.Pieces)
     {
       if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
       {
         Rectangle hostBounds = GetPieceWorldBounds(piece.AttachedTo, cellSize);
-        Rectangle cargoBadge = new(hostBounds.Right - 30, hostBounds.Y + 6, 24, 24);
+        Rectangle hostScreenBounds = GetScreenBounds(hostBounds, cameraTransform);
+        Vector2 cargoAnchor = new(hostScreenBounds.Right - 18, hostScreenBounds.Y + 18);
         DrawRotatedWorldText(
           UiText.BuildPieceLabel(piece.Definition),
-          new Vector2(cargoBadge.Center.X, cargoBadge.Center.Y),
+          cargoAnchor,
           0.48f,
           Vector2.One * 0.5f,
           textRotation,
-          cameraTransform
+          Matrix.Identity
         );
         continue;
       }
 
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
+      Rectangle screenBounds = GetScreenBounds(pieceBounds, cameraTransform);
+      Vector2 screenCenter = new(screenBounds.Center.X, screenBounds.Center.Y);
       DrawRotatedWorldText(
         UiText.BuildPieceLabel(piece.Definition),
-        new Vector2(pieceBounds.Center.X, pieceBounds.Center.Y),
+        screenCenter,
         1f,
         Vector2.One * 0.5f,
         textRotation,
-        cameraTransform
+        Matrix.Identity
       );
       DrawRotatedWorldText(
         $"HP {piece.CurrentHealth}",
-        new Vector2(pieceBounds.Center.X, pieceBounds.Y + 6),
+        new Vector2(screenBounds.Center.X, screenBounds.Y + 6 * _zoom),
         0.6f,
         new Vector2(0.5f, 0f),
         textRotation,
-        cameraTransform
+        Matrix.Identity
+      );
+
+      int healthBarWidth = Math.Max(1, screenBounds.Width - (int)(16 * _zoom));
+      int healthBarHeight = Math.Max(2, (int)(5 * _zoom));
+      Rectangle healthBarBounds = new(
+        screenBounds.X + (int)(8 * _zoom),
+        screenBounds.Bottom - (int)(12 * _zoom),
+        healthBarWidth,
+        healthBarHeight
+      );
+      DrawWorldRectangle(healthBarBounds, UiTheme.Shadow, 0.121f);
+      DrawWorldRectangle(
+        new Rectangle(
+          healthBarBounds.X,
+          healthBarBounds.Y,
+          (int)(healthBarBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+          healthBarBounds.Height
+        ),
+        UiTheme.Health,
+        0.122f
       );
     }
+  }
+
+  private static Rectangle GetScreenBounds(Rectangle worldBounds, Matrix transform)
+  {
+    Vector2[] corners =
+    [
+      Vector2.Transform(new Vector2(worldBounds.Left, worldBounds.Top), transform),
+      Vector2.Transform(new Vector2(worldBounds.Right, worldBounds.Top), transform),
+      Vector2.Transform(new Vector2(worldBounds.Left, worldBounds.Bottom), transform),
+      Vector2.Transform(new Vector2(worldBounds.Right, worldBounds.Bottom), transform)
+    ];
+    float left = corners.Min(corner => corner.X);
+    float right = corners.Max(corner => corner.X);
+    float top = corners.Min(corner => corner.Y);
+    float bottom = corners.Max(corner => corner.Y);
+    int roundedLeft = (int)MathF.Floor(left);
+    int roundedTop = (int)MathF.Floor(top);
+    return new Rectangle(
+      roundedLeft,
+      roundedTop,
+      Math.Max(1, (int)MathF.Ceiling(right) - roundedLeft),
+      Math.Max(1, (int)MathF.Ceiling(bottom) - roundedTop)
+    );
   }
 
   private void DrawRotatedWorldText(
@@ -5076,24 +5122,6 @@ internal sealed class Game1 : Game
       );
 
       DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), 0.111f);
-
-      int pieceHealthBarWidth = pieceBounds.Width - 16;
-      float healthRatio = piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health);
-      DrawWorldRectangle(
-        new Rectangle(pieceBounds.X + 8, pieceBounds.Bottom - 12, pieceHealthBarWidth, 5),
-        UiTheme.Shadow,
-        0.121f
-      );
-      DrawWorldRectangle(
-        new Rectangle(
-          pieceBounds.X + 8,
-          pieceBounds.Bottom - 12,
-          (int)(pieceHealthBarWidth * MathHelper.Clamp(healthRatio, 0f, 1f)),
-          5
-        ),
-        UiTheme.Health,
-        0.122f
-      );
 
     }
 
