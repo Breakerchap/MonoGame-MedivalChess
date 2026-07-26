@@ -62,6 +62,17 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> PurchaseUnit(PurchaseRequest request)
+  {
+    ActionResult result = matches.PurchaseUnit(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public async Task<ActionResult> StopInitialBuying()
   {
     ActionResult result = matches.StopInitialBuying(Context.ConnectionId);
@@ -223,13 +234,7 @@ public sealed class MatchStore
       }
 
       foundMatch.Pieces[index] = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true };
-      player.ActionsRemaining--;
-      if (player.ActionsRemaining <= 0)
-      {
-        player.ActionsRemaining = ActionsPerTurn;
-        foundMatch.CurrentTurn = foundMatch.CurrentTurn == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
-        ResetTurnActions(foundMatch, foundMatch.CurrentTurn);
-      }
+      SpendAction(foundMatch, player);
 
       foundMatch.Version++;
       foundMatch.Touch();
@@ -330,6 +335,55 @@ public sealed class MatchStore
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
       buyPhase.RecordPurchase();
       foundMatch.CurrentTurn = buyPhase.IsComplete ? NetworkTeam.Red : buyPhase.CurrentTeam;
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult PurchaseUnit(string connectionId, PurchaseRequest request)
+  {
+    if (request is null || string.IsNullOrWhiteSpace(request.PieceType))
+    {
+      return new(false, "Choose a unit and placement square.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false })
+      {
+        return new(false, "The opening buy phase must finish first.", foundMatch.State());
+      }
+
+      if (player is null || player.Team != foundMatch.CurrentTurn)
+      {
+        return new(false, "It is not your turn.", foundMatch.State());
+      }
+
+      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit, includeMercenary: true))
+      {
+        return new(false, "That unit is not available for purchase.", foundMatch.State());
+      }
+
+      bool validPlacement = unit.Type == "Mercenary"
+        ? NetworkBoardRules.CanPlaceMercenary(foundMatch.Configuration, request.X, request.Y)
+        : NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, request.X, request.Y, unit.Width, unit.Height);
+      if (player.Money < unit.Cost || !validPlacement ||
+          foundMatch.Pieces.Any(piece => FootprintsOverlap(piece, request.X, request.Y, unit.Width, unit.Height)))
+      {
+        return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
+      }
+
+      player.Money -= unit.Cost;
+      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
+      SpendAction(foundMatch, player);
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -487,7 +541,7 @@ public sealed class MatchStore
 
   private sealed record UnitPurchaseInfo(string Type, int Cost, int Health, int Width = 1, int Height = 1);
 
-  private static bool TryGetPurchasableUnit(string type, out UnitPurchaseInfo unit)
+  private static bool TryGetPurchasableUnit(string type, out UnitPurchaseInfo unit, bool includeMercenary = false)
   {
     UnitPurchaseInfo? found = type switch
     {
@@ -508,6 +562,7 @@ public sealed class MatchStore
       "Ballista" => new(type, 55, 20, 2, 2),
       "Elephant" => new(type, 55, 50, 2, 2),
       "Guard" => new(type, 25, 25),
+      "Mercenary" when includeMercenary => new(type, 45, 20),
       _ => null
     };
     if (found is null)
@@ -543,6 +598,19 @@ public sealed class MatchStore
         match.Pieces[index] = piece with { HasMovedThisTurn = false, HasAttackedThisTurn = false };
       }
     }
+  }
+
+  private static void SpendAction(Match match, PlayerSlot player)
+  {
+    player.ActionsRemaining--;
+    if (player.ActionsRemaining > 0)
+    {
+      return;
+    }
+
+    player.ActionsRemaining = ActionsPerTurn;
+    match.CurrentTurn = match.CurrentTurn == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
+    ResetTurnActions(match, match.CurrentTurn);
   }
 
   private sealed class PlayerSlot(string? connectionId, NetworkTeam team, int money)
@@ -709,6 +777,18 @@ internal static class NetworkBoardRules
     }
 
     return x >= minX && x + width <= minX + boardWidth && y >= minY && y + height <= minY + boardHeight;
+  }
+
+  internal static bool CanPlaceMercenary(NetworkMatchConfiguration configuration, int x, int y)
+  {
+    (int minX, int minY, int boardWidth, int boardHeight) = GetBounds(configuration);
+    int arrayY = y - minY;
+    int centreRow = boardHeight / 2;
+    int noMansLandHalfHeight = configuration.GameMode == "Conquest" ? 4 : 3;
+    bool inNoMansLand = arrayY >= centreRow - noMansLandHalfHeight &&
+      arrayY <= centreRow + noMansLandHalfHeight;
+    bool onEdge = x == minX || x == minX + boardWidth - 1 || y == minY || y == minY + boardHeight - 1;
+    return inNoMansLand && onEdge && Contains(configuration, x, y);
   }
 }
 

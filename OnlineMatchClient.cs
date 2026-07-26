@@ -63,6 +63,11 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     );
   }
 
+  internal async Task<ActionResult> PurchaseUnitAsync(string pieceType, int x, int y)
+  {
+    return await _connection.InvokeAsync<ActionResult>("PurchaseUnit", new PurchaseRequest(pieceType, x, y));
+  }
+
   internal async Task<ActionResult> StopInitialBuyingAsync()
   {
     return await _connection.InvokeAsync<ActionResult>("StopInitialBuying");

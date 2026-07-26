@@ -169,4 +169,27 @@ public sealed class OnlineMatchTests
     Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
     Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Archer" && piece.Team == NetworkTeam.Blue);
   }
+
+  [Fact]
+  public void NormalTurnPurchaseCostsMoneyAndOneAction()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with { StartingCash = 100 }));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess")).Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    Assert.True(matches.StopInitialBuying(redConnection).Accepted);
+    Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
+
+    ActionResult purchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Soldier", 0, 8));
+
+    Assert.True(purchase.Accepted);
+    NetworkTeamState redTeam = purchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red);
+    Assert.Equal(80, redTeam.Money);
+    Assert.Equal(2, redTeam.ActionsRemaining);
+    Assert.Contains(purchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+  }
 }

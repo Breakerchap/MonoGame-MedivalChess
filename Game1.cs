@@ -88,6 +88,8 @@ internal sealed class Game1 : Game
 
     internal Piece Piece { get; init; }
     internal List<(int x, int y)> Path { get; init; }
+    internal (int x, int y) StartPosition { get; init; }
+    internal bool IsAuthoritativeSnapshot { get; init; }
     internal float ElapsedSeconds { get; set; }
     internal float Duration => Path.Count * SecondsPerStep;
   }
@@ -309,7 +311,7 @@ internal sealed class Game1 : Game
       keyboard.IsKeyDown(Keys.Down) &&
       !_previousKeyboardState.IsKeyDown(Keys.Down);
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null && _onlineClient == null)
+    if (wasPurchaseModeToggle && _initialBuyPhase == null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -519,13 +521,20 @@ internal sealed class Game1 : Game
         return;
       }
 
-      if (definition.Type == PieceType.Mercenary)
+      if (_initialBuyPhase != null && definition.Type == PieceType.Mercenary)
       {
         Console.WriteLine("Mercenaries are unavailable during the initial buy phase.");
         return;
       }
 
-      _ = SendOnlineInitialPurchaseAsync(definition, targetPosition);
+      if (_initialBuyPhase != null)
+      {
+        _ = SendOnlineInitialPurchaseAsync(definition, targetPosition);
+      }
+      else
+      {
+        _ = SendOnlinePurchaseAsync(definition, targetPosition);
+      }
       return;
     }
 
@@ -940,6 +949,26 @@ internal sealed class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlinePurchaseAsync(
+    PieceDefinition definition,
+    (int x, int y) position
+  )
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.PurchaseUnitAsync(definition.Type.ToString(), position.x, position.y);
+      if (!result.Accepted)
+      {
+        _onlineError = result.Error ?? "That purchase was rejected.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Purchase could not be sent: {exception.Message}");
+      _onlineError = "Could not send the purchase.";
+    }
+  }
+
   private async System.Threading.Tasks.Task SendOnlineStopInitialBuyingAsync()
   {
     try
@@ -959,9 +988,13 @@ internal sealed class Game1 : Game
 
   private void ApplyOnlineState(NetworkGameState state)
   {
+    Dictionary<string, (int x, int y)> previousPositions = pieceSetup.Pieces
+      .Where(piece => !string.IsNullOrWhiteSpace(piece.NetworkId))
+      .ToDictionary(piece => piece.NetworkId, piece => piece.Position);
     ApplyOnlineConfiguration(state.Configuration);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlinePieces(state.Pieces);
+    BeginOnlineMovementAnimation(state.Pieces, previousPositions);
 
     if (_onlineWaitingForOpponent && state.PlayerCount < 2)
     {
@@ -1965,8 +1998,56 @@ internal sealed class Game1 : Game
     _movementAnimation = new MovementAnimation
     {
       Piece = piece,
-      Path = path
+      Path = path,
+      StartPosition = piece.Position
     };
+  }
+
+  private void BeginOnlineMovementAnimation(
+    IReadOnlyList<NetworkPiece> pieces,
+    IReadOnlyDictionary<string, (int x, int y)> previousPositions
+  )
+  {
+    foreach (NetworkPiece networkPiece in pieces)
+    {
+      if (!previousPositions.TryGetValue(networkPiece.Id, out (int x, int y) previous) ||
+          previous == (networkPiece.X, networkPiece.Y))
+      {
+        continue;
+      }
+
+      Piece piece = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == networkPiece.Id);
+      if (piece is null)
+      {
+        continue;
+      }
+
+      _movementAnimation = new MovementAnimation
+      {
+        Piece = piece,
+        StartPosition = previous,
+        Path = BuildOnlineAnimationPath(previous, (networkPiece.X, networkPiece.Y)),
+        IsAuthoritativeSnapshot = true
+      };
+      return;
+    }
+  }
+
+  private static List<(int x, int y)> BuildOnlineAnimationPath((int x, int y) from, (int x, int y) to)
+  {
+    List<(int x, int y)> path = [];
+    (int x, int y) current = from;
+    while (current.x != to.x)
+    {
+      current.x += Math.Sign(to.x - current.x);
+      path.Add(current);
+    }
+    while (current.y != to.y)
+    {
+      current.y += Math.Sign(to.y - current.y);
+      path.Add(current);
+    }
+    return path;
   }
 
   private void UpdateMovementAnimation(float deltaTime)
@@ -1979,6 +2060,11 @@ internal sealed class Game1 : Game
 
     MovementAnimation completedAnimation = _movementAnimation;
     _movementAnimation = null;
+    if (completedAnimation.IsAuthoritativeSnapshot)
+    {
+      return;
+    }
+
     Piece movedPiece = completedAnimation.Piece;
     (int x, int y) destination = completedAnimation.Path[^1];
 
@@ -2541,7 +2627,7 @@ internal sealed class Game1 : Game
 
   private void DrawWorldPieceText(Matrix cameraTransform, int cellSize)
   {
-    float textRotation = _rotateBoard ? MathHelper.PiOver2 : 0f;
+    float textRotation = GetBoardRotationAngle();
     foreach (Piece piece in pieceSetup.Pieces)
     {
       if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
@@ -2637,7 +2723,7 @@ internal sealed class Game1 : Game
     int segmentIndex = Math.Min((int)pathProgress, _movementAnimation.Path.Count - 1);
     float segmentProgress = MathHelper.Clamp(pathProgress - segmentIndex, 0f, 1f);
     (int x, int y) segmentStart = segmentIndex == 0
-      ? animatedPiece.Position
+      ? _movementAnimation.StartPosition
       : _movementAnimation.Path[segmentIndex - 1];
     (int x, int y) segmentEnd = _movementAnimation.Path[segmentIndex];
     Vector2 animatedPosition = Vector2.Lerp(
@@ -2726,7 +2812,13 @@ internal sealed class Game1 : Game
 
   private Matrix GetBoardRotationTransform()
   {
-    return _rotateBoard ? Matrix.CreateRotationZ(MathHelper.PiOver2) : Matrix.Identity;
+    return Matrix.CreateRotationZ(GetBoardRotationAngle());
+  }
+
+  private float GetBoardRotationAngle()
+  {
+    float teamFacing = _onlineClient?.Team == NetworkTeam.Blue ? MathHelper.Pi : 0f;
+    return teamFacing + (_rotateBoard ? MathHelper.PiOver2 : 0f);
   }
 
   private Rectangle GetTitleButtonBounds(int index)
