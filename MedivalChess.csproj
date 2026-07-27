@@ -5,11 +5,21 @@
     <RollForward>Major</RollForward>
     <PublishReadyToRun>false</PublishReadyToRun>
     <TieredCompilation>false</TieredCompilation>
+    <!-- 1. ADDED: Runtime identifiers to enable cross-compilation target packaging -->
+    <RuntimeIdentifiers>win-x64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
-  <PropertyGroup>
+
+  <!-- 2. MODIFIED: Isolated Windows-only manifest and desktop icon settings -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) or '$(RuntimeIdentifier)' == 'win-x64'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <!-- Optional: If you eventually make an Apple Icon.icns for your Mac dock, target it here -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) or '$(RuntimeIdentifier)' == 'osx-x64' or '$(RuntimeIdentifier)' == 'osx-arm64'">
+    <!-- <ApplicationIcon>Icon.icns</ApplicationIcon> -->
+  </PropertyGroup>
+
   <ItemGroup>
     <None Remove="Icon.ico" />
     <None Remove="Icon.bmp" />
@@ -17,6 +27,7 @@
     <Compile Remove="MedivalChess.Shared\**\*.cs" />
     <Compile Remove="MedivalChess.Server\**\*.cs" />
   </ItemGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Icon.ico">
       <LogicalName>Icon.ico</LogicalName>
@@ -25,18 +36,21 @@
       <LogicalName>Icon.bmp</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
   </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="MedivalChess.Shared\MedivalChess.Shared.csproj" />
   </ItemGroup>
+
   <ItemGroup> 
-  <None Update="GameBoard\board_*.json">
-  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> 
-  <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory> 
-  </None> 
+    <None Update="GameBoard\board_*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> 
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory> 
+    </None> 
   </ItemGroup>
 </Project>
