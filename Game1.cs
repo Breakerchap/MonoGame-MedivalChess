@@ -112,7 +112,7 @@ internal sealed class Game1 : Game
   private const int noMansLandHalfHeight = MatchRules.DefaultNoMansLandHalfHeight;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
-  private const int purchasePanelHeight = 470;
+  private const int purchasePanelHeight = 510;
   private int _terrainSeed;
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
@@ -2835,7 +2835,7 @@ internal sealed class Game1 : Game
     _ui.Text(_initialBuyPhase == null ? "PURCHASE PIECE" : "INITIAL PURCHASE", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Divider(content, content.Y + 30);
 
-    Rectangle previewBounds = new(content.X, content.Y + 46, 88, 88);
+    Rectangle previewBounds = new(content.X, content.Y + 46, panel.Height < 500 ? 76 : 84, panel.Height < 500 ? 76 : 84);
     string label = UiText.BuildPieceLabel(definition);
     _ui.PiecePreview(previewBounds, teamColour, label);
     float detailX = previewBounds.Right + UiTheme.SpaceMd;
@@ -2843,16 +2843,17 @@ internal sealed class Game1 : Game
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
     _ui.Text($"{definition.Cost} GOLD", new Vector2(detailX, previewBounds.Y + 56), UiTheme.Gold, 0.84f);
 
-    Rectangle statGrid = new(content.X, previewBounds.Bottom + UiTheme.SpaceLg, content.Width, 150);
+    const int statHeight = 44;
+    const int statRowGap = 4;
+    Rectangle statGrid = new(content.X, previewBounds.Bottom + UiTheme.SpaceLg, content.Width, statHeight * 3 + statRowGap * 2);
     Rectangle leftColumn = UiLayout.HorizontalSlot(statGrid, 2, 0, UiTheme.SpaceSm);
     Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
-    int statHeight = 44;
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health);
     _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack);
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 52, leftColumn.Width, statHeight), "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 52, rightColumn.Width, statHeight), "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + 104, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + 104, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + statHeight + statRowGap, leftColumn.Width, statHeight), "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + statHeight + statRowGap, rightColumn.Width, statHeight), "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour);
 
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
@@ -2861,7 +2862,26 @@ internal sealed class Game1 : Game
       : _initialBuyPhase != null
         ? $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} bought. Select a square on your side."
         : "Buy, then select a square. Click a rival Mercenary to buy it off.";
-    _ui.Text(purchaseHint, new Vector2(content.X, previousButton.Y - 48), UiTheme.TextMuted, 0.76f);
+    int unitInfoY = statGrid.Bottom + UiTheme.SpaceSm;
+    const float abilityScale = 0.58f;
+    const float hintScale = 0.58f;
+    string abilityText = $"ABILITY: {GetUnitAbilityText(definition.Type)}";
+    int availableInfoHeight = Math.Max(0, previousButton.Y - unitInfoY - UiTheme.SpaceSm);
+    int hintRequiredHeight = _ui.WrappedTextHeight(purchaseHint, content.Width, hintScale);
+    int reservedHintHeight = Math.Min(hintRequiredHeight, Math.Max(0, availableInfoHeight / 3));
+    int abilityHeight = Math.Max(0, availableInfoHeight - reservedHintHeight - UiTheme.SpaceXs);
+    _ui.TextWrapped(
+      abilityText,
+      new Rectangle(content.X, unitInfoY, content.Width, abilityHeight),
+      UiTheme.TextPrimary,
+      abilityScale
+    );
+    _ui.TextWrapped(
+      purchaseHint,
+      new Rectangle(content.X, unitInfoY + abilityHeight + UiTheme.SpaceXs, content.Width, reservedHintHeight),
+      UiTheme.TextMuted,
+      hintScale
+    );
     DrawMenuButton(previousButton, "<", UiButtonTone.Neutral);
     DrawMenuButton(nextButton, ">", UiButtonTone.Neutral);
     DrawMenuButton(
@@ -4423,10 +4443,13 @@ internal sealed class Game1 : Game
 
   private static string GetEncyclopediaAbilityText(PieceType type)
   {
+    return GetUnitAbilityText(type);
+  }
+
+  private static string GetUnitAbilityText(PieceType type)
+  {
     string description = UnitRules.GetAbilityDescription(type.ToString());
-    return string.IsNullOrWhiteSpace(description)
-      ? "Use its movement, attack range, and size to control the battlefield."
-      : description;
+    return string.IsNullOrWhiteSpace(description) ? "No special ability." : description;
   }
 
   private void DrawGameOverScreen()
@@ -4494,7 +4517,7 @@ internal sealed class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int desiredHeight = selectedPiece == null
       ? 124
-      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox ? 438 : 354;
+      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox ? 500 : 400;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
   }
@@ -4502,13 +4525,13 @@ internal sealed class Game1 : Game
   private Rectangle GetOxCargoButtonBounds()
   {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Y + 346, content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 384, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetEngineerAbilityBounds()
   {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Y + 326, content.Width, 82);
+    return new Rectangle(content.X, content.Y + 362, content.Width, 82);
   }
 
   private Rectangle GetEngineerPreviousButtonBounds()
@@ -4714,6 +4737,20 @@ internal sealed class Game1 : Game
     );
     _ui.Text(GetSelectedPieceControlHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.72f);
 
+    int abilityInfoY = rangeRow.Bottom + UiTheme.SpaceMd + 44;
+    int abilityInfoBottom = selectedPiece.Definition.Type switch
+    {
+      PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
+      PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
+      _ => content.Bottom - UiTheme.SpaceSm
+    };
+    _ui.TextWrapped(
+      $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition.Type)}",
+      new Rectangle(content.X, abilityInfoY, content.Width, Math.Max(0, abilityInfoBottom - abilityInfoY)),
+      UiTheme.TextPrimary,
+      0.58f
+    );
+
     if (selectedPiece.Definition.Type == PieceType.Engineer)
     {
       DrawEngineerAbilityControls();
@@ -4726,7 +4763,6 @@ internal sealed class Game1 : Game
       return;
     }
 
-    _ui.Text(GetSelectedPieceAbilityHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 44), UiTheme.TextMuted, 0.66f);
   }
 
   private void DrawOxCarryControls()
@@ -4790,17 +4826,6 @@ internal sealed class Game1 : Game
     return piece.Definition.Type is PieceType.Spy or PieceType.Engineer or PieceType.Guard or PieceType.Ox
       ? "RIGHT-CLICK to use special"
       : "RIGHT-CLICK red to attack";
-  }
-
-  private static string GetSelectedPieceAbilityHint(Piece piece)
-  {
-    if (piece.AttachedTo?.Definition.Type == PieceType.Ox &&
-        piece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
-    {
-      return "RIDING: attack normally; moving dismounts you";
-    }
-
-    return UnitRules.GetAbilityDescription(piece.Definition.Type.ToString());
   }
 
   protected override void Draw(GameTime gameTime)

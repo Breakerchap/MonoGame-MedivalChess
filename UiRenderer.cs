@@ -2,6 +2,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using System;
+using System.Collections.Generic;
 
 namespace MedivalChess;
 
@@ -91,6 +92,43 @@ internal sealed class UiRenderer
     _spriteBatch.DrawString(_font, text, position, colour, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
   }
 
+  internal void TextWrapped(string text, Rectangle bounds, Color colour, float scale = 1f)
+  {
+    if (string.IsNullOrWhiteSpace(text) || bounds.Width <= 0 || bounds.Height <= 0)
+    {
+      return;
+    }
+
+    float lineHeight = _font.LineSpacing * scale;
+    float y = bounds.Y;
+    foreach (string line in WrapText(text, bounds.Width, scale))
+    {
+      if (y + lineHeight > bounds.Bottom)
+      {
+        break;
+      }
+
+      Text(line, new Vector2(bounds.X, y), colour, scale);
+      y += lineHeight;
+    }
+  }
+
+  internal int WrappedTextHeight(string text, int maximumWidth, float scale = 1f)
+  {
+    if (string.IsNullOrWhiteSpace(text) || maximumWidth <= 0)
+    {
+      return 0;
+    }
+
+    int lineCount = 0;
+    foreach (string _ in WrapText(text, maximumWidth, scale))
+    {
+      lineCount++;
+    }
+
+    return (int)Math.Ceiling(lineCount * _font.LineSpacing * scale);
+  }
+
   internal void CenterText(string text, Rectangle bounds, Color colour, float scale = 1f)
   {
     Vector2 size = _font.MeasureString(text) * scale;
@@ -125,6 +163,74 @@ internal sealed class UiRenderer
   {
     Panel(bounds, Color.Lerp(teamColour, UiTheme.PanelRaised, 0.25f), Color.Lerp(teamColour, UiTheme.TextPrimary, 0.3f));
     CenterText(label, bounds, UiTheme.TextPrimary);
+  }
+
+  private IEnumerable<string> WrapText(string text, int maximumWidth, float scale)
+  {
+    foreach (string paragraph in text.Split('\n'))
+    {
+      string currentLine = string.Empty;
+      foreach (string word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+      {
+        string candidate = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
+        if (_font.MeasureString(candidate).X * scale <= maximumWidth)
+        {
+          currentLine = candidate;
+          continue;
+        }
+
+        if (!string.IsNullOrEmpty(currentLine))
+        {
+          yield return currentLine;
+          currentLine = string.Empty;
+        }
+
+        if (_font.MeasureString(word).X * scale <= maximumWidth)
+        {
+          currentLine = word;
+          continue;
+        }
+
+        foreach (string fragment in SplitLongWord(word, maximumWidth, scale))
+        {
+          yield return fragment;
+        }
+      }
+
+      if (!string.IsNullOrEmpty(currentLine))
+      {
+        yield return currentLine;
+      }
+    }
+  }
+
+  private IEnumerable<string> SplitLongWord(string word, int maximumWidth, float scale)
+  {
+    if (_font.MeasureString(word).X * scale <= maximumWidth)
+    {
+      yield return word;
+      yield break;
+    }
+
+    string fragment = string.Empty;
+    foreach (char character in word)
+    {
+      string candidate = fragment + character;
+      if (!string.IsNullOrEmpty(fragment) && _font.MeasureString(candidate).X * scale > maximumWidth)
+      {
+        yield return fragment;
+        fragment = character.ToString();
+      }
+      else
+      {
+        fragment = candidate;
+      }
+    }
+
+    if (!string.IsNullOrEmpty(fragment))
+    {
+      yield return fragment;
+    }
   }
 
   private void DrawBorder(Rectangle bounds, Color colour)
