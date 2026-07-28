@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 
 namespace MedivalChess.GameBoard;
 
@@ -55,17 +56,21 @@ internal static class Actions
 
   internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)
   {
-    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    if (piece.Definition.AttackShape.shape is Shape.MoveOnEnemy or Shape.None)
     {
       return false;
     }
 
-    List<(int x, int y)> attackOffsets = ValidActionSquares(piece, false);
-
     foreach ((int x, int y) origin in piece.OccupiedSquares())
     {
-      var offset = (x: targetPosition.x - origin.x, y: targetPosition.y - origin.y);
-      if (attackOffsets.Contains(offset))
+      if (UnitRules.CanAttackOffset(
+        ToRuleShape(piece.Definition.AttackShape.shape),
+        piece.Definition.MinimumAttackRange,
+        piece.Definition.AttackShape.range,
+        piece.Team == TeamName.Red ? NetworkTeam.Red : NetworkTeam.Blue,
+        targetPosition.x - origin.x,
+        targetPosition.y - origin.y
+      ))
       {
         return true;
       }
@@ -73,6 +78,17 @@ internal static class Actions
 
     return false;
   }
+
+  private static RuleShape ToRuleShape(Shape shape) => shape switch
+  {
+    Shape.Any => RuleShape.Any,
+    Shape.Straight => RuleShape.Straight,
+    Shape.Forward => RuleShape.Forward,
+    Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
+    Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
+    Shape.PierceStraight => RuleShape.PierceStraight,
+    _ => RuleShape.None
+  };
 
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
@@ -86,7 +102,6 @@ internal static class Actions
         break;
 
       case Shape.Any:
-      case Shape.FourSquare:
         squares = ShapeFuncs.AnyShape(action.range);
         break;
 
@@ -141,14 +156,9 @@ internal static class Actions
   {
     if (piece.CurrentHealth > 0) { return false; }
 
-    attackingTeam.Money += RoundToNearestFive(piece.Definition.Cost * killerRefundMultiplier);
-    defeatedTeam.Money += RoundToNearestFive(piece.Definition.Cost * defeatedTeamRefundMultiplier);
+    attackingTeam.Money += CombatRules.RoundCurrencyToNearestFive(piece.Definition.Cost * killerRefundMultiplier);
+    defeatedTeam.Money += CombatRules.RoundCurrencyToNearestFive(piece.Definition.Cost * defeatedTeamRefundMultiplier);
     return true;
-  }
-
-  private static int RoundToNearestFive(float amount)
-  {
-    return (int)MathF.Round(amount / 5f, MidpointRounding.AwayFromZero) * 5;
   }
 }
 

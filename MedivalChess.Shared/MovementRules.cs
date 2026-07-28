@@ -1,0 +1,71 @@
+namespace MedivalChess.Shared;
+
+/// <summary>Terrain-aware movement search shared by the local client and authoritative server.</summary>
+public static class MovementRules
+{
+  public static Dictionary<(int x, int y), List<(int x, int y)>> FindPaths(
+    UnitRule unit,
+    (int x, int y) origin,
+    NetworkTeam team,
+    Func<(int x, int y), bool> canLand,
+    Func<(int x, int y), (int x, int y), bool> canTravelThrough,
+    Func<(int x, int y), int> landingCost,
+    Func<(int x, int y), (int x, int y), bool> crossesRiver
+  )
+  {
+    Dictionary<(int x, int y), int> bestCosts = new() { [origin] = 0 };
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
+    Queue<MovementState> frontier = new();
+    frontier.Enqueue(new(origin, 0, []));
+
+    while (frontier.TryDequeue(out MovementState? current) && current is not null)
+    {
+      if (current.Cost >= unit.MoveRange) continue;
+
+      foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
+      {
+        int maximumStepDistance = GetMaximumStepDistance(unit, direction);
+        for (int stepDistance = 1; stepDistance <= maximumStepDistance; stepDistance++)
+        {
+          var next = (
+            x: current.Position.x + direction.x * stepDistance,
+            y: current.Position.y + direction.y * stepDistance
+          );
+          if (!canTravelThrough(current.Position, next)) continue;
+
+          int nextCost = crossesRiver(current.Position, next)
+            ? unit.MoveRange
+            : current.Cost + landingCost(next);
+          if (nextCost > unit.MoveRange ||
+              (bestCosts.TryGetValue(next, out int bestCost) && bestCost <= nextCost)) continue;
+
+          List<(int x, int y)> nextPath = [.. current.Path, next];
+          bestCosts[next] = nextCost;
+          if (canLand(next)) paths[next] = nextPath;
+          frontier.Enqueue(new MovementState(next, nextCost, nextPath));
+        }
+      }
+    }
+
+    return paths;
+  }
+
+  public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
+  {
+    RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
+    RuleShape.Any => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
+    RuleShape.Forward => [(0, team == NetworkTeam.Red ? -1 : 1)],
+    RuleShape.ForwardOrForwardDiagonal =>
+      [(0, team == NetworkTeam.Red ? -1 : 1), (-1, team == NetworkTeam.Red ? -1 : 1), (1, team == NetworkTeam.Red ? -1 : 1)],
+    RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
+    _ => []
+  };
+
+  private static int GetMaximumStepDistance(UnitRule unit, (int x, int y) direction)
+  {
+    if (direction.x != 0 && direction.y != 0) return Math.Max(unit.Width, unit.Height);
+    return direction.x != 0 ? unit.Width : unit.Height;
+  }
+
+  private sealed record MovementState((int x, int y) Position, int Cost, List<(int x, int y)> Path);
+}

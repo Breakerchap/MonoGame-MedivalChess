@@ -109,7 +109,7 @@ internal sealed class Game1 : Game
   private readonly Dictionary<(int x, int y), TeamName> _mines = [];
   private readonly HashSet<(int x, int y)> _restoredLakeTiles = [];
   private readonly HashSet<TileEdge> _riverBridges = [];
-  private const int noMansLandHalfHeight = 3;
+  private const int noMansLandHalfHeight = MatchRules.DefaultNoMansLandHalfHeight;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
   private const int purchasePanelHeight = 470;
@@ -120,7 +120,6 @@ internal sealed class Game1 : Game
   private KeyboardState _previousKeyboardState;
   private bool _isPurchaseMode;
   private int _selectedPurchaseIndex;
-  private int _selectedTeacherDefinitionIndex;
   private EngineerAbility _selectedEngineerAbility;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
@@ -137,7 +136,7 @@ internal sealed class Game1 : Game
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
   private GameMode _gameMode = GameMode.Regicide;
-  private int _conquestWinScore = 15;
+  private int _conquestWinScore = MatchRules.DefaultConquestWinScore;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
   private BindingAction? _bindingToChange;
@@ -308,6 +307,23 @@ internal sealed class Game1 : Game
     bool wasNextPurchasePressed =
       keyboard.IsKeyDown(Keys.Down) &&
       !_previousKeyboardState.IsKeyDown(Keys.Down);
+    bool wasSkipTurnPressed =
+      keyboard.IsKeyDown(Keys.Space) &&
+      !_previousKeyboardState.IsKeyDown(Keys.Space);
+
+    if (wasSkipTurnPressed && _screen == Screen.Playing && _initialBuyPhase == null &&
+        _teams.Find(team => team.TeamName == Team.CurrentTurn).ActionPoints < Team.ActionsPerTurn)
+    {
+      if (_onlineClient is null)
+      {
+        _teams.Find(team => team.TeamName == Team.CurrentTurn).ActionPoints = 1;
+        CompleteAction();
+      }
+      else if (IsOnlineLocalTurn())
+      {
+        _ = SendOnlineSkipTurnAsync();
+      }
+    }
 
     if (wasPurchaseModeToggle && _initialBuyPhase == null)
     {
@@ -329,14 +345,12 @@ internal sealed class Game1 : Game
       wasLeftClick && HandlePurchasePanelClick(mouse.Position);
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
-    bool clickedTeacherPanel =
-      wasLeftClick && HandleTeacherChoiceClick(mouse.Position);
     bool clickedEngineerPanel =
       wasLeftClick && HandleEngineerAbilityClick(mouse.Position);
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedTeacherPanel && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -360,7 +374,12 @@ internal sealed class Game1 : Game
       }
       else if (pieceAtTarget == selectedPiece && selectedPiece.Occupies(targetPosition))
       {
-        if (_cavalierAwaitingAttack == selectedPiece)
+        if (_onlineClient != null && selectedPiece.Definition.Type == PieceType.Cavalier &&
+            selectedPiece.HasMovedThisTurn && !selectedPiece.HasAttackedThisTurn)
+        {
+          _ = SendOnlineCompleteCavalierActivationAsync(selectedPiece);
+        }
+        else if (_cavalierAwaitingAttack == selectedPiece)
         {
           CompleteAction();
           _cavalierAwaitingAttack = null;
@@ -387,8 +406,10 @@ internal sealed class Game1 : Game
       }
       else
       {
-        bool usedSpecialAbility = _onlineClient == null && wasRightClick &&
-          TryUseSpecialAbility(selectedPiece, targetPosition, pieceAtTarget, keyboard);
+        bool usedSpecialAbility = wasRightClick &&
+          (_onlineClient is null
+            ? TryUseSpecialAbility(selectedPiece, targetPosition, pieceAtTarget, keyboard)
+            : TrySendOnlineSpecialAbility(selectedPiece, targetPosition, pieceAtTarget));
 
         if (usedSpecialAbility)
         {
@@ -414,12 +435,6 @@ internal sealed class Game1 : Game
 
           if (isBoardCell && TryGetMovementPathAt(selectedPiece, targetPosition, out List<(int x, int y)> path))
           {
-            if (selectedPiece.AttachedTo != null &&
-                selectedPiece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
-            {
-              pieceSetup.Detach(selectedPiece);
-            }
-
             if (_onlineClient != null)
             {
               _ = SendOnlineMoveAsync(selectedPiece, targetPosition);
@@ -427,6 +442,11 @@ internal sealed class Game1 : Game
             }
             else
             {
+              if (selectedPiece.AttachedTo != null &&
+                  selectedPiece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
+              {
+                pieceSetup.Detach(selectedPiece);
+              }
               BeginMovementAnimation(selectedPiece, path);
             }
           }
@@ -441,14 +461,21 @@ internal sealed class Game1 : Game
           if (_onlineClient != null)
           {
             bool canSendOnlineAttack =
-              pieceAtTarget is not null &&
-              pieceAtTarget.Team != selectedPiece.Team &&
+              (pieceAtTarget is not null && pieceAtTarget.Team != selectedPiece.Team ||
+               _barricades.ContainsKey(targetPosition)) &&
               !selectedPiece.HasAttackedThisTurn &&
               selectedPiece.Definition.Attack > 0 &&
               Actions.CanAttackSquare(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
-              _ = SendOnlineAttackAsync(selectedPiece, pieceAtTarget);
+              if (pieceAtTarget is not null)
+              {
+                _ = SendOnlineAttackAsync(selectedPiece, pieceAtTarget);
+              }
+              else
+              {
+                _ = SendOnlineBarricadeAttackAsync(selectedPiece, targetPosition);
+              }
             }
             selectedPiece = null;
           }
@@ -469,18 +496,13 @@ internal sealed class Game1 : Game
               !selectedPiece.HasAttackedThisTurn &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
-              ((selectedPiece.Definition.Attack > 0 &&
-                ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
-                 _barricades.ContainsKey(targetPosition))) ||
-               CanUseAreaAttack(selectedPiece, targetPosition));
+              selectedPiece.Definition.Attack > 0 &&
+              ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
+               _barricades.ContainsKey(targetPosition));
 
             if (isValidAttack)
             {
-              if (selectedPiece.Definition.Type == PieceType.Catapult)
-              {
-                PerformAreaAttack(selectedPiece, targetPosition);
-              }
-              else if (selectedPiece.Definition.Type == PieceType.Ballista)
+              if (selectedPiece.Definition.Type == PieceType.Ballista)
               {
                 PerformPiercingAttack(selectedPiece, targetPosition);
               }
@@ -924,6 +946,62 @@ internal sealed class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlineBarricadeAttackAsync(Piece attacker, (int x, int y) targetPosition)
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.AttackAsync(attacker.NetworkId, null, targetPosition.x, targetPosition.y);
+      if (!result.Accepted) _onlineError = result.Error ?? "That barricade attack was rejected.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Barricade attack could not be sent: {exception.Message}");
+      _onlineError = "Could not send the barricade attack.";
+    }
+  }
+
+  private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
+  {
+    bool isSpecialTarget = actor.Definition.Type switch
+    {
+      PieceType.Spy => target is not null && target.Team != actor.Team,
+      PieceType.Engineer => true,
+      PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
+      _ => false
+    };
+    if (!isSpecialTarget)
+    {
+      return false;
+    }
+
+    string ability = actor.Definition.Type == PieceType.Engineer
+      ? _selectedEngineerAbility.ToString()
+      : string.Empty;
+    _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, targetPosition);
+    return true;
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineSpecialAsync(
+    Piece actor,
+    string ability,
+    string targetId,
+    (int x, int y) targetPosition
+  )
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.SpecialAsync(
+        actor.NetworkId, ability, targetId, targetPosition.x, targetPosition.y
+      );
+      if (!result.Accepted) _onlineError = result.Error ?? "That special action was rejected.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Special action could not be sent: {exception.Message}");
+      _onlineError = "Could not send the special action.";
+    }
+  }
+
   private async System.Threading.Tasks.Task SendOnlineRoyalChoiceAsync()
   {
     if (_onlineClient == null || _onlineRoyalChoicePending)
@@ -1007,6 +1085,34 @@ internal sealed class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlineSkipTurnAsync()
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.SkipTurnAsync();
+      if (!result.Accepted) _onlineError = result.Error ?? "Could not end the turn.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Skip turn could not be sent: {exception.Message}");
+      _onlineError = "Could not end the turn.";
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlineCompleteCavalierActivationAsync(Piece cavalier)
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.CompleteCavalierActivationAsync(cavalier.NetworkId);
+      if (!result.Accepted) _onlineError = result.Error ?? "Could not finish the Cavalier activation.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Cavalier activation could not be completed: {exception.Message}");
+      _onlineError = "Could not finish the Cavalier activation.";
+    }
+  }
+
   private void ApplyOnlineState(NetworkGameState state)
   {
     Dictionary<string, (int x, int y)> previousPositions = pieceSetup.Pieces
@@ -1014,7 +1120,16 @@ internal sealed class Game1 : Game
       .ToDictionary(piece => piece.NetworkId, piece => piece.Position);
     ApplyOnlineConfiguration(state.Configuration);
     ApplyOnlineTeamStates(state.Teams);
+    ApplyOnlineImprovements(state.Improvements);
     ApplyOnlinePieces(state.Pieces);
+    _conquestScore = state.ConquestScore;
+    if (state.Winner is NetworkTeam winner)
+    {
+      _winningTeam = winner == NetworkTeam.Red ? TeamName.Red : TeamName.Blue;
+      _screen = Screen.GameOver;
+      selectedPiece = null;
+      return;
+    }
 
     if (_onlineWaitingForOpponent && state.PlayerCount < 2)
     {
@@ -1124,6 +1239,7 @@ internal sealed class Game1 : Game
   private void ApplyOnlinePieces(IReadOnlyList<NetworkPiece> pieces)
   {
     pieceSetup.ClearPieces();
+    Dictionary<string, Piece> piecesByNetworkId = [];
     foreach (NetworkPiece networkPiece in pieces)
     {
       if (!Enum.TryParse(networkPiece.Type, out PieceType pieceType))
@@ -1146,9 +1262,43 @@ internal sealed class Game1 : Game
         NetworkId = networkPiece.Id,
         CurrentHealth = networkPiece.Health,
         HasMovedThisTurn = networkPiece.HasMovedThisTurn,
-        HasAttackedThisTurn = networkPiece.HasAttackedThisTurn
+        HasAttackedThisTurn = networkPiece.HasAttackedThisTurn,
+        LastBid = networkPiece.LastBid
       };
       pieceSetup.AddPiece(piece);
+      piecesByNetworkId[networkPiece.Id] = piece;
+    }
+
+    foreach (NetworkPiece networkPiece in pieces)
+    {
+      if (!piecesByNetworkId.TryGetValue(networkPiece.Id, out Piece piece)) continue;
+      if (networkPiece.AttachedToId is not null && piecesByNetworkId.TryGetValue(networkPiece.AttachedToId, out Piece host))
+      {
+        piece.AttachedTo = host;
+        piece.AttachmentKind = networkPiece.AttachmentKind switch
+        {
+          NetworkAttachmentKind.Guard => AttachmentKind.Guard,
+          NetworkAttachmentKind.Carried => AttachmentKind.Carried,
+          NetworkAttachmentKind.Towed => AttachmentKind.Towed,
+          _ => AttachmentKind.None
+        };
+      }
+
+      if (networkPiece.MarkedTargetId is not null && piecesByNetworkId.TryGetValue(networkPiece.MarkedTargetId, out Piece markedTarget))
+      {
+        piece.MarkedTarget = markedTarget;
+      }
+    }
+  }
+
+  private void ApplyOnlineImprovements(IReadOnlyList<NetworkImprovement> improvements)
+  {
+    _roads.Clear();
+    _barricades.Clear();
+    foreach (NetworkImprovement improvement in improvements ?? [])
+    {
+      if (improvement.Type == "Road") _roads.Add((improvement.X, improvement.Y));
+      else if (improvement.Type == "Barrier") _barricades[(improvement.X, improvement.Y)] = improvement.Health;
     }
   }
 
@@ -1283,7 +1433,12 @@ internal sealed class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
   {
-    if (!CanPlacePiece(piece.Definition, destination, null, piece))
+    bool canLand = piece.Definition.Type == PieceType.Elephant
+      ? IsFootprintOnBoard(piece.Definition, destination) &&
+        pieceSetup.IsFootprintClear(piece.Definition, destination, piece) &&
+        !OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)
+      : CanPlacePiece(piece.Definition, destination, null, piece);
+    if (!canLand)
     {
       return false;
     }
@@ -1313,7 +1468,10 @@ internal sealed class Game1 : Game
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        if (!IsTraversableTerrainSquare(occupiedSquare))
+        bool terrainBlocks = piece.Definition.Type != PieceType.Elephant && !IsTraversableTerrainSquare(occupiedSquare);
+        bool elephantBarrier = piece.Definition.Type == PieceType.Elephant && _barricades.ContainsKey(occupiedSquare);
+        if (terrainBlocks || elephantBarrier ||
+            !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
         }
@@ -1338,6 +1496,10 @@ internal sealed class Game1 : Game
 
   private int GetMovementCost(Piece piece, (int x, int y) destination)
   {
+    if (piece.Definition.Type == PieceType.Elephant)
+    {
+      return 1;
+    }
     int cost = 0;
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
@@ -1361,6 +1523,10 @@ internal sealed class Game1 : Game
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
+    if (piece.Definition.Type == PieceType.Elephant)
+    {
+      return false;
+    }
     foreach ((int x, int y) fromSquare in OccupiedSquares(piece.Definition, from))
     {
       var toSquare = (
@@ -1567,23 +1733,10 @@ internal sealed class Game1 : Game
 
   private int GetAttackDamage(Piece attacker, Piece target)
   {
-    int damage = attacker.Definition.Attack;
-
-    if (HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team))
-    {
-      damage += 5;
-    }
-
-    foreach (Piece spy in pieceSetup.Pieces)
-    {
-      if (spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target)
-      {
-        damage *= 2;
-        break;
-      }
-    }
-
-    return damage;
+    bool hasBaronBonus = HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team);
+    bool isSpyMarked = pieceSetup.Pieces.Any(spy =>
+      spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target);
+    return CombatRules.CalculateDamage(attacker.Definition.Attack, hasBaronBonus, isSpyMarked, false, false, 0);
   }
 
   private void ResolveDamage(Piece attacker, Piece target, int? damageOverride = null)
@@ -1592,15 +1745,14 @@ internal sealed class Game1 : Game
     Piece damagedPiece = guard ?? target;
     int damage = damageOverride ?? GetAttackDamage(attacker, target);
 
-    if (HasAdjacentPieceOfType(damagedPiece, PieceType.King, damagedPiece.Team))
-    {
-      damage = Math.Max(5, damage - 5);
-    }
-
-    if (IsPieceInForest(damagedPiece))
-    {
-      damage = Math.Max(1, damage - _terrain.ForestDamageReduction);
-    }
+    damage = CombatRules.CalculateDamage(
+      damage,
+      false,
+      false,
+      HasAdjacentPieceOfType(damagedPiece, PieceType.King, damagedPiece.Team),
+      IsPieceInForest(damagedPiece),
+      _terrain.ForestDamageReduction
+    );
 
     damagedPiece.CurrentHealth -= damage;
     foreach (Piece spy in pieceSetup.Pieces)
@@ -1694,33 +1846,6 @@ internal sealed class Game1 : Game
       return true;
     }
 
-    if (actor.Definition.Type == PieceType.Teacher &&
-        targetPiece != null &&
-        targetPiece.Team == actor.Team &&
-        targetPiece.Definition.Category != PieceCategory.Royal &&
-        Actions.CanAttackSquare(actor, targetPosition))
-    {
-      PieceDefinition replacementDefinition = PieceDefinitions.Purchasable[_selectedTeacherDefinitionIndex];
-      Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
-      int conversionCost = Math.Max(0, replacementDefinition.Cost - targetPiece.Definition.Cost);
-      if (replacementDefinition.Category != PieceCategory.Royal &&
-          replacementDefinition.Type != targetPiece.Definition.Type &&
-          team.Money >= conversionCost &&
-          CanPlacePiece(replacementDefinition, targetPiece.Position, null, targetPiece))
-      {
-        float healthPercent = targetPiece.CurrentHealth / (float)Math.Max(1, targetPiece.Definition.Health);
-        Piece replacement = new(replacementDefinition, targetPiece.Position, targetPiece.Team)
-        {
-          CurrentHealth = Math.Max(1, (int)MathF.Ceiling(replacementDefinition.Health * healthPercent))
-        };
-        team.Money -= conversionCost;
-        pieceSetup.ReplacePiece(targetPiece, replacement);
-        Console.WriteLine($"Teacher changed {targetPiece.Definition.Type} into {replacementDefinition.Type}.");
-        CompleteAction();
-        return true;
-      }
-    }
-
     if (actor.Definition.Type == PieceType.Engineer)
     {
       return TryUseEngineerAbility(actor, targetPosition, targetPiece);
@@ -1729,9 +1854,12 @@ internal sealed class Game1 : Game
     if (actor.Definition.Type == PieceType.Guard &&
         targetPiece != null &&
         targetPiece.Team == actor.Team &&
-        targetPiece.Definition.Category != PieceCategory.Royal &&
-        actor.AttachedTo == null &&
-        pieceSetup.GetAttachedPiece(targetPiece, AttachmentKind.Guard) == null &&
+        AbilityRules.CanGuardAttach(
+          UnitRules.GetRequired(actor.Definition.Type.ToString()),
+          UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
+          actor.AttachedTo != null,
+          pieceSetup.GetAttachedPiece(targetPiece, AttachmentKind.Guard) != null
+        ) &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
       pieceSetup.Attach(actor, targetPiece, AttachmentKind.Guard);
@@ -1743,10 +1871,13 @@ internal sealed class Game1 : Game
         targetPiece != null &&
         targetPiece.Team == actor.Team &&
         targetPiece != actor &&
-        targetPiece.AttachedTo == null &&
-        pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) == null &&
-        pieceSetup.GetAttachedPiece(actor, AttachmentKind.Towed) == null &&
-        (targetPiece.Definition.Size == (1, 1) || targetPiece.Definition.Category == PieceCategory.Mechanical) &&
+        AbilityRules.CanOxAttach(
+          UnitRules.GetRequired(actor.Definition.Type.ToString()),
+          UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
+          targetPiece.AttachedTo != null,
+          pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) != null ||
+            pieceSetup.GetAttachedPiece(actor, AttachmentKind.Towed) != null
+        ) &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
       AttachmentKind kind = targetPiece.Definition.Category == PieceCategory.Mechanical
@@ -2126,12 +2257,13 @@ internal sealed class Game1 : Game
         continue;
       }
 
-      bool wasMovedOver = path.Any(step => FootprintsOverlap(
-        attacker.Definition,
-        step,
-        crossedPiece.Definition,
-        crossedPiece.Position
-      ));
+      bool wasMovedOver = AbilityRules.PathOverlapsUnit(
+        UnitRules.GetRequired(attacker.Definition.Type.ToString()),
+        path,
+        UnitRules.GetRequired(crossedPiece.Definition.Type.ToString()),
+        crossedPiece.Position.x,
+        crossedPiece.Position.y
+      );
       if (wasMovedOver && damagedPieces.Add(crossedPiece))
       {
         ResolveDamage(attacker, crossedPiece);
@@ -2189,100 +2321,29 @@ internal sealed class Game1 : Game
     }
   }
 
-  private bool CanUseAreaAttack(Piece piece, (int x, int y) targetPosition)
-  {
-    if (piece.Definition.Type != PieceType.Catapult || !Actions.CanAttackSquare(piece, targetPosition))
-    {
-      return false;
-    }
-
-    for (int y = 0; y < 2; y++)
-    {
-      for (int x = 0; x < 2; x++)
-      {
-        if (!IsBoardCell(targetPosition.x - _board.MinX + x, targetPosition.y - _board.MinY + y))
-        {
-          return false;
-        }
-      }
-    }
-
-    return true;
-  }
-
-  private void PerformAreaAttack(Piece attacker, (int x, int y) targetPosition)
-  {
-    HashSet<Piece> targets = [];
-    for (int y = 0; y < 2; y++)
-    {
-      for (int x = 0; x < 2; x++)
-      {
-        var areaPosition = (x: targetPosition.x + x, y: targetPosition.y + y);
-        if (_barricades.ContainsKey(areaPosition))
-        {
-          DamageBarricade(attacker, areaPosition);
-        }
-
-        Piece target = pieceSetup.GetPieceAt(areaPosition);
-        if (target != null)
-        {
-          targets.Add(target);
-        }
-      }
-    }
-
-    foreach (Piece target in targets)
-    {
-      ResolveDamage(attacker, target);
-    }
-  }
-
   private void PerformPiercingAttack(Piece attacker, (int x, int y) targetPosition)
   {
-    foreach ((int x, int y) origin in attacker.OccupiedSquares())
+    UnitRule ballistaRule = UnitRules.GetRequired(attacker.Definition.Type.ToString());
+    foreach ((int x, int y) position in AbilityRules.GetPiercingRay(
+      ballistaRule,
+      attacker.Position.x,
+      attacker.Position.y,
+      targetPosition.x,
+      targetPosition.y
+    ))
     {
-      int deltaX = targetPosition.x - origin.x;
-      int deltaY = targetPosition.y - origin.y;
-      if ((deltaX == 0 && deltaY == 0) || (deltaX != 0 && deltaY != 0))
+      if (!IsBoardCell(position.x - _board.MinX, position.y - _board.MinY))
       {
-        continue;
+        break;
       }
-
-      int stepX = Math.Sign(deltaX);
-      int stepY = Math.Sign(deltaY);
-      HashSet<Piece> targets = [];
-      for (int distance = 1; distance <= attacker.Definition.AttackShape.range; distance++)
+      if (_barricades.ContainsKey(position))
       {
-        var position = (x: origin.x + stepX * distance, y: origin.y + stepY * distance);
-        if (!IsBoardCell(position.x - _board.MinX, position.y - _board.MinY))
-        {
-          break;
-        }
-
-        if (_barricades.ContainsKey(position))
-        {
-          DamageBarricade(attacker, position);
-          break;
-        }
-
-        if (_terrain.IsForest(position))
-        {
-          break;
-        }
-
-        Piece target = pieceSetup.GetPieceAt(position);
-        if (target != null && target.Team != attacker.Team)
-        {
-          targets.Add(target);
-        }
+        DamageBarricade(attacker, position);
+        break;
       }
-
-      foreach (Piece target in targets)
-      {
-        ResolveDamage(attacker, target);
-      }
-
-      return;
+      if (_terrain.IsForest(position)) break;
+      Piece target = pieceSetup.GetPieceAt(position);
+      if (target != null && target.Team != attacker.Team) ResolveDamage(attacker, target);
     }
   }
 
@@ -2317,9 +2378,20 @@ internal sealed class Game1 : Game
 
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
-    return HasClearDirectAttackPath(attacker, targetPosition) &&
-      HasClearForestPathForRangedAttack(attacker, targetPosition) &&
-      HasClearBarrierPath(attacker, targetPosition);
+    UnitRule rule = UnitRules.GetRequired(attacker.Definition.Type.ToString());
+    return LineOfSightRules.HasClearAttackPath(
+      rule,
+      attacker.OccupiedSquares(),
+      targetPosition,
+      _terrain.IsForest,
+      _barricades.ContainsKey,
+      square =>
+      {
+        Piece blockingPiece = pieceSetup.GetPieceAt(square);
+        return blockingPiece is not null &&
+          !(attacker.Definition.Type == PieceType.Princess && blockingPiece.Team == attacker.Team);
+      }
+    );
   }
 
   private bool HasClearBarrierPath(Piece attacker, (int x, int y) targetPosition)
@@ -2456,22 +2528,8 @@ internal sealed class Game1 : Game
 
   private TeamName? GetSquareOwner(int arrayY)
   {
-    int centreRow = _board.BoardArray.GetLength(0) / 2;
-    int halfHeight = _gameMode == GameMode.Conquest
-      ? noMansLandHalfHeight + 1
-      : noMansLandHalfHeight;
-
-    if (arrayY < centreRow - halfHeight)
-    {
-      return TeamName.Blue;
-    }
-
-    if (arrayY > centreRow + halfHeight)
-    {
-      return TeamName.Red;
-    }
-
-    return null;
+    NetworkTeam? owner = MatchRules.GetTeamForArrayRow(_board, _gameMode.ToString(), arrayY);
+    return owner is NetworkTeam.Red ? TeamName.Red : owner is NetworkTeam.Blue ? TeamName.Blue : null;
   }
 
   private Rectangle GetPurchasePanelBounds()
@@ -2520,28 +2578,6 @@ internal sealed class Game1 : Game
         _isPurchaseMode = !_isPurchaseMode;
         selectedPiece = null;
       }
-    }
-
-    return true;
-  }
-
-  private bool HandleTeacherChoiceClick(Point mousePosition)
-  {
-    if (selectedPiece?.Definition.Type != PieceType.Teacher ||
-        !GetSelectedPiecePanelBounds().Contains(mousePosition))
-    {
-      return false;
-    }
-
-    if (GetTeacherPreviousButtonBounds().Contains(mousePosition))
-    {
-      _selectedTeacherDefinitionIndex =
-        (_selectedTeacherDefinitionIndex - 1 + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
-    }
-    else if (GetTeacherNextButtonBounds().Contains(mousePosition))
-    {
-      _selectedTeacherDefinitionIndex =
-        (_selectedTeacherDefinitionIndex + 1) % PieceDefinitions.Purchasable.Length;
     }
 
     return true;
@@ -3278,7 +3314,7 @@ internal sealed class Game1 : Game
   {
     _terrainSeed = terrainSeed;
     _board = new Board(GetBoardFileName(boardSize));
-    _terrain = BattlefieldTerrain.CreateRandom(_board, terrainSeed, CreateTerrainGenerationSettings(forestDensity, waterwayDensity));
+    _terrain = TerrainRules.Create(_board, terrainSeed, forestDensity.ToString(), waterwayDensity.ToString());
     _roads.Clear();
     _barricades.Clear();
     _mines.Clear();
@@ -3350,11 +3386,10 @@ internal sealed class Game1 : Game
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
-    _selectedTeacherDefinitionIndex = 0;
     _selectedEngineerAbility = EngineerAbility.Road;
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
-    _conquestWinScore = 15;
+    _conquestWinScore = MatchRules.DefaultConquestWinScore;
     _conquestScore = 0;
     _setupTeam = TeamName.Red;
     _selectedRoyalIndex = 0;
@@ -3372,7 +3407,7 @@ internal sealed class Game1 : Game
     _selectedRoyalIndex = 0;
     _setupStage = SetupStage.Mode;
     _gameMode = GameMode.Regicide;
-    _conquestWinScore = 15;
+    _conquestWinScore = MatchRules.DefaultConquestWinScore;
     _conquestScore = 0;
     _selectedBoardSize = BoardSize.Medium;
     _forestDensity = TerrainDensity.Standard;
@@ -3581,6 +3616,11 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.OnlineRoyalSelection:
+        if (_onlineRoyalChoicePending)
+        {
+          break;
+        }
+
         if (GetSetupBackButtonBounds().Contains(mousePosition))
         {
           ReturnToTitle();
@@ -3828,38 +3868,17 @@ internal sealed class Game1 : Game
 
   private (int x, int y) FindRoyalSpawn(TeamName teamName, PieceDefinition definition)
   {
-    int boardHeight = _board.BoardArray.GetLength(0);
-    int firstArrayY = teamName == TeamName.Red
-      ? boardHeight - definition.Size.y
-      : 0;
-    int rowStep = teamName == TeamName.Red ? -1 : 1;
-    int centreX = _board.BoardArray.GetLength(1) / 2;
-
-    for (int rowOffset = 0; rowOffset < boardHeight; rowOffset++)
+    NetworkTeam networkTeam = teamName == TeamName.Red ? NetworkTeam.Red : NetworkTeam.Blue;
+    foreach ((int x, int y) position in MatchRules.GetRoyalSpawnCandidates(
+      _board,
+      networkTeam,
+      definition.Size.x,
+      definition.Size.y
+    ))
     {
-      int arrayY = firstArrayY + rowOffset * rowStep;
-      if (arrayY < 0 || arrayY + definition.Size.y > boardHeight)
+      if (CanPlacePiece(definition, position, teamName))
       {
-        continue;
-      }
-
-      for (int offset = 0; offset < _board.BoardArray.GetLength(1); offset++)
-      {
-        int[] candidateXs = offset == 0
-          ? [centreX]
-          : [centreX - offset, centreX + offset];
-
-        foreach (int arrayX in candidateXs)
-        {
-          if (arrayX >= 0 && arrayX + definition.Size.x <= _board.BoardArray.GetLength(1))
-          {
-            var position = (x: arrayX + _board.MinX, y: arrayY + _board.MinY);
-            if (CanPlacePiece(definition, position, teamName))
-            {
-              return position;
-            }
-          }
-        }
+        return position;
       }
     }
 
@@ -3912,11 +3931,7 @@ internal sealed class Game1 : Game
 
   private bool IsConquestSquare((int x, int y) position)
   {
-    int centreX = _board.MinX + _board.BoardArray.GetLength(1) / 2;
-    int centreY = _board.MinY + _board.BoardArray.GetLength(0) / 2;
-    return Math.Abs(position.x - centreX) <= 1 &&
-      Math.Abs(position.y - centreY) <= 1 &&
-      IsBoardCell(position.x - _board.MinX, position.y - _board.MinY);
+    return MatchRules.IsConquestSquare(_board, position);
   }
 
   private Keys GetBinding(BindingAction action)
@@ -4408,24 +4423,10 @@ internal sealed class Game1 : Game
 
   private static string GetEncyclopediaAbilityText(PieceType type)
   {
-    return type switch
-    {
-      PieceType.Cavalier => "Can move and attack before spending its action.",
-      PieceType.Spy => "Marks an enemy; it takes double damage until attacked.",
-      PieceType.Catapult => "Attacks a four-square area at range.",
-      PieceType.Teacher => "Can convert an adjacent friendly unit.",
-      PieceType.Ox => "Carries one friendly unit or tows one Mechanical unit.",
-      PieceType.Engineer => "Builds a road or 20-health barricade on an adjacent empty square.",
-      PieceType.Ballista => "Its attack pierces enemies in a straight line.",
-      PieceType.Elephant => "May move through enemies, damaging each crossed unit, but must land on empty squares.",
-      PieceType.Guard => "Attaches to a friendly unit and takes damage for it.",
-      PieceType.Mercenary => "Place on a No-Man's-Land edge. An enemy can buy it for its last bid plus 10 gold.",
-      PieceType.King => "Adjacent allies take less damage.",
-      PieceType.Palace => "If destroyed, its owner loses.",
-      PieceType.Baron => "Adjacent allies deal more damage.",
-      PieceType.Emissary => "Moves up to two adjacent 1x1 allies with it.",
-      _ => "Use its movement, attack range, and size to control the battlefield."
-    };
+    string description = UnitRules.GetAbilityDescription(type.ToString());
+    return string.IsNullOrWhiteSpace(description)
+      ? "Use its movement, attack range, and size to control the battlefield."
+      : description;
   }
 
   private void DrawGameOverScreen()
@@ -4493,33 +4494,9 @@ internal sealed class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int desiredHeight = selectedPiece == null
       ? 124
-      : selectedPiece.Definition.Type is PieceType.Teacher or PieceType.Engineer or PieceType.Ox ? 438 : 354;
+      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox ? 438 : 354;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
-  }
-
-  private Rectangle GetTeacherChoiceBounds()
-  {
-    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Y + 326, content.Width, 70);
-  }
-
-  private Rectangle GetTeacherPreviousButtonBounds()
-  {
-    Rectangle row = GetTeacherChoiceBounds();
-    return new Rectangle(row.X, row.Y + 28, 42, 34);
-  }
-
-  private Rectangle GetTeacherNextButtonBounds()
-  {
-    Rectangle row = GetTeacherChoiceBounds();
-    return new Rectangle(row.Right - 42, row.Y + 28, 42, 34);
-  }
-
-  private Rectangle GetTeacherChoiceValueBounds()
-  {
-    Rectangle row = GetTeacherChoiceBounds();
-    return new Rectangle(row.X + 50, row.Y + 28, row.Width - 100, 34);
   }
 
   private Rectangle GetOxCargoButtonBounds()
@@ -4737,12 +4714,6 @@ internal sealed class Game1 : Game
     );
     _ui.Text(GetSelectedPieceControlHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.72f);
 
-    if (selectedPiece.Definition.Type == PieceType.Teacher)
-    {
-      DrawTeacherChoiceControls();
-      return;
-    }
-
     if (selectedPiece.Definition.Type == PieceType.Engineer)
     {
       DrawEngineerAbilityControls();
@@ -4756,20 +4727,6 @@ internal sealed class Game1 : Game
     }
 
     _ui.Text(GetSelectedPieceAbilityHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 44), UiTheme.TextMuted, 0.66f);
-  }
-
-  private void DrawTeacherChoiceControls()
-  {
-    Rectangle row = GetTeacherChoiceBounds();
-    Rectangle choiceValue = GetTeacherChoiceValueBounds();
-    PieceDefinition choice = PieceDefinitions.Purchasable[_selectedTeacherDefinitionIndex];
-
-    _ui.Text("CONVERT ADJACENT FRIENDLY INTO", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
-    DrawMenuButton(GetTeacherPreviousButtonBounds(), "<", UiButtonTone.Neutral);
-    DrawPanel(choiceValue, UiTheme.PanelRaised, UiTheme.Gold);
-    _ui.CenterText($"{choice.Type.ToString().ToUpperInvariant()}  {choice.Cost} GOLD", choiceValue, UiTheme.TextPrimary, 0.7f);
-    DrawMenuButton(GetTeacherNextButtonBounds(), ">", UiButtonTone.Neutral);
-    _ui.Text("RIGHT-CLICK the target to convert it", new Vector2(row.X, row.Bottom + 6), UiTheme.TextMuted, 0.68f);
   }
 
   private void DrawOxCarryControls()
@@ -4830,7 +4787,7 @@ internal sealed class Game1 : Game
       return "MOVE over red squares to attack";
     }
 
-    return piece.Definition.Type is PieceType.Spy or PieceType.Teacher or PieceType.Engineer or PieceType.Guard or PieceType.Ox
+    return piece.Definition.Type is PieceType.Spy or PieceType.Engineer or PieceType.Guard or PieceType.Ox
       ? "RIGHT-CLICK to use special"
       : "RIGHT-CLICK red to attack";
   }
@@ -4843,23 +4800,7 @@ internal sealed class Game1 : Game
       return "RIDING: attack normally; moving dismounts you";
     }
 
-    return piece.Definition.Type switch
-    {
-      PieceType.Cavalier => "SPECIAL: move, then attack before ending activation",
-      PieceType.Spy => "SPECIAL: mark an enemy for double damage until hit",
-      PieceType.Teacher => "SPECIAL: change adjacent friendly unit",
-      PieceType.Ox => "SPECIAL: carry 1x1 or tow Mechanical",
-      PieceType.Engineer => "SPECIAL: build an adjacent road or 20 HP barrier",
-      PieceType.Ballista => "SPECIAL: attack pierces a straight line",
-      PieceType.Elephant => "SPECIAL: move through enemies, dealing 15 damage to each crossed unit",
-      PieceType.Guard => "SPECIAL: attach to protect a friendly unit",
-      PieceType.Mercenary => "SPECIAL: rivals can buy this unit for its last bid +10",
-      PieceType.King => "AURA: adjacent friendlies take 5 less damage",
-      PieceType.Palace => "ROYAL: if destroyed, its owner loses",
-      PieceType.Baron => "AURA: adjacent friendlies deal +5 damage",
-      PieceType.Emissary => "SPECIAL: moves up to two adjacent 1x1 allies",
-      _ => string.Empty
-    };
+    return UnitRules.GetAbilityDescription(piece.Definition.Type.ToString());
   }
 
   protected override void Draw(GameTime gameTime)

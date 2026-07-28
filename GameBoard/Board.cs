@@ -1,4 +1,4 @@
-namespace MedivalChess.GameBoard;
+namespace MedivalChess.Shared;
 
 using System;
 using System.Text.Json;
@@ -13,16 +13,16 @@ internal sealed class BoardData
   public List<int[]> Cells { get; set; } = new();
 }
 
-internal sealed class Board
+public sealed class Board
 {
   private readonly HashSet<(int x, int y)> _cells = [];
 
-  internal int[,] BoardArray { get; }
-  internal int MinX { get; }
-  internal int MinY { get; }
-  internal IReadOnlyCollection<(int x, int y)> Cells => _cells;
+  public int[,] BoardArray { get; }
+  public int MinX { get; }
+  public int MinY { get; }
+  public IReadOnlyCollection<(int x, int y)> Cells => _cells;
 
-  internal Board(string boardFileName = "board_medium.json")
+  public Board(string boardFileName = "board_medium.json")
   {
     string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", boardFileName);
     if (!File.Exists(boardPath))
@@ -36,7 +36,7 @@ internal sealed class Board
     }
 
     string json = File.ReadAllText(boardPath);
-    BoardData data = JsonSerializer.Deserialize<BoardData>(json, new JsonSerializerOptions
+    BoardData? data = JsonSerializer.Deserialize<BoardData>(json, new JsonSerializerOptions
     {
       PropertyNameCaseInsensitive = true
     });
@@ -67,7 +67,7 @@ internal sealed class Board
     }
   }
 
-  internal bool ContainsCell((int x, int y) position)
+  public bool ContainsCell((int x, int y) position)
   {
     return _cells.Contains(position);
   }

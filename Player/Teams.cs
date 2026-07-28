@@ -1,11 +1,12 @@
 namespace MedivalChess.Player;
 
 using MedivalChess.GameBoard;
+using MedivalChess.Shared;
 using System;
 
 internal sealed class Team
 {
-  internal const int ActionsPerTurn = 3;
+  internal const int ActionsPerTurn = MatchRules.ActionsPerTurn;
 
   internal TeamName TeamName { get; }
   internal PieceType? ChosenRoyal { get; private set; }

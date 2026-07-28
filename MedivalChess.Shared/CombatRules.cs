@@ -1,0 +1,83 @@
+namespace MedivalChess.Shared;
+
+public static class CombatRules
+{
+  public static int RoundCurrencyToNearestFive(float amount) =>
+    (int)MathF.Round(amount / 5f, MidpointRounding.AwayFromZero) * 5;
+
+  public static int CalculateDamage(
+    int baseDamage,
+    bool hasBaronBonus,
+    bool isSpyMarked,
+    bool hasKingProtection,
+    bool isInForest,
+    int forestDamageReduction
+  )
+  {
+    int damage = baseDamage + (hasBaronBonus ? 5 : 0);
+    if (isSpyMarked) damage *= 2;
+    if (hasKingProtection) damage = Math.Max(5, damage - 5);
+    return isInForest ? Math.Max(1, damage - forestDamageReduction) : damage;
+  }
+}
+
+public static class LineOfSightRules
+{
+  public static bool HasClearAttackPath(
+    UnitRule attacker,
+    IEnumerable<(int x, int y)> origins,
+    (int x, int y) target,
+    Func<(int x, int y), bool> isForest,
+    Func<(int x, int y), bool> isBarricade,
+    Func<(int x, int y), bool> blocksDirectPath
+  )
+  {
+    bool ranged = attacker.Category == RuleCategory.Ranged ||
+      attacker.Type is "Princess" or "Cannon" or "Ballista";
+
+    foreach ((int x, int y) origin in origins)
+    {
+      int deltaX = target.x - origin.x;
+      int deltaY = target.y - origin.y;
+      if (!UnitRules.CanAttackOffset(
+        attacker.AttackPattern, attacker.MinimumAttackRange, attacker.AttackRange,
+        NetworkTeam.Red, deltaX, deltaY) &&
+        !UnitRules.CanAttackOffset(
+          attacker.AttackPattern, attacker.MinimumAttackRange, attacker.AttackRange,
+          NetworkTeam.Blue, deltaX, deltaY)) continue;
+
+      bool clear = true;
+      foreach ((int x, int y) square in SquaresBetween(origin, target))
+      {
+        if (isBarricade(square) || (ranged && isForest(square)) ||
+            (attacker.AttackPattern == RuleShape.Straight && blocksDirectPath(square)))
+        {
+          clear = false;
+          break;
+        }
+      }
+
+      if (clear) return true;
+    }
+
+    return false;
+  }
+
+  public static IEnumerable<(int x, int y)> SquaresBetween((int x, int y) start, (int x, int y) end)
+  {
+    int x = start.x;
+    int y = start.y;
+    int deltaX = Math.Abs(end.x - start.x);
+    int deltaY = Math.Abs(end.y - start.y);
+    int stepX = Math.Sign(end.x - start.x);
+    int stepY = Math.Sign(end.y - start.y);
+    int error = deltaX - deltaY;
+    while (x != end.x || y != end.y)
+    {
+      int doubledError = error * 2;
+      if (doubledError > -deltaY) { error -= deltaY; x += stepX; }
+      if (doubledError < deltaX) { error += deltaX; y += stepY; }
+      if (x != end.x || y != end.y) yield return (x, y);
+    }
+  }
+}

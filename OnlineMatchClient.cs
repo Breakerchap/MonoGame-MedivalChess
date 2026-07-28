@@ -50,9 +50,23 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("AttemptMove", new MoveRequest(pieceId, x, y));
   }
 
-  internal async Task<ActionResult> AttackAsync(string attackerId, string targetId)
+  internal async Task<ActionResult> AttackAsync(string attackerId, string targetId, int? targetX = null, int? targetY = null)
   {
-    return await _connection.InvokeAsync<ActionResult>("AttemptAttack", new AttackRequest(attackerId, targetId));
+    return await _connection.InvokeAsync<ActionResult>("AttemptAttack", new AttackRequest(attackerId, targetId, targetX, targetY));
+  }
+
+  internal async Task<ActionResult> SpecialAsync(
+    string actorId,
+    string ability,
+    string targetId,
+    int targetX,
+    int targetY
+  )
+  {
+    return await _connection.InvokeAsync<ActionResult>(
+      "AttemptSpecial",
+      new SpecialActionRequest(actorId, ability, targetId, targetX, targetY)
+    );
   }
 
   internal async Task<ActionResult> ChooseRoyalAsync(string royalType)
@@ -76,6 +90,19 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
   internal async Task<ActionResult> StopInitialBuyingAsync()
   {
     return await _connection.InvokeAsync<ActionResult>("StopInitialBuying");
+  }
+
+  internal async Task<ActionResult> SkipTurnAsync()
+  {
+    return await _connection.InvokeAsync<ActionResult>("SkipTurn", new SkipTurnRequest());
+  }
+
+  internal async Task<ActionResult> CompleteCavalierActivationAsync(string pieceId)
+  {
+    return await _connection.InvokeAsync<ActionResult>(
+      "CompleteCavalierActivation",
+      new CompleteCavalierActivationRequest(pieceId)
+    );
   }
 
   internal void DrainStates(Action<NetworkGameState> apply, Action<string> reportError = null)

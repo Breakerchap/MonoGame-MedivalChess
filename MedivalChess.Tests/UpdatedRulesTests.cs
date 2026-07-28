@@ -19,17 +19,21 @@ public class UpdatedRulesTests
     AssertDefinition(PieceDefinitions.Chariot, PieceCategory.Melee, 4, Shape.Straight, 15, 25, (1, 1), 1, Shape.Straight, 40);
     AssertDefinition(PieceDefinitions.Cannon, PieceCategory.Mechanical, 2, Shape.Straight, 30, 25, (1, 2), 5, Shape.Straight, 50, 2);
     AssertDefinition(PieceDefinitions.Spy, PieceCategory.Intelligence, 5, Shape.Any, 0, 10, (1, 1), 3, Shape.Any, 35, 1);
-    AssertDefinition(PieceDefinitions.Catapult, PieceCategory.Mechanical, 1, Shape.Any, 20, 20, (1, 2), 6, Shape.FourSquare, 55, 3);
-    AssertDefinition(PieceDefinitions.Teacher, PieceCategory.Intelligence, 4, Shape.Any, 0, 10, (1, 1), 1, Shape.Straight, 35);
+    AssertDefinition(PieceDefinitions.Catapult, PieceCategory.Mechanical, 1, Shape.Any, 20, 20, (1, 2), 6, Shape.Any, 55, 3);
     AssertDefinition(PieceDefinitions.Ox, PieceCategory.Transport, 4, Shape.Any, 5, 25, (1, 1), 1, Shape.Forward, 35);
     AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 15, (1, 1), 1, Shape.Straight, 35);
     AssertDefinition(PieceDefinitions.Ballista, PieceCategory.Mechanical, 1, Shape.Straight, 25, 20, (2, 2), 5, Shape.PierceStraight, 55, 2);
+<<<<<<< HEAD
     AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 0, Shape.None, 60);
     AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Any, 10, 25, (1, 1), 1, Shape.Any, 35);
+=======
+    AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 2, Shape.Straight, 15, 50, (2, 2), 0, Shape.None, 60, 0);
+    AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Any, 10, 25, (1, 1), 1, Shape.Any, 30);
+>>>>>>> febb4f9 (unify local and online)
     AssertDefinition(PieceDefinitions.Mercenary, PieceCategory.Melee, 3, Shape.Any, 25, 20, (1, 1), 1, Shape.Any, 45);
     AssertDefinition(PieceDefinitions.King, PieceCategory.Royal, 1, Shape.Any, 15, 120, (1, 1), 1, Shape.Any, 0);
     AssertDefinition(PieceDefinitions.Princess, PieceCategory.Royal, 1, Shape.Any, 15, 80, (1, 1), 3, Shape.Any, 0, 1);
-    AssertDefinition(PieceDefinitions.Palace, PieceCategory.Royal, 0, Shape.None, 0, 160, (3, 2), 0, Shape.None, 0);
+    AssertDefinition(PieceDefinitions.Palace, PieceCategory.Royal, 0, Shape.None, 0, 160, (3, 2), 0, Shape.None, 0, 0);
     AssertDefinition(PieceDefinitions.Baron, PieceCategory.Royal, 1, Shape.Any, 5, 100, (1, 1), 1, Shape.Any, 0);
     AssertDefinition(PieceDefinitions.Emissary, PieceCategory.Royal, 3, Shape.Any, 5, 80, (1, 1), 1, Shape.Any, 0);
   }
@@ -137,7 +141,7 @@ public class UpdatedRulesTests
     Assert.DoesNotContain(PieceDefinitions.Mercenary, PieceDefinitions.Royals);
     Assert.Equal(45, mercenary.LastBid);
     Assert.Equal(55, mercenary.NextMercenaryBid);
-    Assert.Equal(23, PieceDefinitions.All.Length);
+    Assert.Equal(22, PieceDefinitions.All.Length);
   }
 
   private static void AssertDefinition(

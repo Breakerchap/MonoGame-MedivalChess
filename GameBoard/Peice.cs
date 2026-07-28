@@ -2,6 +2,7 @@ namespace MedivalChess.GameBoard;
 
 using System.Collections.Generic;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 
 internal enum AttachmentKind
 {
@@ -80,17 +81,28 @@ internal sealed class PieceDefinition
     int minimumAttackRange = 1
   )
   {
+    UnitRule sharedRule = UnitRules.GetRequired(name.ToString());
     Type = name;
-    Category = category;
-    Movement = movement;
-    Attack = attack;
-    Health = health;
-    Size = size;
-    AttackShape = attackShape;
-    Cost = cost;
-    MinimumAttackRange = minimumAttackRange;
+    Category = (PieceCategory)sharedRule.Category;
+    Movement = (sharedRule.MoveRange, ToLocalShape(sharedRule.MovePattern));
+    Attack = sharedRule.Attack;
+    Health = sharedRule.Health;
+    Size = (sharedRule.Width, sharedRule.Height);
+    AttackShape = (sharedRule.AttackRange, ToLocalShape(sharedRule.AttackPattern));
+    Cost = sharedRule.Cost;
+    MinimumAttackRange = sharedRule.MinimumAttackRange;
   }
 
+  private static Shape ToLocalShape(RuleShape shape) => shape switch
+  {
+    RuleShape.Any => Shape.Any,
+    RuleShape.Straight => Shape.Straight,
+    RuleShape.Forward => Shape.Forward,
+    RuleShape.AbsoluteStraightOrDiagonal => Shape.AbsoluteStraightOrDiagonal,
+    RuleShape.ForwardOrForwardDiagonal => Shape.ForwardOrForwardDiagonal,
+    RuleShape.PierceStraight => Shape.PierceStraight,
+    _ => Shape.None
+  };
 }
 
 internal enum Shape
@@ -98,7 +110,7 @@ internal enum Shape
   Any, Straight, Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
-  FourSquare, PierceStraight,
+  PierceStraight,
   MoveOnEnemy, None
 }
 
@@ -107,7 +119,7 @@ internal enum PieceType
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, FieldHospital,
-  Ambulance, Teacher, Ox, Engineer, Ballista,
+  Ambulance, Ox, Engineer, Ballista,
   Elephant, Guard, Mercenary, Assassin,
 
   King, Princess, Palace, Baron, Emissary
@@ -263,7 +275,7 @@ internal static class PieceDefinitions
     20,
     20,
     (1, 2),
-    (6, Shape.FourSquare),
+    (6, Shape.Any),
     55,
     3
   );
@@ -287,17 +299,6 @@ internal static class PieceDefinitions
     10,
     (1, 2),
     (0, Shape.None),
-    35
-  );
-
-  internal static readonly PieceDefinition Teacher = new(
-    PieceType.Teacher,
-    PieceCategory.Intelligence,
-    (4, Shape.Any),
-    0,
-    10,
-    (1, 1),
-    (1, Shape.Straight),
     35
   );
 
@@ -439,7 +440,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Spearman, Knight,
     Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Teacher, Ox, Engineer, Ballista,
+    Catapult, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary, King, Princess,
     Palace, Baron, Emissary
   ];
@@ -448,7 +449,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Scout, Spearman, Peasant,
     Knight, Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, FieldHospital, Ambulance, Teacher, Ox, Engineer,
+    Catapult, FieldHospital, Ambulance, Ox, Engineer,
     Ballista, Elephant, Guard, Mercenary, Assassin,
     King, Princess, Palace, Baron, Emissary
   ];
@@ -457,7 +458,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Spearman, Knight,
     Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Teacher, Ox, Engineer, Ballista,
+    Catapult, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary
   ];
 

@@ -47,7 +47,7 @@ public class UiTextTests
       (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"),
       (PieceDefinitions.Cavalier, "Cv"), (PieceDefinitions.Chariot, "Ch"),
       (PieceDefinitions.Cannon, "Cn"), (PieceDefinitions.Spy, "Sy"),
-      (PieceDefinitions.Catapult, "Ct"), (PieceDefinitions.Teacher, "Te"),
+      (PieceDefinitions.Catapult, "Ct"),
       (PieceDefinitions.Ox, "Ox"), (PieceDefinitions.Engineer, "En"),
       (PieceDefinitions.Ballista, "Bl"), (PieceDefinitions.Elephant, "El"),
       (PieceDefinitions.Guard, "Gd"), (PieceDefinitions.Mercenary, "Mc"),

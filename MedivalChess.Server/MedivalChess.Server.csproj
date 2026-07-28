@@ -7,4 +7,10 @@
   <ItemGroup>
     <ProjectReference Include="..\MedivalChess.Shared\MedivalChess.Shared.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <None Include="..\GameBoard\board_*.json" Link="GameBoard\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
 </Project>

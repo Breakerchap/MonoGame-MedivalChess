@@ -24,7 +24,6 @@ internal static class UiText
       PieceType.Catapult => "Ct",
       PieceType.FieldHospital => "FH",
       PieceType.Ambulance => "Am",
-      PieceType.Teacher => "Te",
       PieceType.Ox => "Ox",
       PieceType.Engineer => "En",
       PieceType.Ballista => "Bl",
@@ -64,7 +63,6 @@ internal static class UiText
       Shape.Forward => "Forward",
       Shape.AbsoluteStraightOrDiagonal => "Line/Diag",
       Shape.ForwardOrForwardDiagonal => "Fwd/Diag",
-      Shape.FourSquare => "4-square",
       Shape.PierceStraight => "Pierce",
       Shape.MoveOnEnemy => "Enemy",
       _ => shape.ToString()
