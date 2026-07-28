@@ -456,66 +456,66 @@ internal sealed class Game1 : Game
           }
           else
           {
-          int arrayX = targetPosition.x - _board.MinX;
-          int arrayY = targetPosition.y - _board.MinY;
+            int arrayX = targetPosition.x - _board.MinX;
+            int arrayY = targetPosition.y - _board.MinY;
 
-          bool isBoardCell =
-            arrayX >= 0 &&
-            arrayX < _board.BoardArray.GetLength(1) &&
-            arrayY >= 0 &&
-            arrayY < _board.BoardArray.GetLength(0) &&
-            _board.BoardArray[arrayY, arrayX] == 1;
+            bool isBoardCell =
+              arrayX >= 0 &&
+              arrayX < _board.BoardArray.GetLength(1) &&
+              arrayY >= 0 &&
+              arrayY < _board.BoardArray.GetLength(0) &&
+              _board.BoardArray[arrayY, arrayX] == 1;
 
-          bool isValidAttack =
-            isBoardCell &&
-            !selectedPiece.HasAttackedThisTurn &&
-            Actions.CanAttackSquare(selectedPiece, targetPosition) &&
-            HasClearAttackPath(selectedPiece, targetPosition) &&
-            ((selectedPiece.Definition.Attack > 0 &&
-              ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
-               _barricades.ContainsKey(targetPosition))) ||
-             CanUseAreaAttack(selectedPiece, targetPosition));
+            bool isValidAttack =
+              isBoardCell &&
+              !selectedPiece.HasAttackedThisTurn &&
+              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              HasClearAttackPath(selectedPiece, targetPosition) &&
+              ((selectedPiece.Definition.Attack > 0 &&
+                ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
+                 _barricades.ContainsKey(targetPosition))) ||
+               CanUseAreaAttack(selectedPiece, targetPosition));
 
-          if (isValidAttack)
-          {
-            if (selectedPiece.Definition.Type == PieceType.Catapult)
+            if (isValidAttack)
             {
-              PerformAreaAttack(selectedPiece, targetPosition);
-            }
-            else if (selectedPiece.Definition.Type == PieceType.Ballista)
-            {
-              PerformPiercingAttack(selectedPiece, targetPosition);
-            }
-            else if (_barricades.ContainsKey(targetPosition))
-            {
-              DamageBarricade(selectedPiece, targetPosition);
-            }
-            else
-            {
-              ResolveDamage(selectedPiece, pieceAtTarget);
+              if (selectedPiece.Definition.Type == PieceType.Catapult)
+              {
+                PerformAreaAttack(selectedPiece, targetPosition);
+              }
+              else if (selectedPiece.Definition.Type == PieceType.Ballista)
+              {
+                PerformPiercingAttack(selectedPiece, targetPosition);
+              }
+              else if (_barricades.ContainsKey(targetPosition))
+              {
+                DamageBarricade(selectedPiece, targetPosition);
+              }
+              else
+              {
+                ResolveDamage(selectedPiece, pieceAtTarget);
+              }
+
+              selectedPiece.HasAttackedThisTurn = true;
+
+              Console.WriteLine(
+                $"Attacked at ({boardX}, {boardY})."
+              );
+
+              if (_screen == Screen.Playing)
+              {
+                CompleteAction();
+              }
+
+              _cavalierAwaitingAttack = null;
             }
 
-            selectedPiece.HasAttackedThisTurn = true;
-
-            Console.WriteLine(
-              $"Attacked at ({boardX}, {boardY})."
-            );
-
-            if (_screen == Screen.Playing)
+            if (_cavalierAwaitingAttack == selectedPiece)
             {
               CompleteAction();
+              _cavalierAwaitingAttack = null;
             }
 
-            _cavalierAwaitingAttack = null;
-          }
-
-          if (_cavalierAwaitingAttack == selectedPiece)
-          {
-            CompleteAction();
-            _cavalierAwaitingAttack = null;
-          }
-
-          selectedPiece = null;
+            selectedPiece = null;
           }
         }
       }

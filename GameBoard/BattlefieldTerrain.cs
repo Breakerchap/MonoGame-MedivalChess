@@ -22,6 +22,10 @@ internal readonly record struct TileEdge((int x, int y) First, (int x, int y) Se
 
 internal sealed class TerrainGenerationSettings
 {
+  // No forest, lake, or river segment may generate within this Manhattan distance
+  // of any possible royal spawn footprint. Set to 0 to protect only spawn squares.
+  internal int RoyalSpawnTerrainClearance { get; init; } = 10;
+
   // Forests
   internal int ForestTilesPerGroup { get; init; } = 90;
   internal int MinimumForestGroups { get; init; } = 4;
@@ -45,8 +49,7 @@ internal sealed class TerrainGenerationSettings
   internal double AdditionalRiverChance { get; init; } = 0.4;
   internal int MinimumRiverLength { get; init; } = 7;
   internal int MinimumRiverSeparation { get; init; } = 4;
-  // Rivers favour side-to-side routes near the battlefield centre, away from royal spawn lanes.
-  internal int RiverRoyalSpawnClearance { get; init; } = 6;
+  // Rivers favour side-to-side routes near the battlefield centre.
   internal int RiverMiddleBandHalfHeight { get; init; } = 5;
   internal int RiverMiddleWeightExponent { get; init; } = 4;
   internal double RiverFarEdgePreference { get; init; } = 0.8;
@@ -113,11 +116,18 @@ internal sealed class BattlefieldTerrain
     }
 
     Dictionary<(int x, int y), int> edgeDistances = GetEdgeDistances(board);
+    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board);
     List<(int x, int y)> protectedInterior = cells
-      .Where(position => edgeDistances[position] >= settings.ForestEdgeClearance)
+      .Where(position =>
+        edgeDistances[position] >= settings.ForestEdgeClearance &&
+        !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance)
+      )
       .ToList();
     List<(int x, int y)> deepInterior = cells
-      .Where(position => edgeDistances[position] >= settings.LakeSourceEdgeClearance)
+      .Where(position =>
+        edgeDistances[position] >= settings.LakeSourceEdgeClearance &&
+        !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance)
+      )
       .ToList();
     if (protectedInterior.Count == 0)
     {
@@ -137,14 +147,13 @@ internal sealed class BattlefieldTerrain
         protectedInterior,
         position => GetInteriorWeight(edgeDistances[position], settings)
       );
-      AddForestCluster(board, random, forests, origin, edgeDistances, settings);
+      AddForestCluster(board, random, forests, origin, edgeDistances, royalSpawns, settings);
     }
 
-    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board);
     List<(int x, int y)> lakeCandidates = (deepInterior.Count > 0 ? deepInterior : protectedInterior)
       .Where(position =>
         !forests.Contains(position) &&
-        !IsNearRoyalSpawn(position, royalSpawns, settings.RiverRoyalSpawnClearance)
+        !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance)
       )
       .ToList();
     int desiredRiverCount =
@@ -177,6 +186,7 @@ internal sealed class BattlefieldTerrain
         origin,
         forests,
         edgeDistances,
+        royalSpawns,
         settings
       );
       if (lake.Count == 0)
@@ -231,11 +241,19 @@ internal sealed class BattlefieldTerrain
   private static List<(int x, int y)> GetRoyalSpawnPositions(Board board)
   {
     int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
-    return
-    [
-      (centreX, board.MinY),
-      (centreX, board.MinY + board.BoardArray.GetLength(0) - 1)
-    ];
+    int topY = board.MinY;
+    int bottomY = board.MinY + board.BoardArray.GetLength(0) - 1;
+    List<(int x, int y)> spawns = [];
+    // Cover the largest possible royal footprint (Palace: 3x2) at either back row.
+    for (int x = centreX - 1; x <= centreX + 1; x++)
+    {
+      spawns.Add((x, topY));
+      spawns.Add((x, topY + 1));
+      spawns.Add((x, bottomY));
+      spawns.Add((x, bottomY - 1));
+    }
+
+    return spawns.Where(board.ContainsCell).Distinct().ToList();
   }
 
   private static (int minX, int maxX, int minY, int maxY) GetBoardBounds(Board board)
@@ -303,6 +321,7 @@ internal sealed class BattlefieldTerrain
     HashSet<(int x, int y)> forests,
     (int x, int y) origin,
     IReadOnlyDictionary<(int x, int y), int> edgeDistances,
+    IReadOnlyList<(int x, int y)> royalSpawns,
     TerrainGenerationSettings settings
   )
   {
@@ -315,6 +334,7 @@ internal sealed class BattlefieldTerrain
         .Where(position =>
           board.ContainsCell(position) &&
           edgeDistances[position] >= settings.ForestEdgeClearance &&
+          !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance) &&
           !cluster.Contains(position)
         )
         .Distinct()
@@ -340,6 +360,7 @@ internal sealed class BattlefieldTerrain
     (int x, int y) origin,
     IReadOnlySet<(int x, int y)> forests,
     IReadOnlyDictionary<(int x, int y), int> edgeDistances,
+    IReadOnlyList<(int x, int y)> royalSpawns,
     TerrainGenerationSettings settings
   )
   {
@@ -352,6 +373,7 @@ internal sealed class BattlefieldTerrain
         .Where(position =>
           board.ContainsCell(position) &&
           edgeDistances[position] >= settings.LakeEdgeClearance &&
+          !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance) &&
           !forests.Contains(position) &&
           !lake.Contains(position)
         )
@@ -383,7 +405,7 @@ internal sealed class BattlefieldTerrain
     List<RiverSegment> outlets = segments
       .Where(segment =>
         sourceLake.Contains(segment.Edge.First) != sourceLake.Contains(segment.Edge.Second) &&
-        !IsNearRoyalSpawn(segment, royalSpawns, settings.RiverRoyalSpawnClearance) &&
+        !IsNearRoyalSpawn(segment, royalSpawns, settings.RoyalSpawnTerrainClearance) &&
         IsFarEnoughFromExistingRivers(segment.Edge, rivers, settings)
       )
       .ToList();
@@ -396,7 +418,7 @@ internal sealed class BattlefieldTerrain
           segment.Edge != outlet.Edge &&
           !allLakes.Contains(segment.Edge.First) &&
           !allLakes.Contains(segment.Edge.Second) &&
-          !IsNearRoyalSpawn(segment, royalSpawns, settings.RiverRoyalSpawnClearance) &&
+          !IsNearRoyalSpawn(segment, royalSpawns, settings.RoyalSpawnTerrainClearance) &&
           IsFarEnoughFromExistingRivers(segment.Edge, rivers, settings)
         )
         .ToList();
@@ -413,7 +435,7 @@ internal sealed class BattlefieldTerrain
           .Where(vertex =>
             IsBoardBoundaryVertex(board, vertex) &&
             IsSideToSideRiverTarget(vertex, bounds, settings) &&
-            !IsNearRoyalSpawn(vertex, royalSpawns, settings.RiverRoyalSpawnClearance) &&
+            !IsNearRoyalSpawn(vertex, royalSpawns, settings.RoyalSpawnTerrainClearance) &&
             (settings.RiverMinimumDetours == 0 ||
               Math.Abs(vertex.y - start.y) >= settings.RiverMinimumDetourLength) &&
             Math.Abs(vertex.y - start.y) <= settings.RiverMaximumDetourLength &&
