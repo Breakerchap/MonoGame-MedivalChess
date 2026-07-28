@@ -77,9 +77,7 @@ internal sealed class Game1 : Game
   private enum EngineerAbility
   {
     Road,
-    Barrier,
-    Mine,
-    Demolish
+    Barrier
   }
 
   private sealed class MovementAnimation
@@ -720,17 +718,6 @@ internal sealed class Game1 : Game
 
       Team.AdvanceTurn();
       ResetPieceTurnActions(Team.CurrentTurn);
-      if (Team.CurrentTurn == TeamName.Red)
-      {
-        foreach (Piece palace in pieceSetup.Pieces)
-        {
-          if (palace.Definition.Type == PieceType.Palace)
-          {
-            Team palaceTeam = _teams.Find(team => team.TeamName == palace.Team);
-            palaceTeam.Money += 10;
-          }
-        }
-      }
     }
   }
 
@@ -1296,11 +1283,6 @@ internal sealed class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
   {
-    if (piece.Definition.Type == PieceType.Elephant)
-    {
-      return IsFootprintOnBoard(piece.Definition, destination);
-    }
-
     if (!CanPlacePiece(piece.Definition, destination, null, piece))
     {
       return false;
@@ -1327,11 +1309,6 @@ internal sealed class Game1 : Game
     (int x, int y) destination
   )
   {
-    if (piece.Definition.Type == PieceType.Elephant)
-    {
-      return IsFootprintOnBoard(piece.Definition, destination);
-    }
-
     foreach ((int x, int y) position in PositionsBetween(from, destination))
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
@@ -1347,6 +1324,11 @@ internal sealed class Game1 : Game
           continue;
         }
 
+        if (piece.Definition.Type == PieceType.Elephant && blockingPiece.Team != piece.Team)
+        {
+          continue;
+        }
+
         return false;
       }
     }
@@ -1356,11 +1338,6 @@ internal sealed class Game1 : Game
 
   private int GetMovementCost(Piece piece, (int x, int y) destination)
   {
-    if (piece.Definition.Type == PieceType.Elephant)
-    {
-      return 1;
-    }
-
     int cost = 0;
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
@@ -1384,11 +1361,6 @@ internal sealed class Game1 : Game
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
-    if (piece.Definition.Type == PieceType.Elephant)
-    {
-      return false;
-    }
-
     foreach ((int x, int y) fromSquare in OccupiedSquares(piece.Definition, from))
     {
       var toSquare = (
@@ -1478,7 +1450,7 @@ internal sealed class Game1 : Game
   {
     HashSet<(int x, int y)> highlightedSquares = [];
     if (piece.HasAttackedThisTurn ||
-        (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy && piece.HasMovedThisTurn))
+        (piece.Definition.Type == PieceType.Elephant && piece.HasMovedThisTurn))
     {
       return highlightedSquares;
     }
@@ -1497,7 +1469,7 @@ internal sealed class Game1 : Game
       return highlightedSquares;
     }
 
-    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    if (piece.Definition.Type == PieceType.Elephant)
     {
       Dictionary<(int x, int y), List<(int x, int y)>> movementPaths = GetMovementPaths(piece);
       foreach (Piece target in pieceSetup.Pieces)
@@ -1560,11 +1532,6 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (piece.Definition.Type == PieceType.Spy)
-    {
-      piece.MarkedTarget = null;
-    }
-
     selectedPiece = piece;
     Console.WriteLine($"Selected {selectedPiece.Team} {selectedPiece.Definition.Type}.");
   }
@@ -1611,7 +1578,7 @@ internal sealed class Game1 : Game
     {
       if (spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target)
       {
-        damage += 10;
+        damage *= 2;
         break;
       }
     }
@@ -1636,6 +1603,13 @@ internal sealed class Game1 : Game
     }
 
     damagedPiece.CurrentHealth -= damage;
+    foreach (Piece spy in pieceSetup.Pieces)
+    {
+      if (spy.MarkedTarget == target)
+      {
+        spy.MarkedTarget = null;
+      }
+    }
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
 
     HandlePieceDestroyed(damagedPiece, attacker.Team);
@@ -1803,8 +1777,6 @@ internal sealed class Game1 : Game
     {
       EngineerAbility.Road => TryBuildRoad(engineer, targetPosition, targetPiece),
       EngineerAbility.Barrier => TryBuildBarrier(targetPosition, targetPiece),
-      EngineerAbility.Mine => TryBuildMine(engineer, targetPosition, targetPiece),
-      EngineerAbility.Demolish => TryDemolishImprovement(engineer, targetPosition),
       _ => false
     };
     if (!improvementChanged)
@@ -1833,13 +1805,9 @@ internal sealed class Game1 : Game
     return _selectedEngineerAbility switch
     {
       EngineerAbility.Road => targetPiece is null && !IsEngineeringImprovementAt(targetPosition) &&
-        (HasUnbridgedRiverBetween(engineer.Position, targetPosition) ||
-         (_terrain.IsLake(targetPosition) && !_restoredLakeTiles.Contains(targetPosition)) ||
-         IsTraversableTerrainSquare(targetPosition)),
-      EngineerAbility.Barrier or EngineerAbility.Mine => targetPiece is null &&
+        IsTraversableTerrainSquare(targetPosition),
+      EngineerAbility.Barrier => targetPiece is null &&
         !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
-      EngineerAbility.Demolish => IsEngineeringImprovementAt(targetPosition) ||
-        HasRiverBridgeBetween(engineer.Position, targetPosition),
       _ => false
     };
   }
@@ -1849,20 +1817,6 @@ internal sealed class Game1 : Game
     if (targetPiece != null || IsEngineeringImprovementAt(targetPosition))
     {
       return false;
-    }
-
-    if (HasUnbridgedRiverBetween(engineer.Position, targetPosition))
-    {
-      _riverBridges.Add(TileEdge.Between(engineer.Position, targetPosition));
-      Console.WriteLine("Engineer built a bridge across the river.");
-      return true;
-    }
-
-    if (_terrain.IsLake(targetPosition) && !_restoredLakeTiles.Contains(targetPosition))
-    {
-      _restoredLakeTiles.Add(targetPosition);
-      Console.WriteLine("Engineer built a bridge across the lake.");
-      return true;
     }
 
     if (!IsTraversableTerrainSquare(targetPosition))
@@ -1885,8 +1839,8 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    _barricades[targetPosition] = 60;
-    Console.WriteLine("Engineer built a 60 HP barrier.");
+    _barricades[targetPosition] = 20;
+    Console.WriteLine("Engineer built a 20 HP barrier.");
     return true;
   }
 
@@ -1999,11 +1953,6 @@ internal sealed class Game1 : Game
     {
       foreach (Piece candidate in pieceSetup.Pieces)
       {
-        if (companions.Count == 2)
-        {
-          break;
-        }
-
         if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
             candidate.Definition.Size == (1, 1) && AreAdjacent(piece, candidate))
         {
@@ -2116,7 +2065,7 @@ internal sealed class Game1 : Game
     Piece movedPiece = completedAnimation.Piece;
     (int x, int y) destination = completedAnimation.Path[^1];
 
-    if (movedPiece.Definition.AttackShape.shape == Shape.MoveOnEnemy &&
+    if (movedPiece.Definition.Type == PieceType.Elephant &&
         AttackUnitsMovedOver(movedPiece, completedAnimation.Path))
     {
       movedPiece.HasAttackedThisTurn = true;
@@ -4462,17 +4411,17 @@ internal sealed class Game1 : Game
     return type switch
     {
       PieceType.Cavalier => "Can move and attack before spending its action.",
-      PieceType.Spy => "Marks an enemy to increase damage dealt to it.",
+      PieceType.Spy => "Marks an enemy; it takes double damage until attacked.",
       PieceType.Catapult => "Attacks a four-square area at range.",
       PieceType.Teacher => "Can convert an adjacent friendly unit.",
       PieceType.Ox => "Carries one friendly unit or tows one Mechanical unit.",
-      PieceType.Engineer => "Builds roads or barricades on empty squares.",
+      PieceType.Engineer => "Builds a road or 20-health barricade on an adjacent empty square.",
       PieceType.Ballista => "Its attack pierces enemies in a straight line.",
-      PieceType.Elephant => "Ignores terrain and tramples enemy units it moves over.",
+      PieceType.Elephant => "May move through enemies, damaging each crossed unit, but must land on empty squares.",
       PieceType.Guard => "Attaches to a friendly unit and takes damage for it.",
       PieceType.Mercenary => "Place on a No-Man's-Land edge. An enemy can buy it for its last bid plus 10 gold.",
       PieceType.King => "Adjacent allies take less damage.",
-      PieceType.Palace => "Generates gold at the start of each round.",
+      PieceType.Palace => "If destroyed, its owner loses.",
       PieceType.Baron => "Adjacent allies deal more damage.",
       PieceType.Emissary => "Moves up to two adjacent 1x1 allies with it.",
       _ => "Use its movement, attack range, and size to control the battlefield."
@@ -4846,10 +4795,8 @@ internal sealed class Game1 : Game
     Rectangle valueBounds = GetEngineerAbilityValueBounds();
     (string title, string detail) = _selectedEngineerAbility switch
     {
-      EngineerAbility.Barrier => ("BARRIER", "60 HP wall; blocks movement and attacks."),
-      EngineerAbility.Mine => ("MINE", "Enemy trigger: 3 x 3 blast for 40 damage."),
-      EngineerAbility.Demolish => ("DEMOLISH", "Instantly removes any Engineer improvement."),
-      _ => ("ROAD", "Forest costs 1; open road costs 0; bridges water.")
+      EngineerAbility.Barrier => ("BARRIER", "20 HP wall; blocks movement and attacks."),
+      _ => ("ROAD", "Build on an adjacent empty square; forests cost 1 and open roads cost 0.")
     };
 
     _ui.Text("ENGINEER ABILITY", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
@@ -4870,7 +4817,7 @@ internal sealed class Game1 : Game
   {
     if (piece.Definition.Type == PieceType.Engineer)
     {
-      return piece.HasAttackedThisTurn ? "ABILITY USED THIS TURN" : "RIGHT-CLICK to build or demolish";
+      return piece.HasAttackedThisTurn ? "ABILITY USED THIS TURN" : "RIGHT-CLICK to build";
     }
 
     if (piece.HasAttackedThisTurn)
@@ -4878,7 +4825,7 @@ internal sealed class Game1 : Game
       return "ATTACK USED THIS TURN";
     }
 
-    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    if (piece.Definition.Type == PieceType.Elephant)
     {
       return "MOVE over red squares to attack";
     }
@@ -4899,16 +4846,16 @@ internal sealed class Game1 : Game
     return piece.Definition.Type switch
     {
       PieceType.Cavalier => "SPECIAL: move, then attack before ending activation",
-      PieceType.Spy => "SPECIAL: mark an enemy for +10 damage",
+      PieceType.Spy => "SPECIAL: mark an enemy for double damage until hit",
       PieceType.Teacher => "SPECIAL: change adjacent friendly unit",
       PieceType.Ox => "SPECIAL: carry 1x1 or tow Mechanical",
-      PieceType.Engineer => "SPECIAL: road, barrier, mine, or demolish",
+      PieceType.Engineer => "SPECIAL: build an adjacent road or 20 HP barrier",
       PieceType.Ballista => "SPECIAL: attack pierces a straight line",
-      PieceType.Elephant => "SPECIAL: move over enemy 1x1 units to attack",
+      PieceType.Elephant => "SPECIAL: move through enemies, dealing 15 damage to each crossed unit",
       PieceType.Guard => "SPECIAL: attach to protect a friendly unit",
       PieceType.Mercenary => "SPECIAL: rivals can buy this unit for its last bid +10",
       PieceType.King => "AURA: adjacent friendlies take 5 less damage",
-      PieceType.Palace => "AURA: gains 10 gold at the start of each round",
+      PieceType.Palace => "ROYAL: if destroyed, its owner loses",
       PieceType.Baron => "AURA: adjacent friendlies deal +5 damage",
       PieceType.Emissary => "SPECIAL: moves up to two adjacent 1x1 allies",
       _ => string.Empty
@@ -5082,7 +5029,7 @@ internal sealed class Game1 : Game
               UiTheme.Barricade,
               0.11f
             );
-            int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / 60;
+            int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / 20;
             DrawWorldRectangle(
               new Rectangle(cellBounds.X + 8, cellBounds.Bottom - 13, barrierHealthWidth, 3),
               UiTheme.Health,

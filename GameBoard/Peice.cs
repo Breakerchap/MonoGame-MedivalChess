@@ -140,7 +140,7 @@ internal static class PieceDefinitions
     30,
     (1, 1),
     (1, Shape.Straight),
-    25
+    20
   );
 
   internal static readonly PieceDefinition Archer = new(
@@ -150,7 +150,7 @@ internal static class PieceDefinitions
     10,
     10,
     (1, 1),
-    (4, Shape.Any),
+    (3, Shape.Any),
     30,
     2
   );
@@ -249,7 +249,7 @@ internal static class PieceDefinitions
     PieceCategory.Intelligence,
     (5, Shape.Any),
     0,
-    15,
+    10,
     (1, 1),
     (3, Shape.Any),
     35,
@@ -262,7 +262,7 @@ internal static class PieceDefinitions
     (1, Shape.Any),
     20,
     20,
-    (2, 2),
+    (1, 2),
     (6, Shape.FourSquare),
     55,
     3
@@ -319,7 +319,7 @@ internal static class PieceDefinitions
     0,
     15,
     (1, 1),
-    (1, Shape.Any),
+    (1, Shape.Straight),
     35
   );
 
@@ -342,7 +342,7 @@ internal static class PieceDefinitions
     15,
     50,
     (2, 2),
-    (1, Shape.MoveOnEnemy),
+    (0, Shape.None),
     60
   );
 
@@ -382,7 +382,7 @@ internal static class PieceDefinitions
   internal static readonly PieceDefinition King = new(
     PieceType.King,
     PieceCategory.Royal,
-    (1, Shape.Straight),
+    (1, Shape.Any),
     15,
     120,
     (1, 1),

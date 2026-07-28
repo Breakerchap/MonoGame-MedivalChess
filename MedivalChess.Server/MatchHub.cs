@@ -627,21 +627,21 @@ public sealed class MatchStore
     {
       "Soldier" => new(type, 20, 15),
       "Defender" => new(type, 20, 30),
-      "Archer" => new(type, 25, 10),
-      "Spearman" => new(type, 20, 15),
+      "Archer" => new(type, 30, 10),
+      "Spearman" => new(type, 25, 15),
       "Knight" => new(type, 40, 25),
       "Crossbowman" => new(type, 40, 15),
       "Cavalier" => new(type, 40, 20),
-      "Chariot" => new(type, 35, 25),
-      "Cannon" => new(type, 40, 25, 1, 2),
-      "Spy" => new(type, 35, 15),
-      "Catapult" => new(type, 50, 20, 2, 2),
-      "Teacher" => new(type, 30, 10),
-      "Ox" => new(type, 40, 25),
-      "Engineer" => new(type, 45, 15),
+      "Chariot" => new(type, 40, 25),
+      "Cannon" => new(type, 50, 25, 1, 2),
+      "Spy" => new(type, 35, 10),
+      "Catapult" => new(type, 55, 20, 1, 2),
+      "Teacher" => new(type, 35, 10),
+      "Ox" => new(type, 35, 25),
+      "Engineer" => new(type, 35, 15),
       "Ballista" => new(type, 55, 20, 2, 2),
-      "Elephant" => new(type, 55, 50, 2, 2),
-      "Guard" => new(type, 25, 25),
+      "Elephant" => new(type, 60, 50, 2, 2),
+      "Guard" => new(type, 30, 25),
       "Mercenary" when includeMercenary => new(type, 45, 20),
       _ => null
     };
@@ -661,7 +661,8 @@ public sealed class MatchStore
     {
       "Palace" => (3, 2),
       "Cannon" => (1, 2),
-      "Catapult" or "Ballista" or "Elephant" => (2, 2),
+      "Catapult" => (1, 2),
+      "Ballista" or "Elephant" => (2, 2),
       _ => (1, 1)
     };
     return existing.X < x + width && existing.X + existingWidth > x &&
@@ -885,7 +886,8 @@ internal static class NetworkMovementRules
 
     (int range, bool straight) = piece.Type switch
     {
-      "Soldier" or "Defender" or "King" => (piece.Type == "King" ? 1 : 2, true),
+      "Soldier" or "Defender" => (2, true),
+      "King" => (1, false),
       "Chariot" or "Cannon" or "Ballista" => (piece.Type == "Ballista" ? 1 : 2, true),
       "Peasant" => (1, true),
       "Knight" => (3, false),
@@ -894,6 +896,10 @@ internal static class NetworkMovementRules
       "Teacher" => (4, false),
       "Engineer" => (3, false),
       "Elephant" => (2, true),
+      "Catapult" => (1, false),
+      "Ox" => (4, false),
+      "Guard" => (3, false),
+      "Princess" => (1, false),
       "Emissary" => (3, false),
       "Palace" => (0, false),
       _ => (2, false)
@@ -921,7 +927,7 @@ internal static class NetworkAttackRules
     (int range, int minimumRange, Pattern pattern) = attacker.Type switch
     {
       "Soldier" or "Defender" => (1, 1, Pattern.Straight),
-      "Archer" => (4, 2, Pattern.Any),
+      "Archer" => (3, 2, Pattern.Any),
       "Scout" => (1, 1, Pattern.Straight),
       "Spearman" or "Peasant" => (1, 1, Pattern.ForwardDiagonal),
       "Knight" or "Cavalier" or "Guard" or "Mercenary" or "Assassin" or "King" or "Baron" or "Emissary" => (1, 1, Pattern.Any),
