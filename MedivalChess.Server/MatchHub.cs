@@ -627,11 +627,11 @@ public sealed class MatchStore
     {
       "Soldier" => new(type, 20, 15),
       "Defender" => new(type, 20, 30),
-      "Archer" => new(type, 30, 10),
+      "Archer" => new(type, 25, 10),
       "Spearman" => new(type, 25, 15),
       "Knight" => new(type, 40, 25),
-      "Crossbowman" => new(type, 40, 15),
-      "Cavalier" => new(type, 40, 20),
+      "Crossbowman" => new(type, 45, 15),
+      "Cavalier" => new(type, 50, 20),
       "Chariot" => new(type, 40, 25),
       "Cannon" => new(type, 50, 25, 1, 2),
       "Spy" => new(type, 35, 10),
@@ -641,7 +641,7 @@ public sealed class MatchStore
       "Engineer" => new(type, 35, 15),
       "Ballista" => new(type, 55, 20, 2, 2),
       "Elephant" => new(type, 60, 50, 2, 2),
-      "Guard" => new(type, 30, 25),
+      "Guard" => new(type, 35, 25),
       "Mercenary" when includeMercenary => new(type, 45, 20),
       _ => null
     };

@@ -137,7 +137,7 @@ internal static class PieceDefinitions
     PieceCategory.Melee,
     (2, Shape.Straight),
     5,
-    30,
+    25,
     (1, 1),
     (1, Shape.Straight),
     20
@@ -196,7 +196,7 @@ internal static class PieceDefinitions
     25,
     (1, 1),
     (1, Shape.Any),
-    40
+    50
   );
 
   internal static readonly PieceDefinition Crossbowman = new(
@@ -354,7 +354,7 @@ internal static class PieceDefinitions
     25,
     (1, 1),
     (1, Shape.Any),
-    30
+    35
   );
 
   internal static readonly PieceDefinition Mercenary = new(
