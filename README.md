@@ -18,3 +18,35 @@ The repository includes a Render Blueprint (`render.yaml`) and Dockerfile, so th
 Render provides HTTPS and supports WebSocket connections, which SignalR uses. No environment variables are required. The client automatically reconnects to the same room and side after a short connection interruption; disconnected rooms are retained for five minutes, while abandoned rooms are cleaned up in the background.
 
 The free Render plan can spin down when idle, so the first connection after a quiet period may take a short while. Matches are stored only in server memory: a server restart or redeploy clears open rooms and matches.
+
+## Build the game
+
+Install the .NET 9 SDK for the architecture you are building on, then restore the local tools and project dependencies from the repository root:
+
+```bash
+dotnet tool restore
+dotnet restore
+```
+
+Publish a self-contained release for the target platform. Each command places the packaged game in `publish/<runtime>`:
+
+| Platform | Runtime identifier | Command |
+| --- | --- | --- |
+| Linux Intel/AMD 64-bit | `linux-x64` | `dotnet publish MedivalChess.csproj -c Release -r linux-x64 --self-contained true -o publish/linux-x64` |
+| Linux ARM 64-bit | `linux-arm64` | `dotnet publish MedivalChess.csproj -c Release -r linux-arm64 --self-contained true -o publish/linux-arm64` |
+| macOS Intel | `osx-x64` | `dotnet publish MedivalChess.csproj -c Release -r osx-x64 --self-contained true -o publish/osx-x64` |
+| macOS Apple silicon | `osx-arm64` | `dotnet publish MedivalChess.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64` |
+| Windows Intel/AMD 64-bit | `win-x64` | `dotnet publish MedivalChess.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64` |
+
+On Linux and macOS, make the published executable runnable before starting it:
+
+```bash
+chmod +x publish/<runtime>/MedivalChess
+./publish/<runtime>/MedivalChess
+```
+
+On Windows, run `publish/win-x64/MedivalChess.exe`. If MonoGame content has not already been built as part of publishing, build it with:
+
+```bash
+dotnet mgcb Content/Content.mgcb
+```
