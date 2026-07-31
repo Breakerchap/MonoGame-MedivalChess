@@ -1381,6 +1381,85 @@ internal sealed class Game1 : Game
     return isBoardEdge && pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
   }
 
+  private bool TryGetPurchasePlacementPreview(
+    out PieceDefinition definition,
+    out (int x, int y) targetPosition,
+    out bool canPurchaseAtTarget
+  )
+  {
+    definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    targetPosition = default;
+    canPurchaseAtTarget = false;
+
+    if (!_isPurchaseMode || !IsOnlineLocalTurn())
+    {
+      return false;
+    }
+
+    MouseState mouse = Mouse.GetState();
+    if (GetPurchasePanelBounds().Contains(mouse.Position))
+    {
+      return false;
+    }
+
+    Vector2 mouseWorld = Vector2.Transform(
+      mouse.Position.ToVector2(),
+      Matrix.Invert(CreateCameraTransform())
+    );
+    targetPosition = (
+      (int)MathF.Floor(mouseWorld.X / 64f) + _board.MinX,
+      (int)MathF.Floor(mouseWorld.Y / 64f) + _board.MinY
+    );
+
+    if (!IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return false;
+    }
+
+    Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+    Piece targetPiece = pieceSetup.GetPieceAt(targetPosition);
+    bool isMercenaryBuyout =
+      definition.Type == PieceType.Mercenary &&
+      _initialBuyPhase == null &&
+      targetPiece?.Definition.Type == PieceType.Mercenary &&
+      targetPiece.Team != Team.CurrentTurn;
+    bool hasEnoughGold = isMercenaryBuyout
+      ? buyingTeam.Money >= targetPiece.NextMercenaryBid
+      : buyingTeam.Money >= definition.Cost;
+    bool isEligibleForPurchase =
+      !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
+      (isMercenaryBuyout ||
+       (definition.Type == PieceType.Mercenary
+         ? CanPlaceMercenary(targetPosition)
+         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
+
+    canPurchaseAtTarget = isEligibleForPurchase && hasEnoughGold;
+    return true;
+  }
+
+  private void DrawPurchasePlacementPreview(int cellSize)
+  {
+    if (!TryGetPurchasePlacementPreview(out PieceDefinition definition, out var targetPosition, out bool canPurchaseAtTarget))
+    {
+      return;
+    }
+
+    Rectangle footprint = new(
+      (targetPosition.x - _board.MinX) * cellSize,
+      (targetPosition.y - _board.MinY) * cellSize,
+      definition.Size.x * cellSize,
+      definition.Size.y * cellSize
+    );
+    Color outline = canPurchaseAtTarget
+      ? Color.Lerp(UiTheme.GetTeamColour(Team.CurrentTurn), UiTheme.GoldBright, 0.4f)
+      : UiTheme.Attack;
+    Color fill = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)46 : (byte)30);
+    Color border = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)190 : (byte)145);
+
+    DrawWorldRectangle(footprint, fill, 0.104f);
+    DrawWorldOutline(footprint, border, 0.105f);
+  }
+
   private bool IsTraversableTerrainSquare((int x, int y) position)
   {
     return
@@ -5030,6 +5109,8 @@ internal sealed class Game1 : Game
         }
       }
     }
+
+    DrawPurchasePlacementPreview(cellSize);
 
     if (selectedPiece != null)
     {
