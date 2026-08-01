@@ -2,7 +2,6 @@ namespace MedivalChess.GameBoard;
 
 using System.Collections.Generic;
 using MedivalChess.Player;
-using MedivalChess.Shared;
 
 internal enum AttachmentKind
 {
@@ -68,6 +67,8 @@ internal sealed class PieceDefinition
   internal (int range, Shape shape) AttackShape { get; }
   internal int Cost { get; }
   internal int MinimumAttackRange { get; }
+  // UI-facing metadata is carried with the same definition object as the stats.
+  internal string AbilityDescription { get; }
 
   internal PieceDefinition(
     PieceType name,
@@ -78,31 +79,21 @@ internal sealed class PieceDefinition
     (int x, int y) size,
     (int range, Shape shape) attackShape,
     int cost,
-    int minimumAttackRange = 1
+    int minimumAttackRange = 1,
+    string abilityDescription = ""
   )
   {
-    UnitRule sharedRule = UnitRules.GetRequired(name.ToString());
     Type = name;
-    Category = (PieceCategory)sharedRule.Category;
-    Movement = (sharedRule.MoveRange, ToLocalShape(sharedRule.MovePattern));
-    Attack = sharedRule.Attack;
-    Health = sharedRule.Health;
-    Size = (sharedRule.Width, sharedRule.Height);
-    AttackShape = (sharedRule.AttackRange, ToLocalShape(sharedRule.AttackPattern));
-    Cost = sharedRule.Cost;
-    MinimumAttackRange = sharedRule.MinimumAttackRange;
+    Category = category;
+    Movement = movement;
+    Attack = attack;
+    Health = health;
+    Size = size;
+    AttackShape = attackShape;
+    Cost = cost;
+    MinimumAttackRange = minimumAttackRange;
+    AbilityDescription = abilityDescription;
   }
-
-  private static Shape ToLocalShape(RuleShape shape) => shape switch
-  {
-    RuleShape.Any => Shape.Any,
-    RuleShape.Straight => Shape.Straight,
-    RuleShape.Forward => Shape.Forward,
-    RuleShape.AbsoluteStraightOrDiagonal => Shape.AbsoluteStraightOrDiagonal,
-    RuleShape.ForwardOrForwardDiagonal => Shape.ForwardOrForwardDiagonal,
-    RuleShape.PierceStraight => Shape.PierceStraight,
-    _ => Shape.None
-  };
 }
 
 internal enum Shape
@@ -118,8 +109,7 @@ internal enum PieceType
 {
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
-  Cannon, Spy, Catapult, FieldHospital,
-  Ambulance, Ox, Engineer, Ballista,
+  Cannon, Spy, Catapult, Ox, Engineer, Ballista,
   Elephant, Guard, Mercenary, Assassin,
 
   King, Princess, Palace, Baron, Emissary
@@ -230,7 +220,7 @@ internal static class PieceDefinitions
     20,
     (1, 1),
     (1, Shape.Any),
-    40
+    50
   );
 
   internal static readonly PieceDefinition Chariot = new(
@@ -265,7 +255,8 @@ internal static class PieceDefinitions
     (1, 1),
     (3, Shape.Any),
     35,
-    1
+    1,
+    "Marks an enemy; it takes double damage until attacked."
   );
 
   internal static readonly PieceDefinition Catapult = new(
@@ -277,29 +268,8 @@ internal static class PieceDefinitions
     (1, 2),
     (6, Shape.Any),
     55,
-    3
-  );
-
-  internal static readonly PieceDefinition FieldHospital = new(
-    PieceType.FieldHospital,
-    PieceCategory.Structure,
-    (1, Shape.Any),
-    0,
-    0,
-    (2, 2),
-    (0, Shape.None),
-    0
-  );
-
-  internal static readonly PieceDefinition Ambulance = new(
-    PieceType.Ambulance,
-    PieceCategory.Transport,
-    (5, Shape.Any),
-    0,
-    10,
-    (1, 2),
-    (0, Shape.None),
-    35
+    3,
+    "Attacks one target at range."
   );
 
   internal static readonly PieceDefinition Ox = new(
@@ -309,8 +279,10 @@ internal static class PieceDefinitions
     5,
     25,
     (1, 1),
-    (1, Shape.Forward),
-    35
+    (1, Shape.Straight),
+    35,
+    1,
+    "Carries one friendly unit or tows one Mechanical unit."
   );
 
   internal static readonly PieceDefinition Engineer = new(
@@ -321,7 +293,9 @@ internal static class PieceDefinitions
     15,
     (1, 1),
     (1, Shape.Straight),
-    35
+    35,
+    1,
+    "Builds a road or 20-health barricade on an adjacent empty square."
   );
 
   internal static readonly PieceDefinition Ballista = new(
@@ -333,7 +307,8 @@ internal static class PieceDefinitions
     (2, 2),
     (5, Shape.PierceStraight),
     55,
-    2
+    2,
+    "Its attack pierces enemies in a straight line."
   );
 
   internal static readonly PieceDefinition Elephant = new(
@@ -344,7 +319,9 @@ internal static class PieceDefinitions
     50,
     (2, 2),
     (0, Shape.None),
-    60
+    60,
+    0,
+    "May move through enemies, damaging each crossed unit, but must land on empty squares."
   );
 
   internal static readonly PieceDefinition Guard = new(
@@ -354,8 +331,10 @@ internal static class PieceDefinitions
     10,
     25,
     (1, 1),
-    (1, Shape.Any),
-    35
+    (1, Shape.Straight),
+    35,
+    1,
+    "Attaches to a friendly unit and takes damage for it."
   );
 
   internal static readonly PieceDefinition Mercenary = new(
@@ -365,19 +344,10 @@ internal static class PieceDefinitions
     25,
     20,
     (1, 1),
-    (1, Shape.Any),
-    45
-  );
-
-  internal static readonly PieceDefinition Assassin = new(
-    PieceType.Assassin,
-    PieceCategory.Melee,
-    (3, Shape.Any),
-    30,
-    10,
-    (1, 1),
-    (1, Shape.Any),
-    60
+    (2, Shape.Any),
+    35,
+    1,
+    "Place on a No-Man's-Land edge. An enemy can buy it in their territory for its last bid plus 10 gold."
   );
 
   internal static readonly PieceDefinition King = new(
@@ -388,7 +358,9 @@ internal static class PieceDefinitions
     120,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Adjacent allies take 5 less damage, to a minimum of 5."
   );
 
   internal static readonly PieceDefinition Princess = new(
@@ -400,7 +372,8 @@ internal static class PieceDefinitions
     (1, 1),
     (3, Shape.Any),
     0,
-    1
+    1,
+    "May attack over friendly units."
   );
 
   internal static readonly PieceDefinition Palace = new(
@@ -411,7 +384,9 @@ internal static class PieceDefinitions
     160,
     (3, 2),
     (0, Shape.None),
-    0
+    0,
+    0,
+    "If destroyed, its owner loses."
   );
 
   internal static readonly PieceDefinition Baron = new(
@@ -422,7 +397,9 @@ internal static class PieceDefinitions
     100,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack."
   );
 
   internal static readonly PieceDefinition Emissary = new(
@@ -433,7 +410,9 @@ internal static class PieceDefinitions
     80,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Moves directly adjacent friendly 1x1 allies with it."
   );
 
   internal static readonly PieceDefinition[] All =
@@ -449,8 +428,8 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Scout, Spearman, Peasant,
     Knight, Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, FieldHospital, Ambulance, Ox, Engineer,
-    Ballista, Elephant, Guard, Mercenary, Assassin,
+    Catapult, Ox, Engineer,
+    Ballista, Elephant, Guard, Mercenary,
     King, Princess, Palace, Baron, Emissary
   ];
 

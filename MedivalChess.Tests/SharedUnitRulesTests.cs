@@ -16,6 +16,28 @@ public sealed class SharedUnitRulesTests
   }
 
   [Fact]
+  public void ClientPieceDefinitionsMatchTheAuthoritativeOnlineRules()
+  {
+    foreach (PieceDefinition definition in PieceDefinitions.All)
+    {
+      UnitRule sharedRule = UnitRules.GetRequired(definition.Type.ToString());
+
+      Assert.Equal(definition.Category.ToString(), sharedRule.Category.ToString());
+      Assert.Equal(definition.Movement.range, sharedRule.MoveRange);
+      Assert.Equal(definition.Movement.shape.ToString(), sharedRule.MovePattern.ToString());
+      Assert.Equal(definition.Attack, sharedRule.Attack);
+      Assert.Equal(definition.Health, sharedRule.Health);
+      Assert.Equal(definition.Size.x, sharedRule.Width);
+      Assert.Equal(definition.Size.y, sharedRule.Height);
+      Assert.Equal(definition.AttackShape.range, sharedRule.AttackRange);
+      Assert.Equal(definition.AttackShape.shape.ToString(), sharedRule.AttackPattern.ToString());
+      Assert.Equal(definition.Cost, sharedRule.Cost);
+      Assert.Equal(definition.MinimumAttackRange, sharedRule.MinimumAttackRange);
+      Assert.Equal(definition.AbilityDescription, sharedRule.AbilityDescription);
+    }
+  }
+
+  [Fact]
   public void SharedRules_KeepLargeUnitMovementAndFootprintsConsistent()
   {
     UnitRule cannon = UnitRules.GetRequired("Cannon");

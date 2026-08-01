@@ -102,7 +102,6 @@ internal sealed class Game1 : Game
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
   private Piece selectedPiece;
-  private Piece _cavalierAwaitingAttack;
   private MovementAnimation _movementAnimation;
   private readonly HashSet<(int x, int y)> _roads = [];
   private readonly Dictionary<(int x, int y), int> _barricades = [];
@@ -132,7 +131,7 @@ internal sealed class Game1 : Game
   private float _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
   private int _initialBuysPerTurn = 2;
-  private int _initialBuyTurnsPerTeam = 4;
+  private int _initialBuyTurnsPerTeam = 3;
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
   private GameMode _gameMode = GameMode.Regicide;
@@ -312,18 +311,9 @@ internal sealed class Game1 : Game
       keyboard.IsKeyDown(Keys.Space) &&
       !_previousKeyboardState.IsKeyDown(Keys.Space);
 
-    if (wasSkipTurnPressed && _screen == Screen.Playing && _initialBuyPhase == null &&
-        _teams.Find(team => team.TeamName == Team.CurrentTurn).ActionPoints < Team.ActionsPerTurn)
+    if (wasSkipTurnPressed)
     {
-      if (_onlineClient is null)
-      {
-        _teams.Find(team => team.TeamName == Team.CurrentTurn).ActionPoints = 1;
-        CompleteAction();
-      }
-      else if (IsOnlineLocalTurn())
-      {
-        _ = SendOnlineSkipTurnAsync();
-      }
+      TrySkipCurrentTurn();
     }
 
     if (wasPurchaseModeToggle && _initialBuyPhase == null)
@@ -346,6 +336,8 @@ internal sealed class Game1 : Game
       wasLeftClick && HandlePurchasePanelClick(mouse.Position);
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
+    bool clickedSkipTurn =
+      wasLeftClick && HandleSkipTurnClick(mouse.Position);
     bool clickedDebugTeamSwitch =
       wasLeftClick && HandleDebugTeamSwitchClick(mouse.Position);
     bool clickedEngineerPanel =
@@ -353,7 +345,7 @@ internal sealed class Game1 : Game
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -377,23 +369,6 @@ internal sealed class Game1 : Game
       }
       else if (pieceAtTarget == selectedPiece && selectedPiece.Occupies(targetPosition))
       {
-        if (_onlineClient != null && selectedPiece.Definition.Type == PieceType.Cavalier &&
-            selectedPiece.HasMovedThisTurn && !selectedPiece.HasAttackedThisTurn)
-        {
-          _ = SendOnlineCompleteCavalierActivationAsync(selectedPiece);
-        }
-        else if (_cavalierAwaitingAttack == selectedPiece)
-        {
-          CompleteAction();
-          _cavalierAwaitingAttack = null;
-        }
-
-        selectedPiece = null;
-      }
-      else if (wasLeftClick && _cavalierAwaitingAttack == selectedPiece)
-      {
-        CompleteAction();
-        _cavalierAwaitingAttack = null;
         selectedPiece = null;
       }
       else if (
@@ -416,12 +391,6 @@ internal sealed class Game1 : Game
 
         if (usedSpecialAbility)
         {
-          selectedPiece = null;
-        }
-        else if (wasLeftClick && _cavalierAwaitingAttack == selectedPiece)
-        {
-          CompleteAction();
-          _cavalierAwaitingAttack = null;
           selectedPiece = null;
         }
         else if (wasLeftClick)
@@ -454,7 +423,7 @@ internal sealed class Game1 : Game
             }
           }
 
-          if (_movementAnimation == null && _cavalierAwaitingAttack != selectedPiece)
+          if (_movementAnimation == null)
           {
             selectedPiece = null;
           }
@@ -529,13 +498,6 @@ internal sealed class Game1 : Game
                 CompleteAction();
               }
 
-              _cavalierAwaitingAttack = null;
-            }
-
-            if (_cavalierAwaitingAttack == selectedPiece)
-            {
-              CompleteAction();
-              _cavalierAwaitingAttack = null;
             }
 
             selectedPiece = null;
@@ -587,6 +549,12 @@ internal sealed class Game1 : Game
       if (_initialBuyPhase != null)
       {
         Console.WriteLine("Mercenaries can only be bought off during the normal action phase.");
+        return;
+      }
+
+      if (!IsInTeamTerritory(targetPosition, Team.CurrentTurn))
+      {
+        Console.WriteLine("A Mercenary can only be bought off while it is in your territory.");
         return;
       }
 
@@ -649,7 +617,6 @@ internal sealed class Game1 : Game
     Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
     _isPurchaseMode = true;
     selectedPiece = null;
-    _cavalierAwaitingAttack = null;
     _screen = Screen.Playing;
     Console.WriteLine("Initial buy phase started.");
   }
@@ -728,6 +695,41 @@ internal sealed class Game1 : Game
       UpdateInitialBuyPhaseState();
     }
     return true;
+  }
+
+  private bool HandleSkipTurnClick(Point mousePosition)
+  {
+    if (_initialBuyPhase != null || !GetSkipTurnButtonBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    TrySkipCurrentTurn();
+    return true;
+  }
+
+  private void TrySkipCurrentTurn()
+  {
+    if (_screen != Screen.Playing || _initialBuyPhase != null || !IsOnlineLocalTurn())
+    {
+      return;
+    }
+
+    Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+    if (currentTeam.ActionPoints >= Team.ActionsPerTurn)
+    {
+      return;
+    }
+
+    if (_onlineClient is null)
+    {
+      currentTeam.ActionPoints = 1;
+      CompleteAction();
+    }
+    else
+    {
+      _ = SendOnlineSkipTurnAsync();
+    }
   }
 
   private bool HandleDebugTeamSwitchClick(Point mousePosition)
@@ -1152,20 +1154,6 @@ internal sealed class Game1 : Game
     }
   }
 
-  private async System.Threading.Tasks.Task SendOnlineCompleteCavalierActivationAsync(Piece cavalier)
-  {
-    try
-    {
-      ActionResult result = await _onlineClient.CompleteCavalierActivationAsync(cavalier.NetworkId);
-      if (!result.Accepted) _onlineError = result.Error ?? "Could not finish the Cavalier activation.";
-    }
-    catch (Exception exception)
-    {
-      Console.WriteLine($"Cavalier activation could not be completed: {exception.Message}");
-      _onlineError = "Could not finish the Cavalier activation.";
-    }
-  }
-
   private void ApplyOnlineState(NetworkGameState state)
   {
     Dictionary<string, (int x, int y)> previousPositions = pieceSetup.Pieces
@@ -1434,6 +1422,13 @@ internal sealed class Game1 : Game
     return isBoardEdge && pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
   }
 
+  private bool IsInTeamTerritory((int x, int y) position, TeamName team)
+  {
+    int arrayX = position.x - _board.MinX;
+    int arrayY = position.y - _board.MinY;
+    return IsBoardCell(arrayX, arrayY) && GetSquareOwner(arrayY) == team;
+  }
+
   private bool TryGetPurchasePlacementPreview(
     out PieceDefinition definition,
     out (int x, int y) targetPosition,
@@ -1475,7 +1470,8 @@ internal sealed class Game1 : Game
       definition.Type == PieceType.Mercenary &&
       _initialBuyPhase == null &&
       targetPiece?.Definition.Type == PieceType.Mercenary &&
-      targetPiece.Team != Team.CurrentTurn;
+      targetPiece.Team != Team.CurrentTurn &&
+      IsInTeamTerritory(targetPosition, Team.CurrentTurn);
     bool hasEnoughGold = isMercenaryBuyout
       ? buyingTeam.Money >= targetPiece.NextMercenaryBid
       : buyingTeam.Money >= definition.Cost;
@@ -2352,16 +2348,8 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (movedPiece.Definition.Type == PieceType.Cavalier)
-    {
-      selectedPiece = movedPiece;
-      _cavalierAwaitingAttack = movedPiece;
-    }
-    else
-    {
-      selectedPiece = null;
-      CompleteAction();
-    }
+    selectedPiece = null;
+    CompleteAction();
   }
 
   private bool HasEscortVictory(Piece piece)
@@ -2796,18 +2784,35 @@ internal sealed class Game1 : Game
     const float textRotation = 0f;
     foreach (Piece piece in pieceSetup.Pieces)
     {
-      if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
+      if (piece.AttachedTo != null)
       {
-        Rectangle hostBounds = GetPieceWorldBounds(piece.AttachedTo, cellSize);
-        Rectangle hostScreenBounds = GetScreenBounds(hostBounds, cameraTransform);
-        Vector2 cargoAnchor = new(hostScreenBounds.Right - 18, hostScreenBounds.Y + 18);
+        Rectangle badgeBounds = GetScreenBounds(GetAttachmentBadgeWorldBounds(piece, cellSize), cameraTransform);
         DrawRotatedWorldText(
           UiText.BuildPieceLabel(piece.Definition),
-          cargoAnchor,
-          0.48f,
+          new Vector2(badgeBounds.Center.X, badgeBounds.Center.Y),
+          0.54f,
           Vector2.One * 0.5f,
           textRotation,
           Matrix.Identity
+        );
+        int healthWidth = Math.Max(1, badgeBounds.Width - (int)(6 * _zoom));
+        int healthHeight = Math.Max(2, (int)(3 * _zoom));
+        Rectangle healthBounds = new(
+          badgeBounds.X + (int)(3 * _zoom),
+          badgeBounds.Bottom - (int)(5 * _zoom),
+          healthWidth,
+          healthHeight
+        );
+        DrawWorldRectangle(healthBounds, UiTheme.Shadow, 0.121f);
+        DrawWorldRectangle(
+          new Rectangle(
+            healthBounds.X,
+            healthBounds.Y,
+            (int)(healthBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+            healthBounds.Height
+          ),
+          UiTheme.Health,
+          0.122f
         );
         continue;
       }
@@ -2914,6 +2919,19 @@ internal sealed class Game1 : Game
     );
   }
 
+  private Rectangle GetAttachmentBadgeWorldBounds(Piece attachment, int cellSize)
+  {
+    Rectangle hostBounds = GetPieceWorldBounds(attachment.AttachedTo, cellSize);
+    int size = Math.Clamp(Math.Min(hostBounds.Width, hostBounds.Height) / 2, 28, 36);
+    const int inset = 4;
+    return attachment.AttachmentKind switch
+    {
+      AttachmentKind.Guard => new Rectangle(hostBounds.Right - size - inset, hostBounds.Bottom - size - inset, size, size),
+      AttachmentKind.Towed => new Rectangle(hostBounds.X + inset, hostBounds.Bottom - size - inset, size, size),
+      _ => new Rectangle(hostBounds.Right - size - inset, hostBounds.Y + inset, size, size)
+    };
+  }
+
   private Vector2 GetRenderedPosition(Piece piece)
   {
     if (_movementAnimation == null)
@@ -2990,14 +3008,14 @@ internal sealed class Game1 : Game
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
         ? "Mercenaries are unavailable during the initial buy phase."
-        : "Place on a No-Man's-Land edge, or outbid a rival for +10 gold."
+        : "Place on a No-Man's-Land edge, or outbid a rival Mercenary in your territory."
       : _initialBuyPhase != null
         ? $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} bought. Select a square on your side."
-        : "Buy, then select a square. Click a rival Mercenary to buy it off.";
+        : "Buy, then select a square. Click a rival Mercenary in your territory to buy it off.";
     int unitInfoY = statGrid.Bottom + UiTheme.SpaceSm;
     const float abilityScale = 0.58f;
     const float hintScale = 0.58f;
-    string abilityText = $"ABILITY: {GetUnitAbilityText(definition.Type)}";
+    string abilityText = $"ABILITY: {GetUnitAbilityText(definition)}";
     int availableInfoHeight = Math.Max(0, previousButton.Y - unitInfoY - UiTheme.SpaceSm);
     int hintRequiredHeight = _ui.WrappedTextHeight(purchaseHint, content.Width, hintScale);
     int reservedHintHeight = Math.Min(hintRequiredHeight, Math.Max(0, availableInfoHeight / 3));
@@ -3512,17 +3530,11 @@ internal sealed class Game1 : Game
         TerrainDensity.Heavy => 8,
         _ => 6
       },
-      LargeBoardCellCount = waterwayDensity switch
+      RiverCount = waterwayDensity switch
       {
-        TerrainDensity.Light => int.MaxValue,
-        TerrainDensity.Heavy => 0,
-        _ => 300
-      },
-      AdditionalRiverChance = waterwayDensity switch
-      {
-        TerrainDensity.Light => 0,
-        TerrainDensity.Heavy => 1,
-        _ => 0.4
+        TerrainDensity.Light => 1,
+        TerrainDensity.Heavy => 3,
+        _ => 2
       }
     };
   }
@@ -3546,7 +3558,6 @@ internal sealed class Game1 : Game
     _teams = pieceSetup.CreateTeams();
     ConfigureBattlefield(BoardSize.Medium, TerrainDensity.Standard, TerrainDensity.Standard, Random.Shared.Next());
     selectedPiece = null;
-    _cavalierAwaitingAttack = null;
     _movementAnimation = null;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
@@ -4447,7 +4458,7 @@ internal sealed class Game1 : Game
       DrawMenuButton(GetBattlefieldIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
     }
 
-    _ui.Text("Light waterways use one river; heavy waterways use two.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 58), UiTheme.TextMuted, 0.68f);
+    _ui.Text("Light waterways use 1 river; Standard 2; Heavy 3.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 58), UiTheme.TextMuted, 0.68f);
     _ui.Text("Forests are always denser away from the edge.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), UiTheme.TextMuted, 0.68f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
@@ -4571,7 +4582,7 @@ internal sealed class Game1 : Game
     int abilityY = statRowTwo.Bottom + 5;
     if (abilityY + 16 <= details.Bottom)
     {
-      _ui.Text(GetEncyclopediaAbilityText(definition.Type), new Vector2(details.X, abilityY), UiTheme.TextMuted, 0.64f);
+      _ui.Text(GetEncyclopediaAbilityText(definition), new Vector2(details.X, abilityY), UiTheme.TextMuted, 0.64f);
     }
 
     DrawPanel(rules, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
@@ -4596,7 +4607,6 @@ internal sealed class Game1 : Game
   {
     return type switch
     {
-      PieceType.FieldHospital => "FIELD HOSPITAL",
       PieceType.Crossbowman => "CROSSBOWMAN",
       PieceType.Spearman => "SPEAR-MAN",
       PieceType.Knight => "KNIGHT (SWORD)",
@@ -4604,15 +4614,16 @@ internal sealed class Game1 : Game
     };
   }
 
-  private static string GetEncyclopediaAbilityText(PieceType type)
+  private static string GetEncyclopediaAbilityText(PieceDefinition definition)
   {
-    return GetUnitAbilityText(type);
+    return GetUnitAbilityText(definition);
   }
 
-  private static string GetUnitAbilityText(PieceType type)
+  private static string GetUnitAbilityText(PieceDefinition definition)
   {
-    string description = UnitRules.GetAbilityDescription(type.ToString());
-    return string.IsNullOrWhiteSpace(description) ? "No special ability." : description;
+    return string.IsNullOrWhiteSpace(definition.AbilityDescription)
+      ? "No special ability."
+      : definition.AbilityDescription;
   }
 
   private void DrawRoyalAbility(PieceDefinition royal, Rectangle content, int y)
@@ -4623,7 +4634,7 @@ internal sealed class Game1 : Game
       : previousButton.Y - UiTheme.SpaceMd;
     _ui.Text("ROYAL ABILITY", new Vector2(content.X, y), UiTheme.Gold, 0.74f);
     _ui.TextWrapped(
-      GetUnitAbilityText(royal.Type),
+      GetUnitAbilityText(royal),
       new Rectangle(
         content.X,
         y + 24,
@@ -4681,7 +4692,8 @@ internal sealed class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
     int desiredHeight = _initialBuyPhase == null
-      ? _gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)
+      ? (_gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)) +
+        UiTheme.ButtonHeight + UiTheme.SpaceSm
       : 260;
     if (IsDebugOnlineMatch)
     {
@@ -4699,6 +4711,13 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Bottom - bottomOffset, content.Width, UiTheme.ButtonHeight);
   }
 
+  private Rectangle GetSkipTurnButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetStatusPanelBounds(), UiTheme.SpaceMd);
+    int bottomOffset = IsDebugOnlineMatch ? UiTheme.ButtonHeight * 2 + UiTheme.SpaceSm : UiTheme.ButtonHeight;
+    return new Rectangle(content.X, content.Bottom - bottomOffset, content.Width, UiTheme.ButtonHeight);
+  }
+
   private Rectangle GetDebugTeamSwitchButtonBounds()
   {
     Rectangle content = UiLayout.Inset(GetStatusPanelBounds(), UiTheme.SpaceMd);
@@ -4711,21 +4730,36 @@ internal sealed class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int desiredHeight = selectedPiece == null
       ? 124
-      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox ? 500 : 400;
+      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox or PieceType.Guard ? 520 : 400;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
   }
 
   private Rectangle GetOxCargoButtonBounds()
   {
+    Rectangle control = GetOxCargoControlBounds();
+    return new Rectangle(control.X + UiTheme.SpaceSm, control.Bottom - UiTheme.ButtonHeight - UiTheme.SpaceSm, control.Width - UiTheme.SpaceSm * 2, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetOxCargoControlBounds()
+  {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Y + 384, content.Width, UiTheme.ButtonHeight);
+    int height = Math.Min(122, Math.Max(80, content.Height - 280));
+    return new Rectangle(content.X, content.Bottom - height, content.Width, height);
+  }
+
+  private Rectangle GetGuardControlBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    int height = Math.Min(92, Math.Max(72, content.Height - 280));
+    return new Rectangle(content.X, content.Bottom - height, content.Width, height);
   }
 
   private Rectangle GetEngineerAbilityBounds()
   {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
-    return new Rectangle(content.X, content.Y + 362, content.Width, 82);
+    const int height = 82;
+    return new Rectangle(content.X, Math.Min(content.Y + 362, content.Bottom - height), content.Width, height);
   }
 
   private Rectangle GetEngineerPreviousButtonBounds()
@@ -4825,15 +4859,20 @@ internal sealed class Game1 : Game
     if (_onlineClient != null)
     {
       string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
-      int roomStatusY = IsDebugOnlineMatch
-        ? GetDebugTeamSwitchButtonBounds().Y - 18
-        : content.Bottom - 18;
+      int roomStatusY = GetSkipTurnButtonBounds().Y - 18;
       _ui.Text($"ONLINE  ROOM: {roomCode}", new Vector2(content.X, roomStatusY), UiTheme.Gold, 0.68f);
       if (IsDebugOnlineMatch)
       {
         DrawMenuButton(GetDebugTeamSwitchButtonBounds(), GetDebugTeamSwitchLabel(), UiButtonTone.Accent, _debugTeamSwitchPending);
       }
     }
+
+    bool canSkipTurn = IsOnlineLocalTurn() && currentTeam.ActionPoints < Team.ActionsPerTurn;
+    DrawMenuButton(
+      GetSkipTurnButtonBounds(),
+      canSkipTurn ? "END TURN" : "END TURN - USE AN ACTION",
+      canSkipTurn ? UiButtonTone.Primary : UiButtonTone.Neutral
+    );
 
     if (_gameMode == GameMode.Conquest)
     {
@@ -4947,10 +4986,11 @@ internal sealed class Game1 : Game
     {
       PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
+      PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
       _ => content.Bottom - UiTheme.SpaceSm
     };
     _ui.TextWrapped(
-      $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition.Type)}",
+      $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition)}",
       new Rectangle(content.X, abilityInfoY, content.Width, Math.Max(0, abilityInfoBottom - abilityInfoY)),
       UiTheme.TextPrimary,
       0.58f
@@ -4968,23 +5008,66 @@ internal sealed class Game1 : Game
       return;
     }
 
+    if (selectedPiece.Definition.Type == PieceType.Guard)
+    {
+      DrawGuardControls();
+    }
+
   }
 
   private void DrawOxCarryControls()
   {
     Piece cargo = GetOxCargo(selectedPiece);
+    Rectangle control = GetOxCargoControlBounds();
+    DrawPanel(control, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
     if (cargo == null)
     {
-      _ui.Text("CARGO BAY EMPTY", new Vector2(GetOxCargoButtonBounds().X, GetOxCargoButtonBounds().Y - 26), UiTheme.TextMuted, 0.74f);
-      _ui.Text("RIGHT-CLICK a friendly 1x1 to carry", new Vector2(GetOxCargoButtonBounds().X, GetOxCargoButtonBounds().Y + 4), UiTheme.TextMuted, 0.68f);
+      _ui.Text("CARGO: EMPTY", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.72f);
+      _ui.TextWrapped(
+        "RIGHT-CLICK a friendly 1 x 1 unit to carry, or a Mechanical unit to tow.",
+        new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
+        UiTheme.TextMuted,
+        0.62f
+      );
       return;
     }
 
     string cargoKind = cargo.AttachmentKind == AttachmentKind.Towed ? "TOWING" : "CARRYING";
     Rectangle button = GetOxCargoButtonBounds();
-    _ui.Text($"{cargoKind}: {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(button.X, button.Y - 26), UiTheme.Gold, 0.74f);
+    _ui.Text($"CARGO: {cargoKind} {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
+    _ui.TextWrapped(
+      "The Ox moves both units. Select cargo to move it separately and dismount it. Either piece can attack.",
+      new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, button.Y - control.Y - 34)),
+      UiTheme.TextMuted,
+      0.56f
+    );
     DrawMenuButton(button, "SELECT CARGO", UiButtonTone.Accent);
-    _ui.Text("Cargo may attack. Moving it dismounts it.", new Vector2(button.X, button.Bottom + 6), UiTheme.TextMuted, 0.64f);
+  }
+
+  private void DrawGuardControls()
+  {
+    Rectangle control = GetGuardControlBounds();
+    DrawPanel(control, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    Piece protectedPiece = selectedPiece.AttachedTo;
+    if (protectedPiece == null)
+    {
+      _ui.Text("PROTECTION: UNASSIGNED", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.68f);
+      _ui.TextWrapped(
+        "RIGHT-CLICK an adjacent friendly non-Royal unit to protect it.",
+        new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
+        UiTheme.TextMuted,
+        0.64f
+      );
+      return;
+    }
+
+    _ui.Text($"PROTECTING: {protectedPiece.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.68f);
+    _ui.TextWrapped(
+      "The Guard follows this unit and takes incoming damage before it does.",
+      new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
+      UiTheme.TextMuted,
+      0.64f
+    );
   }
 
   private void DrawEngineerAbilityControls()
@@ -5011,7 +5094,7 @@ internal sealed class Game1 : Game
       pieceSetup.GetAttachedPiece(ox, AttachmentKind.Towed);
   }
 
-  private static string GetSelectedPieceControlHint(Piece piece)
+  private string GetSelectedPieceControlHint(Piece piece)
   {
     if (piece.Definition.Type == PieceType.Engineer)
     {
@@ -5028,9 +5111,15 @@ internal sealed class Game1 : Game
       return "MOVE over red squares to attack";
     }
 
-    return piece.Definition.Type is PieceType.Spy or PieceType.Engineer or PieceType.Guard or PieceType.Ox
-      ? "RIGHT-CLICK to use special"
-      : "RIGHT-CLICK red to attack";
+    return piece.Definition.Type switch
+    {
+      PieceType.Guard => "RIGHT-CLICK ally to protect",
+      PieceType.Ox => GetOxCargo(piece) == null
+        ? "RIGHT-CLICK ally to carry or tow"
+        : "CARGO LINKED - USE CONTROL BELOW",
+      PieceType.Spy => "RIGHT-CLICK to use special",
+      _ => "RIGHT-CLICK red to attack"
+    };
   }
 
   protected override void Draw(GameTime gameTime)
@@ -5247,17 +5336,13 @@ internal sealed class Game1 : Game
 
     foreach (Piece piece in pieceSetup.Pieces)
     {
-      Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
-      Color colour = UiTheme.GetTeamColour(piece.Team);
-
-      if (piece.AttachmentKind == AttachmentKind.Carried && piece.AttachedTo != null)
+      if (piece.AttachedTo != null)
       {
-        Rectangle hostBounds = GetPieceWorldBounds(piece.AttachedTo, cellSize);
-        Rectangle cargoBadge = new(hostBounds.Right - 30, hostBounds.Y + 6, 24, 24);
-        DrawWorldRectangle(cargoBadge, colour, 0.125f);
-        DrawWorldOutline(cargoBadge, UiTheme.TextPrimary, 0.126f);
         continue;
       }
+
+      Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
+      Color colour = UiTheme.GetTeamColour(piece.Team);
 
       _spriteBatch.Draw(
           _pixel,
@@ -5276,7 +5361,16 @@ internal sealed class Game1 : Game
       );
 
       DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), 0.111f);
+    }
 
+    // Attached units share their host's board position. Rendering them as badges keeps
+    // both identities visible without stacking full sprites on top of each other.
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo != null))
+    {
+      Rectangle badge = GetAttachmentBadgeWorldBounds(attachment, cellSize);
+      Color outline = attachment.AttachmentKind == AttachmentKind.Guard ? UiTheme.Gold : UiTheme.TextPrimary;
+      DrawWorldRectangle(badge, UiTheme.GetTeamColour(attachment.Team), 0.125f);
+      DrawWorldOutline(badge, outline, 0.126f);
     }
 
     _spriteBatch.End();

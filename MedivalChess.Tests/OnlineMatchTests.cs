@@ -137,7 +137,12 @@ public sealed class OnlineMatchTests
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
     Assert.True(matches.StopInitialBuying(redConnection).Accepted);
-    Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
+    ActionResult openingComplete = matches.StopInitialBuying(blueConnection);
+    Assert.True(openingComplete.Accepted);
+    Assert.Equal(NetworkTeam.Red, openingComplete.State!.CurrentTurn);
+
+    ActionResult noActionSkip = matches.TrySkipTurn(redConnection);
+    Assert.False(noActionSkip.Accepted);
     NetworkPiece redKing = ready.State!.Pieces.Single(piece => piece.Team == NetworkTeam.Red);
 
     ActionResult wrongOwner = matches.TryMove(blueConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
@@ -276,7 +281,7 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
-  public void CavalierMayEndItsOnlineMoveActivationWithoutAttacking()
+  public void CavalierMoveSpendsOneActionLikeEveryOtherUnit()
   {
     MatchStore matches = new();
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
@@ -299,14 +304,10 @@ public sealed class OnlineMatchTests
     NetworkPiece cavalier = redPurchase.State!.Pieces.Single(piece => piece.Type == "Cavalier" && piece.Team == NetworkTeam.Red);
     ActionResult move = matches.TryMove(redConnection, new MoveRequest(cavalier.Id, 0, 7));
     Assert.True(move.Accepted);
-    Assert.Equal(3, move.State!.Teams.Single(team => team.Team == NetworkTeam.Red).ActionsRemaining);
+    Assert.Equal(2, move.State!.Teams.Single(team => team.Team == NetworkTeam.Red).ActionsRemaining);
 
-    ActionResult complete = matches.TryCompleteCavalierActivation(
-      redConnection,
-      new CompleteCavalierActivationRequest(cavalier.Id)
-    );
-
-    Assert.True(complete.Accepted);
-    Assert.Equal(2, complete.State!.Teams.Single(team => team.Team == NetworkTeam.Red).ActionsRemaining);
+    ActionResult skipped = matches.TrySkipTurn(redConnection);
+    Assert.True(skipped.Accepted);
+    Assert.Equal(NetworkTeam.Blue, skipped.State!.CurrentTurn);
   }
 }

@@ -16,7 +16,7 @@ public sealed class TerrainGenerationTests
       RoyalSpawnTerrainClearance = clearance,
       MinimumForestGroups = 6,
       MaximumForestGroups = 6,
-      AdditionalRiverChance = 1
+      RiverCount = 2
     });
     List<(int x, int y)> royalFootprints = GetLargestRoyalSpawnFootprints(board);
 
@@ -27,6 +27,17 @@ public sealed class TerrainGenerationTests
       AssertFarFromRoyalSpawn(edge.First, royalFootprints, clearance);
       AssertFarFromRoyalSpawn(edge.Second, royalFootprints, clearance);
     });
+  }
+
+  [Theory]
+  [InlineData("Light", 1)]
+  [InlineData("Standard", 2)]
+  [InlineData("Heavy", 3)]
+  public void WaterwayDensityCreatesTheRequestedNumberOfLakeFedRivers(string density, int expectedCount)
+  {
+    BattlefieldTerrain terrain = TerrainRules.Create(new Board("board_medium.json"), 12345, "Standard", density);
+
+    Assert.Equal(expectedCount, CountOrthogonalGroups(terrain.Lakes));
   }
 
   private static List<(int x, int y)> GetLargestRoyalSpawnFootprints(Board board)
@@ -44,6 +55,33 @@ public sealed class TerrainGenerationTests
     }
 
     return positions.Where(board.ContainsCell).Distinct().ToList();
+  }
+
+  private static int CountOrthogonalGroups(IReadOnlySet<(int x, int y)> tiles)
+  {
+    HashSet<(int x, int y)> remaining = [.. tiles];
+    int groups = 0;
+    while (remaining.Count > 0)
+    {
+      groups++;
+      Queue<(int x, int y)> frontier = new();
+      frontier.Enqueue(remaining.First());
+      while (frontier.Count > 0)
+      {
+        (int x, int y) position = frontier.Dequeue();
+        if (!remaining.Remove(position)) continue;
+        foreach ((int x, int y) neighbour in new[]
+        {
+          (position.x - 1, position.y), (position.x + 1, position.y),
+          (position.x, position.y - 1), (position.x, position.y + 1)
+        })
+        {
+          if (remaining.Contains(neighbour)) frontier.Enqueue(neighbour);
+        }
+      }
+    }
+
+    return groups;
   }
 
   private static void AssertFarFromRoyalSpawn(

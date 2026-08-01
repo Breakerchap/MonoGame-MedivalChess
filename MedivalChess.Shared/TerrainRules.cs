@@ -16,8 +16,7 @@ public static class TerrainRules
       MaximumForestGroups = forestDensity switch { "Light" => 3, "Heavy" => 8, _ => 6 },
       MinimumForestClusterSize = forestDensity == "Light" ? 2 : 3,
       MaximumForestClusterSize = forestDensity switch { "Light" => 4, "Heavy" => 8, _ => 6 },
-      LargeBoardCellCount = waterwayDensity switch { "Light" => int.MaxValue, "Heavy" => 0, _ => 300 },
-      AdditionalRiverChance = waterwayDensity switch { "Light" => 0, "Heavy" => 1, _ => 0.4 }
+      RiverCount = waterwayDensity switch { "Light" => 1, "Heavy" => 3, _ => 2 }
     };
     return BattlefieldTerrain.CreateRandom(board, seed, settings);
   }

@@ -45,8 +45,9 @@ public sealed class TerrainGenerationSettings
   public int MinimumLakeSourceSeparation { get; init; } = 7;
 
   // Rivers
-  public int LargeBoardCellCount { get; init; } = 300;
-  public double AdditionalRiverChance { get; init; } = 0.4;
+  // Waterway density maps directly to this count so every match gets a predictable
+  // number of lake-fed rivers: Light 1, Standard 2, Heavy 3.
+  public int RiverCount { get; init; } = 1;
   public int MinimumRiverLength { get; init; } = 7;
   public int MinimumRiverSeparation { get; init; } = 4;
   // Rivers favour side-to-side routes near the battlefield centre.
@@ -156,10 +157,7 @@ public sealed class BattlefieldTerrain
         !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance)
       )
       .ToList();
-    int desiredRiverCount =
-      cells.Count >= settings.LargeBoardCellCount && random.NextDouble() < settings.AdditionalRiverChance
-        ? 2
-        : 1;
+    int desiredRiverCount = Math.Max(0, settings.RiverCount);
     List<HashSet<(int x, int y)>> lakeGroups = [];
     for (int index = 0; index < desiredRiverCount; index++)
     {

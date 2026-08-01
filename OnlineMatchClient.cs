@@ -112,14 +112,6 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("SkipTurn", new SkipTurnRequest());
   }
 
-  internal async Task<ActionResult> CompleteCavalierActivationAsync(string pieceId)
-  {
-    return await _connection.InvokeAsync<ActionResult>(
-      "CompleteCavalierActivation",
-      new CompleteCavalierActivationRequest(pieceId)
-    );
-  }
-
   internal void DrainStates(Action<NetworkGameState> apply, Action<string> reportError = null)
   {
     while (_pendingErrors.TryDequeue(out string error))

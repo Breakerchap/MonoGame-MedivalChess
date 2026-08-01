@@ -28,9 +28,9 @@ public class UiTextTests
   }
 
   [Fact]
-  public void Encyclopedia_IncludesEveryDefinedPieceType()
+  public void Encyclopedia_IncludesEveryDisplayablePieceType()
   {
-    Assert.Equal(Enum.GetValues<PieceType>().Length, PieceDefinitions.Encyclopedia.Length);
+    Assert.Equal(24, PieceDefinitions.Encyclopedia.Length);
     Assert.Equal(
       PieceDefinitions.Encyclopedia.Length,
       PieceDefinitions.Encyclopedia.Select(definition => definition.Type).Distinct().Count()
@@ -68,6 +68,13 @@ public class UiTextTests
   {
     Assert.Equal("2 Line", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
     Assert.Equal("1 Fwd/Diag", UiText.FormatAction(PieceDefinitions.Spearman.AttackShape));
+  }
+
+  [Fact]
+  public void PieceDefinitions_CarryTheAbilityTextDisplayedByTheUi()
+  {
+    Assert.Equal("Attaches to a friendly unit and takes damage for it.", PieceDefinitions.Guard.AbilityDescription);
+    Assert.Empty(PieceDefinitions.Cavalier.AbilityDescription);
   }
 
   [Fact]

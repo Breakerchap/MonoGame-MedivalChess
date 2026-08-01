@@ -83,16 +83,6 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
-  public async Task<ActionResult> CompleteCavalierActivation(CompleteCavalierActivationRequest request)
-  {
-    ActionResult result = matches.TryCompleteCavalierActivation(Context.ConnectionId, request);
-    if (result.Accepted && result.State is not null)
-    {
-      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
-    }
-    return result;
-  }
-
   public async Task<ActionResult> ChooseRoyal(RoyalSelectionRequest request)
   {
     ActionResult result = matches.ChooseRoyal(Context.ConnectionId, request);
@@ -393,7 +383,7 @@ public sealed class MatchStore
       {
         foundMatch.Winner = piece.Team;
       }
-      if (foundMatch.Winner is null && piece.Type != "Cavalier")
+      if (foundMatch.Winner is null)
       {
         SpendAction(foundMatch, player);
       }
@@ -591,37 +581,6 @@ public sealed class MatchStore
     }
   }
 
-  public ActionResult TryCompleteCavalierActivation(string connectionId, CompleteCavalierActivationRequest request)
-  {
-    if (request is null || string.IsNullOrWhiteSpace(request.PieceId))
-    {
-      return new(false, "Choose the Cavalier that finished its activation.", null);
-    }
-    if (!TryGetMatch(connectionId, out Match? match)) return new(false, "Join a room first.", null);
-    Match foundMatch = match!;
-    lock (foundMatch.Sync)
-    {
-      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
-      if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false } || foundMatch.Winner is not null ||
-          player is null || player.Team != foundMatch.CurrentTurn)
-      {
-        return new(false, "That Cavalier activation is not available now.", foundMatch.State());
-      }
-
-      NetworkPiece? cavalier = foundMatch.Pieces.FirstOrDefault(piece => piece.Id == request.PieceId);
-      if (cavalier is null || cavalier.Team != player.Team || cavalier.Type != "Cavalier" ||
-          !cavalier.HasMovedThisTurn || cavalier.HasAttackedThisTurn)
-      {
-        return new(false, "That Cavalier has no pending activation.", foundMatch.State());
-      }
-
-      SpendAction(foundMatch, player);
-      foundMatch.Version++;
-      foundMatch.Touch();
-      return new(true, null, foundMatch.State());
-    }
-  }
-
   public ActionResult ChooseRoyal(string connectionId, RoyalSelectionRequest request)
   {
     if (request is null || string.IsNullOrWhiteSpace(request.RoyalType))
@@ -756,6 +715,10 @@ public sealed class MatchStore
       if (mercenaryIndex >= 0)
       {
         NetworkPiece mercenary = foundMatch.Pieces[mercenaryIndex];
+        if (!NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, mercenary.X, mercenary.Y, 1, 1))
+        {
+          return new(false, "A Mercenary can only be bought off while it is in your territory.", foundMatch.State());
+        }
         long bid = (long)Math.Max(mercenary.LastBid, GetUnitCost("Mercenary")) + 10;
         PlayerSlot? previousOwner = foundMatch.Players.FirstOrDefault(candidate => candidate.Team == mercenary.Team);
         if (bid > int.MaxValue || player.Money < bid || previousOwner is null)

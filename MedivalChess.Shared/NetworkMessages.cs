@@ -92,8 +92,6 @@ public sealed record SpecialActionRequest(string ActorId, string Ability, string
 
 public sealed record SkipTurnRequest();
 
-public sealed record CompleteCavalierActivationRequest(string PieceId);
-
 public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
 public sealed record RoyalSelectionRequest(string RoyalType);
