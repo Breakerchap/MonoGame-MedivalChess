@@ -96,10 +96,21 @@ internal sealed class PieceSetup
 
   internal bool Attach(Piece attachment, Piece host, AttachmentKind kind)
   {
+    if (attachment == host)
+    {
+      return false;
+    }
+
     bool isCargo = kind is AttachmentKind.Carried or AttachmentKind.Towed;
     if (isCargo && _pieces.Exists(candidate =>
       candidate.AttachedTo == host &&
       candidate.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed))
+    {
+      return false;
+    }
+
+    if (kind == AttachmentKind.Guard && _pieces.Exists(candidate =>
+      candidate.AttachedTo == host && candidate.AttachmentKind == AttachmentKind.Guard))
     {
       return false;
     }

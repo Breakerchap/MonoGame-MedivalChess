@@ -60,15 +60,12 @@ public static class UnitRules
     new("Cannon", RuleCategory.Mechanical, 2, RuleShape.Straight, 30, 25, 1, 2, 5, RuleShape.Straight, 50, 2),
     new("Spy", RuleCategory.Intelligence, 5, RuleShape.Any, 0, 10, 1, 1, 3, RuleShape.Any, 35, 1, "Marks an enemy; it takes double damage until attacked."),
     new("Catapult", RuleCategory.Mechanical, 1, RuleShape.Any, 20, 20, 1, 2, 6, RuleShape.Any, 55, 3, "Attacks one target at range."),
-    new("FieldHospital", RuleCategory.Structure, 1, RuleShape.Any, 0, 0, 2, 2, 0, RuleShape.None, 0),
-    new("Ambulance", RuleCategory.Transport, 5, RuleShape.Any, 0, 10, 1, 2, 0, RuleShape.None, 35),
     new("Ox", RuleCategory.Transport, 4, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Carries one friendly unit or tows one Mechanical unit."),
     new("Engineer", RuleCategory.Intelligence, 3, RuleShape.Any, 0, 15, 1, 1, 1, RuleShape.Straight, 35, 1, "Builds a road or 20-health barricade on an adjacent empty square."),
     new("Ballista", RuleCategory.Mechanical, 1, RuleShape.Straight, 25, 20, 2, 2, 5, RuleShape.PierceStraight, 55, 2, "Its attack pierces enemies in a straight line."),
     new("Elephant", RuleCategory.Melee, 2, RuleShape.Straight, 15, 50, 2, 2, 0, RuleShape.None, 60, 0, "May move through enemies, damaging each crossed unit, but must land on empty squares."),
     new("Guard", RuleCategory.Melee, 3, RuleShape.Any, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly unit and takes damage for it."),
     new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 35, 1, "Place on a No-Man's-Land edge. An enemy can buy it in their territory for its last bid plus 10 gold."),
-    new("Assassin", RuleCategory.Melee, 3, RuleShape.Any, 30, 10, 1, 1, 1, RuleShape.Any, 60),
     new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 120, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
     new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 15, 80, 1, 1, 3, RuleShape.Any, 0, 1, "May attack over friendly units."),
     new("Palace", RuleCategory.Royal, 0, RuleShape.None, 0, 160, 3, 2, 0, RuleShape.None, 0, 0, "If destroyed, its owner loses."),
@@ -80,7 +77,7 @@ public static class UnitRules
 
   public static IReadOnlyList<UnitRule> All => Rules;
   public static IReadOnlyList<UnitRule> Purchasable { get; } = Rules.Where(rule =>
-    rule.Category != RuleCategory.Royal && rule.Type is not "Scout" and not "Peasant" and not "FieldHospital" and not "Ambulance" and not "Assassin"
+    rule.Category != RuleCategory.Royal && rule.Type is not "Scout" and not "Peasant"
   ).ToArray();
   public static IReadOnlyList<UnitRule> Royals { get; } = Rules.Where(rule => rule.Category == RuleCategory.Royal).ToArray();
 

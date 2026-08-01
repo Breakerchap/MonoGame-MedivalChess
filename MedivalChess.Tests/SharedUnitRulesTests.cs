@@ -18,7 +18,7 @@ public sealed class SharedUnitRulesTests
   [Fact]
   public void ClientPieceDefinitionsMatchTheAuthoritativeOnlineRules()
   {
-    foreach (PieceDefinition definition in PieceDefinitions.All)
+    foreach (PieceDefinition definition in PieceDefinitions.Encyclopedia)
     {
       UnitRule sharedRule = UnitRules.GetRequired(definition.Type.ToString());
 
@@ -35,6 +35,11 @@ public sealed class SharedUnitRulesTests
       Assert.Equal(definition.MinimumAttackRange, sharedRule.MinimumAttackRange);
       Assert.Equal(definition.AbilityDescription, sharedRule.AbilityDescription);
     }
+
+    Assert.Equal(
+      PieceDefinitions.Encyclopedia.Select(definition => definition.Type.ToString()),
+      UnitRules.All.Select(rule => rule.Type)
+    );
   }
 
   [Fact]

@@ -1467,7 +1467,6 @@ internal sealed class Game1 : Game
     Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
     Piece targetPiece = pieceSetup.GetPieceAt(targetPosition);
     bool isMercenaryBuyout =
-      definition.Type == PieceType.Mercenary &&
       _initialBuyPhase == null &&
       targetPiece?.Definition.Type == PieceType.Mercenary &&
       targetPiece.Team != Team.CurrentTurn &&
@@ -3502,41 +3501,6 @@ internal sealed class Game1 : Game
     _mines.Clear();
     _restoredLakeTiles.Clear();
     _riverBridges.Clear();
-  }
-
-  private static TerrainGenerationSettings CreateTerrainGenerationSettings(
-    TerrainDensity forestDensity,
-    TerrainDensity waterwayDensity
-  )
-  {
-    return new TerrainGenerationSettings
-    {
-      MinimumForestGroups = forestDensity switch
-      {
-        TerrainDensity.Light => 2,
-        TerrainDensity.Heavy => 6,
-        _ => 4
-      },
-      MaximumForestGroups = forestDensity switch
-      {
-        TerrainDensity.Light => 3,
-        TerrainDensity.Heavy => 8,
-        _ => 6
-      },
-      MinimumForestClusterSize = forestDensity == TerrainDensity.Light ? 2 : 3,
-      MaximumForestClusterSize = forestDensity switch
-      {
-        TerrainDensity.Light => 4,
-        TerrainDensity.Heavy => 8,
-        _ => 6
-      },
-      RiverCount = waterwayDensity switch
-      {
-        TerrainDensity.Light => 1,
-        TerrainDensity.Heavy => 3,
-        _ => 2
-      }
-    };
   }
 
   private void ReturnToTitle()

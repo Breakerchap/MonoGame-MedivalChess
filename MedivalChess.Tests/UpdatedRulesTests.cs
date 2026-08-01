@@ -60,14 +60,18 @@ public class UpdatedRulesTests
     PieceSetup setup = new();
     Piece soldier = new(PieceDefinitions.Soldier, (4, 4), TeamName.Red);
     Piece guard = new(PieceDefinitions.Guard, (4, 3), TeamName.Red);
+    Piece secondGuard = new(PieceDefinitions.Guard, (3, 4), TeamName.Red);
     Piece ox = new(PieceDefinitions.Ox, (8, 4), TeamName.Red);
     Piece cannon = new(PieceDefinitions.Cannon, (8, 5), TeamName.Red);
     setup.AddPiece(soldier);
     setup.AddPiece(guard);
+    setup.AddPiece(secondGuard);
     setup.AddPiece(ox);
     setup.AddPiece(cannon);
 
-    setup.Attach(guard, soldier, AttachmentKind.Guard);
+    Assert.True(setup.Attach(guard, soldier, AttachmentKind.Guard));
+    Assert.False(setup.Attach(secondGuard, soldier, AttachmentKind.Guard));
+    Assert.False(setup.Attach(secondGuard, secondGuard, AttachmentKind.Guard));
     Assert.True(setup.Attach(cannon, ox, AttachmentKind.Towed));
     setup.MovePiece(soldier, (5, 4));
     setup.MovePiece(ox, (9, 4));

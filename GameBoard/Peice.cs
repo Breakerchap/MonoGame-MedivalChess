@@ -110,7 +110,7 @@ internal enum PieceType
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, Ox, Engineer, Ballista,
-  Elephant, Guard, Mercenary, Assassin,
+  Elephant, Guard, Mercenary,
 
   King, Princess, Palace, Baron, Emissary
 }

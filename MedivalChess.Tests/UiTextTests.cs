@@ -30,7 +30,7 @@ public class UiTextTests
   [Fact]
   public void Encyclopedia_IncludesEveryDisplayablePieceType()
   {
-    Assert.Equal(24, PieceDefinitions.Encyclopedia.Length);
+    Assert.Equal(Enum.GetValues<PieceType>().Length, PieceDefinitions.Encyclopedia.Length);
     Assert.Equal(
       PieceDefinitions.Encyclopedia.Length,
       PieceDefinitions.Encyclopedia.Select(definition => definition.Type).Distinct().Count()
