@@ -157,6 +157,7 @@ internal sealed class Game1 : Game
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
   private bool _onlineWaitingForOpponent;
   private bool _onlineRoyalChoicePending;
+  private bool _debugTeamSwitchPending;
   private bool _onlineHostingSetup;
   private NetworkMatchConfiguration _onlineMatchConfiguration;
   private DateTimeOffset _nextOnlineJoinAttemptAt;
@@ -345,12 +346,14 @@ internal sealed class Game1 : Game
       wasLeftClick && HandlePurchasePanelClick(mouse.Position);
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
+    bool clickedDebugTeamSwitch =
+      wasLeftClick && HandleDebugTeamSwitchClick(mouse.Position);
     bool clickedEngineerPanel =
       wasLeftClick && HandleEngineerAbilityClick(mouse.Position);
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -727,6 +730,17 @@ internal sealed class Game1 : Game
     return true;
   }
 
+  private bool HandleDebugTeamSwitchClick(Point mousePosition)
+  {
+    if (!IsDebugOnlineMatch || !GetDebugTeamSwitchButtonBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    _ = SwitchDebugTeamAsync();
+    return true;
+  }
+
   private void CompleteAction()
   {
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
@@ -800,6 +814,45 @@ internal sealed class Game1 : Game
 
     return _onlineClient.Team is NetworkTeam team &&
       (team == NetworkTeam.Red ? Team.CurrentTurn == TeamName.Red : Team.CurrentTurn == TeamName.Blue);
+  }
+
+  private bool IsDebugOnlineMatch => _onlineClient?.IsDebugRoom == true;
+
+  private async System.Threading.Tasks.Task SwitchDebugTeamAsync()
+  {
+    OnlineMatchClient debugClient = _onlineClient;
+    if (debugClient == null || !debugClient.IsDebugRoom || _debugTeamSwitchPending)
+    {
+      return;
+    }
+
+    _debugTeamSwitchPending = true;
+    selectedPiece = null;
+    NetworkTeam nextTeam = debugClient.Team == NetworkTeam.Blue ? NetworkTeam.Red : NetworkTeam.Blue;
+    try
+    {
+      ActionResult result = await debugClient.SelectDebugTeamAsync(nextTeam);
+      if (!result.Accepted)
+      {
+        _onlineError = result.Error ?? "Could not switch the debug player.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Debug side switch could not be sent: {exception.Message}");
+      _onlineError = "Could not switch the debug player.";
+    }
+    finally
+    {
+      _debugTeamSwitchPending = false;
+    }
+  }
+
+  private string GetDebugTeamSwitchLabel()
+  {
+    NetworkTeam nextTeam = _onlineClient?.Team == NetworkTeam.Blue ? NetworkTeam.Red : NetworkTeam.Blue;
+    string nextTeamName = nextTeam == NetworkTeam.Red ? "ORANGE" : "PURPLE";
+    return _debugTeamSwitchPending ? "DEBUG: SWITCHING..." : $"DEBUG: SWITCH TO {nextTeamName}";
   }
 
   private async System.Threading.Tasks.Task HostOnlineMatchAsync(NetworkMatchConfiguration configuration)
@@ -3356,6 +3409,18 @@ internal sealed class Game1 : Game
     );
   }
 
+  private Rectangle GetDebugRoyalSwitchButtonBounds()
+  {
+    Rectangle previousButton = GetSetupPreviousButtonBounds();
+    Rectangle confirmButton = GetSetupConfirmButtonBounds();
+    return new Rectangle(
+      previousButton.X,
+      previousButton.Y - UiTheme.ButtonHeight - UiTheme.SpaceSm,
+      confirmButton.Right - previousButton.X,
+      UiTheme.ButtonHeight
+    );
+  }
+
   private Rectangle GetEconomyRowBounds(int index)
   {
     Rectangle panel = GetSetupPanelBounds();
@@ -3472,6 +3537,7 @@ internal sealed class Game1 : Game
 
     _onlineWaitingForOpponent = false;
     _onlineRoyalChoicePending = false;
+    _debugTeamSwitchPending = false;
     _onlineHostingSetup = false;
     _onlineMatchConfiguration = null;
     _onlineError = string.Empty;
@@ -3715,6 +3781,12 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.OnlineRoyalSelection:
+        if (IsDebugOnlineMatch && GetDebugRoyalSwitchButtonBounds().Contains(mousePosition))
+        {
+          _ = SwitchDebugTeamAsync();
+          break;
+        }
+
         if (_onlineRoyalChoicePending)
         {
           break;
@@ -4135,10 +4207,15 @@ internal sealed class Game1 : Game
     DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     DrawPanel(codeBounds, UiTheme.PanelRaised, _onlineInputFocus == OnlineInputField.JoinCode ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
     _ui.CenterText(string.IsNullOrEmpty(_onlineJoinCode) ? "ROOM CODE" : _onlineJoinCode, codeBounds, string.IsNullOrEmpty(_onlineJoinCode) ? UiTheme.TextDim : UiTheme.GoldBright, 1.1f);
-    if (!string.IsNullOrWhiteSpace(_onlineError))
-    {
-      _ui.Text(_onlineError, new Vector2(content.X, codeBounds.Bottom + 4), UiTheme.Attack, 0.56f);
-    }
+    string joinHint = string.IsNullOrWhiteSpace(_onlineError)
+      ? "DEBUG: one client can emulate both teams."
+      : _onlineError;
+    _ui.Text(
+      joinHint,
+      new Vector2(content.X, codeBounds.Bottom + 4),
+      string.IsNullOrWhiteSpace(_onlineError) ? UiTheme.TextDim : UiTheme.Attack,
+      0.56f
+    );
     DrawMenuButton(GetOnlineJoinButtonBounds(), "JOIN", UiButtonTone.Primary);
     DrawMenuButton(GetOnlineBackButtonBounds(), "BACK", UiButtonTone.Neutral);
   }
@@ -4187,6 +4264,11 @@ internal sealed class Game1 : Game
     _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm), "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
     _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm), "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
     DrawRoyalAbility(royal, content, actionGrid.Bottom + UiTheme.SpaceLg);
+
+    if (IsDebugOnlineMatch)
+    {
+      DrawMenuButton(GetDebugRoyalSwitchButtonBounds(), GetDebugTeamSwitchLabel(), UiButtonTone.Accent, _debugTeamSwitchPending);
+    }
 
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
@@ -4536,6 +4618,9 @@ internal sealed class Game1 : Game
   private void DrawRoyalAbility(PieceDefinition royal, Rectangle content, int y)
   {
     Rectangle previousButton = GetSetupPreviousButtonBounds();
+    int abilityBottom = IsDebugOnlineMatch
+      ? GetDebugRoyalSwitchButtonBounds().Y - UiTheme.SpaceMd
+      : previousButton.Y - UiTheme.SpaceMd;
     _ui.Text("ROYAL ABILITY", new Vector2(content.X, y), UiTheme.Gold, 0.74f);
     _ui.TextWrapped(
       GetUnitAbilityText(royal.Type),
@@ -4543,7 +4628,7 @@ internal sealed class Game1 : Game
         content.X,
         y + 24,
         content.Width,
-        Math.Max(0, previousButton.Y - y - UiTheme.SpaceLg - 24)
+        Math.Max(0, abilityBottom - y - 24)
       ),
       UiTheme.TextPrimary,
       0.72f
@@ -4598,6 +4683,10 @@ internal sealed class Game1 : Game
     int desiredHeight = _initialBuyPhase == null
       ? _gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)
       : 260;
+    if (IsDebugOnlineMatch)
+    {
+      desiredHeight += UiTheme.ButtonHeight + UiTheme.SpaceSm;
+    }
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Height - UiTheme.SpaceLg * 2));
     return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
   }
@@ -4606,6 +4695,13 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetStatusPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
+    int bottomOffset = IsDebugOnlineMatch ? UiTheme.ButtonHeight * 2 + UiTheme.SpaceSm : UiTheme.ButtonHeight;
+    return new Rectangle(content.X, content.Bottom - bottomOffset, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetDebugTeamSwitchButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetStatusPanelBounds(), UiTheme.SpaceMd);
     return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
   }
 
@@ -4688,6 +4784,10 @@ internal sealed class Game1 : Game
       }
 
       DrawMenuButton(GetInitialBuyStopButtonBounds(), "STOP BUYING", UiButtonTone.Danger);
+      if (IsDebugOnlineMatch)
+      {
+        DrawMenuButton(GetDebugTeamSwitchButtonBounds(), GetDebugTeamSwitchLabel(), UiButtonTone.Accent, _debugTeamSwitchPending);
+      }
       return;
     }
 
@@ -4725,7 +4825,14 @@ internal sealed class Game1 : Game
     if (_onlineClient != null)
     {
       string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
-      _ui.Text($"ONLINE  ROOM: {roomCode}", new Vector2(content.X, content.Bottom - 18), UiTheme.Gold, 0.68f);
+      int roomStatusY = IsDebugOnlineMatch
+        ? GetDebugTeamSwitchButtonBounds().Y - 18
+        : content.Bottom - 18;
+      _ui.Text($"ONLINE  ROOM: {roomCode}", new Vector2(content.X, roomStatusY), UiTheme.Gold, 0.68f);
+      if (IsDebugOnlineMatch)
+      {
+        DrawMenuButton(GetDebugTeamSwitchButtonBounds(), GetDebugTeamSwitchLabel(), UiButtonTone.Accent, _debugTeamSwitchPending);
+      }
     }
 
     if (_gameMode == GameMode.Conquest)

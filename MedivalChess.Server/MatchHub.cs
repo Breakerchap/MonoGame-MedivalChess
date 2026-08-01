@@ -29,6 +29,17 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> SelectDebugTeam(DebugTeamSelectionRequest request)
+  {
+    ActionResult result = matches.SelectDebugTeam(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public async Task<ActionResult> AttemptMove(MoveRequest request)
   {
     ActionResult result = matches.TryMove(Context.ConnectionId, request);
@@ -135,6 +146,7 @@ public sealed class MatchHub(MatchStore matches) : Hub
 
 public sealed class MatchStore
 {
+  public const string DebugJoinCode = "DEBUG";
   private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   private const int ActionsPerTurn = MatchRules.ActionsPerTurn;
   private static readonly TimeSpan JoinAttemptCooldown = TimeSpan.FromMilliseconds(500);
@@ -143,6 +155,33 @@ public sealed class MatchStore
   private static readonly TimeSpan InactiveMatchLifetime = TimeSpan.FromHours(2);
   private readonly ConcurrentDictionary<string, Match> _matches = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConcurrentDictionary<string, DateTimeOffset> _lastJoinAttemptByConnection = new();
+
+  public MatchStore()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Medium",
+      "Standard",
+      "Standard",
+      "Regicide",
+      20260801,
+      1000,
+      0.5f,
+      0f,
+      2,
+      4,
+      MatchRules.DefaultConquestWinScore
+    );
+    Match debugMatch = new(
+      DebugJoinCode,
+      configuration,
+      new PlayerSlot(null, NetworkTeam.Red, configuration.StartingCash),
+      isDebugMatch: true
+    )
+    {
+      Guest = new PlayerSlot(null, NetworkTeam.Blue, configuration.StartingCash)
+    };
+    _matches[DebugJoinCode] = debugMatch;
+  }
 
   public RoomJoinResult Create(string connectionId, CreateGameRequest request)
   {
@@ -195,6 +234,19 @@ public sealed class MatchStore
 
     lock (match.Sync)
     {
+      if (match.IsDebugMatch)
+      {
+        if (request.DebugTeam is NetworkTeam requestedTeam && !Enum.IsDefined(requestedTeam))
+        {
+          return new(false, "That debug side is not valid.", null, null, null, null);
+        }
+
+        NetworkTeam debugTeam = request.DebugTeam ?? match.CurrentTurn;
+        match.RegisterDebugController(connectionId, debugTeam);
+        match.Touch();
+        return match.ResultFor(match.FindPlayerByConnection(connectionId)!);
+      }
+
       if (!string.IsNullOrWhiteSpace(request.ReconnectToken))
       {
         PlayerSlot? reconnectingPlayer = match.FindPlayerByToken(request.ReconnectToken);
@@ -218,6 +270,32 @@ public sealed class MatchStore
       match.Guest = new PlayerSlot(connectionId, guestTeam, match.Configuration.StartingCash);
       match.Touch();
       return match.ResultFor(match.Guest);
+    }
+  }
+
+  public ActionResult SelectDebugTeam(string connectionId, DebugTeamSelectionRequest request)
+  {
+    if (request is null || !Enum.IsDefined(request.Team))
+    {
+      return new(false, "Choose Orange or Purple.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      if (!foundMatch.IsDebugMatch || !foundMatch.IsDebugController(connectionId))
+      {
+        return new(false, "Side switching is only available in the DEBUG room.", foundMatch.State());
+      }
+
+      foundMatch.RegisterDebugController(connectionId, request.Team);
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
     }
   }
 
@@ -744,6 +822,12 @@ public sealed class MatchStore
     {
       lock (match.Sync)
       {
+        if (match.IsDebugMatch && match.RemoveDebugController(connectionId))
+        {
+          match.Touch();
+          return;
+        }
+
         PlayerSlot? player = match.FindPlayerByConnection(connectionId);
         if (player is not null)
         {
@@ -763,6 +847,11 @@ public sealed class MatchStore
     {
       lock (match.Sync)
       {
+        if (match.IsDebugMatch)
+        {
+          continue;
+        }
+
         bool playerTimedOut = match.Players.Any(player =>
           player.DisconnectedAt is DateTimeOffset disconnectedAt && now - disconnectedAt > DisconnectGracePeriod
         );
@@ -1415,12 +1504,18 @@ public sealed class MatchStore
     internal string? ChosenRoyal { get; set; }
   }
 
-  private sealed class Match(string code, NetworkMatchConfiguration configuration, PlayerSlot host)
+  private sealed class Match(
+    string code,
+    NetworkMatchConfiguration configuration,
+    PlayerSlot host,
+    bool isDebugMatch = false
+  )
   {
     internal object Sync { get; } = new();
     internal string Code { get; } = code;
     internal NetworkMatchConfiguration Configuration { get; } = configuration;
     internal PlayerSlot Host { get; } = host;
+    internal bool IsDebugMatch { get; } = isDebugMatch;
     internal PlayerSlot? Guest { get; set; }
     internal List<PlayerSlot> Players => Guest is null ? [Host] : [Host, Guest];
     internal List<NetworkPiece> Pieces { get; } = [];
@@ -1437,8 +1532,33 @@ public sealed class MatchStore
     internal long Version { get; set; }
     internal DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     internal DateTimeOffset LastActivity { get; private set; } = DateTimeOffset.UtcNow;
+    private readonly HashSet<string> _debugControllers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NetworkTeam> _debugTeams = new(StringComparer.Ordinal);
+
     internal bool MatchReady => Guest is not null && Host.ChosenRoyal is not null && Guest.ChosenRoyal is not null;
-    internal PlayerSlot? FindPlayerByConnection(string connectionId) => Players.FirstOrDefault(player => player.ConnectionId == connectionId);
+    internal PlayerSlot? FindPlayerByConnection(string connectionId)
+    {
+      if (IsDebugMatch && _debugTeams.TryGetValue(connectionId, out NetworkTeam debugTeam))
+      {
+        return Players.FirstOrDefault(player => player.Team == debugTeam);
+      }
+
+      return Players.FirstOrDefault(player => player.ConnectionId == connectionId);
+    }
+
+    internal bool IsDebugController(string connectionId) => _debugControllers.Contains(connectionId);
+    internal void RegisterDebugController(string connectionId, NetworkTeam team)
+    {
+      _debugControllers.Add(connectionId);
+      _debugTeams[connectionId] = team;
+    }
+
+    internal bool RemoveDebugController(string connectionId)
+    {
+      _debugTeams.Remove(connectionId);
+      return _debugControllers.Remove(connectionId);
+    }
+
     internal PlayerSlot? FindPlayerByToken(string token) => Players.FirstOrDefault(player => player.ReconnectToken == token);
     internal void Touch() => LastActivity = DateTimeOffset.UtcNow;
     internal NetworkGameState State() => new(

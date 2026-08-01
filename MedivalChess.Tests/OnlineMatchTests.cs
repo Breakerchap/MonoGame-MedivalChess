@@ -89,6 +89,29 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void DebugRoomAllowsOneConnectionToAuthoritativelyEmulateBothTeams()
+  {
+    MatchStore matches = new();
+
+    RoomJoinResult joined = matches.Join("debug-client", new JoinGameRequest(MatchStore.DebugJoinCode));
+
+    Assert.True(joined.Accepted);
+    Assert.Equal(NetworkTeam.Red, joined.Team);
+    Assert.Equal(2, joined.State!.PlayerCount);
+    Assert.False(joined.State.MatchReady);
+
+    Assert.True(matches.ChooseRoyal("debug-client", new RoyalSelectionRequest("King")).Accepted);
+    Assert.True(matches.SelectDebugTeam("debug-client", new DebugTeamSelectionRequest(NetworkTeam.Blue)).Accepted);
+
+    ActionResult setupCompleted = matches.ChooseRoyal("debug-client", new RoyalSelectionRequest("Princess"));
+
+    Assert.True(setupCompleted.Accepted);
+    Assert.True(setupCompleted.State!.MatchReady);
+    Assert.Contains(setupCompleted.State.Teams, team => team.Team == NetworkTeam.Red && team.ChosenRoyal == "King");
+    Assert.Contains(setupCompleted.State.Teams, team => team.Team == NetworkTeam.Blue && team.ChosenRoyal == "Princess");
+  }
+
+  [Fact]
   public void InvalidMatchConfigurationIsRejected()
   {
     MatchStore matches = new();

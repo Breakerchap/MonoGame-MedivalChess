@@ -76,7 +76,11 @@ public sealed record NetworkGameState(
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
 
-public sealed record JoinGameRequest(string JoinCode, string? ReconnectToken = null);
+public sealed record JoinGameRequest(
+  string JoinCode,
+  string? ReconnectToken = null,
+  NetworkTeam? DebugTeam = null
+);
 
 public sealed record MoveRequest(string PieceId, int ToX, int ToY);
 
@@ -93,6 +97,8 @@ public sealed record CompleteCavalierActivationRequest(string PieceId);
 public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
 public sealed record RoyalSelectionRequest(string RoyalType);
+
+public sealed record DebugTeamSelectionRequest(NetworkTeam Team);
 
 public sealed record RoomJoinResult(
   bool Accepted,
