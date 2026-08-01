@@ -132,6 +132,11 @@ internal sealed class Game1 : Game
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
   private int _initialBuysPerTurn = 2;
   private int _initialBuyTurnsPerTeam = 3;
+  private bool _farmsEnabled;
+  private int _farmIncomePerTurn = 15;
+  private bool _unitMaintenanceEnabled;
+  private int _unitMaintenancePercent = 10;
+  private int _unitPricePercent = 100;
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
   private GameMode _gameMode = GameMode.Regicide;
@@ -203,6 +208,18 @@ internal sealed class Game1 : Game
 
     KeyboardState keyboard = Keyboard.GetState();
     MouseState mouse = Mouse.GetState();
+
+    // Do not let background windows consume clicks or hotkeys. Keeping the
+    // previous input state current also prevents a held key/click from firing
+    // when the game regains focus.
+    if (!IsActive)
+    {
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      _onlineClient?.DrainStates(ApplyOnlineState, error => _onlineError = error);
+      base.Update(gameTime);
+      return;
+    }
 
     bool wasLeftClick =
       mouse.LeftButton == ButtonState.Pressed &&
@@ -446,7 +463,7 @@ internal sealed class Game1 : Game
               }
               else
               {
-                _ = SendOnlineBarricadeAttackAsync(selectedPiece, targetPosition);
+                _ = SendOnlineImprovementAttackAsync(selectedPiece, targetPosition);
               }
             }
             selectedPiece = null;
@@ -514,7 +531,7 @@ internal sealed class Game1 : Game
 
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
-    PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    PieceDefinition definition = GetPurchasablePieces()[_selectedPurchaseIndex];
     if (_onlineClient != null)
     {
       if (!IsOnlineLocalTurn())
@@ -586,7 +603,7 @@ internal sealed class Game1 : Game
       (definition.Type == PieceType.Mercenary
         ? CanPlaceMercenary(targetPosition)
         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
-      buyingTeam.Money >= definition.Cost;
+      buyingTeam.Money >= GetUnitPrice(definition);
 
     if (!canPlace)
     {
@@ -596,7 +613,12 @@ internal sealed class Game1 : Game
       return;
     }
 
-    Piece boughtPiece = Team.BuyPiece(definition, buyingTeam, targetPosition);
+    int price = GetUnitPrice(definition);
+    buyingTeam.Money -= price;
+    Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
+    {
+      LastBid = price
+    };
     pieceSetup.AddPiece(boughtPiece);
 
     Console.WriteLine(
@@ -609,7 +631,7 @@ internal sealed class Game1 : Game
   private void StartInitialBuyPhase()
   {
     _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam);
-    if (PieceDefinitions.Purchasable[_selectedPurchaseIndex].Type == PieceType.Mercenary)
+    if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Mercenary)
     {
       CyclePurchaseSelection(1);
     }
@@ -623,16 +645,27 @@ internal sealed class Game1 : Game
 
   private void CyclePurchaseSelection(int direction)
   {
-    for (int attempts = 0; attempts < PieceDefinitions.Purchasable.Length; attempts++)
+    IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
+    for (int attempts = 0; attempts < purchasablePieces.Count; attempts++)
     {
       _selectedPurchaseIndex =
-        (_selectedPurchaseIndex + direction + PieceDefinitions.Purchasable.Length) % PieceDefinitions.Purchasable.Length;
+        (_selectedPurchaseIndex + direction + purchasablePieces.Count) % purchasablePieces.Count;
       if (_initialBuyPhase == null ||
-          PieceDefinitions.Purchasable[_selectedPurchaseIndex].Type != PieceType.Mercenary)
+          purchasablePieces[_selectedPurchaseIndex].Type != PieceType.Mercenary)
       {
         return;
       }
     }
+  }
+
+  private IReadOnlyList<PieceDefinition> GetPurchasablePieces() => _farmsEnabled
+    ? PieceDefinitions.Purchasable
+    : PieceDefinitions.Purchasable.Where(definition => definition.Type != PieceType.Farm).ToArray();
+
+  private void EnsurePurchaseSelectionIsValid()
+  {
+    int purchaseCount = GetPurchasablePieces().Count;
+    _selectedPurchaseIndex = purchaseCount == 0 ? 0 : _selectedPurchaseIndex % purchaseCount;
   }
 
   private void CompletePurchase()
@@ -755,6 +788,7 @@ internal sealed class Game1 : Game
       }
 
       Team.AdvanceTurn();
+      ApplyTurnEconomy(Team.CurrentTurn);
       ResetPieceTurnActions(Team.CurrentTurn);
     }
   }
@@ -770,6 +804,55 @@ internal sealed class Game1 : Game
       }
     }
   }
+
+  private void ApplyTurnEconomy(TeamName teamName)
+  {
+    Team team = _teams.Find(candidate => candidate.TeamName == teamName);
+    int farmCount = pieceSetup.Pieces.Count(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Farm);
+    if (farmCount > 0 && _farmIncomePerTurn != 0)
+    {
+      team.Money = ClampCurrency((long)team.Money + farmCount * (long)_farmIncomePerTurn);
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {farmCount * (long)_farmIncomePerTurn} gold from {farmCount} farm(s).");
+    }
+
+    if (!_unitMaintenanceEnabled || _unitMaintenancePercent <= 0)
+    {
+      return;
+    }
+
+    long upkeep = GetTeamMaintenance(teamName);
+    if (upkeep > 0)
+    {
+      team.Money = ClampCurrency((long)team.Money - upkeep);
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} paid {upkeep} gold in unit upkeep.");
+    }
+  }
+
+  private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);
+
+  private int GetTeamMaintenance(TeamName teamName)
+  {
+    if (!_unitMaintenanceEnabled || _unitMaintenancePercent <= 0)
+    {
+      return 0;
+    }
+
+    long upkeep = pieceSetup.Pieces
+      .Where(piece => piece.Team == teamName && piece.AttachedTo is null)
+      .Sum(piece => (long)GetUnitMaintenance(piece.Definition));
+    return ClampCurrency(upkeep);
+  }
+
+  private int GetUnitPrice(PieceDefinition definition) =>
+    definition.Type == PieceType.Farm
+      ? definition.Cost
+      : EconomyRules.GetUnitPrice(definition.Cost, _unitPricePercent);
+
+  private int GetUnitMaintenance(PieceDefinition definition) =>
+    definition.Type == PieceType.Farm
+      ? 0
+      : EconomyRules.GetUnitMaintenance(definition.Cost, _unitMaintenancePercent);
 
   private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
   {
@@ -1001,17 +1084,17 @@ internal sealed class Game1 : Game
     }
   }
 
-  private async System.Threading.Tasks.Task SendOnlineBarricadeAttackAsync(Piece attacker, (int x, int y) targetPosition)
+  private async System.Threading.Tasks.Task SendOnlineImprovementAttackAsync(Piece attacker, (int x, int y) targetPosition)
   {
     try
     {
       ActionResult result = await _onlineClient.AttackAsync(attacker.NetworkId, null, targetPosition.x, targetPosition.y);
-      if (!result.Accepted) _onlineError = result.Error ?? "That barricade attack was rejected.";
+      if (!result.Accepted) _onlineError = result.Error ?? "That structure attack was rejected.";
     }
     catch (Exception exception)
     {
-      Console.WriteLine($"Barricade attack could not be sent: {exception.Message}");
-      _onlineError = "Could not send the barricade attack.";
+      Console.WriteLine($"Structure attack could not be sent: {exception.Message}");
+      _onlineError = "Could not send the structure attack.";
     }
   }
 
@@ -1253,6 +1336,12 @@ internal sealed class Game1 : Game
     _initialBuysPerTurn = configuration.InitialBuysPerTurn;
     _initialBuyTurnsPerTeam = configuration.InitialBuyTurnsPerTeam;
     _conquestWinScore = configuration.ConquestWinScore;
+    _farmsEnabled = configuration.FarmsEnabled;
+    _farmIncomePerTurn = configuration.FarmIncomePerTurn;
+    _unitMaintenanceEnabled = configuration.UnitMaintenanceEnabled;
+    _unitMaintenancePercent = configuration.UnitMaintenancePercent;
+    _unitPricePercent = configuration.UnitPricePercent;
+    EnsurePurchaseSelectionIsValid();
     ConfigureBattlefield(boardSize, forestDensity, waterwayDensity, configuration.TerrainSeed);
   }
 
@@ -1435,7 +1524,7 @@ internal sealed class Game1 : Game
     out bool canPurchaseAtTarget
   )
   {
-    definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    definition = GetPurchasablePieces()[_selectedPurchaseIndex];
     targetPosition = default;
     canPurchaseAtTarget = false;
 
@@ -1473,7 +1562,7 @@ internal sealed class Game1 : Game
       IsInTeamTerritory(targetPosition, Team.CurrentTurn);
     bool hasEnoughGold = isMercenaryBuyout
       ? buyingTeam.Money >= targetPiece.NextMercenaryBid
-      : buyingTeam.Money >= definition.Cost;
+      : buyingTeam.Money >= GetUnitPrice(definition);
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isMercenaryBuyout ||
@@ -1748,6 +1837,11 @@ internal sealed class Game1 : Game
       return highlightedSquares;
     }
 
+    if (piece.Definition.Type == PieceType.Farm)
+    {
+      return highlightedSquares;
+    }
+
     if (piece.Definition.Type == PieceType.Engineer)
     {
       foreach ((int x, int y) boardPosition in _board.Cells)
@@ -1923,7 +2017,8 @@ internal sealed class Game1 : Game
         attackingTeam,
         defeatedTeam,
         _killerRefundMultiplier,
-        _defeatedTeamRefundMultiplier
+        _defeatedTeamRefundMultiplier,
+        GetUnitPrice(damagedPiece.Definition)
       );
     }
 
@@ -2729,19 +2824,22 @@ internal sealed class Game1 : Game
 
     if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
     {
-      _selectedEngineerAbility = (EngineerAbility)(
-        ((int)_selectedEngineerAbility - 1 + Enum.GetValues<EngineerAbility>().Length) %
-        Enum.GetValues<EngineerAbility>().Length
-      );
+      CycleEngineerAbility(-1);
     }
     else if (GetEngineerNextButtonBounds().Contains(mousePosition))
     {
-      _selectedEngineerAbility = (EngineerAbility)(
-        ((int)_selectedEngineerAbility + 1) % Enum.GetValues<EngineerAbility>().Length
-      );
+      CycleEngineerAbility(1);
     }
 
     return true;
+  }
+
+  private void CycleEngineerAbility(int direction)
+  {
+    EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier];
+    int selectedIndex = Array.IndexOf(abilities, _selectedEngineerAbility);
+    if (selectedIndex < 0) selectedIndex = 0;
+    _selectedEngineerAbility = abilities[(selectedIndex + direction + abilities.Length) % abilities.Length];
   }
 
   private void DrawPanel(Rectangle bounds, Color fill, Color border)
@@ -2977,7 +3075,7 @@ internal sealed class Game1 : Game
     Rectangle previousButton = GetPreviousPurchaseButtonBounds();
     Rectangle nextButton = GetNextPurchaseButtonBounds();
     Rectangle purchaseButton = GetPurchaseButtonBounds();
-    PieceDefinition definition = PieceDefinitions.Purchasable[_selectedPurchaseIndex];
+    PieceDefinition definition = GetPurchasablePieces()[_selectedPurchaseIndex];
     Color teamColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, _isPurchaseMode ? UiTheme.Gold : UiTheme.PanelBorder);
@@ -2990,7 +3088,11 @@ internal sealed class Game1 : Game
     float detailX = previewBounds.Right + UiTheme.SpaceMd;
     _ui.Text(definition.Type.ToString().ToUpperInvariant(), new Vector2(detailX, previewBounds.Y + 4), UiTheme.TextPrimary);
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
-    _ui.Text($"{definition.Cost} GOLD", new Vector2(detailX, previewBounds.Y + 56), UiTheme.Gold, 0.84f);
+    _ui.Text($"{GetUnitPrice(definition)} GOLD", new Vector2(detailX, previewBounds.Y + 56), UiTheme.Gold, 0.84f);
+    if (_unitMaintenanceEnabled)
+    {
+      _ui.Text($"UPKEEP {GetUnitMaintenance(definition)} / TURN", new Vector2(detailX, previewBounds.Y + 78), UiTheme.TextMuted, 0.58f);
+    }
 
     const int statHeight = 44;
     const int statRowGap = 4;
@@ -3390,7 +3492,8 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    return UiLayout.Centered(viewport, 640, 620, UiTheme.SpaceLg);
+    int height = _setupStage == SetupStage.Economy ? 840 : 620;
+    return UiLayout.Centered(viewport, 640, height, UiTheme.SpaceLg);
   }
 
   private Rectangle GetSetupPreviousButtonBounds()
@@ -3442,7 +3545,7 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetSetupPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 92 + index * 60, content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 92 + index * 52, content.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetEconomyDecreaseButtonBounds(int index)
@@ -3527,6 +3630,11 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
     _selectedEngineerAbility = EngineerAbility.Road;
+    _farmsEnabled = false;
+    _farmIncomePerTurn = 15;
+    _unitMaintenanceEnabled = false;
+    _unitMaintenancePercent = 10;
+    _unitPricePercent = 100;
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
@@ -3557,6 +3665,11 @@ internal sealed class Game1 : Game
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
     _initialBuysPerTurn = 2;
     _initialBuyTurnsPerTeam = 4;
+    _farmsEnabled = false;
+    _farmIncomePerTurn = 15;
+    _unitMaintenanceEnabled = false;
+    _unitMaintenancePercent = 10;
+    _unitPricePercent = 100;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -3591,7 +3704,12 @@ internal sealed class Game1 : Game
       _defeatedTeamRefundMultiplier,
       _initialBuysPerTurn,
       _initialBuyTurnsPerTeam,
-      _conquestWinScore
+      _conquestWinScore,
+      _farmsEnabled,
+      _farmIncomePerTurn,
+      _unitMaintenanceEnabled,
+      _unitMaintenancePercent,
+      _unitPricePercent
     );
   }
 
@@ -3938,11 +4056,53 @@ internal sealed class Game1 : Game
           {
             _initialBuyTurnsPerTeam++;
           }
-          else if (_gameMode == GameMode.Conquest && GetEconomyDecreaseButtonBounds(5).Contains(mousePosition))
+          else if (GetEconomyDecreaseButtonBounds(5).Contains(mousePosition))
+          {
+            _farmsEnabled = false;
+            EnsurePurchaseSelectionIsValid();
+          }
+          else if (GetEconomyIncreaseButtonBounds(5).Contains(mousePosition))
+          {
+            _farmsEnabled = true;
+            EnsurePurchaseSelectionIsValid();
+          }
+          else if (GetEconomyDecreaseButtonBounds(6).Contains(mousePosition))
+          {
+            _farmIncomePerTurn = Math.Max(-15, _farmIncomePerTurn - 5);
+          }
+          else if (GetEconomyIncreaseButtonBounds(6).Contains(mousePosition))
+          {
+            _farmIncomePerTurn = Math.Min(40, _farmIncomePerTurn + 5);
+          }
+          else if (GetEconomyDecreaseButtonBounds(7).Contains(mousePosition))
+          {
+            _unitMaintenanceEnabled = false;
+          }
+          else if (GetEconomyIncreaseButtonBounds(7).Contains(mousePosition))
+          {
+            _unitMaintenanceEnabled = true;
+          }
+          else if (GetEconomyDecreaseButtonBounds(8).Contains(mousePosition))
+          {
+            _unitMaintenancePercent = Math.Max(0, _unitMaintenancePercent - 5);
+          }
+          else if (GetEconomyIncreaseButtonBounds(8).Contains(mousePosition))
+          {
+            _unitMaintenancePercent = Math.Min(100, _unitMaintenancePercent + 5);
+          }
+          else if (GetEconomyDecreaseButtonBounds(9).Contains(mousePosition))
+          {
+            _unitPricePercent = Math.Max(-100, _unitPricePercent - 10);
+          }
+          else if (GetEconomyIncreaseButtonBounds(9).Contains(mousePosition))
+          {
+            _unitPricePercent = Math.Min(500, _unitPricePercent + 10);
+          }
+          else if (_gameMode == GameMode.Conquest && GetEconomyDecreaseButtonBounds(10).Contains(mousePosition))
           {
             _conquestWinScore = Math.Max(1, _conquestWinScore - 1);
           }
-          else if (_gameMode == GameMode.Conquest && GetEconomyIncreaseButtonBounds(5).Contains(mousePosition))
+          else if (_gameMode == GameMode.Conquest && GetEconomyIncreaseButtonBounds(10).Contains(mousePosition))
           {
             _conquestWinScore++;
           }
@@ -4437,11 +4597,14 @@ internal sealed class Game1 : Game
     _ui.Divider(content, content.Y + 56);
 
     List<string> labels = [
-      "Starting cash", "Killer refund", "Defeated team refund", "Buys per buy turn", "Buy turns per team"
+      "Starting cash", "Killer refund", "Defeated team refund", "Buys per buy turn", "Buy turns per team",
+      "Farms", "Farm income per turn", "Unit maintenance", "Maintenance rate", "Unit price"
     ];
     List<string> values = [
       _startingCash.ToString(), $"{_killerRefundMultiplier:0.0}x", $"{_defeatedTeamRefundMultiplier:0.0}x",
-      _initialBuysPerTurn.ToString(), _initialBuyTurnsPerTeam.ToString()
+      _initialBuysPerTurn.ToString(), _initialBuyTurnsPerTeam.ToString(),
+      _farmsEnabled ? "ON" : "OFF", $"{_farmIncomePerTurn} GOLD",
+      _unitMaintenanceEnabled ? "ON" : "OFF", $"{_unitMaintenancePercent}%", $"{_unitPricePercent}%"
     ];
     if (_gameMode == GameMode.Conquest)
     {
@@ -4455,16 +4618,31 @@ internal sealed class Game1 : Game
       Rectangle valueBounds = GetEconomyValueBounds(index);
       DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
       _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
-      DrawMenuButton(GetEconomyDecreaseButtonBounds(index), "-", UiButtonTone.Neutral);
+      bool isToggle = index is 5 or 7;
+      bool toggleEnabled = index == 5 ? _farmsEnabled : _unitMaintenanceEnabled;
+      DrawMenuButton(
+        GetEconomyDecreaseButtonBounds(index),
+        isToggle ? "OFF" : "-",
+        isToggle && !toggleEnabled ? UiButtonTone.Danger : UiButtonTone.Neutral
+      );
       DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
       _ui.CenterText(values[index], valueBounds, UiTheme.GoldBright);
-      DrawMenuButton(GetEconomyIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
+      DrawMenuButton(
+        GetEconomyIncreaseButtonBounds(index),
+        isToggle ? "ON" : "+",
+        isToggle && toggleEnabled ? UiButtonTone.Primary : UiButtonTone.Neutral
+      );
     }
 
-    string economyHint = _gameMode == GameMode.Conquest
-      ? "Conquest control resolves after each team's three actions."
-      : "Buy turns alternate. A player may stop buying early.";
-    _ui.Text(economyHint, new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 48), UiTheme.TextMuted, 0.72f);
+    string economyHint = _farmsEnabled
+      ? $"Farms cost {GetUnitPrice(PieceDefinitions.Farm)} gold, occupy 2 x 2 squares, and earn {_farmIncomePerTurn} gold at the start of each owner turn."
+      : "Enable Farms to add a 2 x 2, 60-gold income unit to the shop.";
+    if (_unitMaintenanceEnabled)
+    {
+      economyHint += $" Upkeep is {_unitMaintenancePercent}% of each standard unit cost, rounded up.";
+    }
+    int hintY = GetEconomyRowBounds(labels.Count - 1).Bottom + UiTheme.SpaceSm;
+    _ui.TextWrapped(economyHint, new Rectangle(content.X, hintY, content.Width, GetSetupConfirmButtonBounds().Y - hintY - UiTheme.SpaceSm), UiTheme.TextMuted, 0.68f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), _onlineHostingSetup ? "HOST ROOM" : "CONTINUE", UiButtonTone.Primary);
   }
 
@@ -4578,13 +4756,18 @@ internal sealed class Game1 : Game
     };
   }
 
-  private static string GetEncyclopediaAbilityText(PieceDefinition definition)
+  private string GetEncyclopediaAbilityText(PieceDefinition definition)
   {
     return GetUnitAbilityText(definition);
   }
 
-  private static string GetUnitAbilityText(PieceDefinition definition)
+  private string GetUnitAbilityText(PieceDefinition definition)
   {
+    if (definition.Type == PieceType.Farm)
+    {
+      return $"Earns {_farmIncomePerTurn} gold at the start of each owner turn.";
+    }
+
     return string.IsNullOrWhiteSpace(definition.AbilityDescription)
       ? "No special ability."
       : definition.AbilityDescription;
@@ -4659,6 +4842,10 @@ internal sealed class Game1 : Game
       ? (_gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)) +
         UiTheme.ButtonHeight + UiTheme.SpaceSm
       : 260;
+    if (_initialBuyPhase == null && _unitMaintenanceEnabled)
+    {
+      desiredHeight += 24;
+    }
     if (IsDebugOnlineMatch)
     {
       desiredHeight += UiTheme.ButtonHeight + UiTheme.SpaceSm;
@@ -4820,6 +5007,12 @@ internal sealed class Game1 : Game
       moneyY += 36;
     }
 
+    if (_unitMaintenanceEnabled)
+    {
+      int upkeep = GetTeamMaintenance(Team.CurrentTurn);
+      _ui.Text($"UPKEEP NEXT TURN: {upkeep} GOLD", new Vector2(content.X, moneyY + 2), UiTheme.TextMuted, 0.66f);
+    }
+
     if (_onlineClient != null)
     {
       string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
@@ -4840,7 +5033,8 @@ internal sealed class Game1 : Game
 
     if (_gameMode == GameMode.Conquest)
     {
-      DrawConquestControlBar(new Rectangle(content.X, content.Y + 174, content.Width, 48));
+      int conquestY = content.Y + (_unitMaintenanceEnabled ? 198 : 174);
+      DrawConquestControlBar(new Rectangle(content.X, conquestY, content.Width, 48));
     }
   }
 
@@ -4953,8 +5147,13 @@ internal sealed class Game1 : Game
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
       _ => content.Bottom - UiTheme.SpaceSm
     };
+    string abilityText = $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition)}";
+    if (_unitMaintenanceEnabled)
+    {
+      abilityText += $"\nUPKEEP: {GetUnitMaintenance(selectedPiece.Definition)} GOLD / OWNER TURN";
+    }
     _ui.TextWrapped(
-      $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition)}",
+      abilityText,
       new Rectangle(content.X, abilityInfoY, content.Width, Math.Max(0, abilityInfoBottom - abilityInfoY)),
       UiTheme.TextPrimary,
       0.58f
@@ -5060,6 +5259,11 @@ internal sealed class Game1 : Game
 
   private string GetSelectedPieceControlHint(Piece piece)
   {
+    if (piece.Definition.Type == PieceType.Farm)
+    {
+      return $"STRUCTURE - EARNS {_farmIncomePerTurn} GOLD EACH OWNER TURN";
+    }
+
     if (piece.Definition.Type == PieceType.Engineer)
     {
       return piece.HasAttackedThisTurn ? "ABILITY USED THIS TURN" : "RIGHT-CLICK to build";

@@ -28,6 +28,7 @@ internal static class UiText
       PieceType.Elephant => "El",
       PieceType.Guard => "Gd",
       PieceType.Mercenary => "Mc",
+      PieceType.Farm => "Fm",
       PieceType.King => "KI",
       PieceType.Princess => "PR",
       PieceType.Palace => "PA",

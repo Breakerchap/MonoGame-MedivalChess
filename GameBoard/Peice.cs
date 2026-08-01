@@ -110,7 +110,7 @@ internal enum PieceType
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, Ox, Engineer, Ballista,
-  Elephant, Guard, Mercenary,
+  Elephant, Guard, Mercenary, Farm,
 
   King, Princess, Palace, Baron, Emissary
 }
@@ -415,12 +415,24 @@ internal static class PieceDefinitions
     "Moves directly adjacent friendly 1x1 allies with it."
   );
 
+  internal static readonly PieceDefinition Farm = new(
+    PieceType.Farm,
+    PieceCategory.Structure,
+    (0, Shape.None),
+    0,
+    40,
+    (2, 2),
+    (0, Shape.None),
+    60,
+    0,
+    "Earns the configured gold amount at the start of each owner turn."
+  );
   internal static readonly PieceDefinition[] All =
   [
     Soldier, Defender, Archer, Spearman, Knight,
     Crossbowman, Cavalier, Chariot, Cannon, Spy,
     Catapult, Ox, Engineer, Ballista,
-    Elephant, Guard, Mercenary, King, Princess,
+    Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
   ];
 
@@ -429,7 +441,7 @@ internal static class PieceDefinitions
     Soldier, Defender, Archer, Scout, Spearman, Peasant,
     Knight, Crossbowman, Cavalier, Chariot, Cannon, Spy,
     Catapult, Ox, Engineer,
-    Ballista, Elephant, Guard, Mercenary,
+    Ballista, Elephant, Guard, Mercenary, Farm,
     King, Princess, Palace, Baron, Emissary
   ];
 
@@ -438,7 +450,7 @@ internal static class PieceDefinitions
     Soldier, Defender, Archer, Spearman, Knight,
     Crossbowman, Cavalier, Chariot, Cannon, Spy,
     Catapult, Ox, Engineer, Ballista,
-    Elephant, Guard, Mercenary
+    Elephant, Guard, Mercenary, Farm
   ];
 
   internal static readonly PieceDefinition[] Royals =

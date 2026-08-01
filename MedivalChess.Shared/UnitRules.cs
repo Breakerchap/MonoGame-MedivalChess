@@ -66,6 +66,7 @@ public static class UnitRules
     new("Elephant", RuleCategory.Melee, 2, RuleShape.Straight, 15, 50, 2, 2, 0, RuleShape.None, 60, 0, "May move through enemies, damaging each crossed unit, but must land on empty squares."),
     new("Guard", RuleCategory.Melee, 3, RuleShape.Any, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly unit and takes damage for it."),
     new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 35, 1, "Place on a No-Man's-Land edge. An enemy can buy it in their territory for its last bid plus 10 gold."),
+    new("Farm", RuleCategory.Structure, 0, RuleShape.None, 0, 40, 2, 2, 0, RuleShape.None, 60, 0, "Earns the configured gold amount at the start of each owner turn."),
     new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 120, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
     new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 15, 80, 1, 1, 3, RuleShape.Any, 0, 1, "May attack over friendly units."),
     new("Palace", RuleCategory.Royal, 0, RuleShape.None, 0, 160, 3, 2, 0, RuleShape.None, 0, 0, "If destroyed, its owner loses."),

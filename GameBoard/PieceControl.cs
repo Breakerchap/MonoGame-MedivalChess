@@ -151,13 +151,15 @@ internal static class Actions
     Team attackingTeam,
     Team defeatedTeam,
     float killerRefundMultiplier,
-    float defeatedTeamRefundMultiplier
+    float defeatedTeamRefundMultiplier,
+    int? unitCost = null
   )
   {
     if (piece.CurrentHealth > 0) { return false; }
 
-    attackingTeam.Money += CombatRules.RoundCurrencyToNearestFive(piece.Definition.Cost * killerRefundMultiplier);
-    defeatedTeam.Money += CombatRules.RoundCurrencyToNearestFive(piece.Definition.Cost * defeatedTeamRefundMultiplier);
+    int refundCost = unitCost ?? piece.Definition.Cost;
+    attackingTeam.Money += CombatRules.RoundCurrencyToNearestFive(refundCost * killerRefundMultiplier);
+    defeatedTeam.Money += CombatRules.RoundCurrencyToNearestFive(refundCost * defeatedTeamRefundMultiplier);
     return true;
   }
 }

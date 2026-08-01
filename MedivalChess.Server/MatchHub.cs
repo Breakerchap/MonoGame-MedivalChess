@@ -658,7 +658,7 @@ public sealed class MatchStore
         return new(false, "It is not your initial buy turn.", foundMatch.State());
       }
 
-      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit))
+      if (!TryGetPurchasableUnit(foundMatch, request.PieceType, out UnitPurchaseInfo unit))
       {
         return new(false, "That unit is not available during the initial buy phase.", foundMatch.State());
       }
@@ -719,7 +719,7 @@ public sealed class MatchStore
         {
           return new(false, "A Mercenary can only be bought off while it is in your territory.", foundMatch.State());
         }
-        long bid = (long)Math.Max(mercenary.LastBid, GetUnitCost("Mercenary")) + 10;
+        long bid = (long)Math.Max(mercenary.LastBid, GetUnitCost(foundMatch, "Mercenary")) + 10;
         PlayerSlot? previousOwner = foundMatch.Players.FirstOrDefault(candidate => candidate.Team == mercenary.Team);
         if (bid > int.MaxValue || player.Money < bid || previousOwner is null)
         {
@@ -734,7 +734,7 @@ public sealed class MatchStore
         return new(true, null, foundMatch.State());
       }
 
-      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit, includeMercenary: true))
+      if (!TryGetPurchasableUnit(foundMatch, request.PieceType, out UnitPurchaseInfo unit, includeMercenary: true))
       {
         return new(false, "That unit is not available for purchase.", foundMatch.State());
       }
@@ -886,6 +886,9 @@ public sealed class MatchStore
         configuration.InitialBuysPerTurn < 1 ||
         configuration.InitialBuyTurnsPerTeam < 1 ||
         configuration.ConquestWinScore < 1 ||
+        configuration.FarmIncomePerTurn is < -15 or > 40 ||
+        configuration.UnitMaintenancePercent is < 0 or > 100 ||
+        configuration.UnitPricePercent is < -100 or > 500 ||
         !float.IsFinite(configuration.KillerRefundMultiplier) ||
         !float.IsFinite(configuration.DefeatedTeamRefundMultiplier) ||
         configuration.KillerRefundMultiplier is < -10 or > 10 ||
@@ -911,23 +914,47 @@ public sealed class MatchStore
 
   private sealed record UnitPurchaseInfo(string Type, int Cost, int Health, int Width = 1, int Height = 1);
 
-  private static bool TryGetPurchasableUnit(string type, out UnitPurchaseInfo unit, bool includeMercenary = false)
+  private static bool TryGetPurchasableUnit(Match match, string type, out UnitPurchaseInfo unit, bool includeMercenary = false)
   {
     if (!UnitRules.TryGet(type, out UnitRule rule) ||
         !UnitRules.Purchasable.Contains(rule) ||
-        (rule.Type == "Mercenary" && !includeMercenary))
+        (rule.Type == "Mercenary" && !includeMercenary) ||
+        (rule.Type == "Farm" && !match.Configuration.FarmsEnabled))
     {
       unit = null!;
       return false;
     }
 
-    unit = new UnitPurchaseInfo(rule.Type, rule.Cost, rule.Health, rule.Width, rule.Height);
+    unit = new UnitPurchaseInfo(
+      rule.Type,
+      GetUnitPrice(match, rule),
+      rule.Health,
+      rule.Width,
+      rule.Height
+    );
     return true;
   }
 
-  private static int GetUnitCost(string type)
+  private static int GetUnitCost(Match match, string type)
   {
-    return TryGetPurchasableUnit(type, out UnitPurchaseInfo unit, includeMercenary: true) ? unit.Cost : 0;
+    return TryGetPurchasableUnit(match, type, out UnitPurchaseInfo unit, includeMercenary: true) ? unit.Cost : 0;
+  }
+
+  private static int GetUnitPrice(Match match, UnitRule rule)
+  {
+    return rule.Type == "Farm"
+      ? rule.Cost
+      : EconomyRules.GetUnitPrice(rule.Cost, match.Configuration.UnitPricePercent);
+  }
+
+  private static int GetUnitMaintenance(Match match, UnitRule rule)
+  {
+    return rule.Type == "Farm"
+      ? 0
+      : EconomyRules.GetUnitMaintenance(
+        rule.Cost,
+        match.Configuration.UnitMaintenancePercent
+      );
   }
 
   private static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
@@ -1169,7 +1196,7 @@ public sealed class MatchStore
 
   private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
   {
-    int unitCost = GetUnitCost(defeatedPiece.Type);
+    int unitCost = GetUnitCost(match, defeatedPiece.Type);
     PlayerSlot? defeatedPlayer = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team);
     attackingPlayer.Money += CombatRules.RoundCurrencyToNearestFive(unitCost * match.Configuration.KillerRefundMultiplier);
     if (defeatedPlayer is not null)
@@ -1302,12 +1329,12 @@ public sealed class MatchStore
   )
   {
     NetworkPiece engineer = match.Pieces[actorIndex];
-    if (engineer.HasAttackedThisTurn || target is not null ||
-        !NetworkBoardRules.Contains(match.Configuration, targetX, targetY) ||
-        match.Terrain.IsLake((targetX, targetY)) ||
-        match.Roads.Contains((targetX, targetY)) || match.Barricades.ContainsKey((targetX, targetY))) return false;
+    if (engineer.HasAttackedThisTurn || target is not null || !AbilityRules.IsEngineerBuild(ability)) return false;
+    if (!CanBuildImprovementAt(match, targetX, targetY))
+    {
+      return false;
+    }
 
-    if (!AbilityRules.IsEngineerBuild(ability)) return false;
     if (string.Equals(ability, "Road", StringComparison.OrdinalIgnoreCase))
     {
       match.Roads.Add((targetX, targetY));
@@ -1318,6 +1345,16 @@ public sealed class MatchStore
     }
     match.Pieces[actorIndex] = engineer with { HasAttackedThisTurn = true };
     return true;
+  }
+
+  private static bool CanBuildImprovementAt(Match match, int x, int y)
+  {
+    var position = (x, y);
+    return NetworkBoardRules.Contains(match.Configuration, x, y) &&
+      !match.Terrain.IsLake(position) && !match.Roads.Contains(position) &&
+      !match.Barricades.ContainsKey(position) &&
+      !match.Pieces.Any(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        UnitRules.FootprintsOverlap(piece.X, piece.Y, rule.Width, rule.Height, x, y, 1, 1));
   }
 
   private static bool TryAttachGuard(Match match, int actorIndex, int targetIndex)
@@ -1453,8 +1490,33 @@ public sealed class MatchStore
 
     player.ActionsRemaining = ActionsPerTurn;
     match.CurrentTurn = match.CurrentTurn == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
+    ApplyTurnEconomy(match, match.CurrentTurn);
     ResetTurnActions(match, match.CurrentTurn);
   }
+
+  private static void ApplyTurnEconomy(Match match, NetworkTeam team)
+  {
+    PlayerSlot? player = match.Players.FirstOrDefault(candidate => candidate.Team == team);
+    if (player is null) return;
+    int farmCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
+    if (farmCount > 0 && match.Configuration.FarmIncomePerTurn != 0)
+    {
+      player.Money = ClampCurrency((long)player.Money + farmCount * (long)match.Configuration.FarmIncomePerTurn);
+    }
+
+    if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;
+    long upkeep = match.Pieces
+      .Where(piece => piece.Team == team && piece.AttachedToId is null)
+      .Sum(piece => UnitRules.TryGet(piece.Type, out UnitRule rule)
+        ? (long)GetUnitMaintenance(match, rule)
+        : 0L);
+    if (upkeep > 0)
+    {
+      player.Money = ClampCurrency((long)player.Money - upkeep);
+    }
+  }
+
+  private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);
 
   private sealed class PlayerSlot(string? connectionId, NetworkTeam team, int money)
   {

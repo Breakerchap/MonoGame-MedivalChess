@@ -29,7 +29,13 @@ public sealed record NetworkPiece(
   int LastBid = 0
 );
 
-public sealed record NetworkImprovement(string Type, int X, int Y, int Health = 0);
+public sealed record NetworkImprovement(
+  string Type,
+  int X,
+  int Y,
+  int Health = 0,
+  NetworkTeam? Owner = null
+);
 
 public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal);
 
@@ -44,7 +50,12 @@ public sealed record NetworkMatchConfiguration(
   float DefeatedTeamRefundMultiplier,
   int InitialBuysPerTurn,
   int InitialBuyTurnsPerTeam,
-  int ConquestWinScore
+  int ConquestWinScore,
+  bool FarmsEnabled = false,
+  int FarmIncomePerTurn = 15,
+  bool UnitMaintenanceEnabled = false,
+  int UnitMaintenancePercent = 10,
+  int UnitPricePercent = 100
 );
 
 public sealed record NetworkInitialBuyState(

@@ -310,4 +310,81 @@ public sealed class OnlineMatchTests
     Assert.True(skipped.Accepted);
     Assert.Equal(NetworkTeam.Blue, skipped.State!.CurrentTurn);
   }
+
+  [Fact]
+  public void EnabledFarmsArePurchasablePiecesAndPayTheirOwnerAtTurnStart()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
+    {
+      FarmsEnabled = true,
+      StartingCash = 100,
+      InitialBuysPerTurn = 1,
+      InitialBuyTurnsPerTeam = 1,
+      ForestDensity = "Light",
+      WaterwayDensity = "Light"
+    }));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("King")).Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    ActionResult redPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Farm", 1, 8));
+    Assert.True(redPurchase.Accepted);
+    Assert.True(matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Soldier", 0, -8)).Accepted);
+
+    NetworkPiece farm = redPurchase.State!.Pieces.Single(piece => piece.Type == "Farm" && piece.Team == NetworkTeam.Red);
+    Assert.Equal(40, farm.Health);
+
+    NetworkPiece redKing = redPurchase.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Red);
+    Assert.True(matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X, redKing.Y - 1)).Accepted);
+    Assert.True(matches.TrySkipTurn(redConnection).Accepted);
+    NetworkPiece blueKing = redPurchase.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Blue);
+    Assert.True(matches.TryMove(blueConnection, new MoveRequest(blueKing.Id, blueKing.X, blueKing.Y + 1)).Accepted);
+    ActionResult redTurn = matches.TrySkipTurn(blueConnection);
+
+    Assert.True(redTurn.Accepted);
+    Assert.Equal(NetworkTeam.Red, redTurn.State!.CurrentTurn);
+    Assert.Equal(55, redTurn.State.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+  }
+
+  [Fact]
+  public void ServerKeepsFarmCostAndUpkeepFixedWhileApplyingConfiguredEconomyToUnits()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
+    {
+      FarmsEnabled = true,
+      StartingCash = 200,
+      UnitPricePercent = 150,
+      UnitMaintenanceEnabled = true,
+      UnitMaintenancePercent = 10,
+      InitialBuysPerTurn = 1,
+      InitialBuyTurnsPerTeam = 1,
+      ForestDensity = "Light",
+      WaterwayDensity = "Light"
+    }));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("King")).Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    ActionResult redPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Farm", 1, 8));
+    Assert.True(redPurchase.Accepted);
+    Assert.Equal(140, redPurchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.True(matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Soldier", 0, -8)).Accepted);
+
+    ActionResult soldierPurchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Soldier", 0, 8));
+    Assert.True(soldierPurchase.Accepted);
+    Assert.Equal(110, soldierPurchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.True(matches.TrySkipTurn(redConnection).Accepted);
+    NetworkPiece blueKing = soldierPurchase.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Blue);
+    Assert.True(matches.TryMove(blueConnection, new MoveRequest(blueKing.Id, blueKing.X, blueKing.Y + 1)).Accepted);
+    ActionResult redTurn = matches.TrySkipTurn(blueConnection);
+
+    Assert.True(redTurn.Accepted);
+    Assert.Equal(123, redTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+  }
 }

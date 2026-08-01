@@ -51,6 +51,7 @@ public class UiTextTests
       (PieceDefinitions.Ox, "Ox"), (PieceDefinitions.Engineer, "En"),
       (PieceDefinitions.Ballista, "Bl"), (PieceDefinitions.Elephant, "El"),
       (PieceDefinitions.Guard, "Gd"), (PieceDefinitions.Mercenary, "Mc"),
+      (PieceDefinitions.Farm, "Fm"),
       (PieceDefinitions.King, "KI"),
       (PieceDefinitions.Princess, "PR"), (PieceDefinitions.Palace, "PA"),
       (PieceDefinitions.Baron, "BR"), (PieceDefinitions.Emissary, "EM")
