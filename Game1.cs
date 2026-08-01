@@ -4208,7 +4208,7 @@ internal sealed class Game1 : Game
     DrawPanel(codeBounds, UiTheme.PanelRaised, _onlineInputFocus == OnlineInputField.JoinCode ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
     _ui.CenterText(string.IsNullOrEmpty(_onlineJoinCode) ? "ROOM CODE" : _onlineJoinCode, codeBounds, string.IsNullOrEmpty(_onlineJoinCode) ? UiTheme.TextDim : UiTheme.GoldBright, 1.1f);
     string joinHint = string.IsNullOrWhiteSpace(_onlineError)
-      ? "DEBUG: one client can emulate both teams."
+      ? ""
       : _onlineError;
     _ui.Text(
       joinHint,
