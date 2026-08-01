@@ -4186,6 +4186,7 @@ internal sealed class Game1 : Game
     Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceLg, content.Width, 54);
     _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm), "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
     _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm), "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+    DrawRoyalAbility(royal, content, actionGrid.Bottom + UiTheme.SpaceLg);
 
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
@@ -4283,6 +4284,7 @@ internal sealed class Game1 : Game
     Rectangle rangeStat = UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm);
     _ui.StatBlock(moveStat, "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
     _ui.StatBlock(rangeStat, "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+    DrawRoyalAbility(royal, content, actionGrid.Bottom + UiTheme.SpaceLg);
 
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
@@ -4529,6 +4531,23 @@ internal sealed class Game1 : Game
   {
     string description = UnitRules.GetAbilityDescription(type.ToString());
     return string.IsNullOrWhiteSpace(description) ? "No special ability." : description;
+  }
+
+  private void DrawRoyalAbility(PieceDefinition royal, Rectangle content, int y)
+  {
+    Rectangle previousButton = GetSetupPreviousButtonBounds();
+    _ui.Text("ROYAL ABILITY", new Vector2(content.X, y), UiTheme.Gold, 0.74f);
+    _ui.TextWrapped(
+      GetUnitAbilityText(royal.Type),
+      new Rectangle(
+        content.X,
+        y + 24,
+        content.Width,
+        Math.Max(0, previousButton.Y - y - UiTheme.SpaceLg - 24)
+      ),
+      UiTheme.TextPrimary,
+      0.72f
+    );
   }
 
   private void DrawGameOverScreen()
