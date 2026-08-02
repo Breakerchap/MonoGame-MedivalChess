@@ -47,38 +47,35 @@ public static class UnitRules
 {
   private static readonly UnitRule[] Rules =
   [
-    new("Soldier", RuleCategory.Melee, 2, RuleShape.Straight, 10, 15, 1, 1, 1, RuleShape.Straight, 20),
-    new("Defender", RuleCategory.Melee, 2, RuleShape.Straight, 5, 25, 1, 1, 1, RuleShape.Straight, 20),
-    new("Archer", RuleCategory.Ranged, 2, RuleShape.Any, 10, 10, 1, 1, 3, RuleShape.Any, 30, 2),
-    new("Scout", RuleCategory.Intelligence, 4, RuleShape.Any, 5, 10, 1, 1, 1, RuleShape.Straight, 20),
-    new("Spearman", RuleCategory.Melee, 2, RuleShape.Any, 15, 15, 1, 1, 1, RuleShape.ForwardOrForwardDiagonal, 25),
-    new("Peasant", RuleCategory.Melee, 1, RuleShape.Straight, 5, 5, 1, 1, 1, RuleShape.ForwardOrForwardDiagonal, 10),
-    new("Knight", RuleCategory.Melee, 3, RuleShape.Any, 20, 25, 1, 1, 1, RuleShape.Any, 50),
-    new("Crossbowman", RuleCategory.Ranged, 2, RuleShape.Any, 20, 15, 1, 1, 3, RuleShape.Any, 45),
-    new("Cavalier", RuleCategory.Melee, 4, RuleShape.Any, 15, 20, 1, 1, 1, RuleShape.Any, 50),
-    new("Chariot", RuleCategory.Melee, 4, RuleShape.Straight, 15, 25, 1, 1, 1, RuleShape.Straight, 40),
-    new("Cannon", RuleCategory.Mechanical, 2, RuleShape.Straight, 30, 25, 1, 2, 5, RuleShape.Straight, 50, 2),
-    new("Spy", RuleCategory.Intelligence, 5, RuleShape.Any, 0, 10, 1, 1, 3, RuleShape.Any, 35, 1, "Marks an enemy; it takes double damage until attacked."),
-    new("Catapult", RuleCategory.Mechanical, 1, RuleShape.Any, 20, 20, 1, 2, 6, RuleShape.Any, 55, 3, "Attacks one target at range."),
-    new("Ox", RuleCategory.Transport, 4, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Carries one friendly unit or tows one Mechanical unit."),
-    new("Engineer", RuleCategory.Intelligence, 3, RuleShape.Any, 0, 15, 1, 1, 1, RuleShape.Straight, 35, 1, "Builds a road or 20-health barricade on an adjacent empty square."),
-    new("Ballista", RuleCategory.Mechanical, 1, RuleShape.Straight, 25, 20, 2, 2, 5, RuleShape.PierceStraight, 55, 2, "Its attack pierces enemies in a straight line."),
-    new("Elephant", RuleCategory.Melee, 2, RuleShape.Straight, 15, 50, 2, 2, 0, RuleShape.None, 60, 0, "May move through enemies, damaging each crossed unit, but must land on empty squares."),
-    new("Guard", RuleCategory.Melee, 3, RuleShape.Any, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly unit and takes damage for it."),
-    new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 35, 1, "Place on a No-Man's-Land edge. An enemy can buy it in their territory for its last bid plus 10 gold."),
-    new("Farm", RuleCategory.Structure, 0, RuleShape.None, 0, 40, 2, 2, 0, RuleShape.None, 60, 0, "Earns the configured gold amount at the start of each owner turn."),
-    new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 120, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
-    new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 15, 80, 1, 1, 3, RuleShape.Any, 0, 1, "May attack over friendly units."),
-    new("Palace", RuleCategory.Royal, 0, RuleShape.None, 0, 160, 3, 2, 0, RuleShape.None, 0, 0, "If destroyed, its owner loses."),
-    new("Baron", RuleCategory.Royal, 1, RuleShape.Any, 5, 100, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack."),
-    new("Emissary", RuleCategory.Royal, 3, RuleShape.Any, 5, 80, 1, 1, 1, RuleShape.Any, 0, 1, "Moves directly adjacent friendly 1x1 allies with it.")
+    new("Soldier", RuleCategory.Melee, 3, RuleShape.Straight, 10, 15, 1, 1, 1, RuleShape.Straight, 20),
+    new("Defender", RuleCategory.Melee, 2, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 15),
+    new("Archer", RuleCategory.Ranged, 3, RuleShape.Straight, 10, 10, 1, 1, 3, RuleShape.Any, 30, 2),
+    new("Peasant", RuleCategory.Melee, 1, RuleShape.Any, 5, 5, 1, 1, 1, RuleShape.Straight, 10),
+    new("Knight", RuleCategory.Melee, 4, RuleShape.Any, 20, 30, 1, 1, 1, RuleShape.Any, 50),
+    new("Crossbowman", RuleCategory.Ranged, 2, RuleShape.Any, 20, 15, 1, 1, 3, RuleShape.Any, 45, 3),
+    new("Chariot", RuleCategory.Melee, 5, RuleShape.Straight, 15, 25, 1, 1, 2, RuleShape.Straight, 40, 2),
+    new("Cannon", RuleCategory.Mechanical, 2, RuleShape.Straight, 30, 15, 1, 2, 4, RuleShape.Straight, 50, 2),
+    new("Spy", RuleCategory.Intelligence, 5, RuleShape.Any, 0, 15, 1, 1, 3, RuleShape.Any, 35, 3, "Marks an enemy; it takes double damage until attacked."),
+    new("Catapult", RuleCategory.Mechanical, 1, RuleShape.Any, 20, 20, 1, 2, 5, RuleShape.Any, 55, 3, "Attacks over terrain and enemies."),
+    new("Ox", RuleCategory.Transport, 4, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Carries one friendly unit. Its movement becomes 3 Any while carrying a Mechanical unit."),
+    new("Engineer", RuleCategory.Intelligence, 3, RuleShape.Any, 0, 15, 1, 1, 1, RuleShape.Any, 20, 1, "Builds up to two roads, 20-health barricades, or mines each turn on adjacent empty squares."),
+    new("Ballista", RuleCategory.Mechanical, 1, RuleShape.Straight, 25, 20, 1, 2, 5, RuleShape.Any, 55, 2, "Its attack pierces enemies in a straight line."),
+    new("Elephant", RuleCategory.Melee, 4, RuleShape.Straight, 15, 60, 2, 2, 0, RuleShape.None, 50, 0, "May move through enemies, damaging each crossed unit. Ignores terrain."),
+    new("Guard", RuleCategory.Melee, 3, RuleShape.Straight, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly non-royal unit and takes damage for it."),
+    new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 10, 1, "Place anywhere in No-Man's-Land. Costs 5 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."),
+    new("Farm", RuleCategory.Structure, 0, RuleShape.None, 0, 30, 3, 3, 0, RuleShape.None, 60, 0, "Earns the configured gold amount at the start of each owner turn (default 5). Units may move and attack over it."),
+    new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 110, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
+    new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 10, 80, 1, 1, 4, RuleShape.Any, 0, 1, "May attack over friendly units."),
+    new("Palace", RuleCategory.Royal, 0, RuleShape.None, 0, 150, 3, 2, 0, RuleShape.None, 0, 0, "Earns 5 gold at the start of each owner turn."),
+    new("Baron", RuleCategory.Royal, 2, RuleShape.Straight, 10, 100, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack."),
+    new("Emissary", RuleCategory.Royal, 4, RuleShape.Any, 5, 80, 1, 1, 1, RuleShape.Any, 0, 1, "Moves directly adjacent friendly 1x1 allies with it.")
   ];
 
   private static readonly Dictionary<string, UnitRule> ByType = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
 
   public static IReadOnlyList<UnitRule> All => Rules;
   public static IReadOnlyList<UnitRule> Purchasable { get; } = Rules.Where(rule =>
-    rule.Category != RuleCategory.Royal && rule.Type is not "Scout" and not "Peasant"
+    rule.Category != RuleCategory.Royal
   ).ToArray();
   public static IReadOnlyList<UnitRule> Royals { get; } = Rules.Where(rule => rule.Category == RuleCategory.Royal).ToArray();
 
@@ -103,8 +100,8 @@ public static class UnitRules
     int dy = Math.Abs(toY - fromY);
     if (dx == 0 && dy == 0) return false;
 
-    int maximumX = rule.MoveRange * rule.Width;
-    int maximumY = rule.MoveRange * rule.Height;
+    int maximumX = rule.MoveRange;
+    int maximumY = rule.MoveRange;
     return rule.MovePattern switch
     {
       RuleShape.Straight => (dx == 0 || dy == 0) && dx <= maximumX && dy <= maximumY,
@@ -158,10 +155,23 @@ public static class UnitRules
     {
       RuleShape.Any => true,
       RuleShape.Straight or RuleShape.PierceStraight => dx == 0 || dy == 0,
-      RuleShape.Forward => dx == 0 && dy == (team == NetworkTeam.Red ? -distance : distance),
-      RuleShape.ForwardOrForwardDiagonal =>
-        dy == (team == NetworkTeam.Red ? -distance : distance) && Math.Abs(dx) <= distance,
+      RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
+      RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
       _ => false
     };
+  }
+
+  private static bool IsForwardOffset(NetworkTeam team, int dx, int dy, int distance)
+  {
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    return dx == forward.x * distance && dy == forward.y * distance;
+  }
+
+  private static bool IsForwardOrDiagonalOffset(NetworkTeam team, int dx, int dy, int distance)
+  {
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    return forward.x == 0
+      ? dy == forward.y * distance && Math.Abs(dx) <= distance
+      : dx == forward.x * distance && Math.Abs(dy) <= distance;
   }
 }

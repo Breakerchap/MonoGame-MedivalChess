@@ -46,8 +46,8 @@ internal static class Actions
       }
 
       destinations.Add((
-        piece.Position.x + offset.x * piece.Definition.Size.x,
-        piece.Position.y + offset.y * piece.Definition.Size.y
+        piece.Position.x + offset.x,
+        piece.Position.y + offset.y
       ));
     }
 
@@ -67,7 +67,7 @@ internal static class Actions
         ToRuleShape(piece.Definition.AttackShape.shape),
         piece.Definition.MinimumAttackRange,
         piece.Definition.AttackShape.range,
-        piece.Team == TeamName.Red ? NetworkTeam.Red : NetworkTeam.Blue,
+        piece.Team.ToNetworkTeam(),
         targetPosition.x - origin.x,
         targetPosition.y - origin.y
       ))
@@ -158,8 +158,10 @@ internal static class Actions
     if (piece.CurrentHealth > 0) { return false; }
 
     int refundCost = unitCost ?? piece.Definition.Cost;
-    attackingTeam.Money += CombatRules.RoundCurrencyToNearestFive(refundCost * killerRefundMultiplier);
-    defeatedTeam.Money += CombatRules.RoundCurrencyToNearestFive(refundCost * defeatedTeamRefundMultiplier);
+    int killerRefund = CombatRules.RoundCurrencyToNearestFive(refundCost * killerRefundMultiplier);
+    int defeatedRefund = CombatRules.RoundCurrencyToNearestFive(refundCost * defeatedTeamRefundMultiplier);
+    attackingTeam.Money = (int)Math.Clamp((long)attackingTeam.Money + killerRefund, int.MinValue, int.MaxValue);
+    defeatedTeam.Money = (int)Math.Clamp((long)defeatedTeam.Money + defeatedRefund, int.MinValue, int.MaxValue);
     return true;
   }
 }
@@ -198,15 +200,23 @@ internal static class ShapeFuncs
   internal static List<(int x, int y)> ForwardShape(TeamName team, int range, bool includeDiagonals)
   {
     List<(int x, int y)> validSquares = new();
-    int direction = team == TeamName.Red ? -1 : 1;
+    (int x, int y) direction = TeamRules.GetForwardDirection(team.ToNetworkTeam());
 
     for (int distance = 1; distance <= range; distance++)
     {
-      validSquares.Add((0, direction * distance));
+      validSquares.Add((direction.x * distance, direction.y * distance));
       if (includeDiagonals)
       {
-        validSquares.Add((-distance, direction * distance));
-        validSquares.Add((distance, direction * distance));
+        if (direction.x == 0)
+        {
+          validSquares.Add((-distance, direction.y * distance));
+          validSquares.Add((distance, direction.y * distance));
+        }
+        else
+        {
+          validSquares.Add((direction.x * distance, -distance));
+          validSquares.Add((direction.x * distance, distance));
+        }
       }
     }
 

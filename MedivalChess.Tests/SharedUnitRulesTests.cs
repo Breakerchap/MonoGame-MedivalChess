@@ -43,13 +43,13 @@ public sealed class SharedUnitRulesTests
   }
 
   [Fact]
-  public void SharedRules_KeepLargeUnitMovementAndFootprintsConsistent()
+  public void SharedRules_KeepLargeUnitFootprintsWithoutScalingMovement()
   {
     UnitRule cannon = UnitRules.GetRequired("Cannon");
     UnitRule elephant = UnitRules.GetRequired("Elephant");
 
     Assert.Equal((1, 2), (cannon.Width, cannon.Height));
-    Assert.True(UnitRules.CanMove(cannon, 0, 0, 0, 4));
+    Assert.False(UnitRules.CanMove(cannon, 0, 0, 0, 4));
     Assert.True(UnitRules.CanMove(cannon, 0, 0, 2, 0));
     Assert.False(UnitRules.CanMove(cannon, 0, 0, 3, 0));
     Assert.Equal((2, 2), (elephant.Width, elephant.Height));
@@ -69,18 +69,18 @@ public sealed class SharedUnitRulesTests
     Assert.False(UnitRules.CanAttack(archer, 0, 0, NetworkTeam.Red, soldier, 1, 0));
     Assert.True(UnitRules.CanAttack(archer, 0, 0, NetworkTeam.Red, soldier, 2, 0));
     Assert.True(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 0, 3));
-    Assert.False(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 2, 2));
+    Assert.True(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 2, 2));
   }
 
   [Fact]
-  public void SharedRules_DefineSingleTargetCatapultAndAbilityMetadata()
+  public void SharedRules_DefineCatapultAndAbilityMetadata()
   {
     UnitRule catapult = UnitRules.GetRequired("Catapult");
 
     Assert.Equal(RuleShape.Any, catapult.AttackPattern);
-    Assert.Equal("Attacks one target at range.", UnitRules.GetAbilityDescription("Catapult"));
+    Assert.Equal("Attacks over terrain and enemies.", UnitRules.GetAbilityDescription("Catapult"));
     Assert.Contains("barricade", UnitRules.GetAbilityDescription("Engineer"));
-    Assert.Contains("land on empty", UnitRules.GetAbilityDescription("Elephant"));
+    Assert.Contains("Ignores terrain", UnitRules.GetAbilityDescription("Elephant"));
   }
 
   [Fact]

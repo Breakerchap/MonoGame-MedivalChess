@@ -51,4 +51,26 @@ public class InitialBuyPhaseTests
 
     Assert.True(phase.IsComplete);
   }
+
+  [Fact]
+  public void FarmOpeningRequiresTwoFreePlacementsPerTeamBeforeNormalBuying()
+  {
+    InitialBuyPhase phase = new(2, 4, farmsEnabled: true);
+
+    Assert.True(phase.IsFarmPlacementPhase);
+    Assert.False(phase.CanStopCurrentBuyer);
+    phase.RecordPurchase();
+    Assert.Equal(1, phase.GetFarmsPlaced(TeamName.Red));
+    Assert.Equal(TeamName.Red, phase.CurrentTeam);
+    phase.RecordPurchase();
+    Assert.Equal(TeamName.Blue, phase.CurrentTeam);
+
+    phase.RecordPurchase();
+    phase.RecordPurchase();
+
+    Assert.False(phase.IsFarmPlacementPhase);
+    Assert.Equal(TeamName.Red, phase.CurrentTeam);
+    Assert.Equal(0, phase.PurchasesThisTurn);
+    Assert.True(phase.CanStopCurrentBuyer);
+  }
 }

@@ -7,7 +7,8 @@ public static class TerrainRules
     Board board,
     int seed,
     string forestDensity,
-    string waterwayDensity
+    string waterwayDensity,
+    int playerCount = 2
   )
   {
     TerrainGenerationSettings settings = new()
@@ -18,6 +19,6 @@ public static class TerrainRules
       MaximumForestClusterSize = forestDensity switch { "Light" => 4, "Heavy" => 8, _ => 6 },
       RiverCount = waterwayDensity switch { "Light" => 1, "Heavy" => 3, _ => 2 }
     };
-    return BattlefieldTerrain.CreateRandom(board, seed, settings);
+    return BattlefieldTerrain.CreateRandom(board, seed, settings, playerCount);
   }
 }

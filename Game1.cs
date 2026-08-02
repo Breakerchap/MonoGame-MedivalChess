@@ -6,6 +6,7 @@ using MedivalChess.Player;
 using MedivalChess.Shared;
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Runtime.InteropServices;
 
@@ -77,7 +78,8 @@ internal sealed class Game1 : Game
   private enum EngineerAbility
   {
     Road,
-    Barrier
+    Barrier,
+    Mine
   }
 
   private sealed class MovementAnimation
@@ -132,17 +134,23 @@ internal sealed class Game1 : Game
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
   private int _initialBuysPerTurn = 2;
   private int _initialBuyTurnsPerTeam = 3;
-  private bool _farmsEnabled;
-  private int _farmIncomePerTurn = 15;
+  private bool _farmsEnabled = true;
+  private int _farmIncomePerTurn = 5;
   private bool _unitMaintenanceEnabled;
   private int _unitMaintenancePercent = 10;
   private int _unitPricePercent = 100;
+  private bool _interestEnabled;
+  private int _interestPercent;
+  private int _economyInputIndex = -1;
+  private string _economyInputText = string.Empty;
+  private int _playerCount = 2;
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
   private GameMode _gameMode = GameMode.Regicide;
   private int _conquestWinScore = MatchRules.DefaultConquestWinScore;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
+  private readonly Dictionary<TeamName, int> _conquestScores = [];
   private BindingAction? _bindingToChange;
   private Screen _settingsReturnScreen = Screen.Title;
   private int _encyclopediaIndex;
@@ -159,7 +167,7 @@ internal sealed class Game1 : Game
   private string _onlineServerUrl = "https://crown-and-siege-server.onrender.com";
   private string _onlineJoinCode = string.Empty;
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
-  private bool _onlineWaitingForOpponent;
+  private bool _onlineIsHost;
   private bool _onlineRoyalChoicePending;
   private bool _debugTeamSwitchPending;
   private bool _onlineHostingSetup;
@@ -187,7 +195,7 @@ internal sealed class Game1 : Game
     _terrain = BattlefieldTerrain.CreateRandom(_board, _terrainSeed);
 
     pieceSetup.AddPieces();
-    _teams = pieceSetup.CreateTeams();
+    ConfigureTeamsForPlayerCount();
 
     base.Initialize();
   }
@@ -432,7 +440,7 @@ internal sealed class Game1 : Game
             else
             {
               if (selectedPiece.AttachedTo != null &&
-                  selectedPiece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed)
+                  selectedPiece.AttachmentKind == AttachmentKind.Carried)
               {
                 pieceSetup.Detach(selectedPiece);
               }
@@ -532,6 +540,11 @@ internal sealed class Game1 : Game
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
     PieceDefinition definition = GetPurchasablePieces()[_selectedPurchaseIndex];
+    if (_initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type != PieceType.Farm)
+    {
+      _onlineError = "Place your two farms before buying units.";
+      return;
+    }
     if (_onlineClient != null)
     {
       if (!IsOnlineLocalTurn())
@@ -569,24 +582,32 @@ internal sealed class Game1 : Game
         return;
       }
 
-      if (!IsInTeamTerritory(targetPosition, Team.CurrentTurn))
+      bool isNeutralMercenary = targetPiece.Team == TeamName.Neutral;
+      if (!isNeutralMercenary && !IsInTeamTerritory(targetPosition, Team.CurrentTurn))
       {
         Console.WriteLine("A Mercenary can only be bought off while it is in your territory.");
         return;
       }
 
-      long buyoutCost = targetPiece.NextMercenaryBid;
+      long buyoutCost = isNeutralMercenary
+        ? Math.Max(1, targetPiece.LastBid)
+        : targetPiece.NextMercenaryBid;
       if (buyoutCost > int.MaxValue || buyingTeam.Money < buyoutCost)
       {
         Console.WriteLine("You cannot afford to outbid that Mercenary.");
         return;
       }
 
-      Team previousOwner = _teams.Find(team => team.TeamName == targetPiece.Team);
-      buyingTeam.Money -= (int)buyoutCost;
-      previousOwner.Money += (int)buyoutCost;
+      buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - buyoutCost);
+      if (!isNeutralMercenary)
+      {
+        Team previousOwner = _teams.Find(team => team.TeamName == targetPiece.Team);
+        previousOwner.Money = ClampCurrency((long)previousOwner.Money + buyoutCost);
+      }
       targetPiece.Team = Team.CurrentTurn;
       targetPiece.LastBid = (int)buyoutCost;
+      targetPiece.HasMovedThisTurn = true;
+      targetPiece.HasAttackedThisTurn = true;
 
       Console.WriteLine($"{Team.CurrentTurn} bought the Mercenary for {buyoutCost} gold.");
       CompletePurchase();
@@ -599,25 +620,28 @@ internal sealed class Game1 : Game
       return;
     }
 
+    bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     bool canPlace =
       (definition.Type == PieceType.Mercenary
         ? CanPlaceMercenary(targetPosition)
         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
-      buyingTeam.Money >= GetUnitPrice(definition);
+      (isOpeningFarmPlacement || buyingTeam.Money >= GetUnitPrice(definition));
 
     if (!canPlace)
     {
       Console.WriteLine(definition.Type == PieceType.Mercenary
-        ? "Mercenaries must be placed on an empty edge square in No-Man's-Land."
+        ? "Mercenaries must be placed on an empty square in No-Man's-Land."
         : "Pieces must be placed on an empty square on your side of the board.");
       return;
     }
 
-    int price = GetUnitPrice(definition);
-    buyingTeam.Money -= price;
+    int price = isOpeningFarmPlacement ? 0 : GetUnitPrice(definition);
+    buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price);
     Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
     {
-      LastBid = price
+      LastBid = price,
+      HasMovedThisTurn = _initialBuyPhase is null,
+      HasAttackedThisTurn = _initialBuyPhase is null
     };
     pieceSetup.AddPiece(boughtPiece);
 
@@ -630,7 +654,8 @@ internal sealed class Game1 : Game
 
   private void StartInitialBuyPhase()
   {
-    _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam);
+    _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam, Team.ActiveTeams, _farmsEnabled);
+    EnsureInitialBuySelection();
     if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Mercenary)
     {
       CyclePurchaseSelection(1);
@@ -646,6 +671,11 @@ internal sealed class Game1 : Game
   private void CyclePurchaseSelection(int direction)
   {
     IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
+    if (_initialBuyPhase?.IsFarmPlacementPhase == true)
+    {
+      EnsureInitialBuySelection();
+      return;
+    }
     for (int attempts = 0; attempts < purchasablePieces.Count; attempts++)
     {
       _selectedPurchaseIndex =
@@ -666,6 +696,17 @@ internal sealed class Game1 : Game
   {
     int purchaseCount = GetPurchasablePieces().Count;
     _selectedPurchaseIndex = purchaseCount == 0 ? 0 : _selectedPurchaseIndex % purchaseCount;
+  }
+
+  private void EnsureInitialBuySelection()
+  {
+    if (_initialBuyPhase?.IsFarmPlacementPhase != true)
+    {
+      return;
+    }
+
+    int farmIndex = GetPurchasablePieces().ToList().FindIndex(piece => piece.Type == PieceType.Farm);
+    if (farmIndex >= 0) _selectedPurchaseIndex = farmIndex;
   }
 
   private void CompletePurchase()
@@ -693,8 +734,10 @@ internal sealed class Game1 : Game
       {
         team.ActionPoints = Team.ActionsPerTurn;
       }
-      ResetPieceTurnActions(TeamName.Red);
-      ResetPieceTurnActions(TeamName.Blue);
+      foreach (TeamName team in Team.ActiveTeams)
+      {
+        ResetPieceTurnActions(team);
+      }
 
       Console.WriteLine("Initial buy phase complete. The match has started.");
       return;
@@ -702,12 +745,13 @@ internal sealed class Game1 : Game
 
     Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
     _isPurchaseMode = true;
+    EnsureInitialBuySelection();
     selectedPiece = null;
   }
 
   private bool HandleInitialBuyStopClick(Point mousePosition)
   {
-    if (_initialBuyPhase == null || !GetInitialBuyStopButtonBounds().Contains(mousePosition))
+    if (_initialBuyPhase == null || !_initialBuyPhase.CanStopCurrentBuyer || !GetInitialBuyStopButtonBounds().Contains(mousePosition))
     {
       return false;
     }
@@ -801,6 +845,7 @@ internal sealed class Game1 : Game
       {
         piece.HasMovedThisTurn = false;
         piece.HasAttackedThisTurn = false;
+        piece.EngineerBuildsThisTurn = 0;
       }
     }
   }
@@ -808,12 +853,31 @@ internal sealed class Game1 : Game
   private void ApplyTurnEconomy(TeamName teamName)
   {
     Team team = _teams.Find(candidate => candidate.TeamName == teamName);
+    if (_interestEnabled && _interestPercent != 0)
+    {
+      int interest = EconomyRules.GetInterest(team.Money, _interestPercent);
+      team.Money = ClampCurrency((long)team.Money + interest);
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} received {interest} gold in interest.");
+    }
+
     int farmCount = pieceSetup.Pieces.Count(piece =>
       piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Farm);
-    if (farmCount > 0 && _farmIncomePerTurn != 0)
+    int palaceCount = pieceSetup.Pieces.Count(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Palace);
+    long income = farmCount * (long)_farmIncomePerTurn + palaceCount * 5L;
+    if (income != 0)
     {
-      team.Money = ClampCurrency((long)team.Money + farmCount * (long)_farmIncomePerTurn);
-      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {farmCount * (long)_farmIncomePerTurn} gold from {farmCount} farm(s).");
+      team.Money = ClampCurrency((long)team.Money + income);
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms and palaces.");
+    }
+
+    int mercenaryCount = pieceSetup.Pieces.Count(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Mercenary);
+    if (mercenaryCount > 0)
+    {
+      long payroll = mercenaryCount * 5L;
+      team.Money = ClampCurrency((long)team.Money - payroll);
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} paid {payroll} gold to {mercenaryCount} Mercenary unit(s).");
     }
 
     if (!_unitMaintenanceEnabled || _unitMaintenancePercent <= 0)
@@ -856,10 +920,27 @@ internal sealed class Game1 : Game
 
   private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
   {
-    if (_gameMode != GameMode.Conquest || teamThatFinishedTurn != TeamName.Blue)
+    if (_gameMode != GameMode.Conquest)
     {
       return false;
     }
+
+    if (_playerCount > 2)
+    {
+      int score = Math.Clamp(
+        _conquestScores.GetValueOrDefault(teamThatFinishedTurn) + GetConquestOccupyingPieceCount(teamThatFinishedTurn),
+        0,
+        _conquestWinScore
+      );
+      _conquestScores[teamThatFinishedTurn] = score;
+      if (score < _conquestWinScore) return false;
+      _winningTeam = teamThatFinishedTurn;
+      _screen = Screen.GameOver;
+      selectedPiece = null;
+      return true;
+    }
+
+    if (teamThatFinishedTurn != TeamName.Blue) return false;
 
     int orangePieces = GetConquestOccupyingPieceCount(TeamName.Red);
     int purplePieces = GetConquestOccupyingPieceCount(TeamName.Blue);
@@ -897,8 +978,7 @@ internal sealed class Game1 : Game
       return true;
     }
 
-    return _onlineClient.Team is NetworkTeam team &&
-      (team == NetworkTeam.Red ? Team.CurrentTurn == TeamName.Red : Team.CurrentTurn == TeamName.Blue);
+    return _onlineClient.Team is NetworkTeam team && Team.CurrentTurn == team.ToTeamName();
   }
 
   private bool IsDebugOnlineMatch => _onlineClient?.IsDebugRoom == true;
@@ -959,7 +1039,7 @@ internal sealed class Game1 : Game
     {
       _onlineError = string.Empty;
       _onlineClient = new OnlineMatchClient(serverUrl);
-      _onlineWaitingForOpponent = true;
+      _onlineIsHost = true;
       _onlineStatus = "CREATING PRIVATE ROOM...";
       _screen = Screen.OnlineWaiting;
       RoomJoinResult result = await _onlineClient.HostAsync(new CreateGameRequest(configuration));
@@ -968,7 +1048,6 @@ internal sealed class Game1 : Game
         Console.WriteLine($"Could not host room: {result.Error}");
         await _onlineClient.DisposeAsync();
         _onlineClient = null;
-        _onlineWaitingForOpponent = false;
         _onlineError = result.Error ?? "Could not create a room.";
         _screen = Screen.OnlineLobby;
         return;
@@ -985,7 +1064,6 @@ internal sealed class Game1 : Game
         await _onlineClient.DisposeAsync();
       }
       _onlineClient = null;
-      _onlineWaitingForOpponent = false;
       _onlineError = "Could not reach the match server.";
       _screen = Screen.OnlineLobby;
     }
@@ -1024,6 +1102,7 @@ internal sealed class Game1 : Game
     {
       _onlineError = string.Empty;
       _onlineClient = new OnlineMatchClient(serverUrl);
+      _onlineIsHost = false;
       RoomJoinResult result = await _onlineClient.JoinAsync(joinCode);
       if (!result.Accepted)
       {
@@ -1100,11 +1179,17 @@ internal sealed class Game1 : Game
 
   private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
   {
+    if (actor.HasAttackedThisTurn)
+    {
+      return false;
+    }
+
     bool isSpecialTarget = actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
       PieceType.Engineer => true,
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
+      PieceType.Mercenary => targetPosition == actor.Position,
       _ => false
     };
     if (!isSpecialTarget)
@@ -1114,8 +1199,10 @@ internal sealed class Game1 : Game
 
     string ability = actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
-      : string.Empty;
-    _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, targetPosition);
+      : actor.Definition.Type == PieceType.Mercenary
+        ? "Fire"
+        : string.Empty;
+    _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, actor.Definition.Type == PieceType.Mercenary ? actor.Position : targetPosition);
     return true;
   }
 
@@ -1247,22 +1334,28 @@ internal sealed class Game1 : Game
     ApplyOnlineImprovements(state.Improvements);
     ApplyOnlinePieces(state.Pieces);
     _conquestScore = state.ConquestScore;
+    _conquestScores.Clear();
+    foreach (NetworkConquestTeamState score in state.ConquestScores ?? [])
+    {
+      _conquestScores[score.Team.ToTeamName()] = score.Score;
+    }
     if (state.Winner is NetworkTeam winner)
     {
-      _winningTeam = winner == NetworkTeam.Red ? TeamName.Red : TeamName.Blue;
+      _winningTeam = winner.ToTeamName();
       _screen = Screen.GameOver;
       selectedPiece = null;
       return;
     }
 
-    if (_onlineWaitingForOpponent && state.PlayerCount < 2)
+    if (state.PlayerCount < state.Configuration.PlayerCount)
     {
+      _onlineStatus = $"WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}";
+      _screen = Screen.OnlineWaiting;
       return;
     }
 
     if (!state.MatchReady)
     {
-      _onlineWaitingForOpponent = false;
       NetworkTeam? localTeam = _onlineClient?.Team;
       bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
         teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
@@ -1279,31 +1372,27 @@ internal sealed class Game1 : Game
       _initialBuyPhase = new InitialBuyPhase(
         initialBuy.PurchasesPerTurn,
         initialBuy.BuyTurnsPerTeam,
-        initialBuy.CurrentTeam == NetworkTeam.Red ? TeamName.Red : TeamName.Blue,
+        initialBuy.CurrentTeam.ToTeamName(),
         initialBuy.PurchasesThisTurn,
-        initialBuy.RedBuyTurnsUsed,
-        initialBuy.BlueBuyTurnsUsed,
-        initialBuy.RedStopped,
-        initialBuy.BlueStopped,
-        initialBuy.IsComplete
+        GetInitialBuyTeamStates(initialBuy),
+        initialBuy.IsComplete,
+        initialBuy.IsFarmPlacementPhase
       );
       Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
       selectedPiece = null;
       _isPurchaseMode = true;
       _onlineStatus = $"ONLINE INITIAL PURCHASE  ROOM: {state.JoinCode}";
-      _onlineWaitingForOpponent = false;
       _onlineRoyalChoicePending = false;
       _screen = Screen.Playing;
       _movementAnimation = null;
       return;
     }
 
-    Team.SetCurrentTurn(state.CurrentTurn == NetworkTeam.Red ? TeamName.Red : TeamName.Blue);
+    Team.SetCurrentTurn(state.CurrentTurn.ToTeamName());
     selectedPiece = null;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
-    _onlineWaitingForOpponent = false;
     _onlineRoyalChoicePending = false;
     _screen = Screen.Playing;
     BeginOnlineMovementAnimation(state.Pieces, previousPositions);
@@ -1341,6 +1430,10 @@ internal sealed class Game1 : Game
     _unitMaintenanceEnabled = configuration.UnitMaintenanceEnabled;
     _unitMaintenancePercent = configuration.UnitMaintenancePercent;
     _unitPricePercent = configuration.UnitPricePercent;
+    _interestEnabled = configuration.InterestEnabled;
+    _interestPercent = configuration.InterestPercent;
+    _playerCount = configuration.PlayerCount;
+    ConfigureTeamsForPlayerCount();
     EnsurePurchaseSelectionIsValid();
     ConfigureBattlefield(boardSize, forestDensity, waterwayDensity, configuration.TerrainSeed);
   }
@@ -1349,7 +1442,7 @@ internal sealed class Game1 : Game
   {
     foreach (NetworkTeamState state in teamStates)
     {
-      TeamName teamName = state.Team == NetworkTeam.Red ? TeamName.Red : TeamName.Blue;
+      TeamName teamName = state.Team.ToTeamName();
       Team team = _teams.Find(candidate => candidate.TeamName == teamName);
       if (team is null)
       {
@@ -1386,14 +1479,15 @@ internal sealed class Game1 : Game
       Piece piece = new(
         definition,
         (networkPiece.X, networkPiece.Y),
-        networkPiece.Team == NetworkTeam.Red ? TeamName.Red : TeamName.Blue
+        networkPiece.Team.ToTeamName()
       )
       {
         NetworkId = networkPiece.Id,
         CurrentHealth = networkPiece.Health,
         HasMovedThisTurn = networkPiece.HasMovedThisTurn,
         HasAttackedThisTurn = networkPiece.HasAttackedThisTurn,
-        LastBid = networkPiece.LastBid
+        LastBid = networkPiece.LastBid,
+        EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn
       };
       pieceSetup.AddPiece(piece);
       piecesByNetworkId[networkPiece.Id] = piece;
@@ -1409,7 +1503,6 @@ internal sealed class Game1 : Game
         {
           NetworkAttachmentKind.Guard => AttachmentKind.Guard,
           NetworkAttachmentKind.Carried => AttachmentKind.Carried,
-          NetworkAttachmentKind.Towed => AttachmentKind.Towed,
           _ => AttachmentKind.None
         };
       }
@@ -1425,10 +1518,15 @@ internal sealed class Game1 : Game
   {
     _roads.Clear();
     _barricades.Clear();
+    _mines.Clear();
     foreach (NetworkImprovement improvement in improvements ?? [])
     {
       if (improvement.Type == "Road") _roads.Add((improvement.X, improvement.Y));
       else if (improvement.Type == "Barrier") _barricades[(improvement.X, improvement.Y)] = improvement.Health;
+      else if (improvement.Type == "Mine" && improvement.Owner is NetworkTeam owner)
+      {
+        _mines[(improvement.X, improvement.Y)] = owner.ToTeamName();
+      }
     }
   }
 
@@ -1454,7 +1552,8 @@ internal sealed class Game1 : Game
 
   private static float AdjustRefundMultiplier(float multiplier, float adjustment)
   {
-    return Math.Clamp(MathF.Round(multiplier + adjustment, 1), -10f, 10f);
+    float adjusted = MathF.Round(multiplier + adjustment, 1);
+    return float.IsFinite(adjusted) ? adjusted : multiplier;
   }
 
   private bool IsBoardCell(int arrayX, int arrayY)
@@ -1486,7 +1585,7 @@ internal sealed class Game1 : Game
           return false;
         }
 
-        if (requiredOwner.HasValue && GetSquareOwner(arrayY) != requiredOwner.Value)
+        if (requiredOwner.HasValue && GetSquareOwner((position.x + x, position.y + y)) != requiredOwner.Value)
         {
           return false;
         }
@@ -1498,24 +1597,19 @@ internal sealed class Game1 : Game
 
   private bool CanPlaceMercenary((int x, int y) position)
   {
-    int arrayX = position.x - _board.MinX;
-    int arrayY = position.y - _board.MinY;
-    if (!IsTraversableTerrainSquare(position) || GetSquareOwner(arrayY).HasValue)
+    if (!IsTraversableTerrainSquare(position) || GetSquareOwner(position).HasValue)
     {
       return false;
     }
 
-    (int x, int y)[] adjacentOffsets = [(0, -1), (1, 0), (0, 1), (-1, 0)];
-    bool isBoardEdge = adjacentOffsets.Any(offset =>
-      !IsBoardCell(arrayX + offset.x, arrayY + offset.y));
-    return isBoardEdge && pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
+    return pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
   }
 
   private bool IsInTeamTerritory((int x, int y) position, TeamName team)
   {
     int arrayX = position.x - _board.MinX;
     int arrayY = position.y - _board.MinY;
-    return IsBoardCell(arrayX, arrayY) && GetSquareOwner(arrayY) == team;
+    return IsBoardCell(arrayX, arrayY) && GetSquareOwner(position) == team;
   }
 
   private bool TryGetPurchasePlacementPreview(
@@ -1559,9 +1653,14 @@ internal sealed class Game1 : Game
       _initialBuyPhase == null &&
       targetPiece?.Definition.Type == PieceType.Mercenary &&
       targetPiece.Team != Team.CurrentTurn &&
-      IsInTeamTerritory(targetPosition, Team.CurrentTurn);
-    bool hasEnoughGold = isMercenaryBuyout
-      ? buyingTeam.Money >= targetPiece.NextMercenaryBid
+      (targetPiece.Team == TeamName.Neutral || IsInTeamTerritory(targetPosition, Team.CurrentTurn));
+    bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
+    bool hasEnoughGold = isOpeningFarmPlacement
+      ? true
+      : isMercenaryBuyout
+      ? buyingTeam.Money >= (targetPiece.Team == TeamName.Neutral
+        ? Math.Max(1, targetPiece.LastBid)
+        : targetPiece.NextMercenaryBid)
       : buyingTeam.Money >= GetUnitPrice(definition);
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
@@ -1612,8 +1711,20 @@ internal sealed class Game1 : Game
       destination => CanLandPieceAt(piece, destination),
       (from, destination) => CanTravelThroughPosition(piece, from, destination),
       destination => GetMovementCost(piece, destination),
-      (from, to) => CrossesRiver(piece, from, to)
+      (from, to) => CrossesRiver(piece, from, to),
+      GetEffectiveMovementRule(piece)
     );
+  }
+
+  private UnitRule GetEffectiveMovementRule(Piece piece)
+  {
+    UnitRule rule = UnitRules.GetRequired(piece.Definition.Type.ToString());
+    Piece cargo = piece.Definition.Type == PieceType.Ox
+      ? pieceSetup.GetAttachedPiece(piece, AttachmentKind.Carried)
+      : null;
+    return cargo?.Definition.Category == PieceCategory.Mechanical
+      ? rule with { MoveRange = 3, MovePattern = RuleShape.Any }
+      : rule;
   }
 
   private bool TryGetMovementPathAt(
@@ -1659,19 +1770,7 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    Piece towedPiece = pieceSetup.GetAttachedPiece(piece, AttachmentKind.Towed);
-    if (towedPiece == null)
-    {
-      return true;
-    }
-
-    var towedDestination = (
-      x: towedPiece.Position.x + destination.x - piece.Position.x,
-      y: towedPiece.Position.y + destination.y - piece.Position.y
-    );
-    return
-      CanPlacePiece(towedPiece.Definition, towedDestination, null, towedPiece) &&
-      !FootprintsOverlap(piece.Definition, destination, towedPiece.Definition, towedDestination);
+    return true;
   }
 
   private bool CanTravelThroughPosition(
@@ -1694,6 +1793,11 @@ internal sealed class Game1 : Game
 
         Piece blockingPiece = pieceSetup.GetPieceAt(occupiedSquare);
         if (blockingPiece == null || blockingPiece == piece)
+        {
+          continue;
+        }
+
+        if (blockingPiece.Definition.Type == PieceType.Farm)
         {
           continue;
         }
@@ -2025,8 +2129,11 @@ internal sealed class Game1 : Game
     pieceSetup.RemovePiece(damagedPiece);
     if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Regicide)
     {
-      _winningTeam = damagedPiece.Team == TeamName.Red ? TeamName.Blue : TeamName.Red;
-      _screen = Screen.GameOver;
+      if (attackingTeamName is TeamName winner && winner != damagedPiece.Team)
+      {
+        _winningTeam = winner;
+        _screen = Screen.GameOver;
+      }
     }
     else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Escort)
     {
@@ -2057,6 +2164,16 @@ internal sealed class Game1 : Game
     KeyboardState keyboard
   )
   {
+    if (actor.HasAttackedThisTurn)
+    {
+      return false;
+    }
+
+    if (actor.Definition.Type == PieceType.Mercenary && targetPosition == actor.Position)
+    {
+      return TryFireMercenary(actor);
+    }
+
     if (actor.Definition.Type == PieceType.Spy &&
         targetPiece != null &&
         targetPiece.Team != actor.Team &&
@@ -2097,20 +2214,31 @@ internal sealed class Game1 : Game
           UnitRules.GetRequired(actor.Definition.Type.ToString()),
           UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
           targetPiece.AttachedTo != null,
-          pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) != null ||
-            pieceSetup.GetAttachedPiece(actor, AttachmentKind.Towed) != null
+          pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) != null
         ) &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
-      AttachmentKind kind = targetPiece.Definition.Category == PieceCategory.Mechanical
-        ? AttachmentKind.Towed
-        : AttachmentKind.Carried;
-      pieceSetup.Attach(targetPiece, actor, kind);
+      pieceSetup.Attach(targetPiece, actor, AttachmentKind.Carried);
       CompleteAction();
       return true;
     }
 
     return false;
+  }
+
+  private bool TryFireMercenary(Piece mercenary)
+  {
+    if (mercenary.Team != Team.CurrentTurn)
+    {
+      return false;
+    }
+
+    mercenary.Team = TeamName.Neutral;
+    mercenary.HasMovedThisTurn = true;
+    mercenary.HasAttackedThisTurn = true;
+    Console.WriteLine("Mercenary fired and left neutral in No-Man's-Land.");
+    CompleteAction();
+    return true;
   }
 
   private bool TryUseEngineerAbility(
@@ -2119,7 +2247,7 @@ internal sealed class Game1 : Game
     Piece targetPiece
   )
   {
-    if (engineer.HasAttackedThisTurn ||
+    if (engineer.EngineerBuildsThisTurn >= 2 ||
         !Actions.CanAttackSquare(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
@@ -2130,6 +2258,7 @@ internal sealed class Game1 : Game
     {
       EngineerAbility.Road => TryBuildRoad(engineer, targetPosition, targetPiece),
       EngineerAbility.Barrier => TryBuildBarrier(targetPosition, targetPiece),
+      EngineerAbility.Mine => TryBuildMine(engineer, targetPosition, targetPiece),
       _ => false
     };
     if (!improvementChanged)
@@ -2137,7 +2266,8 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    engineer.HasAttackedThisTurn = true;
+    engineer.EngineerBuildsThisTurn++;
+    engineer.HasAttackedThisTurn = engineer.EngineerBuildsThisTurn >= 2;
     CompleteAction();
     return true;
   }
@@ -2148,7 +2278,7 @@ internal sealed class Game1 : Game
     Piece targetPiece
   )
   {
-    if (engineer.HasAttackedThisTurn ||
+    if (engineer.EngineerBuildsThisTurn >= 2 ||
         !Actions.CanAttackSquare(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
@@ -2160,6 +2290,8 @@ internal sealed class Game1 : Game
       EngineerAbility.Road => targetPiece is null && !IsEngineeringImprovementAt(targetPosition) &&
         IsTraversableTerrainSquare(targetPosition),
       EngineerAbility.Barrier => targetPiece is null &&
+        !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
+      EngineerAbility.Mine => targetPiece is null &&
         !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
       _ => false
     };
@@ -2453,10 +2585,8 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    int enemyBackRow = piece.Team == TeamName.Red
-      ? _board.MinY
-      : _board.MinY + _board.BoardArray.GetLength(0) - 1;
-    return piece.OccupiedSquares().Any(square => square.y == enemyBackRow);
+    return piece.OccupiedSquares().Any(square =>
+      MatchRules.IsOnEnemyBackEdge(_board, piece.Team.ToNetworkTeam(), square));
   }
 
   private bool AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
@@ -2557,6 +2687,10 @@ internal sealed class Game1 : Game
       }
       if (_terrain.IsForest(position)) break;
       Piece target = pieceSetup.GetPieceAt(position);
+      if (target?.Definition.Type == PieceType.Farm)
+      {
+        continue;
+      }
       if (target != null && target.Team != attacker.Team) ResolveDamage(attacker, target);
     }
   }
@@ -2593,6 +2727,7 @@ internal sealed class Game1 : Game
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
     UnitRule rule = UnitRules.GetRequired(attacker.Definition.Type.ToString());
+    if (rule.Type == "Catapult") return true;
     return LineOfSightRules.HasClearAttackPath(
       rule,
       attacker.OccupiedSquares(),
@@ -2602,7 +2737,7 @@ internal sealed class Game1 : Game
       square =>
       {
         Piece blockingPiece = pieceSetup.GetPieceAt(square);
-        return blockingPiece is not null &&
+        return blockingPiece is not null && blockingPiece.Definition.Type != PieceType.Farm &&
           !(attacker.Definition.Type == PieceType.Princess && blockingPiece.Team == attacker.Team);
       }
     );
@@ -2740,10 +2875,10 @@ internal sealed class Game1 : Game
     return false;
   }
 
-  private TeamName? GetSquareOwner(int arrayY)
+  private TeamName? GetSquareOwner((int x, int y) position)
   {
-    NetworkTeam? owner = MatchRules.GetTeamForArrayRow(_board, _gameMode.ToString(), arrayY);
-    return owner is NetworkTeam.Red ? TeamName.Red : owner is NetworkTeam.Blue ? TeamName.Blue : null;
+    NetworkTeam? owner = MatchRules.GetSquareOwner(_board, _gameMode.ToString(), position, _playerCount);
+    return owner?.ToTeamName();
   }
 
   private Rectangle GetPurchasePanelBounds()
@@ -2836,7 +2971,7 @@ internal sealed class Game1 : Game
 
   private void CycleEngineerAbility(int direction)
   {
-    EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier];
+    EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier, EngineerAbility.Mine];
     int selectedIndex = Array.IndexOf(abilities, _selectedEngineerAbility);
     if (selectedIndex < 0) selectedIndex = 0;
     _selectedEngineerAbility = abilities[(selectedIndex + direction + abilities.Length) % abilities.Length];
@@ -3024,7 +3159,6 @@ internal sealed class Game1 : Game
     return attachment.AttachmentKind switch
     {
       AttachmentKind.Guard => new Rectangle(hostBounds.Right - size - inset, hostBounds.Bottom - size - inset, size, size),
-      AttachmentKind.Towed => new Rectangle(hostBounds.X + inset, hostBounds.Bottom - size - inset, size, size),
       _ => new Rectangle(hostBounds.Right - size - inset, hostBounds.Y + inset, size, size)
     };
   }
@@ -3040,7 +3174,7 @@ internal sealed class Game1 : Game
     bool followsAnimatedPiece =
       piece == animatedPiece ||
       (piece.AttachedTo == animatedPiece &&
-       piece.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed);
+       piece.AttachmentKind == AttachmentKind.Carried);
     if (!followsAnimatedPiece)
     {
       return new Vector2(piece.Position.x, piece.Position.y);
@@ -3088,12 +3222,13 @@ internal sealed class Game1 : Game
     float detailX = previewBounds.Right + UiTheme.SpaceMd;
     _ui.Text(definition.Type.ToString().ToUpperInvariant(), new Vector2(detailX, previewBounds.Y + 4), UiTheme.TextPrimary);
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
-    _ui.Text($"{GetUnitPrice(definition)} GOLD", new Vector2(detailX, previewBounds.Y + 56), UiTheme.Gold, 0.84f);
-    if (_unitMaintenanceEnabled)
-    {
-      _ui.Text($"UPKEEP {GetUnitMaintenance(definition)} / TURN", new Vector2(detailX, previewBounds.Y + 78), UiTheme.TextMuted, 0.58f);
-    }
-
+    bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
+    _ui.Text(
+      isOpeningFarmPlacement ? "FREE OPENING FARM" : $"{GetUnitPrice(definition)} GOLD",
+      new Vector2(detailX, previewBounds.Y + 56),
+      UiTheme.Gold,
+      0.84f
+    );
     const int statHeight = 44;
     const int statRowGap = 4;
     Rectangle statGrid = new(content.X, previewBounds.Bottom + UiTheme.SpaceLg, content.Width, statHeight * 3 + statRowGap * 2);
@@ -3109,10 +3244,12 @@ internal sealed class Game1 : Game
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
         ? "Mercenaries are unavailable during the initial buy phase."
-        : "Place on a No-Man's-Land edge, or outbid a rival Mercenary in your territory."
-      : _initialBuyPhase != null
+        : "Place anywhere in No-Man's-Land, or hire a neutral Mercenary / outbid a rival in your territory."
+      : _initialBuyPhase?.IsFarmPlacementPhase == true
+        ? "Place two free farms on your side before normal buying."
+        : _initialBuyPhase != null
         ? $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} bought. Select a square on your side."
-        : "Buy, then select a square. Click a rival Mercenary in your territory to buy it off.";
+        : "Buy, then select a square. Click a neutral Mercenary to hire it, or a rival Mercenary in your territory to buy it off.";
     int unitInfoY = statGrid.Bottom + UiTheme.SpaceSm;
     const float abilityScale = 0.58f;
     const float hintScale = 0.58f;
@@ -3168,7 +3305,13 @@ internal sealed class Game1 : Game
 
   private float GetBoardRotationAngle()
   {
-    float teamFacing = _onlineClient?.Team == NetworkTeam.Blue ? MathHelper.Pi : 0f;
+    float teamFacing = _onlineClient?.Team switch
+    {
+      NetworkTeam.Blue => MathHelper.Pi,
+      NetworkTeam.Green => -MathHelper.PiOver2,
+      NetworkTeam.Yellow => MathHelper.PiOver2,
+      _ => 0f
+    };
     return teamFacing + (_rotateBoard ? MathHelper.PiOver2 : 0f);
   }
 
@@ -3379,14 +3522,116 @@ internal sealed class Game1 : Game
       Keys.D7 or Keys.NumPad7 => '7',
       Keys.D8 or Keys.NumPad8 => '8',
       Keys.D9 or Keys.NumPad9 => '9',
-      Keys.OemPeriod => '.',
-      Keys.OemMinus => '-',
+      Keys.OemPeriod or Keys.Decimal => '.',
+      Keys.OemMinus or Keys.Subtract => '-',
       Keys.OemSemicolon => shiftHeld ? ':' : ';',
       Keys.OemQuestion => shiftHeld ? '?' : '/',
       _ => default
     };
     return character != default;
   }
+
+  private bool IsEditableEconomyRow(int index) => index is 0 or 1 or 2 or 3 or 4 or 6 or 7 or 9 ||
+    (_gameMode == GameMode.Conquest && index == 10);
+
+  private bool TryBeginEconomyTextInput(Point position)
+  {
+    for (int index = 0; index <= (_gameMode == GameMode.Conquest ? 10 : 9); index++)
+    {
+      if (IsEditableEconomyRow(index) && GetEconomyValueBounds(index).Contains(position))
+      {
+        _economyInputIndex = index;
+        // Treat a click as selecting the current value, so typing replaces it.
+        _economyInputText = string.Empty;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private void UpdateEconomyTextInput(Keys key)
+  {
+    if (key == Keys.Enter)
+    {
+      CommitEconomyTextInput();
+      return;
+    }
+
+    if (key == Keys.Back)
+    {
+      if (_economyInputText.Length > 0)
+      {
+        _economyInputText = _economyInputText[..^1];
+      }
+      return;
+    }
+
+    if (!TryGetOnlineInputCharacter(key, false, out char character)) return;
+    bool acceptsDecimal = _economyInputIndex is 1 or 2;
+    bool validCharacter = char.IsDigit(character) ||
+      (character == '-' && _economyInputText.Length == 0) ||
+      (character == '.' && acceptsDecimal && !_economyInputText.Contains('.'));
+    if (validCharacter)
+    {
+      _economyInputText += character;
+    }
+  }
+
+  private void CommitEconomyTextInput()
+  {
+    if (_economyInputIndex < 0)
+    {
+      return;
+    }
+
+    switch (_economyInputIndex)
+    {
+      case 0 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int startingCash):
+        _startingCash = Math.Max(0, startingCash);
+        break;
+      case 1 when float.TryParse(_economyInputText, NumberStyles.Float, CultureInfo.InvariantCulture, out float killerRefund) && float.IsFinite(killerRefund):
+        _killerRefundMultiplier = killerRefund;
+        break;
+      case 2 when float.TryParse(_economyInputText, NumberStyles.Float, CultureInfo.InvariantCulture, out float defeatedRefund) && float.IsFinite(defeatedRefund):
+        _defeatedTeamRefundMultiplier = defeatedRefund;
+        break;
+      case 3 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int buysPerTurn):
+        _initialBuysPerTurn = Math.Max(1, buysPerTurn);
+        break;
+      case 4 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int buyTurns):
+        _initialBuyTurnsPerTeam = Math.Max(1, buyTurns);
+        break;
+      case 6 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int farmIncome):
+        _farmIncomePerTurn = farmIncome;
+        break;
+      case 7 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int unitPrice):
+        _unitPricePercent = unitPrice;
+        break;
+      case 9 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int interest):
+        _interestPercent = Math.Clamp(interest, -100, 200);
+        break;
+      case 10 when _gameMode == GameMode.Conquest &&
+        int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int conquestScore):
+        _conquestWinScore = Math.Max(1, conquestScore);
+        break;
+    }
+
+    _economyInputIndex = -1;
+    _economyInputText = string.Empty;
+  }
+
+  private void CancelEconomyTextInput()
+  {
+    _economyInputIndex = -1;
+    _economyInputText = string.Empty;
+  }
+
+  private string GetEconomyEditedValue(int index, string normalValue) =>
+    _economyInputIndex == index ? (_economyInputText.Length == 0 ? "|" : _economyInputText) : normalValue;
+
+  private static int AdjustInteger(int value, int delta) =>
+    (int)Math.Clamp((long)value + delta, int.MinValue, int.MaxValue);
 
   private void DrawOnlineServerUrlField(Rectangle bounds)
   {
@@ -3492,7 +3737,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    int height = _setupStage == SetupStage.Economy ? 840 : 620;
+    int height = _setupStage == SetupStage.Economy ? (_gameMode == GameMode.Conquest ? 920 : 870) : 620;
     return UiLayout.Centered(viewport, 640, height, UiTheme.SpaceLg);
   }
 
@@ -3527,6 +3772,31 @@ internal sealed class Game1 : Game
       Math.Max(1, next.X - previous.Right - UiTheme.SpaceSm * 2),
       UiTheme.ButtonHeight
     );
+  }
+
+  private Rectangle GetPlayerCountRowBounds()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 326, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetPlayerCountDecreaseButtonBounds()
+  {
+    Rectangle row = GetPlayerCountRowBounds();
+    return new Rectangle(row.Right - 204, row.Y, 44, row.Height);
+  }
+
+  private Rectangle GetPlayerCountValueBounds()
+  {
+    Rectangle row = GetPlayerCountRowBounds();
+    return new Rectangle(row.Right - 152, row.Y, 100, row.Height);
+  }
+
+  private Rectangle GetPlayerCountIncreaseButtonBounds()
+  {
+    Rectangle row = GetPlayerCountRowBounds();
+    return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
   }
 
   private Rectangle GetDebugRoyalSwitchButtonBounds()
@@ -3598,12 +3868,47 @@ internal sealed class Game1 : Game
   {
     _terrainSeed = terrainSeed;
     _board = new Board(GetBoardFileName(boardSize));
-    _terrain = TerrainRules.Create(_board, terrainSeed, forestDensity.ToString(), waterwayDensity.ToString());
+    _terrain = TerrainRules.Create(_board, terrainSeed, forestDensity.ToString(), waterwayDensity.ToString(), _playerCount);
     _roads.Clear();
     _barricades.Clear();
     _mines.Clear();
     _restoredLakeTiles.Clear();
     _riverBridges.Clear();
+  }
+
+  private void ConfigureTeamsForPlayerCount()
+  {
+    TeamName[] activeTeams = TeamRules.GetActiveTeams(_playerCount)
+      .Select(team => team.ToTeamName())
+      .ToArray();
+    Team.ConfigureTurnOrder(activeTeams);
+    _teams = pieceSetup.CreateTeams(_playerCount);
+    _setupTeam = activeTeams[0];
+    _conquestScores.Clear();
+    foreach (TeamName team in activeTeams) _conquestScores[team] = 0;
+  }
+
+  private void SetPlayerCount(int playerCount)
+  {
+    _playerCount = Math.Clamp(playerCount, 2, 4);
+    pieceSetup.ClearPieces();
+    ConfigureTeamsForPlayerCount();
+    _selectedRoyalIndex = 0;
+  }
+
+  private static IReadOnlyDictionary<TeamName, (int buyTurnsUsed, bool stopped, int farmsPlaced)> GetInitialBuyTeamStates(
+    NetworkInitialBuyState initialBuy
+  )
+  {
+    IReadOnlyList<NetworkInitialBuyTeamState> states = initialBuy.TeamStates ??
+    [
+      new NetworkInitialBuyTeamState(NetworkTeam.Red, initialBuy.RedBuyTurnsUsed, initialBuy.RedStopped),
+      new NetworkInitialBuyTeamState(NetworkTeam.Blue, initialBuy.BlueBuyTurnsUsed, initialBuy.BlueStopped)
+    ];
+    return states.ToDictionary(
+      state => state.Team.ToTeamName(),
+      state => (state.BuyTurnsUsed, state.Stopped, state.FarmsPlaced)
+    );
   }
 
   private void ReturnToTitle()
@@ -3614,7 +3919,7 @@ internal sealed class Game1 : Game
       _onlineClient = null;
     }
 
-    _onlineWaitingForOpponent = false;
+    _onlineIsHost = false;
     _onlineRoyalChoicePending = false;
     _debugTeamSwitchPending = false;
     _onlineHostingSetup = false;
@@ -3622,7 +3927,8 @@ internal sealed class Game1 : Game
     _onlineError = string.Empty;
     _onlineStatus = "OFFLINE";
     pieceSetup.ClearPieces();
-    _teams = pieceSetup.CreateTeams();
+    _playerCount = 2;
+    ConfigureTeamsForPlayerCount();
     ConfigureBattlefield(BoardSize.Medium, TerrainDensity.Standard, TerrainDensity.Standard, Random.Shared.Next());
     selectedPiece = null;
     _movementAnimation = null;
@@ -3630,11 +3936,14 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
     _selectedEngineerAbility = EngineerAbility.Road;
-    _farmsEnabled = false;
-    _farmIncomePerTurn = 15;
+    _farmsEnabled = true;
+    _farmIncomePerTurn = 5;
     _unitMaintenanceEnabled = false;
     _unitMaintenancePercent = 10;
     _unitPricePercent = 100;
+    _interestEnabled = false;
+    _interestPercent = 0;
+    CancelEconomyTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
@@ -3651,7 +3960,7 @@ internal sealed class Game1 : Game
   private void BeginMatchSetup(bool onlineHost = false)
   {
     _screen = Screen.Setup;
-    _setupTeam = TeamName.Red;
+    SetPlayerCount(2);
     _selectedRoyalIndex = 0;
     _setupStage = SetupStage.Mode;
     _gameMode = GameMode.Regicide;
@@ -3665,11 +3974,14 @@ internal sealed class Game1 : Game
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
     _initialBuysPerTurn = 2;
     _initialBuyTurnsPerTeam = 4;
-    _farmsEnabled = false;
-    _farmIncomePerTurn = 15;
+    _farmsEnabled = true;
+    _farmIncomePerTurn = 5;
+    CancelEconomyTextInput();
     _unitMaintenanceEnabled = false;
     _unitMaintenancePercent = 10;
     _unitPricePercent = 100;
+    _interestEnabled = false;
+    _interestPercent = 0;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -3681,7 +3993,7 @@ internal sealed class Game1 : Game
   private void PrepareOnlineRoom()
   {
     pieceSetup.ClearPieces();
-    _teams = pieceSetup.CreateTeams();
+    ConfigureTeamsForPlayerCount();
     ConfigureBattlefield(_selectedBoardSize, _forestDensity, _waterwayDensity, _terrainSeed);
     selectedPiece = null;
     _initialBuyPhase = null;
@@ -3709,7 +4021,10 @@ internal sealed class Game1 : Game
       _farmIncomePerTurn,
       _unitMaintenanceEnabled,
       _unitMaintenancePercent,
-      _unitPricePercent
+      _unitPricePercent,
+      _playerCount,
+      _interestEnabled,
+      _interestPercent
     );
   }
 
@@ -3722,6 +4037,12 @@ internal sealed class Game1 : Game
   {
     if (wasEscapePressed)
     {
+      if (_economyInputIndex >= 0)
+      {
+        CancelEconomyTextInput();
+        return;
+      }
+
       if (_bindingToChange.HasValue)
       {
         _bindingToChange = null;
@@ -3793,6 +4114,17 @@ internal sealed class Game1 : Game
           {
             UpdateOnlineTextInput(key, keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift));
           }
+        }
+      }
+    }
+
+    if (_screen == Screen.Setup && _setupStage == SetupStage.Economy && _economyInputIndex >= 0)
+    {
+      foreach (Keys key in keyboard.GetPressedKeys())
+      {
+        if (!_previousKeyboardState.IsKeyDown(key))
+        {
+          UpdateEconomyTextInput(key);
         }
       }
     }
@@ -3963,6 +4295,11 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.Setup:
+        if (_setupStage == SetupStage.Economy && _economyInputIndex >= 0 &&
+            !GetEconomyValueBounds(_economyInputIndex).Contains(mousePosition))
+        {
+          CommitEconomyTextInput();
+        }
         if (GetSetupBackButtonBounds().Contains(mousePosition))
         {
           NavigateSetupBack();
@@ -3976,6 +4313,14 @@ internal sealed class Game1 : Game
           else if (GetSetupNextButtonBounds().Contains(mousePosition))
           {
             _gameMode = (GameMode)(((int)_gameMode + 1) % Enum.GetValues<GameMode>().Length);
+          }
+          else if (GetPlayerCountDecreaseButtonBounds().Contains(mousePosition))
+          {
+            SetPlayerCount(_playerCount - 1);
+          }
+          else if (GetPlayerCountIncreaseButtonBounds().Contains(mousePosition))
+          {
+            SetPlayerCount(_playerCount + 1);
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
@@ -4016,13 +4361,17 @@ internal sealed class Game1 : Game
         }
         else if (_setupStage == SetupStage.Economy)
         {
-          if (GetEconomyDecreaseButtonBounds(0).Contains(mousePosition))
+          if (TryBeginEconomyTextInput(mousePosition))
           {
-            _startingCash = Math.Max(0, _startingCash - 100);
+            break;
+          }
+          else if (GetEconomyDecreaseButtonBounds(0).Contains(mousePosition))
+          {
+            _startingCash = Math.Max(0, AdjustInteger(_startingCash, -15));
           }
           else if (GetEconomyIncreaseButtonBounds(0).Contains(mousePosition))
           {
-            _startingCash = Math.Min(5000, _startingCash + 100);
+            _startingCash = AdjustInteger(_startingCash, 15);
           }
           else if (GetEconomyDecreaseButtonBounds(1).Contains(mousePosition))
           {
@@ -4068,35 +4417,35 @@ internal sealed class Game1 : Game
           }
           else if (GetEconomyDecreaseButtonBounds(6).Contains(mousePosition))
           {
-            _farmIncomePerTurn = Math.Max(-15, _farmIncomePerTurn - 5);
+            _farmIncomePerTurn = AdjustInteger(_farmIncomePerTurn, -1);
           }
           else if (GetEconomyIncreaseButtonBounds(6).Contains(mousePosition))
           {
-            _farmIncomePerTurn = Math.Min(40, _farmIncomePerTurn + 5);
+            _farmIncomePerTurn = AdjustInteger(_farmIncomePerTurn, 1);
           }
           else if (GetEconomyDecreaseButtonBounds(7).Contains(mousePosition))
           {
-            _unitMaintenanceEnabled = false;
+            _unitPricePercent = AdjustInteger(_unitPricePercent, -10);
           }
           else if (GetEconomyIncreaseButtonBounds(7).Contains(mousePosition))
           {
-            _unitMaintenanceEnabled = true;
+            _unitPricePercent = AdjustInteger(_unitPricePercent, 10);
           }
           else if (GetEconomyDecreaseButtonBounds(8).Contains(mousePosition))
           {
-            _unitMaintenancePercent = Math.Max(0, _unitMaintenancePercent - 5);
+            _interestEnabled = false;
           }
           else if (GetEconomyIncreaseButtonBounds(8).Contains(mousePosition))
           {
-            _unitMaintenancePercent = Math.Min(100, _unitMaintenancePercent + 5);
+            _interestEnabled = true;
           }
           else if (GetEconomyDecreaseButtonBounds(9).Contains(mousePosition))
           {
-            _unitPricePercent = Math.Max(-100, _unitPricePercent - 10);
+            _interestPercent = Math.Max(-100, _interestPercent - 5);
           }
           else if (GetEconomyIncreaseButtonBounds(9).Contains(mousePosition))
           {
-            _unitPricePercent = Math.Min(500, _unitPricePercent + 10);
+            _interestPercent = Math.Min(200, _interestPercent + 5);
           }
           else if (_gameMode == GameMode.Conquest && GetEconomyDecreaseButtonBounds(10).Contains(mousePosition))
           {
@@ -4147,9 +4496,10 @@ internal sealed class Game1 : Game
           setupTeam.ChooseRoyal(royal.Type);
           pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam));
 
-          if (_setupTeam == TeamName.Red)
+          int teamIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
+          if (teamIndex >= 0 && teamIndex + 1 < Team.ActiveTeams.Count)
           {
-            _setupTeam = TeamName.Blue;
+            _setupTeam = Team.ActiveTeams[teamIndex + 1];
             _selectedRoyalIndex = 0;
           }
           else
@@ -4174,12 +4524,13 @@ internal sealed class Game1 : Game
 
   private (int x, int y) FindRoyalSpawn(TeamName teamName, PieceDefinition definition)
   {
-    NetworkTeam networkTeam = teamName == TeamName.Red ? NetworkTeam.Red : NetworkTeam.Blue;
+    NetworkTeam networkTeam = teamName.ToNetworkTeam();
     foreach ((int x, int y) position in MatchRules.GetRoyalSpawnCandidates(
       _board,
       networkTeam,
       definition.Size.x,
-      definition.Size.y
+      definition.Size.y,
+      _playerCount
     ))
     {
       if (CanPlacePiece(definition, position, teamName))
@@ -4218,15 +4569,22 @@ internal sealed class Game1 : Game
       case SetupStage.Economy:
         _setupStage = SetupStage.Battlefield;
         break;
-      case SetupStage.RoyalSelection when _setupTeam == TeamName.Blue:
-        Piece redRoyal = pieceSetup.Pieces.FirstOrDefault(piece =>
-          piece.Team == TeamName.Red && piece.Definition.Category == PieceCategory.Royal);
-        if (redRoyal != null)
+      case SetupStage.RoyalSelection:
+        int setupIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
+        if (setupIndex <= 0)
         {
-          pieceSetup.RemovePiece(redRoyal);
-          _teams.Find(team => team.TeamName == TeamName.Red).ClearRoyal();
+          _setupStage = SetupStage.Economy;
+          break;
         }
-        _setupTeam = TeamName.Red;
+        TeamName previousTeam = Team.ActiveTeams[setupIndex - 1];
+        Piece previousRoyal = pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.Team == previousTeam && piece.Definition.Category == PieceCategory.Royal);
+        if (previousRoyal != null)
+        {
+          pieceSetup.RemovePiece(previousRoyal);
+          _teams.Find(team => team.TeamName == previousTeam).ClearRoyal();
+        }
+        _setupTeam = previousTeam;
         _selectedRoyalIndex = 0;
         break;
       default:
@@ -4361,12 +4719,13 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     string roomCode = string.IsNullOrWhiteSpace(_onlineClient?.JoinCode) ? "-----" : _onlineClient.JoinCode;
     string team = _onlineClient?.Team?.ToString().ToUpperInvariant() ?? "";
+    int remainingPlayers = Math.Max(0, _playerCount - 1);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.CenterText("PRIVATE ROOM CREATED", new Rectangle(content.X, content.Y, content.Width, 30), UiTheme.GoldBright, 1.05f);
-    _ui.CenterText("SHARE THIS ROOM CODE", new Rectangle(content.X, content.Y + 64, content.Width, 22), UiTheme.TextMuted, 0.76f);
+    _ui.CenterText(_onlineIsHost ? "PRIVATE ROOM CREATED" : "JOINED PRIVATE ROOM", new Rectangle(content.X, content.Y, content.Width, 30), UiTheme.GoldBright, 1.05f);
+    _ui.CenterText(_onlineIsHost ? "SHARE THIS ROOM CODE" : "ROOM CODE", new Rectangle(content.X, content.Y + 64, content.Width, 22), UiTheme.TextMuted, 0.76f);
     _ui.CenterText(roomCode, new Rectangle(content.X, content.Y + 94, content.Width, 52), UiTheme.GoldBright, 1.45f);
     _ui.CenterText($"YOU WILL PLAY {team}", new Rectangle(content.X, content.Y + 166, content.Width, 24), UiTheme.TextPrimary, 0.82f);
-    _ui.CenterText("Waiting for another player to join...", new Rectangle(content.X, content.Y + 214, content.Width, 22), UiTheme.TextMuted, 0.74f);
+    _ui.CenterText($"Waiting for {remainingPlayers} more player(s) to join...", new Rectangle(content.X, content.Y + 214, content.Width, 22), UiTheme.TextMuted, 0.74f);
     DrawMenuButton(GetOnlineWaitingCancelButtonBounds(), "CANCEL", UiButtonTone.Neutral);
   }
 
@@ -4375,7 +4734,7 @@ internal sealed class Game1 : Game
     Rectangle panel = GetSetupPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
-    TeamName localTeam = _onlineClient?.Team == NetworkTeam.Blue ? TeamName.Blue : TeamName.Red;
+    TeamName localTeam = _onlineClient?.Team?.ToTeamName() ?? TeamName.Red;
     Color teamColour = UiTheme.GetTeamColour(localTeam);
     bool waitingForOpponent = _onlineRoyalChoicePending;
 
@@ -4383,7 +4742,7 @@ internal sealed class Game1 : Game
     _ui.Text(waitingForOpponent ? "ROYAL CHOSEN" : "CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text(
-      waitingForOpponent ? "Waiting for the other player to choose theirs." : "You choose only your own royal. It is placed on your back row.",
+      waitingForOpponent ? "Waiting for the other players to choose theirs." : "You choose only your own royal. It is placed on your back row.",
       new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
     _ui.Divider(content, content.Y + 56);
 
@@ -4548,6 +4907,15 @@ internal sealed class Game1 : Game
     _ui.CenterText(detail, new Rectangle(modeCard.X + UiTheme.SpaceLg, modeCard.Y + 146, modeCard.Width - UiTheme.SpaceXl * 2, 40), UiTheme.TextMuted, 0.68f);
     _ui.CenterText($"{(int)_gameMode + 1}/{Enum.GetValues<GameMode>().Length}", new Rectangle(modeCard.X, modeCard.Bottom - 30, modeCard.Width, 18), UiTheme.TextDim, 0.64f);
 
+    Rectangle playerCountRow = GetPlayerCountRowBounds();
+    DrawPanel(playerCountRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    _ui.Text("PLAYERS", new Vector2(playerCountRow.X + UiTheme.SpaceMd, playerCountRow.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
+    DrawMenuButton(GetPlayerCountDecreaseButtonBounds(), "-", UiButtonTone.Neutral);
+    DrawPanel(GetPlayerCountValueBounds(), UiTheme.Panel, UiTheme.Gold);
+    _ui.CenterText($"{_playerCount} PLAYERS", GetPlayerCountValueBounds(), UiTheme.GoldBright, 0.7f);
+    DrawMenuButton(GetPlayerCountIncreaseButtonBounds(), "+", UiButtonTone.Neutral);
+    _ui.Text("Green and Gold join from the left and right edges.", new Vector2(content.X, playerCountRow.Bottom + 8), UiTheme.TextMuted, 0.62f);
+
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
@@ -4593,18 +4961,21 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("MATCH ECONOMY", new Vector2(content.X, content.Y), UiTheme.Gold);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Set economy and the pre-game purchase phase.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Text("Click a number to type a value, or use the controls.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
 
     List<string> labels = [
       "Starting cash", "Killer refund", "Defeated team refund", "Buys per buy turn", "Buy turns per team",
-      "Farms", "Farm income per turn", "Unit maintenance", "Maintenance rate", "Unit price"
+      "Farms", "Farm income per turn", "Unit price", "Interest", "Interest rate"
     ];
     List<string> values = [
-      _startingCash.ToString(), $"{_killerRefundMultiplier:0.0}x", $"{_defeatedTeamRefundMultiplier:0.0}x",
+      _startingCash.ToString(CultureInfo.InvariantCulture),
+      $"{_killerRefundMultiplier.ToString("G9", CultureInfo.InvariantCulture)}x",
+      $"{_defeatedTeamRefundMultiplier.ToString("G9", CultureInfo.InvariantCulture)}x",
       _initialBuysPerTurn.ToString(), _initialBuyTurnsPerTeam.ToString(),
       _farmsEnabled ? "ON" : "OFF", $"{_farmIncomePerTurn} GOLD",
-      _unitMaintenanceEnabled ? "ON" : "OFF", $"{_unitMaintenancePercent}%", $"{_unitPricePercent}%"
+      $"{_unitPricePercent}%",
+      _interestEnabled ? "ON" : "OFF", $"{_interestPercent}%"
     ];
     if (_gameMode == GameMode.Conquest)
     {
@@ -4618,15 +4989,21 @@ internal sealed class Game1 : Game
       Rectangle valueBounds = GetEconomyValueBounds(index);
       DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
       _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
-      bool isToggle = index is 5 or 7;
-      bool toggleEnabled = index == 5 ? _farmsEnabled : _unitMaintenanceEnabled;
+      bool isToggle = index is 5 or 8;
+      bool toggleEnabled = index switch
+      {
+        5 => _farmsEnabled,
+        8 => _interestEnabled,
+        _ => false
+      };
       DrawMenuButton(
         GetEconomyDecreaseButtonBounds(index),
         isToggle ? "OFF" : "-",
         isToggle && !toggleEnabled ? UiButtonTone.Danger : UiButtonTone.Neutral
       );
-      DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
-      _ui.CenterText(values[index], valueBounds, UiTheme.GoldBright);
+      bool isEditing = _economyInputIndex == index;
+      DrawPanel(valueBounds, UiTheme.Panel, isEditing ? UiTheme.GoldBright : UiTheme.Gold);
+      _ui.CenterText(GetEconomyEditedValue(index, values[index]), valueBounds, UiTheme.GoldBright);
       DrawMenuButton(
         GetEconomyIncreaseButtonBounds(index),
         isToggle ? "ON" : "+",
@@ -4635,11 +5012,11 @@ internal sealed class Game1 : Game
     }
 
     string economyHint = _farmsEnabled
-      ? $"Farms cost {GetUnitPrice(PieceDefinitions.Farm)} gold, occupy 2 x 2 squares, and earn {_farmIncomePerTurn} gold at the start of each owner turn."
-      : "Enable Farms to add a 2 x 2, 60-gold income unit to the shop.";
-    if (_unitMaintenanceEnabled)
+      ? $"Each player places two 3 x 3 farms before normal buying. Farms earn {_farmIncomePerTurn} gold at the start of each owner turn."
+      : "Disable Farms to skip the opening farm placement phase.";
+    if (_interestEnabled)
     {
-      economyHint += $" Upkeep is {_unitMaintenancePercent}% of each standard unit cost, rounded up.";
+      economyHint += $" Interest applies at the start of normal turns only: {_interestPercent}%.";
     }
     int hintY = GetEconomyRowBounds(labels.Count - 1).Bottom + UiTheme.SpaceSm;
     _ui.TextWrapped(economyHint, new Rectangle(content.X, hintY, content.Width, GetSetupConfirmButtonBounds().Y - hintY - UiTheme.SpaceSm), UiTheme.TextMuted, 0.68f);
@@ -4765,7 +5142,7 @@ internal sealed class Game1 : Game
   {
     if (definition.Type == PieceType.Farm)
     {
-      return $"Earns {_farmIncomePerTurn} gold at the start of each owner turn.";
+      return $"Earns {_farmIncomePerTurn} gold at the start of each owner turn. Units may move and attack over it.";
     }
 
     return string.IsNullOrWhiteSpace(definition.AbilityDescription)
@@ -4838,13 +5215,24 @@ internal sealed class Game1 : Game
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int width = Math.Min(360, Math.Max(1, viewport.Width - UiTheme.SpaceLg * 2));
-    int desiredHeight = _initialBuyPhase == null
-      ? (_gameMode == GameMode.Conquest ? 260 : (_onlineClient == null ? 194 : 226)) +
-        UiTheme.ButtonHeight + UiTheme.SpaceSm
-      : 260;
-    if (_initialBuyPhase == null && _unitMaintenanceEnabled)
+    int desiredHeight;
+    if (_initialBuyPhase is not null)
     {
-      desiredHeight += 24;
+      desiredHeight = 100 + _teams.Count * 36 + UiTheme.SpaceSm + UiTheme.ButtonHeight + UiTheme.SpaceMd * 2;
+    }
+    else
+    {
+      int contentHeight = 94 + _teams.Count * 36;
+      if (_gameMode == GameMode.Conquest)
+      {
+        contentHeight += _playerCount > 2 ? 20 + _teams.Count * 26 : 60;
+      }
+      if (_onlineClient is not null)
+      {
+        contentHeight += 18;
+      }
+      contentHeight += UiTheme.SpaceSm + UiTheme.ButtonHeight;
+      desiredHeight = contentHeight + UiTheme.SpaceMd * 2;
     }
     if (IsDebugOnlineMatch)
     {
@@ -4943,16 +5331,20 @@ internal sealed class Game1 : Game
     if (_initialBuyPhase != null)
     {
       int buyTurnNumber = _initialBuyPhase.GetBuyTurnsUsed(Team.CurrentTurn) + 1;
-      _ui.Text("INITIAL BUY PHASE", new Vector2(content.X, content.Y), UiTheme.Gold);
+      _ui.Text(_initialBuyPhase.IsFarmPlacementPhase ? "OPENING FARM PLACEMENT" : "INITIAL BUY PHASE", new Vector2(content.X, content.Y), UiTheme.Gold);
       _ui.Divider(content, content.Y + 30);
       _ui.Text(
-        $"{UiText.GetTeamDisplayName(Team.CurrentTurn)} BUY TURN {buyTurnNumber}/{_initialBuyPhase.BuyTurnsPerTeam}",
+        _initialBuyPhase.IsFarmPlacementPhase
+          ? $"{UiText.GetTeamDisplayName(Team.CurrentTurn)}: {_initialBuyPhase.GetFarmsPlaced(Team.CurrentTurn)}/2 FARMS"
+          : $"{UiText.GetTeamDisplayName(Team.CurrentTurn)} BUY TURN {buyTurnNumber}/{_initialBuyPhase.BuyTurnsPerTeam}",
         new Vector2(content.X, content.Y + 43),
         turnColour,
         0.7f
       );
       _ui.Text(
-        $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} UNITS THIS TURN",
+        _initialBuyPhase.IsFarmPlacementPhase
+          ? "PLACE TWO FARMS ON YOUR SIDE"
+          : $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} UNITS THIS TURN",
         new Vector2(content.X, content.Y + 66),
         UiTheme.TextPrimary,
         0.72f
@@ -4968,7 +5360,10 @@ internal sealed class Game1 : Game
         initialMoneyY += 36;
       }
 
-      DrawMenuButton(GetInitialBuyStopButtonBounds(), "STOP BUYING", UiButtonTone.Danger);
+      if (_initialBuyPhase.CanStopCurrentBuyer)
+      {
+        DrawMenuButton(GetInitialBuyStopButtonBounds(), "STOP BUYING", UiButtonTone.Danger);
+      }
       if (IsDebugOnlineMatch)
       {
         DrawMenuButton(GetDebugTeamSwitchButtonBounds(), GetDebugTeamSwitchLabel(), UiButtonTone.Accent, _debugTeamSwitchPending);
@@ -5007,12 +5402,6 @@ internal sealed class Game1 : Game
       moneyY += 36;
     }
 
-    if (_unitMaintenanceEnabled)
-    {
-      int upkeep = GetTeamMaintenance(Team.CurrentTurn);
-      _ui.Text($"UPKEEP NEXT TURN: {upkeep} GOLD", new Vector2(content.X, moneyY + 2), UiTheme.TextMuted, 0.66f);
-    }
-
     if (_onlineClient != null)
     {
       string roomCode = string.IsNullOrWhiteSpace(_onlineClient.JoinCode) ? "CONNECTING" : _onlineClient.JoinCode;
@@ -5027,19 +5416,33 @@ internal sealed class Game1 : Game
     bool canSkipTurn = IsOnlineLocalTurn() && currentTeam.ActionPoints < Team.ActionsPerTurn;
     DrawMenuButton(
       GetSkipTurnButtonBounds(),
-      canSkipTurn ? "END TURN" : "END TURN - USE AN ACTION",
+      canSkipTurn ? "END TURN" : "END TURN",
       canSkipTurn ? UiButtonTone.Primary : UiButtonTone.Neutral
     );
 
     if (_gameMode == GameMode.Conquest)
     {
-      int conquestY = content.Y + (_unitMaintenanceEnabled ? 198 : 174);
-      DrawConquestControlBar(new Rectangle(content.X, conquestY, content.Width, 48));
+      DrawConquestControlBar(new Rectangle(content.X, moneyY + UiTheme.SpaceXs, content.Width, _playerCount > 2 ? 20 + _teams.Count * 26 : 48));
     }
   }
 
   private void DrawConquestControlBar(Rectangle bounds)
   {
+    if (_playerCount > 2)
+    {
+      _ui.Text("CONQUEST SCORE", new Vector2(bounds.X, bounds.Y), UiTheme.Gold, 0.7f);
+      int rowY = bounds.Y + 20;
+      foreach (Team team in _teams)
+      {
+        Color colour = UiTheme.GetTeamColour(team.TeamName);
+        Rectangle row = new(bounds.X, rowY, bounds.Width, 22);
+        DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+        _ui.LabelValueRow(row, UiText.GetTeamDisplayName(team.TeamName), $"{_conquestScores.GetValueOrDefault(team.TeamName)}/{_conquestWinScore}", colour);
+        rowY += 26;
+      }
+      return;
+    }
+
     _ui.Text("CONQUEST CONTROL", new Vector2(bounds.X, bounds.Y), UiTheme.Gold, 0.7f);
     Rectangle bar = new(bounds.X, bounds.Y + 22, bounds.Width, 14);
     DrawPanel(bar, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
@@ -5074,8 +5477,8 @@ internal sealed class Game1 : Game
       _ui.Divider(content, content.Y + 30);
       if (_initialBuyPhase != null)
       {
-        _ui.Text("Choose a unit from the right panel.", new Vector2(content.X, content.Y + 44), UiTheme.Gold, 0.76f);
-        _ui.Text("Use STOP BUYING when this team is done.", new Vector2(content.X, content.Y + 68), UiTheme.TextMuted, 0.68f);
+        _ui.Text(_initialBuyPhase.IsFarmPlacementPhase ? "Place two farms from the right panel." : "Choose a unit from the right panel.", new Vector2(content.X, content.Y + 44), UiTheme.Gold, 0.76f);
+        _ui.Text(_initialBuyPhase.CanStopCurrentBuyer ? "Use STOP BUYING when this team is done." : "Normal buying begins after all farms are placed.", new Vector2(content.X, content.Y + 68), UiTheme.TextMuted, 0.68f);
         return;
       }
 
@@ -5120,7 +5523,7 @@ internal sealed class Game1 : Game
       selectedPiece.HasAttackedThisTurn
         ? "USED"
         : selectedPiece.Definition.Type == PieceType.Engineer
-          ? _selectedEngineerAbility.ToString().ToUpperInvariant()
+          ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
           : selectedPiece.Definition.Attack.ToString(),
       selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
@@ -5148,10 +5551,6 @@ internal sealed class Game1 : Game
       _ => content.Bottom - UiTheme.SpaceSm
     };
     string abilityText = $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition)}";
-    if (_unitMaintenanceEnabled)
-    {
-      abilityText += $"\nUPKEEP: {GetUnitMaintenance(selectedPiece.Definition)} GOLD / OWNER TURN";
-    }
     _ui.TextWrapped(
       abilityText,
       new Rectangle(content.X, abilityInfoY, content.Width, Math.Max(0, abilityInfoBottom - abilityInfoY)),
@@ -5187,7 +5586,7 @@ internal sealed class Game1 : Game
     {
       _ui.Text("CARGO: EMPTY", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.72f);
       _ui.TextWrapped(
-        "RIGHT-CLICK a friendly 1 x 1 unit to carry, or a Mechanical unit to tow.",
+        "RIGHT-CLICK a friendly 1 x 1 or Mechanical unit to carry.",
         new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
         UiTheme.TextMuted,
         0.62f
@@ -5195,9 +5594,8 @@ internal sealed class Game1 : Game
       return;
     }
 
-    string cargoKind = cargo.AttachmentKind == AttachmentKind.Towed ? "TOWING" : "CARRYING";
     Rectangle button = GetOxCargoButtonBounds();
-    _ui.Text($"CARGO: {cargoKind} {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
+    _ui.Text($"CARGO: CARRYING {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
     _ui.TextWrapped(
       "The Ox moves both units. Select cargo to move it separately and dismount it. Either piece can attack.",
       new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, button.Y - control.Y - 34)),
@@ -5240,6 +5638,7 @@ internal sealed class Game1 : Game
     (string title, string detail) = _selectedEngineerAbility switch
     {
       EngineerAbility.Barrier => ("BARRIER", "20 HP wall; blocks movement and attacks."),
+      EngineerAbility.Mine => ("MINE", "Place on an adjacent empty square; detonates on enemies."),
       _ => ("ROAD", "Build on an adjacent empty square; forests cost 1 and open roads cost 0.")
     };
 
@@ -5253,15 +5652,14 @@ internal sealed class Game1 : Game
 
   private Piece GetOxCargo(Piece ox)
   {
-    return pieceSetup.GetAttachedPiece(ox, AttachmentKind.Carried) ??
-      pieceSetup.GetAttachedPiece(ox, AttachmentKind.Towed);
+    return pieceSetup.GetAttachedPiece(ox, AttachmentKind.Carried);
   }
 
   private string GetSelectedPieceControlHint(Piece piece)
   {
     if (piece.Definition.Type == PieceType.Farm)
     {
-      return $"STRUCTURE - EARNS {_farmIncomePerTurn} GOLD EACH OWNER TURN";
+      return $"STRUCTURE - EARNS {_farmIncomePerTurn} GOLD EACH OWNER TURN; UNITS PASS THROUGH";
     }
 
     if (piece.Definition.Type == PieceType.Engineer)
@@ -5283,9 +5681,10 @@ internal sealed class Game1 : Game
     {
       PieceType.Guard => "RIGHT-CLICK ally to protect",
       PieceType.Ox => GetOxCargo(piece) == null
-        ? "RIGHT-CLICK ally to carry or tow"
+        ? "RIGHT-CLICK ally to carry"
         : "CARGO LINKED - USE CONTROL BELOW",
       PieceType.Spy => "RIGHT-CLICK to use special",
+      PieceType.Mercenary => "RIGHT-CLICK this unit to fire; enemies to attack",
       _ => "RIGHT-CLICK red to attack"
     };
   }
@@ -5332,13 +5731,10 @@ internal sealed class Game1 : Game
             (x + y) % 2 == 0
             ? UiTheme.DarkBoardCell
             : UiTheme.LightBoardCell;
-          TeamName? squareOwner = GetSquareOwner(y);
-          Color territoryColour =
-            squareOwner == TeamName.Red
-            ? UiTheme.TeamOrange
-            : squareOwner == TeamName.Blue
-              ? UiTheme.TeamPurple
-              : UiTheme.NoMansLand;
+          TeamName? squareOwner = GetSquareOwner(boardPosition);
+          Color territoryColour = squareOwner.HasValue
+            ? UiTheme.GetTeamColour(squareOwner.Value)
+            : UiTheme.NoMansLand;
 
           Rectangle cellBounds = new(x * cellSize, y * cellSize, cellSize, cellSize);
           DrawWorldRectangle(

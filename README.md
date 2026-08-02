@@ -13,7 +13,11 @@ The repository includes a Render Blueprint (`render.yaml`) and Dockerfile, so th
 2. In [Render](https://dashboard.render.com/), choose **New** > **Blueprint** and connect that repository.
 3. Render detects `render.yaml`. Create the `crown-and-siege-server` web service and wait for the deploy to finish.
 4. Open the service and copy its public URL, for example `https://crown-and-siege-server.onrender.com`. Visiting `https://your-url/health` should return a small healthy response.
-5. In the game, open **Online Multiplayer** and enter that exact URL in the **Match Server URL** field. Do not add `/gamehub`; the game adds it itself. Click either field and press **Ctrl+V** to paste. The host chooses the game mode, battlefield, terrain, and economy in the in-game setup screens before the room is created. The joining player enters the same URL and the five-character room code.
+5. In the game, open **Online Multiplayer** and enter that exact URL in the **Match Server URL** field. Do not add `/gamehub`; the game adds it itself. Click either field and press **Ctrl+V** to paste. The host chooses the game mode, player count (2–4), battlefield, terrain, and economy in the in-game setup screens before the room is created. Every joining player enters the same URL and five-character room code; the match begins setup once all configured seats are filled.
+
+## Two to four players
+
+Local and online matches support 2, 3, or 4 players. Orange and Purple start from the bottom and top edges; Green and Gold enter from the left and right edges. Each side has its own turn, economy, opening purchases, royal, and forward-facing unit direction.
 
 Render provides HTTPS and supports WebSocket connections, which SignalR uses. No environment variables are required. The client automatically reconnects to the same room and side after a short connection interruption; disconnected rooms are retained for five minutes, while abandoned rooms are cleaned up in the background.
 

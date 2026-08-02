@@ -105,7 +105,8 @@ public sealed class BattlefieldTerrain
   public static BattlefieldTerrain CreateRandom(
     Board board,
     int seed,
-    TerrainGenerationSettings? settings = null
+    TerrainGenerationSettings? settings = null,
+    int playerCount = 2
   )
   {
     settings ??= DefaultGenerationSettings;
@@ -117,7 +118,7 @@ public sealed class BattlefieldTerrain
     }
 
     Dictionary<(int x, int y), int> edgeDistances = GetEdgeDistances(board);
-    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board);
+    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board, playerCount);
     List<(int x, int y)> protectedInterior = cells
       .Where(position =>
         edgeDistances[position] >= settings.ForestEdgeClearance &&
@@ -236,8 +237,19 @@ public sealed class BattlefieldTerrain
     return distances;
   }
 
-  private static List<(int x, int y)> GetRoyalSpawnPositions(Board board)
+  private static List<(int x, int y)> GetRoyalSpawnPositions(Board board, int playerCount)
   {
+    if (playerCount > 2)
+    {
+      return TeamRules.GetActiveTeams(playerCount)
+        .SelectMany(team => MatchRules.GetRoyalSpawnCandidates(board, team, 3, 2, playerCount).Take(1))
+        .SelectMany(position => Enumerable.Range(0, 2).SelectMany(offsetY =>
+          Enumerable.Range(0, 3).Select(offsetX => (position.x + offsetX, position.y + offsetY))))
+        .Where(board.ContainsCell)
+        .Distinct()
+        .ToList();
+    }
+
     int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
     int topY = board.MinY;
     int bottomY = board.MinY + board.BoardArray.GetLength(0) - 1;

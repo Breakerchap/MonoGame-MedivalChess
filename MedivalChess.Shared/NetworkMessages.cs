@@ -3,15 +3,17 @@ namespace MedivalChess.Shared;
 public enum NetworkTeam
 {
   Red,
-  Blue
+  Blue,
+  Green,
+  Yellow,
+  Neutral
 }
 
 public enum NetworkAttachmentKind
 {
   None,
   Guard,
-  Carried,
-  Towed
+  Carried
 }
 
 public sealed record NetworkPiece(
@@ -26,7 +28,8 @@ public sealed record NetworkPiece(
   string? AttachedToId = null,
   NetworkAttachmentKind AttachmentKind = NetworkAttachmentKind.None,
   string? MarkedTargetId = null,
-  int LastBid = 0
+  int LastBid = 0,
+  int EngineerBuildsThisTurn = 0
 );
 
 public sealed record NetworkImprovement(
@@ -38,6 +41,7 @@ public sealed record NetworkImprovement(
 );
 
 public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal);
+public sealed record NetworkConquestTeamState(NetworkTeam Team, int Score);
 
 public sealed record NetworkMatchConfiguration(
   string BoardSize,
@@ -51,12 +55,19 @@ public sealed record NetworkMatchConfiguration(
   int InitialBuysPerTurn,
   int InitialBuyTurnsPerTeam,
   int ConquestWinScore,
-  bool FarmsEnabled = false,
-  int FarmIncomePerTurn = 15,
+  bool FarmsEnabled = true,
+  int FarmIncomePerTurn = 5,
   bool UnitMaintenanceEnabled = false,
   int UnitMaintenancePercent = 10,
-  int UnitPricePercent = 100
+  int UnitPricePercent = 100,
+  int PlayerCount = 2,
+  bool InterestEnabled = false,
+  int InterestPercent = 0
 );
+
+/// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on
+/// <see cref="NetworkInitialBuyState"/> remain populated for two-player clients.</summary>
+public sealed record NetworkInitialBuyTeamState(NetworkTeam Team, int BuyTurnsUsed, bool Stopped, int FarmsPlaced = 0);
 
 public sealed record NetworkInitialBuyState(
   NetworkTeam CurrentTeam,
@@ -67,7 +78,9 @@ public sealed record NetworkInitialBuyState(
   int BuyTurnsPerTeam,
   bool RedStopped,
   bool BlueStopped,
-  bool IsComplete
+  bool IsComplete,
+  IReadOnlyList<NetworkInitialBuyTeamState>? TeamStates = null,
+  bool IsFarmPlacementPhase = false
 );
 
 public sealed record NetworkGameState(
@@ -82,7 +95,8 @@ public sealed record NetworkGameState(
   NetworkInitialBuyState? InitialBuy = null,
   IReadOnlyList<NetworkImprovement>? Improvements = null,
   NetworkTeam? Winner = null,
-  int ConquestScore = 0
+  int ConquestScore = 0,
+  IReadOnlyList<NetworkConquestTeamState>? ConquestScores = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);

@@ -28,4 +28,27 @@ public sealed class EconomyRulesTests
   {
     Assert.Equal(expected, EconomyRules.GetUnitMaintenance(baseCost, maintenancePercent));
   }
+
+  [Theory]
+  [InlineData(100, -100, -100)]
+  [InlineData(100, 0, 0)]
+  [InlineData(100, 200, 200)]
+  [InlineData(-100, -100, 100)]
+  public void Interest_UsesTheConfiguredPercentage(int balance, int interestPercent, int expected)
+  {
+    Assert.Equal(expected, EconomyRules.GetInterest(balance, interestPercent));
+  }
+
+  [Fact]
+  public void MatchConfiguration_EnablesFiveGoldFarmsAndDisablesInterestByDefault()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Medium", "Standard", "Standard", "Regicide", 1, 300, 0.5f, 0f, 2, 4, 15
+    );
+
+    Assert.True(configuration.FarmsEnabled);
+    Assert.Equal(5, configuration.FarmIncomePerTurn);
+    Assert.False(configuration.InterestEnabled);
+    Assert.Equal(0, configuration.InterestPercent);
+  }
 }

@@ -30,7 +30,8 @@ public class UiTextTests
   [Fact]
   public void Encyclopedia_IncludesEveryDisplayablePieceType()
   {
-    Assert.Equal(Enum.GetValues<PieceType>().Length, PieceDefinitions.Encyclopedia.Length);
+    Assert.Equal(22, PieceDefinitions.Encyclopedia.Length);
+    Assert.DoesNotContain(PieceDefinitions.Encyclopedia, piece => piece.Type is PieceType.Scout or PieceType.Spearman or PieceType.Cavalier);
     Assert.Equal(
       PieceDefinitions.Encyclopedia.Length,
       PieceDefinitions.Encyclopedia.Select(definition => definition.Type).Distinct().Count()
@@ -43,9 +44,8 @@ public class UiTextTests
     (PieceDefinition definition, string label)[] expected =
     [
       (PieceDefinitions.Soldier, "So"), (PieceDefinitions.Defender, "Df"),
-      (PieceDefinitions.Archer, "Ar"), (PieceDefinitions.Spearman, "Sp"),
-      (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"),
-      (PieceDefinitions.Cavalier, "Cv"), (PieceDefinitions.Chariot, "Ch"),
+      (PieceDefinitions.Archer, "Ar"), (PieceDefinitions.Peasant, "Pe"),
+      (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"), (PieceDefinitions.Chariot, "Ch"),
       (PieceDefinitions.Cannon, "Cn"), (PieceDefinitions.Spy, "Sy"),
       (PieceDefinitions.Catapult, "Ct"),
       (PieceDefinitions.Ox, "Ox"), (PieceDefinitions.Engineer, "En"),
@@ -68,14 +68,14 @@ public class UiTextTests
   public void ActionDescriptions_UseShortLabelsThatFitTheSidebar()
   {
     Assert.Equal("2 Line", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
-    Assert.Equal("1 Fwd/Diag", UiText.FormatAction(PieceDefinitions.Spearman.AttackShape));
+    Assert.Equal("1 Line", UiText.FormatAction(PieceDefinitions.Peasant.AttackShape));
   }
 
   [Fact]
   public void PieceDefinitions_CarryTheAbilityTextDisplayedByTheUi()
   {
-    Assert.Equal("Attaches to a friendly unit and takes damage for it.", PieceDefinitions.Guard.AbilityDescription);
-    Assert.Empty(PieceDefinitions.Cavalier.AbilityDescription);
+    Assert.Equal("Attaches to a friendly non-royal unit and takes damage for it.", PieceDefinitions.Guard.AbilityDescription);
+    Assert.Empty(PieceDefinitions.Soldier.AbilityDescription);
   }
 
   [Fact]

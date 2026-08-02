@@ -54,17 +54,23 @@ public static class MovementRules
   {
     RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
     RuleShape.Any => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.Forward => [(0, team == NetworkTeam.Red ? -1 : 1)],
-    RuleShape.ForwardOrForwardDiagonal =>
-      [(0, team == NetworkTeam.Red ? -1 : 1), (-1, team == NetworkTeam.Red ? -1 : 1), (1, team == NetworkTeam.Red ? -1 : 1)],
+    RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
+    RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),
     RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     _ => []
   };
 
+  private static IReadOnlyList<(int x, int y)> GetForwardAndDiagonalDirections(NetworkTeam team)
+  {
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    return forward.x == 0
+      ? [forward, (-1, forward.y), (1, forward.y)]
+      : [forward, (forward.x, -1), (forward.x, 1)];
+  }
+
   private static int GetMaximumStepDistance(UnitRule unit, (int x, int y) direction)
   {
-    if (direction.x != 0 && direction.y != 0) return Math.Max(unit.Width, unit.Height);
-    return direction.x != 0 ? unit.Width : unit.Height;
+    return 1;
   }
 
   private sealed record MovementState((int x, int y) Position, int Cost, List<(int x, int y)> Path);

@@ -2,8 +2,12 @@ namespace MedivalChess.Shared;
 
 public static class CombatRules
 {
-  public static int RoundCurrencyToNearestFive(float amount) =>
-    (int)MathF.Round(amount / 5f, MidpointRounding.AwayFromZero) * 5;
+  public static int RoundCurrencyToNearestFive(float amount)
+  {
+    if (!float.IsFinite(amount)) return amount < 0 ? int.MinValue : int.MaxValue;
+    double rounded = Math.Round(amount / 5d, MidpointRounding.AwayFromZero) * 5d;
+    return (int)Math.Clamp(rounded, int.MinValue, int.MaxValue);
+  }
 
   public static int CalculateDamage(
     int baseDamage,
@@ -39,12 +43,9 @@ public static class LineOfSightRules
     {
       int deltaX = target.x - origin.x;
       int deltaY = target.y - origin.y;
-      if (!UnitRules.CanAttackOffset(
+      if (!TeamRules.GetActiveTeams(4).Any(team => UnitRules.CanAttackOffset(
         attacker.AttackPattern, attacker.MinimumAttackRange, attacker.AttackRange,
-        NetworkTeam.Red, deltaX, deltaY) &&
-        !UnitRules.CanAttackOffset(
-          attacker.AttackPattern, attacker.MinimumAttackRange, attacker.AttackRange,
-          NetworkTeam.Blue, deltaX, deltaY)) continue;
+        team, deltaX, deltaY))) continue;
 
       bool clear = true;
       foreach ((int x, int y) square in SquaresBetween(origin, target))

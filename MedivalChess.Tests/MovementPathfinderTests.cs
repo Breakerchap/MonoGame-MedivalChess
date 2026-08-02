@@ -8,7 +8,7 @@ namespace MedivalChess.Tests;
 public class MovementPathfinderTests
 {
   [Fact]
-  public void StraightTwo_UsesTwoOrthogonalStepsAndCannotReturnToStart()
+  public void StraightThree_UsesOrthogonalStepsAndCannotReturnToStart()
   {
     Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
 
@@ -23,11 +23,12 @@ public class MovementPathfinderTests
     Assert.True(paths.ContainsKey((2, 0)));
     Assert.Equal([(1, 0), (2, 0)], paths[(2, 0)]);
     Assert.False(paths.ContainsKey((0, 0)));
+    Assert.True(paths.ContainsKey((3, 0)));
     Assert.True(paths.ContainsKey((1, 1)));
   }
 
   [Fact]
-  public void BlockedOrForestStep_PreventsReachingPastItWithinTwoMovement()
+  public void BlockedOrForestStepPreventsReachingPastItWithinMovementBudget()
   {
     Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
 
@@ -46,9 +47,10 @@ public class MovementPathfinderTests
       (_, _) => false
     );
 
-    Assert.False(blockedPaths.ContainsKey((2, 0)));
+    Assert.False(blockedPaths.ContainsKey((3, 0)));
     Assert.True(forestPaths.ContainsKey((1, 0)));
-    Assert.False(forestPaths.ContainsKey((2, 0)));
+    Assert.True(forestPaths.ContainsKey((2, 0)));
+    Assert.False(forestPaths.ContainsKey((3, 0)));
   }
 
   [Fact]
@@ -65,7 +67,7 @@ public class MovementPathfinderTests
     );
 
     Assert.True(paths.ContainsKey((1, 0)));
-    Assert.False(paths.ContainsKey((2, 0)));
+    Assert.False(paths.ContainsKey((3, 0)));
   }
 
   [Fact]
@@ -82,7 +84,7 @@ public class MovementPathfinderTests
     );
 
     Assert.True(paths.ContainsKey((1, 0)));
-    Assert.False(paths.ContainsKey((2, 0)));
+    Assert.False(paths.ContainsKey((3, 0)));
   }
 
   [Fact]
@@ -116,11 +118,11 @@ public class MovementPathfinderTests
 
     Assert.Equal(Shape.None, elephant.Definition.AttackShape.shape);
     Assert.False(Actions.CanAttackSquare(elephant, (2, 0)));
-    Assert.Equal([(0, 2), (0, 4)], paths[(0, 4)]);
+    Assert.Equal([(0, 1), (0, 2), (0, 3), (0, 4)], paths[(0, 4)]);
   }
 
   [Fact]
-  public void LargePiece_WithTwoMovementCanReachThreeTilesAway()
+  public void LargePieceMovementUsesItsListedRange()
   {
     Piece elephant = new(PieceDefinitions.Elephant, (0, 0), TeamName.Red);
 
@@ -132,7 +134,8 @@ public class MovementPathfinderTests
       (_, _) => false
     );
 
-    Assert.True(paths.ContainsKey((0, 3)));
+    Assert.True(paths.ContainsKey((0, 4)));
+    Assert.False(paths.ContainsKey((0, 5)));
   }
 
   [Fact]

@@ -34,6 +34,8 @@ internal static class UiTheme
 
   internal static readonly Color TeamOrange = new(209, 125, 54);
   internal static readonly Color TeamPurple = new(139, 92, 181);
+  internal static readonly Color TeamGreen = new(72, 157, 103);
+  internal static readonly Color TeamYellow = new(215, 181, 63);
   internal static readonly Color NeutralUnit = new(137, 145, 153);
   internal static readonly Color Health = new(105, 185, 112);
   internal static readonly Color Attack = new(221, 116, 108);
@@ -59,8 +61,13 @@ internal static class UiTheme
 
   internal static Color GetTeamColour(TeamName teamName)
   {
-    return teamName == TeamName.Red
-      ? TeamOrange
-      : teamName == TeamName.Blue ? TeamPurple : NeutralUnit;
+    return teamName switch
+    {
+      TeamName.Red => TeamOrange,
+      TeamName.Blue => TeamPurple,
+      TeamName.Green => TeamGreen,
+      TeamName.Yellow => TeamYellow,
+      _ => NeutralUnit
+    };
   }
 }
