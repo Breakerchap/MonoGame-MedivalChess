@@ -45,6 +45,11 @@ chmod +x publish/<runtime>/MedivalChess
 ./publish/<runtime>/MedivalChess
 ```
 
+The game prints startup diagnostics to the terminal. It also appends diagnostics
+and any crash stack trace to `~/Library/Application Support/CrownAndSiege/startup.log`
+on macOS, which is useful when launching the executable from Finder or when no
+terminal remains open.
+
 On Windows, run `publish/win-x64/MedivalChess.exe`. If MonoGame content has not already been built as part of publishing, build it with:
 
 ```bash
