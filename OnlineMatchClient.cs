@@ -15,6 +15,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
   internal NetworkTeam? Team { get; private set; }
   internal string JoinCode { get; private set; }
   internal string ReconnectToken { get; private set; }
+  internal bool IsDebugRoom => string.Equals(JoinCode, "DEBUG", StringComparison.OrdinalIgnoreCase);
 
   internal OnlineMatchClient(string serverUrl)
   {
@@ -39,7 +40,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     await _connection.StartAsync();
     RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
       "JoinGame",
-      new JoinGameRequest(joinCode, reconnectToken)
+      new JoinGameRequest(joinCode, reconnectToken, Team)
     );
     Accept(result);
     return result;
@@ -50,14 +51,42 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return await _connection.InvokeAsync<ActionResult>("AttemptMove", new MoveRequest(pieceId, x, y));
   }
 
-  internal async Task<ActionResult> AttackAsync(string attackerId, string targetId)
+  internal async Task<ActionResult> AttackAsync(string attackerId, string targetId, int? targetX = null, int? targetY = null)
   {
-    return await _connection.InvokeAsync<ActionResult>("AttemptAttack", new AttackRequest(attackerId, targetId));
+    return await _connection.InvokeAsync<ActionResult>("AttemptAttack", new AttackRequest(attackerId, targetId, targetX, targetY));
+  }
+
+  internal async Task<ActionResult> SpecialAsync(
+    string actorId,
+    string ability,
+    string targetId,
+    int targetX,
+    int targetY
+  )
+  {
+    return await _connection.InvokeAsync<ActionResult>(
+      "AttemptSpecial",
+      new SpecialActionRequest(actorId, ability, targetId, targetX, targetY)
+    );
   }
 
   internal async Task<ActionResult> ChooseRoyalAsync(string royalType)
   {
     return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType));
+  }
+
+  internal async Task<ActionResult> SelectDebugTeamAsync(NetworkTeam team)
+  {
+    ActionResult result = await _connection.InvokeAsync<ActionResult>(
+      "SelectDebugTeam",
+      new DebugTeamSelectionRequest(team)
+    );
+    if (result.Accepted)
+    {
+      Team = team;
+    }
+
+    return result;
   }
 
   internal async Task<ActionResult> PurchaseInitialUnitAsync(string pieceType, int x, int y)
@@ -76,6 +105,11 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
   internal async Task<ActionResult> StopInitialBuyingAsync()
   {
     return await _connection.InvokeAsync<ActionResult>("StopInitialBuying");
+  }
+
+  internal async Task<ActionResult> SkipTurnAsync()
+  {
+    return await _connection.InvokeAsync<ActionResult>("SkipTurn", new SkipTurnRequest());
   }
 
   internal void DrainStates(Action<NetworkGameState> apply, Action<string> reportError = null)
@@ -102,7 +136,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     {
       RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
         "JoinGame",
-        new JoinGameRequest(JoinCode, ReconnectToken)
+        new JoinGameRequest(JoinCode, ReconnectToken, Team)
       );
       if (result.Accepted)
       {

@@ -22,16 +22,13 @@ internal static class UiText
       PieceType.Cannon => "Cn",
       PieceType.Spy => "Sy",
       PieceType.Catapult => "Ct",
-      PieceType.FieldHospital => "FH",
-      PieceType.Ambulance => "Am",
-      PieceType.Teacher => "Te",
       PieceType.Ox => "Ox",
       PieceType.Engineer => "En",
       PieceType.Ballista => "Bl",
       PieceType.Elephant => "El",
       PieceType.Guard => "Gd",
       PieceType.Mercenary => "Mc",
-      PieceType.Assassin => "As",
+      PieceType.Farm => "Fm",
       PieceType.King => "KI",
       PieceType.Princess => "PR",
       PieceType.Palace => "PA",
@@ -48,7 +45,14 @@ internal static class UiText
 
   internal static string GetTeamDisplayName(TeamName teamName)
   {
-    return teamName == TeamName.Red ? "ORANGE" : teamName == TeamName.Blue ? "PURPLE" : "NEUTRAL";
+    return teamName switch
+    {
+      TeamName.Red => "ORANGE",
+      TeamName.Blue => "PURPLE",
+      TeamName.Green => "GREEN",
+      TeamName.Yellow => "GOLD",
+      _ => "NEUTRAL"
+    };
   }
 
   internal static string FormatAction((int range, Shape shape) action)
@@ -64,7 +68,6 @@ internal static class UiText
       Shape.Forward => "Forward",
       Shape.AbsoluteStraightOrDiagonal => "Line/Diag",
       Shape.ForwardOrForwardDiagonal => "Fwd/Diag",
-      Shape.FourSquare => "4-square",
       Shape.PierceStraight => "Pierce",
       Shape.MoveOnEnemy => "Enemy",
       _ => shape.ToString()

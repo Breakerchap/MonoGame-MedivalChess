@@ -7,8 +7,7 @@ internal enum AttachmentKind
 {
   None,
   Guard,
-  Carried,
-  Towed
+  Carried
 }
 
 internal sealed class Piece
@@ -24,6 +23,7 @@ internal sealed class Piece
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
   internal bool HasMovedThisTurn { get; set; }
   internal bool HasAttackedThisTurn { get; set; }
+  internal int EngineerBuildsThisTurn { get; set; }
   internal long NextMercenaryBid => (long)LastBid + 10;
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
@@ -67,6 +67,8 @@ internal sealed class PieceDefinition
   internal (int range, Shape shape) AttackShape { get; }
   internal int Cost { get; }
   internal int MinimumAttackRange { get; }
+  // UI-facing metadata is carried with the same definition object as the stats.
+  internal string AbilityDescription { get; }
 
   internal PieceDefinition(
     PieceType name,
@@ -77,7 +79,8 @@ internal sealed class PieceDefinition
     (int x, int y) size,
     (int range, Shape shape) attackShape,
     int cost,
-    int minimumAttackRange = 1
+    int minimumAttackRange = 1,
+    string abilityDescription = ""
   )
   {
     Type = name;
@@ -89,8 +92,8 @@ internal sealed class PieceDefinition
     AttackShape = attackShape;
     Cost = cost;
     MinimumAttackRange = minimumAttackRange;
+    AbilityDescription = abilityDescription;
   }
-
 }
 
 internal enum Shape
@@ -98,7 +101,7 @@ internal enum Shape
   Any, Straight, Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
-  FourSquare, PierceStraight,
+  PierceStraight,
   MoveOnEnemy, None
 }
 
@@ -106,9 +109,8 @@ internal enum PieceType
 {
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
-  Cannon, Spy, Catapult, FieldHospital,
-  Ambulance, Teacher, Ox, Engineer, Ballista,
-  Elephant, Guard, Mercenary, Assassin,
+  Cannon, Spy, Catapult, Ox, Engineer, Ballista,
+  Elephant, Guard, Mercenary, Farm,
 
   King, Princess, Palace, Baron, Emissary
 }
@@ -125,7 +127,7 @@ internal static class PieceDefinitions
   internal static readonly PieceDefinition Soldier = new(
     PieceType.Soldier,
     PieceCategory.Melee,
-    (2, Shape.Straight),
+    (3, Shape.Straight),
     10,
     15,
     (1, 1),
@@ -135,18 +137,18 @@ internal static class PieceDefinitions
   internal static readonly PieceDefinition Defender = new(
     PieceType.Defender,
     PieceCategory.Melee,
-    (2, Shape.Straight),
+    (2, Shape.Any),
     5,
     25,
     (1, 1),
     (1, Shape.Straight),
-    20
+    15
   );
 
   internal static readonly PieceDefinition Archer = new(
     PieceType.Archer,
     PieceCategory.Ranged,
-    (2, Shape.Any),
+    (3, Shape.Straight),
     10,
     10,
     (1, 1),
@@ -180,20 +182,20 @@ internal static class PieceDefinitions
   internal static readonly PieceDefinition Peasant = new(
     PieceType.Peasant,
     PieceCategory.Melee,
-    (1, Shape.Straight),
+    (1, Shape.Any),
     5,
     5,
     (1, 1),
-    (1, Shape.ForwardOrForwardDiagonal),
+    (1, Shape.Straight),
     10
   );
 
   internal static readonly PieceDefinition Knight = new(
     PieceType.Knight,
     PieceCategory.Melee,
-    (3, Shape.Any),
+    (4, Shape.Any),
     20,
-    25,
+    30,
     (1, 1),
     (1, Shape.Any),
     50
@@ -207,7 +209,8 @@ internal static class PieceDefinitions
     15,
     (1, 1),
     (3, Shape.Any),
-    45
+    45,
+    3
   );
 
   internal static readonly PieceDefinition Cavalier = new(
@@ -218,18 +221,19 @@ internal static class PieceDefinitions
     20,
     (1, 1),
     (1, Shape.Any),
-    40
+    50
   );
 
   internal static readonly PieceDefinition Chariot = new(
     PieceType.Chariot,
     PieceCategory.Melee,
-    (4, Shape.Straight),
+    (5, Shape.Straight),
     15,
     25,
     (1, 1),
-    (1, Shape.Straight),
-    40
+    (2, Shape.Straight),
+    40,
+    2
   );
 
   internal static readonly PieceDefinition Cannon = new(
@@ -237,9 +241,9 @@ internal static class PieceDefinitions
     PieceCategory.Mechanical,
     (2, Shape.Straight),
     30,
-    25,
+    15,
     (1, 2),
-    (5, Shape.Straight),
+    (4, Shape.Straight),
     50,
     2
   );
@@ -249,11 +253,12 @@ internal static class PieceDefinitions
     PieceCategory.Intelligence,
     (5, Shape.Any),
     0,
-    10,
+    15,
     (1, 1),
     (3, Shape.Any),
     35,
-    1
+    3,
+    "Marks an enemy; it takes double damage until attacked."
   );
 
   internal static readonly PieceDefinition Catapult = new(
@@ -263,42 +268,10 @@ internal static class PieceDefinitions
     20,
     20,
     (1, 2),
-    (6, Shape.FourSquare),
-    55,
-    3
-  );
-
-  internal static readonly PieceDefinition FieldHospital = new(
-    PieceType.FieldHospital,
-    PieceCategory.Structure,
-    (1, Shape.Any),
-    0,
-    0,
-    (2, 2),
-    (0, Shape.None),
-    0
-  );
-
-  internal static readonly PieceDefinition Ambulance = new(
-    PieceType.Ambulance,
-    PieceCategory.Transport,
     (5, Shape.Any),
-    0,
-    10,
-    (1, 2),
-    (0, Shape.None),
-    35
-  );
-
-  internal static readonly PieceDefinition Teacher = new(
-    PieceType.Teacher,
-    PieceCategory.Intelligence,
-    (4, Shape.Any),
-    0,
-    10,
-    (1, 1),
-    (1, Shape.Straight),
-    35
+    55,
+    3,
+    "Attacks over terrain and enemies."
   );
 
   internal static readonly PieceDefinition Ox = new(
@@ -308,8 +281,10 @@ internal static class PieceDefinitions
     5,
     25,
     (1, 1),
-    (1, Shape.Forward),
-    35
+    (1, Shape.Straight),
+    35,
+    1,
+    "Carries one friendly unit. Its movement becomes 3 Any while carrying a Mechanical unit."
   );
 
   internal static readonly PieceDefinition Engineer = new(
@@ -319,8 +294,10 @@ internal static class PieceDefinitions
     0,
     15,
     (1, 1),
-    (1, Shape.Straight),
-    35
+    (1, Shape.Any),
+    20,
+    1,
+    "Builds up to two roads, 20-health barricades, or mines each turn on adjacent empty squares."
   );
 
   internal static readonly PieceDefinition Ballista = new(
@@ -329,32 +306,37 @@ internal static class PieceDefinitions
     (1, Shape.Straight),
     25,
     20,
-    (2, 2),
-    (5, Shape.PierceStraight),
+    (1, 2),
+    (5, Shape.Any),
     55,
-    2
+    2,
+    "Its attack pierces enemies in a straight line."
   );
 
   internal static readonly PieceDefinition Elephant = new(
     PieceType.Elephant,
     PieceCategory.Melee,
-    (2, Shape.Straight),
+    (4, Shape.Straight),
     15,
-    50,
+    60,
     (2, 2),
     (0, Shape.None),
-    60
+    50,
+    0,
+    "May move through enemies, damaging each crossed unit. Ignores terrain."
   );
 
   internal static readonly PieceDefinition Guard = new(
     PieceType.Guard,
     PieceCategory.Melee,
-    (3, Shape.Any),
+    (3, Shape.Straight),
     10,
     25,
     (1, 1),
-    (1, Shape.Any),
-    35
+    (1, Shape.Straight),
+    35,
+    1,
+    "Attaches to a friendly non-royal unit and takes damage for it."
   );
 
   internal static readonly PieceDefinition Mercenary = new(
@@ -364,19 +346,10 @@ internal static class PieceDefinitions
     25,
     20,
     (1, 1),
-    (1, Shape.Any),
-    45
-  );
-
-  internal static readonly PieceDefinition Assassin = new(
-    PieceType.Assassin,
-    PieceCategory.Melee,
-    (3, Shape.Any),
-    30,
+    (2, Shape.Any),
     10,
-    (1, 1),
-    (1, Shape.Any),
-    60
+    1,
+    "Place anywhere in No-Man's-Land. Costs 5 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."
   );
 
   internal static readonly PieceDefinition King = new(
@@ -384,22 +357,25 @@ internal static class PieceDefinitions
     PieceCategory.Royal,
     (1, Shape.Any),
     15,
-    120,
+    110,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Adjacent allies take 5 less damage, to a minimum of 5."
   );
 
   internal static readonly PieceDefinition Princess = new(
     PieceType.Princess,
     PieceCategory.Royal,
     (1, Shape.Any),
-    15,
+    10,
     80,
     (1, 1),
-    (3, Shape.Any),
+    (4, Shape.Any),
     0,
-    1
+    1,
+    "May attack over friendly units."
   );
 
   internal static readonly PieceDefinition Palace = new(
@@ -407,58 +383,76 @@ internal static class PieceDefinitions
     PieceCategory.Royal,
     (0, Shape.None),
     0,
-    160,
+    150,
     (3, 2),
     (0, Shape.None),
-    0
+    0,
+    0,
+    "Earns 5 gold at the start of each owner turn."
   );
 
   internal static readonly PieceDefinition Baron = new(
     PieceType.Baron,
     PieceCategory.Royal,
-    (1, Shape.Any),
-    5,
+    (2, Shape.Straight),
+    10,
     100,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack."
   );
 
   internal static readonly PieceDefinition Emissary = new(
     PieceType.Emissary,
     PieceCategory.Royal,
-    (3, Shape.Any),
+    (4, Shape.Any),
     5,
     80,
     (1, 1),
     (1, Shape.Any),
-    0
+    0,
+    1,
+    "Moves directly adjacent friendly 1x1 allies with it."
   );
 
+  internal static readonly PieceDefinition Farm = new(
+    PieceType.Farm,
+    PieceCategory.Structure,
+    (0, Shape.None),
+    0,
+    30,
+    (3, 3),
+    (0, Shape.None),
+    60,
+    0,
+    "Earns the configured gold amount at the start of each owner turn (default 5). Units may move and attack over it."
+  );
   internal static readonly PieceDefinition[] All =
   [
-    Soldier, Defender, Archer, Spearman, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Teacher, Ox, Engineer, Ballista,
-    Elephant, Guard, Mercenary, King, Princess,
+    Soldier, Defender, Archer, Peasant, Knight,
+    Crossbowman, Chariot, Cannon, Spy,
+    Catapult, Ox, Engineer, Ballista,
+    Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
   ];
 
   internal static readonly PieceDefinition[] Encyclopedia =
   [
-    Soldier, Defender, Archer, Scout, Spearman, Peasant,
-    Knight, Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, FieldHospital, Ambulance, Teacher, Ox, Engineer,
-    Ballista, Elephant, Guard, Mercenary, Assassin,
+    Soldier, Defender, Archer, Peasant,
+    Knight, Crossbowman, Chariot, Cannon, Spy,
+    Catapult, Ox, Engineer,
+    Ballista, Elephant, Guard, Mercenary, Farm,
     King, Princess, Palace, Baron, Emissary
   ];
 
   internal static readonly PieceDefinition[] Purchasable =
   [
-    Soldier, Defender, Archer, Spearman, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Teacher, Ox, Engineer, Ballista,
-    Elephant, Guard, Mercenary
+    Soldier, Defender, Archer, Peasant, Knight,
+    Crossbowman, Chariot, Cannon, Spy,
+    Catapult, Ox, Engineer, Ballista,
+    Elephant, Guard, Mercenary, Farm
   ];
 
   internal static readonly PieceDefinition[] Royals =

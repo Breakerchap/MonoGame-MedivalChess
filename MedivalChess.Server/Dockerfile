@@ -7,6 +7,8 @@ RUN dotnet restore MedivalChess.Server/MedivalChess.Server.csproj
 
 COPY MedivalChess.Shared/ MedivalChess.Shared/
 COPY MedivalChess.Server/ MedivalChess.Server/
+# The shared rules project links Board and terrain sources plus board JSON assets from this folder.
+COPY GameBoard/ GameBoard/
 RUN dotnet publish MedivalChess.Server/MedivalChess.Server.csproj --configuration Release --no-restore --output /app/publish
 
 FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS runtime

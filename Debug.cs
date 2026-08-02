@@ -3,6 +3,7 @@ namespace MedivalChess;
 using System.Collections.Generic;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 
 internal sealed class PieceSetup
 {
@@ -16,7 +17,9 @@ internal sealed class PieceSetup
 
   internal Piece GetPieceAt((int x, int y) position)
   {
-    return _pieces.Find(piece => piece.AttachedTo == null && piece.Occupies(position))
+    return _pieces.Find(piece => piece.AttachedTo == null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
+      ?? _pieces.Find(piece => piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
+      ?? _pieces.Find(piece => piece.AttachedTo == null && piece.Occupies(position))
       ?? _pieces.Find(piece => piece.Occupies(position));
   }
 
@@ -31,7 +34,8 @@ internal sealed class PieceSetup
       for (int x = 0; x < definition.Size.x; x++)
       {
         Piece occupiedPiece = GetPieceAt((position.x + x, position.y + y));
-        if (occupiedPiece != null && occupiedPiece != ignoredPiece)
+        if (occupiedPiece != null && occupiedPiece != ignoredPiece &&
+            (definition.Type == PieceType.Farm || occupiedPiece.Definition.Type != PieceType.Farm))
         {
           return false;
         }
@@ -78,28 +82,33 @@ internal sealed class PieceSetup
 
   internal void MovePiece(Piece piece, (int x, int y) destination)
   {
-    var displacement = (
-      x: destination.x - piece.Position.x,
-      y: destination.y - piece.Position.y
-    );
     piece.Position = destination;
     piece.HasMovedThisTurn = true;
 
     foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
     {
-      attachedPiece.Position = attachedPiece.AttachmentKind == AttachmentKind.Towed
-        ? (attachedPiece.Position.x + displacement.x, attachedPiece.Position.y + displacement.y)
-        : destination;
+      attachedPiece.Position = destination;
       attachedPiece.HasMovedThisTurn = true;
     }
   }
 
   internal bool Attach(Piece attachment, Piece host, AttachmentKind kind)
   {
-    bool isCargo = kind is AttachmentKind.Carried or AttachmentKind.Towed;
+    if (attachment == host)
+    {
+      return false;
+    }
+
+    bool isCargo = kind == AttachmentKind.Carried;
     if (isCargo && _pieces.Exists(candidate =>
       candidate.AttachedTo == host &&
-      candidate.AttachmentKind is AttachmentKind.Carried or AttachmentKind.Towed))
+      candidate.AttachmentKind == AttachmentKind.Carried))
+    {
+      return false;
+    }
+
+    if (kind == AttachmentKind.Guard && _pieces.Exists(candidate =>
+      candidate.AttachedTo == host && candidate.AttachmentKind == AttachmentKind.Guard))
     {
       return false;
     }
@@ -107,10 +116,7 @@ internal sealed class PieceSetup
     Detach(attachment);
     attachment.AttachedTo = host;
     attachment.AttachmentKind = kind;
-    if (kind != AttachmentKind.Towed)
-    {
-      attachment.Position = host.Position;
-    }
+    attachment.Position = host.Position;
 
     return true;
   }
@@ -145,13 +151,12 @@ internal sealed class PieceSetup
     _pieces[index] = replacement;
   }
 
-  internal List<Team> CreateTeams()
+  internal List<Team> CreateTeams(int playerCount = 2)
   {
     List<Team> teams = new();
-    TeamName currentTeam = TeamName.Red;
-
-    while (teams.Count < 2)
+    foreach (NetworkTeam networkTeam in TeamRules.GetActiveTeams(playerCount))
     {
+      TeamName currentTeam = networkTeam.ToTeamName();
       PieceType? chosenRoyal = null;
 
       foreach (Piece piece in _pieces)
@@ -163,8 +168,6 @@ internal sealed class PieceSetup
         }
       }
       teams.Add(new Team(currentTeam, chosenRoyal));
-      currentTeam = TeamName.Blue;
-
     }
     return teams;
   }

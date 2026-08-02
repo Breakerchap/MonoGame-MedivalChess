@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 
 namespace MedivalChess.GameBoard;
 
@@ -45,8 +46,8 @@ internal static class Actions
       }
 
       destinations.Add((
-        piece.Position.x + offset.x * piece.Definition.Size.x,
-        piece.Position.y + offset.y * piece.Definition.Size.y
+        piece.Position.x + offset.x,
+        piece.Position.y + offset.y
       ));
     }
 
@@ -55,17 +56,21 @@ internal static class Actions
 
   internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)
   {
-    if (piece.Definition.AttackShape.shape == Shape.MoveOnEnemy)
+    if (piece.Definition.AttackShape.shape is Shape.MoveOnEnemy or Shape.None)
     {
       return false;
     }
 
-    List<(int x, int y)> attackOffsets = ValidActionSquares(piece, false);
-
     foreach ((int x, int y) origin in piece.OccupiedSquares())
     {
-      var offset = (x: targetPosition.x - origin.x, y: targetPosition.y - origin.y);
-      if (attackOffsets.Contains(offset))
+      if (UnitRules.CanAttackOffset(
+        ToRuleShape(piece.Definition.AttackShape.shape),
+        piece.Definition.MinimumAttackRange,
+        piece.Definition.AttackShape.range,
+        piece.Team.ToNetworkTeam(),
+        targetPosition.x - origin.x,
+        targetPosition.y - origin.y
+      ))
       {
         return true;
       }
@@ -73,6 +78,17 @@ internal static class Actions
 
     return false;
   }
+
+  private static RuleShape ToRuleShape(Shape shape) => shape switch
+  {
+    Shape.Any => RuleShape.Any,
+    Shape.Straight => RuleShape.Straight,
+    Shape.Forward => RuleShape.Forward,
+    Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
+    Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
+    Shape.PierceStraight => RuleShape.PierceStraight,
+    _ => RuleShape.None
+  };
 
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
@@ -86,7 +102,6 @@ internal static class Actions
         break;
 
       case Shape.Any:
-      case Shape.FourSquare:
         squares = ShapeFuncs.AnyShape(action.range);
         break;
 
@@ -136,19 +151,18 @@ internal static class Actions
     Team attackingTeam,
     Team defeatedTeam,
     float killerRefundMultiplier,
-    float defeatedTeamRefundMultiplier
+    float defeatedTeamRefundMultiplier,
+    int? unitCost = null
   )
   {
     if (piece.CurrentHealth > 0) { return false; }
 
-    attackingTeam.Money += RoundToNearestFive(piece.Definition.Cost * killerRefundMultiplier);
-    defeatedTeam.Money += RoundToNearestFive(piece.Definition.Cost * defeatedTeamRefundMultiplier);
+    int refundCost = unitCost ?? piece.Definition.Cost;
+    int killerRefund = CombatRules.RoundCurrencyToNearestFive(refundCost * killerRefundMultiplier);
+    int defeatedRefund = CombatRules.RoundCurrencyToNearestFive(refundCost * defeatedTeamRefundMultiplier);
+    attackingTeam.Money = (int)Math.Clamp((long)attackingTeam.Money + killerRefund, int.MinValue, int.MaxValue);
+    defeatedTeam.Money = (int)Math.Clamp((long)defeatedTeam.Money + defeatedRefund, int.MinValue, int.MaxValue);
     return true;
-  }
-
-  private static int RoundToNearestFive(float amount)
-  {
-    return (int)MathF.Round(amount / 5f, MidpointRounding.AwayFromZero) * 5;
   }
 }
 
@@ -186,15 +200,23 @@ internal static class ShapeFuncs
   internal static List<(int x, int y)> ForwardShape(TeamName team, int range, bool includeDiagonals)
   {
     List<(int x, int y)> validSquares = new();
-    int direction = team == TeamName.Red ? -1 : 1;
+    (int x, int y) direction = TeamRules.GetForwardDirection(team.ToNetworkTeam());
 
     for (int distance = 1; distance <= range; distance++)
     {
-      validSquares.Add((0, direction * distance));
+      validSquares.Add((direction.x * distance, direction.y * distance));
       if (includeDiagonals)
       {
-        validSquares.Add((-distance, direction * distance));
-        validSquares.Add((distance, direction * distance));
+        if (direction.x == 0)
+        {
+          validSquares.Add((-distance, direction.y * distance));
+          validSquares.Add((distance, direction.y * distance));
+        }
+        else
+        {
+          validSquares.Add((direction.x * distance, -distance));
+          validSquares.Add((direction.x * distance, distance));
+        }
       }
     }
 

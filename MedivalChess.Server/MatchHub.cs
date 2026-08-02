@@ -29,6 +29,17 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> SelectDebugTeam(DebugTeamSelectionRequest request)
+  {
+    ActionResult result = matches.SelectDebugTeam(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public async Task<ActionResult> AttemptMove(MoveRequest request)
   {
     ActionResult result = matches.TryMove(Context.ConnectionId, request);
@@ -48,6 +59,27 @@ public sealed class MatchHub(MatchStore matches) : Hub
       await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
     }
 
+    return result;
+  }
+
+  public async Task<ActionResult> AttemptSpecial(SpecialActionRequest request)
+  {
+    ActionResult result = matches.TrySpecial(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
+  public async Task<ActionResult> SkipTurn(SkipTurnRequest request)
+  {
+    ActionResult result = matches.TrySkipTurn(Context.ConnectionId);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
     return result;
   }
 
@@ -104,14 +136,40 @@ public sealed class MatchHub(MatchStore matches) : Hub
 
 public sealed class MatchStore
 {
+  public const string DebugJoinCode = "DEBUG";
   private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  private const int ActionsPerTurn = 3;
+  private const int ActionsPerTurn = MatchRules.ActionsPerTurn;
   private static readonly TimeSpan JoinAttemptCooldown = TimeSpan.FromMilliseconds(500);
   private static readonly TimeSpan EmptyRoomLifetime = TimeSpan.FromMinutes(10);
   private static readonly TimeSpan DisconnectGracePeriod = TimeSpan.FromMinutes(5);
   private static readonly TimeSpan InactiveMatchLifetime = TimeSpan.FromHours(2);
   private readonly ConcurrentDictionary<string, Match> _matches = new(StringComparer.OrdinalIgnoreCase);
   private readonly ConcurrentDictionary<string, DateTimeOffset> _lastJoinAttemptByConnection = new();
+
+  public MatchStore()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Medium",
+      "Standard",
+      "Standard",
+      "Regicide",
+      20260801,
+      1000,
+      0.5f,
+      0f,
+      2,
+      4,
+      MatchRules.DefaultConquestWinScore
+    );
+    Match debugMatch = new(
+      DebugJoinCode,
+      configuration,
+      new PlayerSlot(null, NetworkTeam.Red, configuration.StartingCash),
+      isDebugMatch: true
+    );
+    debugMatch.AddPlayer(new PlayerSlot(null, NetworkTeam.Blue, configuration.StartingCash));
+    _matches[DebugJoinCode] = debugMatch;
+  }
 
   public RoomJoinResult Create(string connectionId, CreateGameRequest request)
   {
@@ -129,7 +187,8 @@ public sealed class MatchStore
     NetworkMatchConfiguration validConfiguration = configuration!;
 
     string code;
-    NetworkTeam hostTeam = Random.Shared.Next(2) == 0 ? NetworkTeam.Red : NetworkTeam.Blue;
+    IReadOnlyList<NetworkTeam> activeTeams = TeamRules.GetActiveTeams(validConfiguration.PlayerCount);
+    NetworkTeam hostTeam = activeTeams[Random.Shared.Next(activeTeams.Count)];
     do
     {
       code = string.Concat(Enumerable.Range(0, 5).Select(_ => CodeAlphabet[Random.Shared.Next(CodeAlphabet.Length)]));
@@ -164,6 +223,19 @@ public sealed class MatchStore
 
     lock (match.Sync)
     {
+      if (match.IsDebugMatch)
+      {
+        if (request.DebugTeam is NetworkTeam requestedTeam && !Enum.IsDefined(requestedTeam))
+        {
+          return new(false, "That debug side is not valid.", null, null, null, null);
+        }
+
+        NetworkTeam debugTeam = request.DebugTeam ?? match.CurrentTurn;
+        match.RegisterDebugController(connectionId, debugTeam);
+        match.Touch();
+        return match.ResultFor(match.FindPlayerByConnection(connectionId)!);
+      }
+
       if (!string.IsNullOrWhiteSpace(request.ReconnectToken))
       {
         PlayerSlot? reconnectingPlayer = match.FindPlayerByToken(request.ReconnectToken);
@@ -178,15 +250,43 @@ public sealed class MatchStore
         return match.ResultFor(reconnectingPlayer);
       }
 
-      if (match.Guest is not null)
+      if (match.Players.Count >= match.Configuration.PlayerCount)
       {
-        return new(false, "Room already has two players.", null, null, null, null);
+        return new(false, "Room already has the configured number of players.", null, null, null, null);
       }
 
-      NetworkTeam guestTeam = match.Host.Team == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
-      match.Guest = new PlayerSlot(connectionId, guestTeam, match.Configuration.StartingCash);
+      NetworkTeam guestTeam = TeamRules.GetActiveTeams(match.Configuration.PlayerCount)
+        .First(team => match.Players.All(player => player.Team != team));
+      PlayerSlot player = new(connectionId, guestTeam, match.Configuration.StartingCash);
+      match.AddPlayer(player);
       match.Touch();
-      return match.ResultFor(match.Guest);
+      return match.ResultFor(player);
+    }
+  }
+
+  public ActionResult SelectDebugTeam(string connectionId, DebugTeamSelectionRequest request)
+  {
+    if (request is null || !Enum.IsDefined(request.Team))
+    {
+      return new(false, "Choose Orange or Purple.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      if (!foundMatch.IsDebugMatch || !foundMatch.IsDebugController(connectionId))
+      {
+        return new(false, "Side switching is only available in the DEBUG room.", foundMatch.State());
+      }
+
+      foundMatch.RegisterDebugController(connectionId, request.Team);
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
     }
   }
 
@@ -208,12 +308,17 @@ public sealed class MatchStore
       PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
       if (!foundMatch.MatchReady)
       {
-        return new(false, "Both players must choose a royal first.", foundMatch.State());
+        return new(false, "Every player must choose a royal first.", foundMatch.State());
       }
 
       if (foundMatch.InitialBuy is { IsComplete: false })
       {
         return new(false, "Finish the initial buy phase before moving units.", foundMatch.State());
+      }
+
+      if (foundMatch.Winner is not null)
+      {
+        return new(false, "This match has already ended.", foundMatch.State());
       }
 
       if (player is null || player.Team != foundMatch.CurrentTurn)
@@ -233,19 +338,58 @@ public sealed class MatchStore
         return new(false, "That unit has already moved this turn.", foundMatch.State());
       }
 
-      if (!NetworkBoardRules.Contains(foundMatch.Configuration, request.ToX, request.ToY) ||
-          foundMatch.Pieces.Any(other => other.Id != piece.Id && other.X == request.ToX && other.Y == request.ToY))
+      if (piece.AttachedToId is not null && piece.AttachmentKind == NetworkAttachmentKind.Guard)
+      {
+        return new(false, "An attached Guard moves only with the unit it protects.", foundMatch.State());
+      }
+      if (piece.AttachedToId is not null)
+      {
+        // Carrying is voluntary: moving the cargo itself dismounts it.
+        piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
+      }
+
+      if (!CanLandAt(foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY)))
       {
         return new(false, "That destination is not available.", foundMatch.State());
       }
 
-      if (!NetworkMovementRules.IsLegal(piece, request.ToX, request.ToY))
+      if (!TryGetLegalMovementPath(foundMatch, piece, request.ToX, request.ToY, out List<(int x, int y)> movementPath))
       {
-        return new(false, "That move is outside the unit's movement rule.", foundMatch.State());
+        return new(false, "That move is blocked by the board, terrain, or unit movement rule.", foundMatch.State());
       }
 
-      foundMatch.Pieces[index] = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true };
-      SpendAction(foundMatch, player);
+      bool elephantDamagedAnEnemy = false;
+      if (piece.Type == "Elephant" && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
+      {
+        foreach (NetworkPiece crossed in foundMatch.Pieces.Where(other => other.Id != piece.Id && other.Team != piece.Team).ToArray())
+        {
+          if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) && AbilityRules.PathOverlapsUnit(
+            elephantRule, movementPath, crossedRule, crossed.X, crossed.Y))
+          {
+            ResolvePieceDamage(foundMatch, piece, player, crossed.Id, 15);
+            elephantDamagedAnEnemy = true;
+          }
+        }
+      }
+
+      int pieceIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
+      if (pieceIndex < 0) return new(false, "That unit is no longer on the board.", foundMatch.State());
+      int oldX = piece.X;
+      int oldY = piece.Y;
+      piece = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true, HasAttackedThisTurn = elephantDamagedAnEnemy || piece.HasAttackedThisTurn };
+      foundMatch.Pieces[pieceIndex] = piece;
+      MoveAttachedPieces(foundMatch, piece, oldX, oldY);
+      MoveEmissaryCompanions(foundMatch, piece, oldX, oldY);
+      TriggerMinesAlongMovement(foundMatch, piece, movementPath);
+      if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id) &&
+          IsEscortVictory(foundMatch, piece, request.ToX, request.ToY))
+      {
+        foundMatch.Winner = piece.Team;
+      }
+      if (foundMatch.Winner is null)
+      {
+        SpendAction(foundMatch, player);
+      }
 
       foundMatch.Version++;
       foundMatch.Touch();
@@ -255,9 +399,9 @@ public sealed class MatchStore
 
   public ActionResult TryAttack(string connectionId, AttackRequest request)
   {
-    if (request is null || string.IsNullOrWhiteSpace(request.AttackerId) || string.IsNullOrWhiteSpace(request.TargetId))
+    if (request is null || string.IsNullOrWhiteSpace(request.AttackerId))
     {
-      return new(false, "Choose an attacking unit and an enemy target.", null);
+      return new(false, "Choose an attacking unit and target.", null);
     }
 
     if (!TryGetMatch(connectionId, out Match? match))
@@ -274,47 +418,170 @@ public sealed class MatchStore
         return new(false, "The match is not ready for attacks.", foundMatch.State());
       }
 
+      if (foundMatch.Winner is not null)
+      {
+        return new(false, "This match has already ended.", foundMatch.State());
+      }
+
       if (player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "It is not your turn.", foundMatch.State());
       }
 
       int attackerIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.AttackerId);
-      int targetIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.TargetId);
-      if (attackerIndex < 0 || targetIndex < 0)
+      if (attackerIndex < 0)
       {
-        return new(false, "That unit is no longer on the board.", foundMatch.State());
+        return new(false, "That attacking unit is no longer on the board.", foundMatch.State());
       }
 
       NetworkPiece attacker = foundMatch.Pieces[attackerIndex];
-      NetworkPiece target = foundMatch.Pieces[targetIndex];
-      if (attacker.Team != player.Team || target.Team == player.Team || attacker.HasAttackedThisTurn)
+      if (attacker.Team != player.Team || attacker.HasAttackedThisTurn)
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
 
-      if (!NetworkAttackRules.IsLegal(attacker, target))
+      NetworkPiece? target = string.IsNullOrWhiteSpace(request.TargetId)
+        ? null
+        : foundMatch.Pieces.FirstOrDefault(piece => piece.Id == request.TargetId);
+      bool attackingBarricade = target is null && request.TargetX is int barricadeX && request.TargetY is int barricadeY &&
+        foundMatch.Barricades.ContainsKey((barricadeX, barricadeY));
+      if (target is null && !attackingBarricade)
       {
-        return new(false, "That target is outside the unit's attack pattern.", foundMatch.State());
+        return new(false, "That target is no longer on the board.", foundMatch.State());
       }
 
-      int damage = NetworkAttackRules.GetDamage(attacker.Type);
-      if (damage <= 0)
+      (int x, int y) targetPosition = target is null
+        ? (request.TargetX!.Value, request.TargetY!.Value)
+        : (target.X, target.Y);
+      if (target is not null &&
+          (target.Team == attacker.Team || target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
+      {
+        return new(false, "That attack is not available.", foundMatch.State());
+      }
+
+      if (target is null && !CanUseActionSquare(attacker, targetPosition.x, targetPosition.y))
+      {
+        return new(false, "That barricade is outside the unit's attack pattern.", foundMatch.State());
+      }
+
+      if (target is not null
+        ? !HasClearAttackPath(foundMatch, attacker, target)
+        : !HasClearAttackPath(foundMatch, attacker, targetPosition, null))
+      {
+        return new(false, "Terrain, a barricade, or another unit blocks that attack.", foundMatch.State());
+      }
+
+      if (NetworkAttackRules.GetDamage(attacker.Type) <= 0)
       {
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
 
       foundMatch.Pieces[attackerIndex] = attacker with { HasAttackedThisTurn = true };
-      int remainingHealth = target.Health - damage;
-      if (remainingHealth <= 0)
+      if (target is null)
       {
-        foundMatch.Pieces.RemoveAt(targetIndex);
+        DamageBarricade(foundMatch, attacker, targetPosition);
       }
       else
       {
-        foundMatch.Pieces[targetIndex] = target with { Health = remainingHealth };
+        ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
       }
 
+      if (target is not null && attacker.Type == "Ballista" && UnitRules.TryGet(attacker.Type, out UnitRule ballistaRule))
+      {
+        foreach ((int x, int y) position in AbilityRules.GetPiercingRay(ballistaRule, attacker.X, attacker.Y, target.X, target.Y))
+        {
+          if (!NetworkBoardRules.Contains(foundMatch.Configuration, position.x, position.y) ||
+              foundMatch.Terrain.IsForest(position) || foundMatch.Barricades.ContainsKey(position)) break;
+          NetworkPiece? pierced = foundMatch.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id && piece.Id != target.Id && piece.Team != attacker.Team && piece.Type != "Farm" &&
+            piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && UnitRules.FootprintsOverlap(piece.X, piece.Y, rule.Width, rule.Height, position.x, position.y, 1, 1));
+          if (pierced is not null) ResolvePieceDamage(foundMatch, attacker, player, pierced.Id, null);
+        }
+      }
+
+      if (foundMatch.Winner is null) SpendAction(foundMatch, player);
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult TrySpecial(string connectionId, SpecialActionRequest request)
+  {
+    if (request is null || string.IsNullOrWhiteSpace(request.ActorId))
+    {
+      return new(false, "Choose a unit and target for its special action.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match)) return new(false, "Join a room first.", null);
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false } ||
+          player is null || player.Team != foundMatch.CurrentTurn)
+      {
+        return new(false, "That special action is not available now.", foundMatch.State());
+      }
+      if (foundMatch.Winner is not null)
+      {
+        return new(false, "This match has already ended.", foundMatch.State());
+      }
+
+      int actorIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.ActorId);
+      int targetIndex = string.IsNullOrWhiteSpace(request.TargetId)
+        ? -1
+        : foundMatch.Pieces.FindIndex(piece => piece.Id == request.TargetId);
+      if (actorIndex < 0 || foundMatch.Pieces[actorIndex].Team != player.Team)
+      {
+        return new(false, "You may only use your own unit's special action.", foundMatch.State());
+      }
+
+      NetworkPiece actor = foundMatch.Pieces[actorIndex];
+      if (actor.HasAttackedThisTurn)
+      {
+        return new(false, "That unit has already acted this turn.", foundMatch.State());
+      }
+      NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
+      if (actor.Type != "Mercenary" && !CanUseActionSquare(actor, request.TargetX, request.TargetY))
+      {
+        return new(false, "That square is outside the unit's special-action range.", foundMatch.State());
+      }
+
+      bool applied = actor.Type switch
+      {
+        "Spy" => TryMarkSpyTarget(foundMatch, actorIndex, target),
+        "Engineer" => TryUseEngineerSpecial(foundMatch, actorIndex, request.Ability, request.TargetX, request.TargetY, target),
+        "Guard" => TryAttachGuard(foundMatch, actorIndex, targetIndex),
+        "Ox" => TryAttachOxCargo(foundMatch, actorIndex, targetIndex),
+        "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
+        _ => false
+      };
+      if (!applied) return new(false, "That special action has no valid target.", foundMatch.State());
+
+      SpendAction(foundMatch, player);
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult TrySkipTurn(string connectionId)
+  {
+    if (!TryGetMatch(connectionId, out Match? match)) return new(false, "Join a room first.", null);
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false } ||
+          player is null || player.Team != foundMatch.CurrentTurn || player.ActionsRemaining >= ActionsPerTurn)
+      {
+        return new(false, "Use at least one action before ending the turn.", foundMatch.State());
+      }
+      if (foundMatch.Winner is not null)
+      {
+        return new(false, "This match has already ended.", foundMatch.State());
+      }
+      player.ActionsRemaining = 1;
       SpendAction(foundMatch, player);
       foundMatch.Version++;
       foundMatch.Touch();
@@ -338,9 +605,9 @@ public sealed class MatchStore
     lock (foundMatch.Sync)
     {
       PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
-      if (player is null || foundMatch.Guest is null)
+      if (player is null || foundMatch.Players.Count < foundMatch.Configuration.PlayerCount)
       {
-        return new(false, "Wait for the other player before choosing a royal.", foundMatch.State());
+        return new(false, "Wait for every player to join before choosing a royal.", foundMatch.State());
       }
 
       if (player.ChosenRoyal is not null)
@@ -362,7 +629,9 @@ public sealed class MatchStore
       {
         foundMatch.InitialBuy ??= new OpeningBuyPhase(
           foundMatch.Configuration.InitialBuysPerTurn,
-          foundMatch.Configuration.InitialBuyTurnsPerTeam
+          foundMatch.Configuration.InitialBuyTurnsPerTeam,
+          foundMatch.Configuration.PlayerCount,
+          foundMatch.Configuration.FarmsEnabled
         );
         foundMatch.CurrentTurn = foundMatch.InitialBuy.CurrentTeam;
       }
@@ -399,22 +668,29 @@ public sealed class MatchStore
         return new(false, "It is not your initial buy turn.", foundMatch.State());
       }
 
-      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit))
+      if (!TryGetPurchasableUnit(foundMatch, request.PieceType, out UnitPurchaseInfo unit))
       {
         return new(false, "That unit is not available during the initial buy phase.", foundMatch.State());
       }
 
-      if (player.Money < unit.Cost ||
-          !NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, request.X, request.Y, unit.Width, unit.Height) ||
-          foundMatch.Pieces.Any(piece => FootprintsOverlap(piece, request.X, request.Y, unit.Width, unit.Height)))
+      if (buyPhase.IsFarmPlacementPhase && unit.Type != "Farm")
+      {
+        return new(false, "Place your two farms before buying units.", foundMatch.State());
+      }
+
+      bool isOpeningFarmPlacement = buyPhase.IsFarmPlacementPhase && unit.Type == "Farm";
+      if ((!isOpeningFarmPlacement && player.Money < unit.Cost) ||
+          !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: true))
       {
         return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
       }
 
-      player.Money -= unit.Cost;
+      if (!isOpeningFarmPlacement) player.Money = ClampCurrency((long)player.Money - unit.Cost);
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
       buyPhase.RecordPurchase();
-      foundMatch.CurrentTurn = buyPhase.IsComplete ? NetworkTeam.Red : buyPhase.CurrentTeam;
+      foundMatch.CurrentTurn = buyPhase.IsComplete
+        ? TeamRules.GetFirstTeam(foundMatch.Configuration.PlayerCount)
+        : buyPhase.CurrentTeam;
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -442,27 +718,65 @@ public sealed class MatchStore
         return new(false, "The opening buy phase must finish first.", foundMatch.State());
       }
 
+      if (foundMatch.Winner is not null)
+      {
+        return new(false, "This match has already ended.", foundMatch.State());
+      }
+
       if (player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "It is not your turn.", foundMatch.State());
       }
 
-      if (!TryGetPurchasableUnit(request.PieceType, out UnitPurchaseInfo unit, includeMercenary: true))
+      int mercenaryIndex = foundMatch.Pieces.FindIndex(piece =>
+        piece.Type == "Mercenary" && piece.Team != player.Team && piece.X == request.X && piece.Y == request.Y);
+      if (mercenaryIndex >= 0)
+      {
+        NetworkPiece mercenary = foundMatch.Pieces[mercenaryIndex];
+        bool isNeutralMercenary = mercenary.Team == NetworkTeam.Neutral;
+        if (!isNeutralMercenary && !NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, mercenary.X, mercenary.Y, 1, 1))
+        {
+          return new(false, "A Mercenary can only be bought off while it is in your territory.", foundMatch.State());
+        }
+        long bid = isNeutralMercenary
+          ? Math.Max(1, mercenary.LastBid)
+          : (long)Math.Max(mercenary.LastBid, GetUnitCost(foundMatch, "Mercenary")) + 10;
+        PlayerSlot? previousOwner = foundMatch.Players.FirstOrDefault(candidate => candidate.Team == mercenary.Team);
+        if (bid > int.MaxValue || player.Money < bid || (!isNeutralMercenary && previousOwner is null))
+        {
+          return new(false, "You cannot afford to outbid that Mercenary.", foundMatch.State());
+        }
+        player.Money = ClampCurrency((long)player.Money - bid);
+        if (previousOwner is not null) previousOwner.Money = ClampCurrency((long)previousOwner.Money + bid);
+        foundMatch.Pieces[mercenaryIndex] = mercenary with
+        {
+          Team = player.Team,
+          LastBid = (int)bid,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true
+        };
+        SpendAction(foundMatch, player);
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+
+      if (!TryGetPurchasableUnit(foundMatch, request.PieceType, out UnitPurchaseInfo unit, includeMercenary: true))
       {
         return new(false, "That unit is not available for purchase.", foundMatch.State());
       }
 
-      bool validPlacement = unit.Type == "Mercenary"
-        ? NetworkBoardRules.CanPlaceMercenary(foundMatch.Configuration, request.X, request.Y)
-        : NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, request.X, request.Y, unit.Width, unit.Height);
-      if (player.Money < unit.Cost || !validPlacement ||
-          foundMatch.Pieces.Any(piece => FootprintsOverlap(piece, request.X, request.Y, unit.Width, unit.Height)))
+      if (player.Money < unit.Cost ||
+          !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: false))
       {
         return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
       }
 
-      player.Money -= unit.Cost;
-      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
+      player.Money = ClampCurrency((long)player.Money - unit.Cost);
+      foundMatch.Pieces.Add(new NetworkPiece(
+        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health,
+        HasMovedThisTurn: true, HasAttackedThisTurn: true, LastBid: unit.Cost
+      ));
       SpendAction(foundMatch, player);
       foundMatch.Version++;
       foundMatch.Touch();
@@ -487,8 +801,15 @@ public sealed class MatchStore
         return new(false, "It is not your initial buy turn.", foundMatch.State());
       }
 
+      if (buyPhase.IsFarmPlacementPhase)
+      {
+        return new(false, "Place your two farms before ending the buy turn.", foundMatch.State());
+      }
+
       buyPhase.StopCurrentBuyer();
-      foundMatch.CurrentTurn = buyPhase.IsComplete ? NetworkTeam.Red : buyPhase.CurrentTeam;
+      foundMatch.CurrentTurn = buyPhase.IsComplete
+        ? TeamRules.GetFirstTeam(foundMatch.Configuration.PlayerCount)
+        : buyPhase.CurrentTeam;
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -501,6 +822,12 @@ public sealed class MatchStore
     {
       lock (match.Sync)
       {
+        if (match.IsDebugMatch && match.RemoveDebugController(connectionId))
+        {
+          match.Touch();
+          return;
+        }
+
         PlayerSlot? player = match.FindPlayerByConnection(connectionId);
         if (player is not null)
         {
@@ -520,10 +847,15 @@ public sealed class MatchStore
     {
       lock (match.Sync)
       {
+        if (match.IsDebugMatch)
+        {
+          continue;
+        }
+
         bool playerTimedOut = match.Players.Any(player =>
           player.DisconnectedAt is DateTimeOffset disconnectedAt && now - disconnectedAt > DisconnectGracePeriod
         );
-        bool roomTimedOut = match.Guest is null && match.Host.ConnectionId is null &&
+        bool roomTimedOut = match.Players.Count == 1 && match.Host.ConnectionId is null &&
           now - match.CreatedAt > EmptyRoomLifetime;
         bool matchInactive = match.Players.All(player => player.ConnectionId is null) &&
           now - match.LastActivity > InactiveMatchLifetime;
@@ -587,14 +919,15 @@ public sealed class MatchStore
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.ForestDensity) ||
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.WaterwayDensity) ||
         !new[] { "Regicide", "Conquest", "Escort" }.Contains(configuration.GameMode) ||
-        configuration.StartingCash is < 0 or > 5000 ||
+        !TeamRules.IsValidPlayerCount(configuration.PlayerCount) ||
+        configuration.StartingCash < 0 ||
         configuration.InitialBuysPerTurn < 1 ||
         configuration.InitialBuyTurnsPerTeam < 1 ||
         configuration.ConquestWinScore < 1 ||
+        configuration.UnitMaintenancePercent is < 0 or > 100 ||
+        configuration.InterestPercent is < -100 or > 200 ||
         !float.IsFinite(configuration.KillerRefundMultiplier) ||
-        !float.IsFinite(configuration.DefeatedTeamRefundMultiplier) ||
-        configuration.KillerRefundMultiplier is < -10 or > 10 ||
-        configuration.DefeatedTeamRefundMultiplier is < -10 or > 10)
+        !float.IsFinite(configuration.DefeatedTeamRefundMultiplier))
     {
       error = "The proposed match settings are not valid.";
       return false;
@@ -604,69 +937,630 @@ public sealed class MatchStore
     return true;
   }
 
-  private static (int width, int height, int health) GetRoyalStats(string type) => type switch
+  private static (int width, int height, int health) GetRoyalStats(string type)
   {
-    "King" => (1, 1, 120),
-    "Princess" => (1, 1, 80),
-    "Palace" => (3, 2, 160),
-    "Baron" => (1, 1, 100),
-    "Emissary" => (1, 1, 80),
-    _ => throw new InvalidOperationException("Unknown royal.")
-  };
+    UnitRule rule = UnitRules.GetRequired(type);
+    return (rule.Width, rule.Height, rule.Health);
+  }
 
-  private static readonly HashSet<string> RoyalTypes = new(StringComparer.Ordinal)
-  {
-    "King", "Princess", "Palace", "Baron", "Emissary"
-  };
+  private static readonly HashSet<string> RoyalTypes = UnitRules.Royals
+    .Select(rule => rule.Type)
+    .ToHashSet(StringComparer.Ordinal);
 
   private sealed record UnitPurchaseInfo(string Type, int Cost, int Health, int Width = 1, int Height = 1);
 
-  private static bool TryGetPurchasableUnit(string type, out UnitPurchaseInfo unit, bool includeMercenary = false)
+  private static bool TryGetPurchasableUnit(Match match, string type, out UnitPurchaseInfo unit, bool includeMercenary = false)
   {
-    UnitPurchaseInfo? found = type switch
-    {
-      "Soldier" => new(type, 20, 15),
-      "Defender" => new(type, 20, 30),
-      "Archer" => new(type, 25, 10),
-      "Spearman" => new(type, 25, 15),
-      "Knight" => new(type, 40, 25),
-      "Crossbowman" => new(type, 45, 15),
-      "Cavalier" => new(type, 50, 20),
-      "Chariot" => new(type, 40, 25),
-      "Cannon" => new(type, 50, 25, 1, 2),
-      "Spy" => new(type, 35, 10),
-      "Catapult" => new(type, 55, 20, 1, 2),
-      "Teacher" => new(type, 35, 10),
-      "Ox" => new(type, 35, 25),
-      "Engineer" => new(type, 35, 15),
-      "Ballista" => new(type, 55, 20, 2, 2),
-      "Elephant" => new(type, 60, 50, 2, 2),
-      "Guard" => new(type, 35, 25),
-      "Mercenary" when includeMercenary => new(type, 45, 20),
-      _ => null
-    };
-    if (found is null)
+    if (!UnitRules.TryGet(type, out UnitRule rule) ||
+        !UnitRules.Purchasable.Contains(rule) ||
+        (rule.Type == "Mercenary" && !includeMercenary) ||
+        (rule.Type == "Farm" && !match.Configuration.FarmsEnabled))
     {
       unit = null!;
       return false;
     }
 
-    unit = found;
+    unit = new UnitPurchaseInfo(
+      rule.Type,
+      GetUnitPrice(match, rule),
+      rule.Health,
+      rule.Width,
+      rule.Height
+    );
     return true;
+  }
+
+  private static int GetUnitCost(Match match, string type)
+  {
+    return TryGetPurchasableUnit(match, type, out UnitPurchaseInfo unit, includeMercenary: true) ? unit.Cost : 0;
+  }
+
+  private static int GetUnitPrice(Match match, UnitRule rule)
+  {
+    return rule.Type == "Farm"
+      ? rule.Cost
+      : EconomyRules.GetUnitPrice(rule.Cost, match.Configuration.UnitPricePercent);
+  }
+
+  private static int GetUnitMaintenance(Match match, UnitRule rule)
+  {
+    return rule.Type == "Farm"
+      ? 0
+      : EconomyRules.GetUnitMaintenance(
+        rule.Cost,
+        match.Configuration.UnitMaintenancePercent
+      );
   }
 
   private static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
   {
-    (int existingWidth, int existingHeight) = existing.Type switch
+    UnitRule existingRule = UnitRules.GetRequired(existing.Type);
+    return UnitRules.FootprintsOverlap(
+      existing.X, existing.Y, existingRule.Width, existingRule.Height,
+      x, y, width, height
+    );
+  }
+
+  private static bool CanPlacePurchasedUnit(
+    Match match,
+    UnitPurchaseInfo unit,
+    NetworkTeam team,
+    int x,
+    int y,
+    bool initialBuy
+  )
+  {
+    bool inValidTerritory = unit.Type == "Mercenary" && !initialBuy
+      ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y)
+      : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
+    if (!inValidTerritory) return false;
+
+    for (int offsetY = 0; offsetY < unit.Height; offsetY++)
+      for (int offsetX = 0; offsetX < unit.Width; offsetX++)
+      {
+        var square = (x: x + offsetX, y: y + offsetY);
+        if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square)) return false;
+      }
+
+    return !match.Pieces.Any(piece =>
+      (unit.Type == "Farm" || piece.Type != "Farm") &&
+      FootprintsOverlap(piece, x, y, unit.Width, unit.Height));
+  }
+
+  private static bool TryGetLegalMovementPath(
+    Match match,
+    NetworkPiece piece,
+    int destinationX,
+    int destinationY,
+    out List<(int x, int y)> path
+  )
+  {
+    path = null!;
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule)) return false;
+    rule = GetEffectiveMovementRule(match, piece, rule);
+
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = MovementRules.FindPaths(
+      rule,
+      (piece.X, piece.Y),
+      piece.Team,
+      destination => CanLandAt(match, piece, rule, destination),
+      (from, to) => CanTravelThrough(match, piece, rule, from, to),
+      destination => GetMovementCost(match, rule, destination),
+      (from, to) => CrossesRiver(match, rule, from, to)
+    );
+    return paths.TryGetValue((destinationX, destinationY), out path!);
+  }
+
+  private static bool CanLandAt(Match match, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      "Palace" => (3, 2),
-      "Cannon" => (1, 2),
-      "Catapult" => (1, 2),
-      "Ballista" or "Elephant" => (2, 2),
-      _ => (1, 1)
+      if ((piece.Type != "Elephant" && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+    }
+
+    HashSet<string> ignoredPieces = match.Pieces
+      .Where(other => other.Id == piece.Id || other.AttachedToId == piece.Id)
+      .Select(other => other.Id)
+      .ToHashSet(StringComparer.Ordinal);
+    if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
+      (rule.Type == "Farm" || other.Type != "Farm") &&
+      NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
+
+    return true;
+  }
+
+  private static UnitRule GetEffectiveMovementRule(Match match, NetworkPiece piece, UnitRule rule)
+  {
+    if (rule.Type != "Ox") return rule;
+    NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
+      other.AttachmentKind == NetworkAttachmentKind.Carried);
+    return cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) && cargoRule.Category == RuleCategory.Mechanical
+      ? rule with { MoveRange = 3, MovePattern = RuleShape.Any }
+      : rule;
+  }
+
+  private static bool CanTravelThrough(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) from,
+    (int x, int y) destination
+  )
+  {
+    foreach ((int x, int y) position in PositionsBetween(from, destination))
+      foreach ((int x, int y) square in OccupiedSquares(rule, position))
+      {
+        if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
+            (piece.Type != "Elephant" && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+
+        NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
+          UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+          UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1));
+        if (blocker is not null && !(piece.Type == "Elephant" && blocker.Team != piece.Team)) return false;
+      }
+
+    return true;
+  }
+
+  private static int GetMovementCost(Match match, UnitRule rule, (int x, int y) destination)
+  {
+    if (rule.Type == "Elephant") return 1;
+    int cost = 0;
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      cost = Math.Max(cost, match.Terrain.IsForest(square) && !match.Roads.Contains(square)
+        ? 2
+        : match.Roads.Contains(square) && !match.Terrain.IsForest(square) ? 0 : 1);
+    }
+    return cost;
+  }
+
+  private static bool CrossesRiver(Match match, UnitRule rule, (int x, int y) from, (int x, int y) to)
+  {
+    if (rule.Type == "Elephant") return false;
+    foreach ((int x, int y) fromSquare in OccupiedSquares(rule, from))
+    {
+      var toSquare = (fromSquare.x + to.x - from.x, fromSquare.y + to.y - from.y);
+      foreach (((int x, int y) first, (int x, int y) second) edge in StepsBetween(fromSquare, toSquare))
+      {
+        if (match.Terrain.HasRiverBetween(edge.first, edge.second) && !match.RiverBridges.Contains(TileEdge.Between(edge.first, edge.second))) return true;
+      }
+    }
+    return false;
+  }
+
+  private static bool HasClearAttackPath(Match match, NetworkPiece attacker, (int x, int y) targetPosition, string? targetId)
+  {
+    if (!UnitRules.TryGet(attacker.Type, out UnitRule attackerRule)) return false;
+    if (attackerRule.Type == "Catapult") return true;
+
+    return LineOfSightRules.HasClearAttackPath(
+      attackerRule,
+      OccupiedSquares(attackerRule, (attacker.X, attacker.Y)),
+      targetPosition,
+      match.Terrain.IsForest,
+      match.Barricades.ContainsKey,
+      square => match.Pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null && other.Type != "Farm" &&
+        !(attacker.Type == "Princess" && other.Team == attacker.Team) &&
+        UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+        UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1))
+    );
+  }
+
+  private static bool HasClearAttackPath(Match match, NetworkPiece attacker, NetworkPiece target)
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return false;
+    foreach ((int x, int y) targetSquare in OccupiedSquares(targetRule, (target.X, target.Y)))
+    {
+      if (HasClearAttackPath(match, attacker, targetSquare, target.Id)) return true;
+    }
+
+    return false;
+  }
+
+  private static int GetAttackDamage(Match match, NetworkPiece attacker, NetworkPiece target)
+  {
+    int baseDamage = NetworkAttackRules.GetDamage(attacker.Type);
+    if (baseDamage <= 0) return 0;
+    return CombatRules.CalculateDamage(
+      baseDamage,
+      HasAdjacentUnit(match, attacker, attacker.Team, "Baron"),
+      match.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
+      false,
+      false,
+      0
+    );
+  }
+
+  private static void ResolvePieceDamage(
+    Match match,
+    NetworkPiece attacker,
+    PlayerSlot attackingPlayer,
+    string targetId,
+    int? damageOverride
+  )
+  {
+    int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
+    if (index < 0) return;
+    NetworkPiece target = match.Pieces[index];
+    NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Guard);
+    NetworkPiece damagedPiece = guard ?? target;
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
+    int damage = CombatRules.CalculateDamage(
+      unmitigatedDamage,
+      false,
+      false,
+      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "King"),
+      IsInForest(match, damagedPiece),
+      match.Terrain.ForestDamageReduction
+    );
+    int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
+    if (damagedIndex < 0) return;
+    if (damagedPiece.Health > damage)
+    {
+      match.Pieces[damagedIndex] = damagedPiece with { Health = damagedPiece.Health - damage };
+    }
+    else
+    {
+      HandlePieceDestroyed(match, damagedPiece, attackingPlayer);
+    }
+
+    for (int pieceIndex = 0; pieceIndex < match.Pieces.Count; pieceIndex++)
+    {
+      NetworkPiece piece = match.Pieces[pieceIndex];
+      if (piece.MarkedTargetId == target.Id)
+      {
+        match.Pieces[pieceIndex] = piece with { MarkedTargetId = null };
+      }
+    }
+  }
+
+  private static void DamageBarricade(Match match, NetworkPiece attacker, (int x, int y) position)
+  {
+    if (!match.Barricades.TryGetValue(position, out int health)) return;
+    int damage = NetworkAttackRules.GetDamage(attacker.Type) +
+      (HasAdjacentUnit(match, attacker, attacker.Team, "Baron") ? 5 : 0);
+    health -= damage;
+    if (health <= 0) match.Barricades.Remove(position);
+    else match.Barricades[position] = health;
+  }
+
+  private static void TriggerMinesAlongMovement(Match match, NetworkPiece movingPiece, IReadOnlyList<(int x, int y)> path)
+  {
+    if (movingPiece.Type == "Engineer" || !UnitRules.TryGet(movingPiece.Type, out UnitRule movingRule)) return;
+    List<((int x, int y) position, NetworkTeam owner)> triggered = [];
+    foreach ((int x, int y) step in path)
+    {
+      foreach ((int x, int y) square in OccupiedSquares(movingRule, step))
+      {
+        if (match.Mines.TryGetValue(square, out NetworkTeam owner) && owner != movingPiece.Team)
+        {
+          triggered.Add((square, owner));
+        }
+      }
+    }
+
+    foreach (((int x, int y) position, NetworkTeam owner) mine in triggered.Distinct())
+    {
+      match.Mines.Remove(mine.position);
+      PlayerSlot? owner = match.Players.FirstOrDefault(player => player.Team == mine.owner);
+      if (owner is null) continue;
+      List<NetworkPiece> affected = match.Pieces.Where(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        OccupiedSquares(rule, (piece.X, piece.Y)).Any(square =>
+          Math.Abs(square.x - mine.position.x) <= 1 && Math.Abs(square.y - mine.position.y) <= 1)).ToList();
+      if (match.Pieces.All(piece => piece.Id != movingPiece.Id)) affected.Add(movingPiece);
+      foreach (NetworkPiece affectedPiece in affected)
+      {
+        ResolveMineDamage(match, affectedPiece.Id, owner);
+      }
+    }
+  }
+
+  private static void ResolveMineDamage(Match match, string targetId, PlayerSlot owner)
+  {
+    int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
+    if (index < 0) return;
+    NetworkPiece target = match.Pieces[index];
+    if (target.Health > 40)
+    {
+      match.Pieces[index] = target with { Health = target.Health - 40 };
+    }
+    else
+    {
+      HandlePieceDestroyed(match, target, owner);
+    }
+  }
+
+  private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
+  {
+    if (defeatedPiece.Team == NetworkTeam.Neutral)
+    {
+      RemovePiece(match, defeatedPiece.Id);
+      return;
+    }
+
+    int unitCost = GetUnitCost(match, defeatedPiece.Type);
+    PlayerSlot? defeatedPlayer = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team);
+    if (attackingPlayer.Team != defeatedPiece.Team)
+    {
+      attackingPlayer.Money = ClampCurrency((long)attackingPlayer.Money +
+        CombatRules.RoundCurrencyToNearestFive(unitCost * match.Configuration.KillerRefundMultiplier));
+      if (defeatedPlayer is not null)
+      {
+        defeatedPlayer.Money = ClampCurrency((long)defeatedPlayer.Money +
+          CombatRules.RoundCurrencyToNearestFive(unitCost * match.Configuration.DefeatedTeamRefundMultiplier));
+      }
+    }
+
+    RemovePiece(match, defeatedPiece.Id);
+    if (!UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return;
+    if (match.Configuration.GameMode == "Regicide" && attackingPlayer.Team != defeatedPiece.Team)
+    {
+      match.Winner = attackingPlayer.Team;
+    }
+    else if (match.Configuration.GameMode == "Escort" && defeatedPiece.Type != "Palace")
+    {
+      (int x, int y) respawn = FindRoyalRespawn(match, defeatedPiece.Team, rule);
+      match.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), defeatedPiece.Type, defeatedPiece.Team, respawn.x, respawn.y, rule.Health));
+    }
+  }
+
+  private static void RemovePiece(Match match, string pieceId)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.AttachedToId == pieceId)
+      {
+        match.Pieces[index] = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
+      }
+      if (piece.MarkedTargetId == pieceId)
+      {
+        match.Pieces[index] = match.Pieces[index] with { MarkedTargetId = null };
+      }
+    }
+    int indexToRemove = match.Pieces.FindIndex(piece => piece.Id == pieceId);
+    if (indexToRemove >= 0) match.Pieces.RemoveAt(indexToRemove);
+  }
+
+  private static (int x, int y) FindRoyalRespawn(Match match, NetworkTeam team, UnitRule rule)
+  {
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    NetworkPiece probe = new("respawn", rule.Type, team, 0, 0, rule.Health);
+    foreach ((int x, int y) position in MatchRules.GetRoyalSpawnCandidates(
+      board, team, rule.Width, rule.Height, match.Configuration.PlayerCount))
+    {
+      if (NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, position.x, position.y, rule.Width, rule.Height) &&
+          CanLandAt(match, probe, rule, position))
+      {
+        return position;
+      }
+    }
+
+    throw new InvalidOperationException("Could not find an empty royal respawn square.");
+  }
+
+  private static bool IsEscortVictory(Match match, NetworkPiece piece, int x, int y)
+  {
+    if (match.Configuration.GameMode != "Escort" || !UnitRules.TryGet(piece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return false;
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    return OccupiedSquares(rule, (x, y)).Any(square => MatchRules.IsOnEnemyBackEdge(board, piece.Team, square));
+  }
+
+  private static void MoveEmissaryCompanions(Match match, NetworkPiece emissary, int oldEmissaryX, int oldEmissaryY)
+  {
+    if (emissary.Type != "Emissary") return;
+    int deltaX = emissary.X - oldEmissaryX;
+    int deltaY = emissary.Y - oldEmissaryY;
+    List<int> companions = match.Pieces
+      .Select((piece, index) => (piece, index))
+      .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
+        UnitRules.TryGet(entry.piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
+        Math.Abs(entry.piece.X - oldEmissaryX) + Math.Abs(entry.piece.Y - oldEmissaryY) == 1)
+      .Select(entry => entry.index).ToList();
+    foreach (int index in companions)
+    {
+      NetworkPiece companion = match.Pieces[index];
+      var destination = (x: companion.X + deltaX, y: companion.Y + deltaY);
+      if (UnitRules.TryGet(companion.Type, out UnitRule companionRule) &&
+          CanLandAt(match, companion, companionRule, destination))
+      {
+        match.Pieces[index] = companion with { X = destination.x, Y = destination.y, HasMovedThisTurn = true };
+      }
+    }
+  }
+
+  private static void MoveAttachedPieces(Match match, NetworkPiece host, int oldHostX, int oldHostY)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece attachment = match.Pieces[index];
+      if (attachment.AttachedToId != host.Id) continue;
+      match.Pieces[index] = attachment with
+      {
+        X = host.X,
+        Y = host.Y,
+        HasMovedThisTurn = true
+      };
+    }
+  }
+
+  private static bool CanUseActionSquare(NetworkPiece actor, int targetX, int targetY)
+  {
+    if (!UnitRules.TryGet(actor.Type, out UnitRule rule) || rule.AttackPattern == RuleShape.None) return false;
+    foreach ((int x, int y) origin in OccupiedSquares(rule, (actor.X, actor.Y)))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern, rule.MinimumAttackRange, rule.AttackRange, actor.Team,
+        targetX - origin.x, targetY - origin.y)) return true;
+    }
+    return false;
+  }
+
+  private static bool TryMarkSpyTarget(Match match, int actorIndex, NetworkPiece? target)
+  {
+    NetworkPiece actor = match.Pieces[actorIndex];
+    if (target is null || target.Team == actor.Team) return false;
+    match.Pieces[actorIndex] = actor with { MarkedTargetId = target.Id };
+    return true;
+  }
+
+  private static bool TryUseEngineerSpecial(
+    Match match,
+    int actorIndex,
+    string ability,
+    int targetX,
+    int targetY,
+    NetworkPiece? target
+  )
+  {
+    NetworkPiece engineer = match.Pieces[actorIndex];
+    if (engineer.EngineerBuildsThisTurn >= 2 || target is not null || !AbilityRules.IsEngineerBuild(ability)) return false;
+    if (!CanBuildImprovementAt(match, targetX, targetY))
+    {
+      return false;
+    }
+
+    if (string.Equals(ability, "Road", StringComparison.OrdinalIgnoreCase))
+    {
+      match.Roads.Add((targetX, targetY));
+    }
+    else if (string.Equals(ability, "Barrier", StringComparison.OrdinalIgnoreCase))
+    {
+      match.Barricades[(targetX, targetY)] = 20;
+    }
+    else if (string.Equals(ability, "Mine", StringComparison.OrdinalIgnoreCase))
+    {
+      match.Mines[(targetX, targetY)] = engineer.Team;
+    }
+    int buildsUsed = engineer.EngineerBuildsThisTurn + 1;
+    match.Pieces[actorIndex] = engineer with
+    {
+      EngineerBuildsThisTurn = buildsUsed,
+      HasAttackedThisTurn = buildsUsed >= 2
     };
-    return existing.X < x + width && existing.X + existingWidth > x &&
-      existing.Y < y + height && existing.Y + existingHeight > y;
+    return true;
+  }
+
+  private static bool CanBuildImprovementAt(Match match, int x, int y)
+  {
+    var position = (x, y);
+    return NetworkBoardRules.Contains(match.Configuration, x, y) &&
+      !match.Terrain.IsLake(position) && !match.Roads.Contains(position) &&
+      !match.Barricades.ContainsKey(position) &&
+      !match.Mines.ContainsKey(position) &&
+      !match.Pieces.Any(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        UnitRules.FootprintsOverlap(piece.X, piece.Y, rule.Width, rule.Height, x, y, 1, 1));
+  }
+
+  private static bool TryAttachGuard(Match match, int actorIndex, int targetIndex)
+  {
+    if (targetIndex < 0) return false;
+    NetworkPiece guard = match.Pieces[actorIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    if (target.Id == guard.Id || target.Team != guard.Team || !UnitRules.TryGet(guard.Type, out UnitRule guardRule) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+        !AbilityRules.CanGuardAttach(
+          guardRule,
+          targetRule,
+          guard.AttachedToId is not null,
+          match.Pieces.Any(piece => piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Guard)
+        )) return false;
+    match.Pieces[actorIndex] = guard with { AttachedToId = target.Id, AttachmentKind = NetworkAttachmentKind.Guard, X = target.X, Y = target.Y };
+    return true;
+  }
+
+  private static bool TryFireMercenary(Match match, int actorIndex, string ability)
+  {
+    if (!string.Equals(ability, "Fire", StringComparison.OrdinalIgnoreCase)) return false;
+    NetworkPiece mercenary = match.Pieces[actorIndex];
+    if (mercenary.Type != "Mercenary" || mercenary.Team == NetworkTeam.Neutral) return false;
+    match.Pieces[actorIndex] = mercenary with
+    {
+      Team = NetworkTeam.Neutral,
+      HasMovedThisTurn = true,
+      HasAttackedThisTurn = true
+    };
+    return true;
+  }
+
+  private static bool TryAttachOxCargo(Match match, int actorIndex, int targetIndex)
+  {
+    if (targetIndex < 0 || !UnitRules.TryGet(match.Pieces[targetIndex].Type, out UnitRule targetRule)) return false;
+    NetworkPiece ox = match.Pieces[actorIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    bool hasCargo = match.Pieces.Any(piece => piece.AttachedToId == ox.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Carried);
+    if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id ||
+        !AbilityRules.CanOxAttach(oxRule, targetRule, target.AttachedToId is not null, hasCargo)) return false;
+
+    match.Pieces[targetIndex] = target with
+    {
+      AttachedToId = ox.Id,
+      AttachmentKind = NetworkAttachmentKind.Carried,
+      X = ox.X,
+      Y = ox.Y
+    };
+    return true;
+  }
+
+  private static bool HasAdjacentUnit(Match match, NetworkPiece piece, NetworkTeam team, string type)
+  {
+    if (!UnitRules.TryGet(piece.Type, out UnitRule pieceRule)) return false;
+    return match.Pieces.Any(candidate => candidate.Id != piece.Id && candidate.Team == team && candidate.Type == type &&
+      UnitRules.TryGet(candidate.Type, out UnitRule candidateRule) &&
+      OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(first =>
+        OccupiedSquares(candidateRule, (candidate.X, candidate.Y)).Any(second =>
+          Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y) == 1)));
+  }
+
+  private static bool IsInForest(Match match, NetworkPiece piece)
+  {
+    return UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      OccupiedSquares(rule, (piece.X, piece.Y)).Any(match.Terrain.IsForest);
+  }
+
+  private static IEnumerable<(int x, int y)> OccupiedSquares(UnitRule rule, (int x, int y) position)
+  {
+    for (int y = 0; y < rule.Height; y++)
+      for (int x = 0; x < rule.Width; x++) yield return (position.x + x, position.y + y);
+  }
+
+  private static IEnumerable<(int x, int y)> PositionsBetween((int x, int y) from, (int x, int y) destination)
+  {
+    int steps = Math.Max(Math.Abs(destination.x - from.x), Math.Abs(destination.y - from.y));
+    for (int step = 1; step <= steps; step++)
+      yield return (
+        from.x + (int)MathF.Round((destination.x - from.x) * step / (float)steps),
+        from.y + (int)MathF.Round((destination.y - from.y) * step / (float)steps)
+      );
+  }
+
+  private static IEnumerable<((int x, int y) first, (int x, int y) second)> StepsBetween(
+    (int x, int y) from,
+    (int x, int y) to
+  )
+  {
+    int steps = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
+    (int x, int y) current = from;
+    for (int step = 1; step <= steps; step++)
+    {
+      (int x, int y) next = (
+        from.x + (int)MathF.Round((to.x - from.x) * step / (float)steps),
+        from.y + (int)MathF.Round((to.y - from.y) * step / (float)steps)
+      );
+      if (next.x != current.x && next.y != current.y)
+      {
+        yield return (current, (next.x, current.y));
+        yield return ((next.x, current.y), next);
+        yield return (current, (current.x, next.y));
+        yield return ((current.x, next.y), next);
+      }
+      else yield return (current, next);
+      current = next;
+    }
   }
 
   private static void ResetTurnActions(Match match, NetworkTeam team)
@@ -676,7 +1570,7 @@ public sealed class MatchStore
       NetworkPiece piece = match.Pieces[index];
       if (piece.Team == team)
       {
-        match.Pieces[index] = piece with { HasMovedThisTurn = false, HasAttackedThisTurn = false };
+        match.Pieces[index] = piece with { HasMovedThisTurn = false, HasAttackedThisTurn = false, EngineerBuildsThisTurn = 0 };
       }
     }
   }
@@ -689,10 +1583,79 @@ public sealed class MatchStore
       return;
     }
 
+    if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount == 2 && player.Team == NetworkTeam.Blue)
+    {
+      Board board = NetworkBoardRules.GetBoard(match.Configuration);
+      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == NetworkTeam.Blue &&
+          UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square))) -
+        match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == NetworkTeam.Red &&
+          UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square)));
+      match.ConquestScore = Math.Clamp(match.ConquestScore + pressure, -match.Configuration.ConquestWinScore, match.Configuration.ConquestWinScore);
+      if (Math.Abs(match.ConquestScore) >= match.Configuration.ConquestWinScore)
+      {
+        match.Winner = match.ConquestScore < 0 ? NetworkTeam.Red : NetworkTeam.Blue;
+        return;
+      }
+    }
+    else if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount > 2)
+    {
+      Board board = NetworkBoardRules.GetBoard(match.Configuration);
+      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == player.Team &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square)));
+      match.ConquestScores[player.Team] = Math.Clamp(
+        match.ConquestScores[player.Team] + pressure,
+        0,
+        match.Configuration.ConquestWinScore
+      );
+      if (match.ConquestScores[player.Team] >= match.Configuration.ConquestWinScore)
+      {
+        match.Winner = player.Team;
+        return;
+      }
+    }
+
     player.ActionsRemaining = ActionsPerTurn;
-    match.CurrentTurn = match.CurrentTurn == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
+    match.CurrentTurn = TeamRules.GetNextTeam(match.CurrentTurn, match.Configuration.PlayerCount);
+    ApplyTurnEconomy(match, match.CurrentTurn);
     ResetTurnActions(match, match.CurrentTurn);
   }
+
+  private static void ApplyTurnEconomy(Match match, NetworkTeam team)
+  {
+    PlayerSlot? player = match.Players.FirstOrDefault(candidate => candidate.Team == team);
+    if (player is null) return;
+    if (match.Configuration.InterestEnabled && match.Configuration.InterestPercent != 0)
+    {
+      player.Money = ClampCurrency((long)player.Money + EconomyRules.GetInterest(player.Money, match.Configuration.InterestPercent));
+    }
+
+    int farmCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
+    int palaceCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Palace");
+    long income = farmCount * (long)match.Configuration.FarmIncomePerTurn + palaceCount * 5L;
+    if (income != 0)
+    {
+      player.Money = ClampCurrency((long)player.Money + income);
+    }
+
+    int mercenaryCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Mercenary");
+    if (mercenaryCount > 0)
+    {
+      player.Money = ClampCurrency((long)player.Money - mercenaryCount * 5L);
+    }
+
+    if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;
+    long upkeep = match.Pieces
+      .Where(piece => piece.Team == team && piece.AttachedToId is null)
+      .Sum(piece => UnitRules.TryGet(piece.Type, out UnitRule rule)
+        ? (long)GetUnitMaintenance(match, rule)
+        : 0L);
+    if (upkeep > 0)
+    {
+      player.Money = ClampCurrency((long)player.Money - upkeep);
+    }
+  }
+
+  private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);
 
   private sealed class PlayerSlot(string? connectionId, NetworkTeam team, int money)
   {
@@ -705,22 +1668,66 @@ public sealed class MatchStore
     internal string? ChosenRoyal { get; set; }
   }
 
-  private sealed class Match(string code, NetworkMatchConfiguration configuration, PlayerSlot host)
+  private sealed class Match(
+    string code,
+    NetworkMatchConfiguration configuration,
+    PlayerSlot host,
+    bool isDebugMatch = false
+  )
   {
     internal object Sync { get; } = new();
     internal string Code { get; } = code;
     internal NetworkMatchConfiguration Configuration { get; } = configuration;
     internal PlayerSlot Host { get; } = host;
-    internal PlayerSlot? Guest { get; set; }
-    internal List<PlayerSlot> Players => Guest is null ? [Host] : [Host, Guest];
+    internal bool IsDebugMatch { get; } = isDebugMatch;
+    private readonly List<PlayerSlot> _players = [host];
+    internal IReadOnlyList<PlayerSlot> Players => _players;
     internal List<NetworkPiece> Pieces { get; } = [];
+    internal BattlefieldTerrain Terrain { get; } = TerrainRules.Create(
+      NetworkBoardRules.GetBoard(configuration), configuration.TerrainSeed, configuration.ForestDensity, configuration.WaterwayDensity,
+      configuration.PlayerCount
+    );
+    internal HashSet<(int x, int y)> Roads { get; } = [];
+    internal Dictionary<(int x, int y), int> Barricades { get; } = [];
+    internal Dictionary<(int x, int y), NetworkTeam> Mines { get; } = [];
+    internal HashSet<TileEdge> RiverBridges { get; } = [];
+    internal NetworkTeam? Winner { get; set; }
+    internal int ConquestScore { get; set; }
+    internal Dictionary<NetworkTeam, int> ConquestScores { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
+      .ToDictionary(team => team, _ => 0);
     internal OpeningBuyPhase? InitialBuy { get; set; }
-    internal NetworkTeam CurrentTurn { get; set; } = NetworkTeam.Red;
+    internal NetworkTeam CurrentTurn { get; set; } = TeamRules.GetFirstTeam(configuration.PlayerCount);
     internal long Version { get; set; }
     internal DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     internal DateTimeOffset LastActivity { get; private set; } = DateTimeOffset.UtcNow;
-    internal bool MatchReady => Guest is not null && Host.ChosenRoyal is not null && Guest.ChosenRoyal is not null;
-    internal PlayerSlot? FindPlayerByConnection(string connectionId) => Players.FirstOrDefault(player => player.ConnectionId == connectionId);
+    private readonly HashSet<string> _debugControllers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, NetworkTeam> _debugTeams = new(StringComparer.Ordinal);
+
+    internal bool MatchReady => Players.Count == Configuration.PlayerCount && Players.All(player => player.ChosenRoyal is not null);
+    internal void AddPlayer(PlayerSlot player) => _players.Add(player);
+    internal PlayerSlot? FindPlayerByConnection(string connectionId)
+    {
+      if (IsDebugMatch && _debugTeams.TryGetValue(connectionId, out NetworkTeam debugTeam))
+      {
+        return Players.FirstOrDefault(player => player.Team == debugTeam);
+      }
+
+      return Players.FirstOrDefault(player => player.ConnectionId == connectionId);
+    }
+
+    internal bool IsDebugController(string connectionId) => _debugControllers.Contains(connectionId);
+    internal void RegisterDebugController(string connectionId, NetworkTeam team)
+    {
+      _debugControllers.Add(connectionId);
+      _debugTeams[connectionId] = team;
+    }
+
+    internal bool RemoveDebugController(string connectionId)
+    {
+      _debugTeams.Remove(connectionId);
+      return _debugControllers.Remove(connectionId);
+    }
+
     internal PlayerSlot? FindPlayerByToken(string token) => Players.FirstOrDefault(player => player.ReconnectToken == token);
     internal void Touch() => LastActivity = DateTimeOffset.UtcNow;
     internal NetworkGameState State() => new(
@@ -730,28 +1737,49 @@ public sealed class MatchStore
       Players.Select(player => new NetworkTeamState(player.Team, player.Money, player.ActionsRemaining, player.ChosenRoyal)).ToArray(),
       Configuration,
       Version,
-      Guest is null ? 1 : 2,
+      Players.Count,
       MatchReady,
-      InitialBuy?.ToNetworkState()
+      InitialBuy?.ToNetworkState(),
+      [
+        .. Roads.Select(position => new NetworkImprovement("Road", position.x, position.y)),
+        .. Barricades.Select(pair => new NetworkImprovement("Barrier", pair.Key.x, pair.Key.y, pair.Value)),
+        .. Mines.Select(pair => new NetworkImprovement("Mine", pair.Key.x, pair.Key.y, 0, pair.Value))
+      ],
+      Winner,
+      ConquestScore,
+      ConquestScores.Select(pair => new NetworkConquestTeamState(pair.Key, pair.Value)).ToArray()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
   }
 
-  private sealed class OpeningBuyPhase(int purchasesPerTurn, int buyTurnsPerTeam)
+  private sealed class OpeningBuyPhase(int purchasesPerTurn, int buyTurnsPerTeam, int playerCount, bool farmsEnabled = false)
   {
-    private int _redBuyTurnsUsed;
-    private int _blueBuyTurnsUsed;
-    private bool _redStopped;
-    private bool _blueStopped;
+    private readonly IReadOnlyList<NetworkTeam> _teams = TeamRules.GetActiveTeams(playerCount);
+    private readonly Dictionary<NetworkTeam, int> _buyTurnsUsed = TeamRules.GetActiveTeams(playerCount)
+      .ToDictionary(team => team, _ => 0);
+    private readonly Dictionary<NetworkTeam, int> _farmsPlaced = TeamRules.GetActiveTeams(playerCount)
+      .ToDictionary(team => team, _ => 0);
+    private readonly HashSet<NetworkTeam> _stoppedTeams = [];
 
-    internal NetworkTeam CurrentTeam { get; private set; } = NetworkTeam.Red;
+    internal NetworkTeam CurrentTeam { get; private set; } = TeamRules.GetFirstTeam(playerCount);
     internal int PurchasesThisTurn { get; private set; }
     internal int PurchasesPerTurn { get; } = Math.Max(1, purchasesPerTurn);
     internal int BuyTurnsPerTeam { get; } = Math.Max(1, buyTurnsPerTeam);
     internal bool IsComplete { get; private set; }
+    internal bool IsFarmPlacementPhase { get; private set; } = farmsEnabled;
 
     internal void RecordPurchase()
     {
+      if (IsFarmPlacementPhase)
+      {
+        _farmsPlaced[CurrentTeam]++;
+        if (_farmsPlaced[CurrentTeam] >= 2)
+        {
+          FinishFarmPlacement();
+        }
+        return;
+      }
+
       PurchasesThisTurn++;
       if (PurchasesThisTurn >= PurchasesPerTurn)
       {
@@ -759,18 +1787,23 @@ public sealed class MatchStore
       }
     }
 
-    internal void StopCurrentBuyer() => FinishCurrentTurn(true);
+    internal void StopCurrentBuyer()
+    {
+      if (!IsFarmPlacementPhase) FinishCurrentTurn(true);
+    }
 
     internal NetworkInitialBuyState ToNetworkState() => new(
       CurrentTeam,
       PurchasesThisTurn,
       PurchasesPerTurn,
-      _redBuyTurnsUsed,
-      _blueBuyTurnsUsed,
+      GetBuyTurnsUsed(NetworkTeam.Red),
+      GetBuyTurnsUsed(NetworkTeam.Blue),
       BuyTurnsPerTeam,
-      _redStopped,
-      _blueStopped,
-      IsComplete
+      _stoppedTeams.Contains(NetworkTeam.Red),
+      _stoppedTeams.Contains(NetworkTeam.Blue),
+      IsComplete,
+      _teams.Select(team => new NetworkInitialBuyTeamState(team, GetBuyTurnsUsed(team), _stoppedTeams.Contains(team), GetFarmsPlaced(team))).ToArray(),
+      IsFarmPlacementPhase
     );
 
     private void FinishCurrentTurn(bool stopped)
@@ -780,57 +1813,81 @@ public sealed class MatchStore
         return;
       }
 
-      if (CurrentTeam == NetworkTeam.Red)
-      {
-        if (stopped) _redStopped = true; else _redBuyTurnsUsed++;
-      }
-      else
-      {
-        if (stopped) _blueStopped = true; else _blueBuyTurnsUsed++;
-      }
+      if (stopped) _stoppedTeams.Add(CurrentTeam); else _buyTurnsUsed[CurrentTeam]++;
 
       PurchasesThisTurn = 0;
-      if (!CanKeepBuying(NetworkTeam.Red) && !CanKeepBuying(NetworkTeam.Blue))
+      if (_teams.All(team => !CanKeepBuying(team)))
       {
         IsComplete = true;
         return;
       }
 
-      NetworkTeam other = CurrentTeam == NetworkTeam.Red ? NetworkTeam.Blue : NetworkTeam.Red;
-      if (CanKeepBuying(other))
+      NetworkTeam nextTeam = CurrentTeam;
+      for (int offset = 0; offset < _teams.Count; offset++)
       {
-        CurrentTeam = other;
+        nextTeam = TeamRules.GetNextTeam(nextTeam, _teams.Count);
+        if (CanKeepBuying(nextTeam))
+        {
+          CurrentTeam = nextTeam;
+          return;
+        }
       }
     }
 
-    private bool CanKeepBuying(NetworkTeam team) => team == NetworkTeam.Red
-      ? !_redStopped && _redBuyTurnsUsed < BuyTurnsPerTeam
-      : !_blueStopped && _blueBuyTurnsUsed < BuyTurnsPerTeam;
+    private void FinishFarmPlacement()
+    {
+      PurchasesThisTurn = 0;
+      if (_teams.All(team => GetFarmsPlaced(team) >= 2))
+      {
+        IsFarmPlacementPhase = false;
+        CurrentTeam = _teams[0];
+        return;
+      }
+
+      NetworkTeam nextTeam = CurrentTeam;
+      for (int offset = 0; offset < _teams.Count; offset++)
+      {
+        nextTeam = TeamRules.GetNextTeam(nextTeam, _teams.Count);
+        if (GetFarmsPlaced(nextTeam) < 2)
+        {
+          CurrentTeam = nextTeam;
+          return;
+        }
+      }
+    }
+
+    private int GetBuyTurnsUsed(NetworkTeam team) => _buyTurnsUsed.TryGetValue(team, out int turns) ? turns : 0;
+    private int GetFarmsPlaced(NetworkTeam team) => _farmsPlaced.TryGetValue(team, out int count) ? count : 0;
+    private bool CanKeepBuying(NetworkTeam team) =>
+      !_stoppedTeams.Contains(team) && GetBuyTurnsUsed(team) < BuyTurnsPerTeam;
   }
 }
 
 internal static class NetworkBoardRules
 {
-  private static (int minX, int minY, int width, int height) GetBounds(NetworkMatchConfiguration configuration) => configuration.BoardSize switch
+  private static readonly Dictionary<string, Board> Boards = new(StringComparer.Ordinal)
   {
-    "Small" => (-9, -11, 19, 23),
-    "Large" => (-11, -13, 23, 27),
-    _ => (-10, -12, 21, 25)
+    ["Small"] = new Board("board_small.json"),
+    ["Medium"] = new Board("board_medium.json"),
+    ["Large"] = new Board("board_large.json")
   };
+
+  internal static Board GetBoard(NetworkMatchConfiguration configuration) => Boards[configuration.BoardSize];
 
   internal static bool Contains(NetworkMatchConfiguration configuration, int x, int y)
   {
-    (int minX, int minY, int width, int height) = GetBounds(configuration);
-    return x >= minX && x < minX + width && y >= minY && y < minY + height;
+    return GetBoard(configuration).ContainsCell((x, y));
   }
 
   internal static (int x, int y) GetRoyalSpawn(NetworkMatchConfiguration configuration, NetworkTeam team, int width, int height)
   {
-    (int minX, int minY, int boardWidth, int boardHeight) = GetBounds(configuration);
-    return (
-      minX + (boardWidth - width) / 2,
-      team == NetworkTeam.Red ? minY + boardHeight - height : minY
-    );
+    Board board = GetBoard(configuration);
+    foreach ((int x, int y) position in MatchRules.GetRoyalSpawnCandidates(board, team, width, height, configuration.PlayerCount))
+    {
+      return position;
+    }
+
+    throw new InvalidOperationException("The shared board has no valid royal spawn.");
   }
 
   internal static bool CanPlaceForTeam(
@@ -842,34 +1899,26 @@ internal static class NetworkBoardRules
     int height
   )
   {
-    (int minX, int minY, int boardWidth, int boardHeight) = GetBounds(configuration);
-    int centreRow = boardHeight / 2;
-    int noMansLandHalfHeight = configuration.GameMode == "Conquest" ? 4 : 3;
+    Board board = GetBoard(configuration);
     for (int offsetY = 0; offsetY < height; offsetY++)
     {
-      int arrayY = y + offsetY - minY;
-      bool ownedByTeam = team == NetworkTeam.Red
-        ? arrayY > centreRow + noMansLandHalfHeight
-        : arrayY < centreRow - noMansLandHalfHeight;
-      if (!ownedByTeam)
+      for (int offsetX = 0; offsetX < width; offsetX++)
       {
-        return false;
+        if (MatchRules.GetSquareOwner(board, configuration.GameMode, (x + offsetX, y + offsetY), configuration.PlayerCount) != team ||
+            !board.ContainsCell((x + offsetX, y + offsetY)))
+        {
+          return false;
+        }
       }
     }
-
-    return x >= minX && x + width <= minX + boardWidth && y >= minY && y + height <= minY + boardHeight;
+    return true;
   }
 
   internal static bool CanPlaceMercenary(NetworkMatchConfiguration configuration, int x, int y)
   {
-    (int minX, int minY, int boardWidth, int boardHeight) = GetBounds(configuration);
-    int arrayY = y - minY;
-    int centreRow = boardHeight / 2;
-    int noMansLandHalfHeight = configuration.GameMode == "Conquest" ? 4 : 3;
-    bool inNoMansLand = arrayY >= centreRow - noMansLandHalfHeight &&
-      arrayY <= centreRow + noMansLandHalfHeight;
-    bool onEdge = x == minX || x == minX + boardWidth - 1 || y == minY || y == minY + boardHeight - 1;
-    return inNoMansLand && onEdge && Contains(configuration, x, y);
+    Board board = GetBoard(configuration);
+    bool inNoMansLand = MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) is null;
+    return inNoMansLand && Contains(configuration, x, y);
   }
 }
 
@@ -877,83 +1926,51 @@ internal static class NetworkMovementRules
 {
   internal static bool IsLegal(NetworkPiece piece, int toX, int toY)
   {
-    int dx = Math.Abs(toX - piece.X);
-    int dy = Math.Abs(toY - piece.Y);
-    if (dx == 0 && dy == 0)
-    {
-      return false;
-    }
+    return UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.CanMove(rule, piece.X, piece.Y, toX, toY);
+  }
+}
 
-    (int range, bool straight) = piece.Type switch
+internal static class NetworkPieceRules
+{
+  internal static (int width, int height) GetSize(string type)
+  {
+    UnitRule rule = UnitRules.GetRequired(type);
+    return (rule.Width, rule.Height);
+  }
+
+  internal static bool FootprintFitsBoard(
+    NetworkMatchConfiguration configuration, int x, int y, int width, int height
+  )
+  {
+    for (int offsetY = 0; offsetY < height; offsetY++)
     {
-      "Soldier" or "Defender" => (2, true),
-      "King" => (1, false),
-      "Chariot" or "Cannon" or "Ballista" => (piece.Type == "Ballista" ? 1 : 2, true),
-      "Peasant" => (1, true),
-      "Knight" => (3, false),
-      "Cavalier" => (4, false),
-      "Scout" or "Spy" or "Ambulance" => (piece.Type == "Scout" ? 4 : 5, false),
-      "Teacher" => (4, false),
-      "Engineer" => (3, false),
-      "Elephant" => (2, true),
-      "Catapult" => (1, false),
-      "Ox" => (4, false),
-      "Guard" => (3, false),
-      "Princess" => (1, false),
-      "Emissary" => (3, false),
-      "Palace" => (0, false),
-      _ => (2, false)
-    };
-    return straight ? (dx == 0 || dy == 0) && dx + dy <= range : Math.Max(dx, dy) <= range;
+      for (int offsetX = 0; offsetX < width; offsetX++)
+      {
+        if (!NetworkBoardRules.Contains(configuration, x + offsetX, y + offsetY)) return false;
+      }
+    }
+    return true;
+  }
+
+  internal static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
+  {
+    (int existingWidth, int existingHeight) = GetSize(existing.Type);
+    return UnitRules.FootprintsOverlap(existing.X, existing.Y, existingWidth, existingHeight, x, y, width, height);
   }
 }
 
 internal static class NetworkAttackRules
 {
-  private enum Pattern { None, Any, Straight, Forward, ForwardDiagonal }
-
-  internal static int GetDamage(string type) => type switch
-  {
-    "Soldier" => 10, "Defender" => 5, "Archer" => 10, "Scout" => 5,
-    "Spearman" => 15, "Peasant" => 5, "Knight" => 20, "Crossbowman" => 20,
-    "Cavalier" => 15, "Chariot" => 15, "Cannon" => 30, "Catapult" => 20,
-    "Ox" => 5, "Ballista" => 25, "Guard" => 10, "Mercenary" => 25,
-    "Assassin" => 30, "King" => 15, "Princess" => 15, "Baron" => 5, "Emissary" => 5,
-    _ => 0
-  };
+  internal static int GetDamage(string type) => UnitRules.TryGet(type, out UnitRule rule) ? rule.Attack : 0;
 
   internal static bool IsLegal(NetworkPiece attacker, NetworkPiece target)
   {
-    (int range, int minimumRange, Pattern pattern) = attacker.Type switch
-    {
-      "Soldier" or "Defender" => (1, 1, Pattern.Straight),
-      "Archer" => (3, 2, Pattern.Any),
-      "Scout" => (1, 1, Pattern.Straight),
-      "Spearman" or "Peasant" => (1, 1, Pattern.ForwardDiagonal),
-      "Knight" or "Cavalier" or "Guard" or "Mercenary" or "Assassin" or "King" or "Baron" or "Emissary" => (1, 1, Pattern.Any),
-      "Crossbowman" or "Princess" => (attacker.Type == "Princess" ? 3 : 3, 1, Pattern.Any),
-      "Chariot" => (1, 1, Pattern.Straight),
-      "Cannon" => (5, 2, Pattern.Straight),
-      "Catapult" => (6, 3, Pattern.Any),
-      "Ox" => (1, 1, Pattern.Forward),
-      "Ballista" => (5, 2, Pattern.Straight),
-      _ => (0, 0, Pattern.None)
-    };
-    int dx = target.X - attacker.X;
-    int dy = target.Y - attacker.Y;
-    int distance = Math.Max(Math.Abs(dx), Math.Abs(dy));
-    if (distance < minimumRange || distance > range)
-    {
-      return false;
-    }
-
-    return pattern switch
-    {
-      Pattern.Any => true,
-      Pattern.Straight => dx == 0 || dy == 0,
-      Pattern.Forward => dx == 0 && dy == (attacker.Team == NetworkTeam.Red ? -distance : distance),
-      Pattern.ForwardDiagonal => dy == (attacker.Team == NetworkTeam.Red ? -distance : distance) && Math.Abs(dx) <= distance,
-      _ => false
-    };
+    return UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
+      UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
+      UnitRules.CanAttack(
+        attackerRule, attacker.X, attacker.Y, attacker.Team,
+        targetRule, target.X, target.Y
+      );
   }
 }

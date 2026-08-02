@@ -1,12 +1,12 @@
-namespace MedivalChess.GameBoard;
+namespace MedivalChess.Shared;
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
 
-internal readonly record struct TileEdge((int x, int y) First, (int x, int y) Second)
+public readonly record struct TileEdge((int x, int y) First, (int x, int y) Second)
 {
-  internal static TileEdge Between((int x, int y) first, (int x, int y) second)
+  public static TileEdge Between((int x, int y) first, (int x, int y) second)
   {
     return Compare(first, second) <= 0
       ? new TileEdge(first, second)
@@ -20,48 +20,49 @@ internal readonly record struct TileEdge((int x, int y) First, (int x, int y) Se
   }
 }
 
-internal sealed class TerrainGenerationSettings
+public sealed class TerrainGenerationSettings
 {
   // No forest, lake, or river segment may generate within this Manhattan distance
   // of any possible royal spawn footprint. Set to 0 to protect only spawn squares.
-  internal int RoyalSpawnTerrainClearance { get; init; } = 10;
+  public int RoyalSpawnTerrainClearance { get; init; } = 10;
 
   // Forests
-  internal int ForestTilesPerGroup { get; init; } = 90;
-  internal int MinimumForestGroups { get; init; } = 4;
-  internal int MaximumForestGroups { get; init; } = 6;
-  internal int MinimumForestClusterSize { get; init; } = 3;
-  internal int MaximumForestClusterSize { get; init; } = 6;
-  internal int ForestEdgeClearance { get; init; } = 1;
-  internal int ForestInteriorWeightExponent { get; init; } = 2;
+  public int ForestTilesPerGroup { get; init; } = 90;
+  public int MinimumForestGroups { get; init; } = 4;
+  public int MaximumForestGroups { get; init; } = 6;
+  public int MinimumForestClusterSize { get; init; } = 3;
+  public int MaximumForestClusterSize { get; init; } = 6;
+  public int ForestEdgeClearance { get; init; } = 1;
+  public int ForestInteriorWeightExponent { get; init; } = 2;
   // Units standing in a forest take this much less damage (minimum damage remains 1).
-  internal int ForestDamageReduction { get; init; } = 3;
+  public int ForestDamageReduction { get; init; } = 3;
 
   // Lakes
-  internal int LakeSourceEdgeClearance { get; init; } = 2;
-  internal int LakeEdgeClearance { get; init; } = 1;
-  internal int MinimumLakeClusterSize { get; init; } = 3;
-  internal int MaximumLakeClusterSize { get; init; } = 5;
-  internal int MinimumLakeSourceSeparation { get; init; } = 7;
+  public int LakeSourceEdgeClearance { get; init; } = 2;
+  public int LakeEdgeClearance { get; init; } = 1;
+  public int MinimumLakeClusterSize { get; init; } = 3;
+  public int MaximumLakeClusterSize { get; init; } = 5;
+  public int MinimumLakeSourceSeparation { get; init; } = 7;
 
   // Rivers
-  internal int LargeBoardCellCount { get; init; } = 300;
-  internal double AdditionalRiverChance { get; init; } = 0.4;
-  internal int MinimumRiverLength { get; init; } = 7;
-  internal int MinimumRiverSeparation { get; init; } = 4;
+  // Waterway density maps directly to this count so every match gets a predictable
+  // number of lake-fed rivers: Light 1, Standard 2, Heavy 3.
+  public int RiverCount { get; init; } = 1;
+  public int MinimumRiverLength { get; init; } = 7;
+  public int MinimumRiverSeparation { get; init; } = 4;
   // Rivers favour side-to-side routes near the battlefield centre.
-  internal int RiverMiddleBandHalfHeight { get; init; } = 5;
-  internal int RiverMiddleWeightExponent { get; init; } = 4;
-  internal double RiverFarEdgePreference { get; init; } = 0.8;
-  internal int RiverFarEdgeTolerance { get; init; } = 2;
-  internal int RiverMinimumDetours { get; init; } = 1;
-  internal int RiverMaximumDetours { get; init; } = 2;
-  internal int RiverMinimumDetourLength { get; init; } = 1;
-  internal int RiverMaximumDetourLength { get; init; } = 2;
-  internal int MaximumRiverTargetsPerOutlet { get; init; } = 12;
+  public int RiverMiddleBandHalfHeight { get; init; } = 5;
+  public int RiverMiddleWeightExponent { get; init; } = 4;
+  public double RiverFarEdgePreference { get; init; } = 0.8;
+  public int RiverFarEdgeTolerance { get; init; } = 2;
+  public int RiverMinimumDetours { get; init; } = 1;
+  public int RiverMaximumDetours { get; init; } = 2;
+  public int RiverMinimumDetourLength { get; init; } = 1;
+  public int RiverMaximumDetourLength { get; init; } = 2;
+  public int MaximumRiverTargetsPerOutlet { get; init; } = 12;
 }
 
-internal sealed class BattlefieldTerrain
+public sealed class BattlefieldTerrain
 {
   private readonly record struct RiverSegment(
     TileEdge Edge,
@@ -73,16 +74,16 @@ internal sealed class BattlefieldTerrain
   private readonly HashSet<(int x, int y)> _lakes;
   private readonly HashSet<TileEdge> _rivers;
 
-  internal IReadOnlySet<(int x, int y)> Forests => _forests;
-  internal IReadOnlySet<(int x, int y)> Lakes => _lakes;
-  internal IReadOnlySet<TileEdge> Rivers => _rivers;
-  internal int ForestDamageReduction { get; }
-  internal static TerrainGenerationSettings DefaultGenerationSettings { get; } = new();
+  public IReadOnlySet<(int x, int y)> Forests => _forests;
+  public IReadOnlySet<(int x, int y)> Lakes => _lakes;
+  public IReadOnlySet<TileEdge> Rivers => _rivers;
+  public int ForestDamageReduction { get; }
+  public static TerrainGenerationSettings DefaultGenerationSettings { get; } = new();
 
-  internal BattlefieldTerrain(
-    IEnumerable<(int x, int y)> forests = null,
-    IEnumerable<(int x, int y)> lakes = null,
-    IEnumerable<TileEdge> rivers = null,
+  public BattlefieldTerrain(
+    IEnumerable<(int x, int y)>? forests = null,
+    IEnumerable<(int x, int y)>? lakes = null,
+    IEnumerable<TileEdge>? rivers = null,
     int forestDamageReduction = 3
   )
   {
@@ -92,19 +93,20 @@ internal sealed class BattlefieldTerrain
     ForestDamageReduction = Math.Max(0, forestDamageReduction);
   }
 
-  internal bool IsForest((int x, int y) position) => _forests.Contains(position);
+  public bool IsForest((int x, int y) position) => _forests.Contains(position);
 
-  internal bool IsLake((int x, int y) position) => _lakes.Contains(position);
+  public bool IsLake((int x, int y) position) => _lakes.Contains(position);
 
-  internal bool HasRiverBetween((int x, int y) first, (int x, int y) second)
+  public bool HasRiverBetween((int x, int y) first, (int x, int y) second)
   {
     return _rivers.Contains(TileEdge.Between(first, second));
   }
 
-  internal static BattlefieldTerrain CreateRandom(
+  public static BattlefieldTerrain CreateRandom(
     Board board,
     int seed,
-    TerrainGenerationSettings settings = null
+    TerrainGenerationSettings? settings = null,
+    int playerCount = 2
   )
   {
     settings ??= DefaultGenerationSettings;
@@ -116,7 +118,7 @@ internal sealed class BattlefieldTerrain
     }
 
     Dictionary<(int x, int y), int> edgeDistances = GetEdgeDistances(board);
-    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board);
+    List<(int x, int y)> royalSpawns = GetRoyalSpawnPositions(board, playerCount);
     List<(int x, int y)> protectedInterior = cells
       .Where(position =>
         edgeDistances[position] >= settings.ForestEdgeClearance &&
@@ -156,10 +158,7 @@ internal sealed class BattlefieldTerrain
         !IsNearRoyalSpawn(position, royalSpawns, settings.RoyalSpawnTerrainClearance)
       )
       .ToList();
-    int desiredRiverCount =
-      cells.Count >= settings.LargeBoardCellCount && random.NextDouble() < settings.AdditionalRiverChance
-        ? 2
-        : 1;
+    int desiredRiverCount = Math.Max(0, settings.RiverCount);
     List<HashSet<(int x, int y)>> lakeGroups = [];
     for (int index = 0; index < desiredRiverCount; index++)
     {
@@ -238,8 +237,19 @@ internal sealed class BattlefieldTerrain
     return distances;
   }
 
-  private static List<(int x, int y)> GetRoyalSpawnPositions(Board board)
+  private static List<(int x, int y)> GetRoyalSpawnPositions(Board board, int playerCount)
   {
+    if (playerCount > 2)
+    {
+      return TeamRules.GetActiveTeams(playerCount)
+        .SelectMany(team => MatchRules.GetRoyalSpawnCandidates(board, team, 3, 2, playerCount).Take(1))
+        .SelectMany(position => Enumerable.Range(0, 2).SelectMany(offsetY =>
+          Enumerable.Range(0, 3).Select(offsetX => (position.x + offsetX, position.y + offsetY))))
+        .Where(board.ContainsCell)
+        .Distinct()
+        .ToList();
+    }
+
     int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
     int topY = board.MinY;
     int bottomY = board.MinY + board.BoardArray.GetLength(0) - 1;
@@ -563,7 +573,7 @@ internal sealed class BattlefieldTerrain
     IReadOnlyDictionary<(int x, int y), List<RiverSegment>> graph,
     (int x, int y) start,
     (int x, int y) target,
-    IReadOnlySet<TileEdge> excludedEdges = null
+    IReadOnlySet<TileEdge>? excludedEdges = null
   )
   {
     List<RiverSegment> route = [];
@@ -606,13 +616,12 @@ internal sealed class BattlefieldTerrain
     Dictionary<(int x, int y), List<RiverSegment>> graph = [];
     foreach (RiverSegment segment in segments)
     {
-      if (!graph.TryGetValue(segment.Start, out List<RiverSegment> startSegments))
+      if (!graph.TryGetValue(segment.Start, out List<RiverSegment>? startSegments))
       {
         startSegments = [];
         graph[segment.Start] = startSegments;
       }
-
-      if (!graph.TryGetValue(segment.End, out List<RiverSegment> endSegments))
+      if (!graph.TryGetValue(segment.End, out List<RiverSegment>? endSegments))
       {
         endSegments = [];
         graph[segment.End] = endSegments;

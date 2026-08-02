@@ -4,4 +4,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\GameBoard\Board.cs" Link="Board.cs" />
+    <Compile Include="..\GameBoard\BattlefieldTerrain.cs" Link="BattlefieldTerrain.cs" />
+    <None Include="..\GameBoard\board_*.json" Link="GameBoard\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
 </Project>
