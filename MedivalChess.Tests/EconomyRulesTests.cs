@@ -40,15 +40,24 @@ public sealed class EconomyRulesTests
   }
 
   [Fact]
-  public void MatchConfiguration_EnablesFiveGoldFarmsAndDisablesInterestByDefault()
+  public void MatchConfiguration_UsesTheSharedEconomyDefaults()
   {
     NetworkMatchConfiguration configuration = new(
-      "Medium", "Standard", "Standard", "Regicide", 1, 300, 0.5f, 0f, 2, 4, 15
+      "Medium", "Standard", "Standard", "Regicide", 1,
+      Globals.StartingCash,
+      Globals.KillerDeathRefundMultiplier,
+      Globals.DefeatedTeamDeathRefundMultiplier,
+      Globals.InitialBuysPerTurn,
+      Globals.InitialBuyTurnsPerTeam,
+      15
     );
 
-    Assert.True(configuration.FarmsEnabled);
-    Assert.Equal(5, configuration.FarmIncomePerTurn);
-    Assert.False(configuration.InterestEnabled);
-    Assert.Equal(0, configuration.InterestPercent);
+    Assert.Equal(Globals.FarmsEnabled, configuration.FarmsEnabled);
+    Assert.Equal(Globals.FarmIncomePerTurn, configuration.FarmIncomePerTurn);
+    Assert.Equal(Globals.UnitMaintenanceEnabled, configuration.UnitMaintenanceEnabled);
+    Assert.Equal(Globals.UnitMaintenancePercent, configuration.UnitMaintenancePercent);
+    Assert.Equal(Globals.UnitPricePercent, configuration.UnitPricePercent);
+    Assert.Equal(Globals.InterestEnabled, configuration.InterestEnabled);
+    Assert.Equal(Globals.InterestPercent, configuration.InterestPercent);
   }
 }

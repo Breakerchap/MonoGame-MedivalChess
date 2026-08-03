@@ -55,14 +55,14 @@ public sealed record NetworkMatchConfiguration(
   int InitialBuysPerTurn,
   int InitialBuyTurnsPerTeam,
   int ConquestWinScore,
-  bool FarmsEnabled = true,
-  int FarmIncomePerTurn = 5,
-  bool UnitMaintenanceEnabled = false,
-  int UnitMaintenancePercent = 10,
-  int UnitPricePercent = 100,
+  bool FarmsEnabled = Globals.FarmsEnabled,
+  int FarmIncomePerTurn = Globals.FarmIncomePerTurn,
+  bool UnitMaintenanceEnabled = Globals.UnitMaintenanceEnabled,
+  int UnitMaintenancePercent = Globals.UnitMaintenancePercent,
+  int UnitPricePercent = Globals.UnitPricePercent,
   int PlayerCount = 2,
-  bool InterestEnabled = false,
-  int InterestPercent = 0
+  bool InterestEnabled = Globals.InterestEnabled,
+  int InterestPercent = Globals.InterestPercent
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on

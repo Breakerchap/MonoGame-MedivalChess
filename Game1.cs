@@ -132,15 +132,15 @@ internal sealed class Game1 : Game
   private int _startingCash = Globals.StartingCash;
   private float _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
-  private int _initialBuysPerTurn = 2;
-  private int _initialBuyTurnsPerTeam = 3;
-  private bool _farmsEnabled = true;
-  private int _farmIncomePerTurn = 5;
-  private bool _unitMaintenanceEnabled;
-  private int _unitMaintenancePercent = 10;
-  private int _unitPricePercent = 100;
-  private bool _interestEnabled;
-  private int _interestPercent;
+  private int _initialBuysPerTurn = Globals.InitialBuysPerTurn;
+  private int _initialBuyTurnsPerTeam = Globals.InitialBuyTurnsPerTeam;
+  private bool _farmsEnabled = Globals.FarmsEnabled;
+  private int _farmIncomePerTurn = Globals.FarmIncomePerTurn;
+  private bool _unitMaintenanceEnabled = Globals.UnitMaintenanceEnabled;
+  private int _unitMaintenancePercent = Globals.UnitMaintenancePercent;
+  private int _unitPricePercent = Globals.UnitPricePercent;
+  private bool _interestEnabled = Globals.InterestEnabled;
+  private int _interestPercent = Globals.InterestPercent;
   private int _economyInputIndex = -1;
   private string _economyInputText = string.Empty;
   private int _playerCount = 2;
@@ -3569,10 +3569,12 @@ internal sealed class Game1 : Game
 
     if (!TryGetOnlineInputCharacter(key, false, out char character)) return;
     bool acceptsDecimal = _economyInputIndex is 1 or 2;
+    int decimalIndex = _economyInputText.IndexOf('.');
+    bool canAddDecimalDigit = decimalIndex < 0 || _economyInputText.Length - decimalIndex - 1 < 2;
     bool validCharacter = char.IsDigit(character) ||
       (character == '-' && _economyInputText.Length == 0) ||
       (character == '.' && acceptsDecimal && !_economyInputText.Contains('.'));
-    if (validCharacter)
+    if (validCharacter && (!char.IsDigit(character) || !acceptsDecimal || canAddDecimalDigit))
     {
       _economyInputText += character;
     }
@@ -3591,10 +3593,10 @@ internal sealed class Game1 : Game
         _startingCash = Math.Max(0, startingCash);
         break;
       case 1 when float.TryParse(_economyInputText, NumberStyles.Float, CultureInfo.InvariantCulture, out float killerRefund) && float.IsFinite(killerRefund):
-        _killerRefundMultiplier = killerRefund;
+        _killerRefundMultiplier = TruncateRefundMultiplier(killerRefund);
         break;
       case 2 when float.TryParse(_economyInputText, NumberStyles.Float, CultureInfo.InvariantCulture, out float defeatedRefund) && float.IsFinite(defeatedRefund):
-        _defeatedTeamRefundMultiplier = defeatedRefund;
+        _defeatedTeamRefundMultiplier = TruncateRefundMultiplier(defeatedRefund);
         break;
       case 3 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int buysPerTurn):
         _initialBuysPerTurn = Math.Max(1, buysPerTurn);
@@ -3632,6 +3634,9 @@ internal sealed class Game1 : Game
 
   private static int AdjustInteger(int value, int delta) =>
     (int)Math.Clamp((long)value + delta, int.MinValue, int.MaxValue);
+
+  private static float TruncateRefundMultiplier(float value) =>
+    (float)(Math.Truncate(value * 100d) / 100d);
 
   private void DrawOnlineServerUrlField(Rectangle bounds)
   {
@@ -3936,13 +3941,18 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
     _selectedEngineerAbility = EngineerAbility.Road;
-    _farmsEnabled = true;
-    _farmIncomePerTurn = 5;
-    _unitMaintenanceEnabled = false;
-    _unitMaintenancePercent = 10;
-    _unitPricePercent = 100;
-    _interestEnabled = false;
-    _interestPercent = 0;
+    _startingCash = Globals.StartingCash;
+    _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
+    _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
+    _initialBuysPerTurn = Globals.InitialBuysPerTurn;
+    _initialBuyTurnsPerTeam = Globals.InitialBuyTurnsPerTeam;
+    _farmsEnabled = Globals.FarmsEnabled;
+    _farmIncomePerTurn = Globals.FarmIncomePerTurn;
+    _unitMaintenanceEnabled = Globals.UnitMaintenanceEnabled;
+    _unitMaintenancePercent = Globals.UnitMaintenancePercent;
+    _unitPricePercent = Globals.UnitPricePercent;
+    _interestEnabled = Globals.InterestEnabled;
+    _interestPercent = Globals.InterestPercent;
     CancelEconomyTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
@@ -3972,16 +3982,16 @@ internal sealed class Game1 : Game
     _startingCash = Globals.StartingCash;
     _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
-    _initialBuysPerTurn = 2;
-    _initialBuyTurnsPerTeam = 4;
-    _farmsEnabled = true;
-    _farmIncomePerTurn = 5;
+    _initialBuysPerTurn = Globals.InitialBuysPerTurn;
+    _initialBuyTurnsPerTeam = Globals.InitialBuyTurnsPerTeam;
+    _farmsEnabled = Globals.FarmsEnabled;
+    _farmIncomePerTurn = Globals.FarmIncomePerTurn;
     CancelEconomyTextInput();
-    _unitMaintenanceEnabled = false;
-    _unitMaintenancePercent = 10;
-    _unitPricePercent = 100;
-    _interestEnabled = false;
-    _interestPercent = 0;
+    _unitMaintenanceEnabled = Globals.UnitMaintenanceEnabled;
+    _unitMaintenancePercent = Globals.UnitMaintenancePercent;
+    _unitPricePercent = Globals.UnitPricePercent;
+    _interestEnabled = Globals.InterestEnabled;
+    _interestPercent = Globals.InterestPercent;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -4970,8 +4980,8 @@ internal sealed class Game1 : Game
     ];
     List<string> values = [
       _startingCash.ToString(CultureInfo.InvariantCulture),
-      $"{_killerRefundMultiplier.ToString("G9", CultureInfo.InvariantCulture)}x",
-      $"{_defeatedTeamRefundMultiplier.ToString("G9", CultureInfo.InvariantCulture)}x",
+      $"{TruncateRefundMultiplier(_killerRefundMultiplier).ToString("0.##", CultureInfo.InvariantCulture)}x",
+      $"{TruncateRefundMultiplier(_defeatedTeamRefundMultiplier).ToString("0.##", CultureInfo.InvariantCulture)}x",
       _initialBuysPerTurn.ToString(), _initialBuyTurnsPerTeam.ToString(),
       _farmsEnabled ? "ON" : "OFF", $"{_farmIncomePerTurn} GOLD",
       $"{_unitPricePercent}%",
