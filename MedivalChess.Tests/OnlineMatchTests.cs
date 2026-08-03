@@ -46,6 +46,26 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void EscortRoyalsUseTheConfiguredStartingHealthPercentage()
+  {
+    MatchStore matches = new();
+    NetworkMatchConfiguration configuration = DefaultConfiguration with
+    {
+      GameMode = "Escort",
+      EscortRoyalHealthPercent = 50
+    };
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(configuration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+
+    Assert.True(ready.Accepted);
+    Assert.Equal(55, ready.State!.Pieces.Single(piece => piece.Type == "King").Health);
+    Assert.Equal(40, ready.State.Pieces.Single(piece => piece.Type == "Princess").Health);
+  }
+
+  [Fact]
   public void ServerStoresHostConfigurationAndInitialTeamState()
   {
     NetworkMatchConfiguration configuration = DefaultConfiguration with
@@ -287,6 +307,7 @@ public sealed class OnlineMatchTests
     ActionResult redPurchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Mercenary", noMansLand.x, noMansLand.y));
     Assert.True(redPurchase.Accepted);
     NetworkPiece mercenary = redPurchase.State!.Pieces.Single(piece => piece.Type == "Mercenary" && piece.Team == NetworkTeam.Red);
+    Assert.True(mercenary.CannotContributeToConquestThisTurn);
     Assert.False(matches.TrySpecial(redConnection, new SpecialActionRequest(mercenary.Id, "Fire", mercenary.Id, mercenary.X, mercenary.Y)).Accepted);
     Assert.True(matches.TrySkipTurn(redConnection).Accepted);
 
@@ -307,6 +328,7 @@ public sealed class OnlineMatchTests
     Assert.Equal(NetworkTeam.Blue, hiredMercenary.Team);
     Assert.True(hiredMercenary.HasMovedThisTurn);
     Assert.True(hiredMercenary.HasAttackedThisTurn);
+    Assert.True(hiredMercenary.CannotContributeToConquestThisTurn);
   }
 
   [Fact]

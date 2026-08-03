@@ -15,4 +15,5 @@ public static class Globals
   public const int UnitPricePercent = 100;
   public const bool InterestEnabled = false;
   public const int InterestPercent = 0;
+  public const int DefaultEscortRoyalHealthPercent = 50;
 }

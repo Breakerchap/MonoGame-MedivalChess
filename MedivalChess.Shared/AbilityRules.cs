@@ -27,6 +27,9 @@ public static class AbilityRules
     string.Equals(ability, "Barrier", StringComparison.OrdinalIgnoreCase) ||
     string.Equals(ability, "Mine", StringComparison.OrdinalIgnoreCase);
 
+  public static bool IsEngineerDemolition(string ability) =>
+    string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase);
+
   public static bool PathOverlapsUnit(
     UnitRule movingUnit,
     IEnumerable<(int x, int y)> path,

@@ -24,6 +24,7 @@ internal sealed class Piece
   internal bool HasMovedThisTurn { get; set; }
   internal bool HasAttackedThisTurn { get; set; }
   internal int EngineerBuildsThisTurn { get; set; }
+  internal bool CannotContributeToConquestThisTurn { get; set; }
   internal long NextMercenaryBid => (long)LastBid + 10;
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
@@ -109,7 +110,7 @@ internal enum PieceType
 {
   Soldier, Defender, Archer, Scout, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
-  Cannon, Spy, Catapult, Ox, Engineer, Ballista,
+  Cannon, Spy, Catapult, Bombard, Ox, Engineer, Ballista,
   Elephant, Guard, Mercenary, Farm,
 
   King, Princess, Palace, Baron, Emissary
@@ -209,8 +210,7 @@ internal static class PieceDefinitions
     15,
     (1, 1),
     (3, Shape.Any),
-    45,
-    3
+    50
   );
 
   internal static readonly PieceDefinition Cavalier = new(
@@ -255,9 +255,9 @@ internal static class PieceDefinitions
     0,
     15,
     (1, 1),
-    (3, Shape.Any),
+    (3, Shape.Straight),
     35,
-    3,
+    1,
     "Marks an enemy; it takes double damage until attacked."
   );
 
@@ -272,6 +272,19 @@ internal static class PieceDefinitions
     55,
     3,
     "Attacks over terrain and enemies."
+  );
+
+  internal static readonly PieceDefinition Bombard = new(
+    PieceType.Bombard,
+    PieceCategory.Ranged,
+    (2, Shape.Straight),
+    15,
+    20,
+    (1, 1),
+    (4, Shape.Straight),
+    55,
+    2,
+    "The target and every adjacent unit take 10 damage, including friendly units. Large units take damage only once."
   );
 
   internal static readonly PieceDefinition Ox = new(
@@ -292,12 +305,12 @@ internal static class PieceDefinitions
     PieceCategory.Intelligence,
     (3, Shape.Any),
     0,
-    15,
+    20,
     (1, 1),
     (1, Shape.Any),
-    20,
+    25,
     1,
-    "Builds up to two roads, 20-health barricades, or mines each turn on adjacent empty squares."
+    "Builds up to two roads, 20-health barricades, or mines each turn. It may also demolish an adjacent Engineer structure without triggering mines."
   );
 
   internal static readonly PieceDefinition Ballista = new(
@@ -307,7 +320,7 @@ internal static class PieceDefinitions
     25,
     20,
     (1, 2),
-    (5, Shape.Any),
+    (5, Shape.Straight),
     55,
     2,
     "Its attack pierces enemies in a straight line."
@@ -321,7 +334,7 @@ internal static class PieceDefinitions
     60,
     (2, 2),
     (0, Shape.None),
-    50,
+    55,
     0,
     "May move through enemies, damaging each crossed unit. Ignores terrain."
   );
@@ -349,7 +362,7 @@ internal static class PieceDefinitions
     (2, Shape.Any),
     10,
     1,
-    "Place anywhere in No-Man's-Land. Costs 5 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."
+    "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."
   );
 
   internal static readonly PieceDefinition King = new(
@@ -433,7 +446,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Peasant, Knight,
     Crossbowman, Chariot, Cannon, Spy,
-    Catapult, Ox, Engineer, Ballista,
+    Catapult, Bombard, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
   ];
@@ -442,7 +455,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Peasant,
     Knight, Crossbowman, Chariot, Cannon, Spy,
-    Catapult, Ox, Engineer,
+    Catapult, Bombard, Ox, Engineer,
     Ballista, Elephant, Guard, Mercenary, Farm,
     King, Princess, Palace, Baron, Emissary
   ];
@@ -451,7 +464,7 @@ internal static class PieceDefinitions
   [
     Soldier, Defender, Archer, Peasant, Knight,
     Crossbowman, Chariot, Cannon, Spy,
-    Catapult, Ox, Engineer, Ballista,
+    Catapult, Bombard, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary, Farm
   ];
 

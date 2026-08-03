@@ -79,7 +79,8 @@ internal sealed class Game1 : Game
   {
     Road,
     Barrier,
-    Mine
+    Mine,
+    Demolish
   }
 
   private sealed class MovementAnimation
@@ -148,6 +149,7 @@ internal sealed class Game1 : Game
   private TeamName? _winningTeam;
   private GameMode _gameMode = GameMode.Regicide;
   private int _conquestWinScore = MatchRules.DefaultConquestWinScore;
+  private int _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
@@ -503,6 +505,10 @@ internal sealed class Game1 : Game
               {
                 PerformPiercingAttack(selectedPiece, targetPosition);
               }
+              else if (selectedPiece.Definition.Type == PieceType.Bombard)
+              {
+                PerformBombardAttack(selectedPiece, pieceAtTarget);
+              }
               else if (_barricades.ContainsKey(targetPosition))
               {
                 DamageBarricade(selectedPiece, targetPosition);
@@ -846,6 +852,7 @@ internal sealed class Game1 : Game
         piece.HasMovedThisTurn = false;
         piece.HasAttackedThisTurn = false;
         piece.EngineerBuildsThisTurn = 0;
+        piece.CannotContributeToConquestThisTurn = false;
       }
     }
   }
@@ -875,7 +882,7 @@ internal sealed class Game1 : Game
       piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Mercenary);
     if (mercenaryCount > 0)
     {
-      long payroll = mercenaryCount * 5L;
+      long payroll = mercenaryCount * 10L;
       team.Money = ClampCurrency((long)team.Money - payroll);
       Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} paid {payroll} gold to {mercenaryCount} Mercenary unit(s).");
     }
@@ -940,17 +947,13 @@ internal sealed class Game1 : Game
       return true;
     }
 
-    if (teamThatFinishedTurn != TeamName.Blue) return false;
-
-    int orangePieces = GetConquestOccupyingPieceCount(TeamName.Red);
-    int purplePieces = GetConquestOccupyingPieceCount(TeamName.Blue);
-    int netPressure = purplePieces - orangePieces;
-    if (netPressure == 0)
+    int pressure = GetConquestOccupyingPieceCount(teamThatFinishedTurn);
+    if (pressure == 0)
     {
       return false;
     }
 
-    _conquestScore += netPressure;
+    _conquestScore += teamThatFinishedTurn == TeamName.Red ? -pressure : pressure;
     _conquestScore = Math.Clamp(_conquestScore, -_conquestWinScore, _conquestWinScore);
 
     if (Math.Abs(_conquestScore) < _conquestWinScore)
@@ -967,7 +970,7 @@ internal sealed class Game1 : Game
   private int GetConquestOccupyingPieceCount(TeamName team)
   {
     return pieceSetup.Pieces.Count(piece =>
-      piece.Team == team && piece.AttachmentKind == AttachmentKind.None &&
+      piece.Team == team && piece.AttachmentKind == AttachmentKind.None && !piece.CannotContributeToConquestThisTurn &&
       piece.OccupiedSquares().Any(IsConquestSquare));
   }
 
@@ -1179,7 +1182,9 @@ internal sealed class Game1 : Game
 
   private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
   {
-    if (actor.HasAttackedThisTurn)
+    bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
+      _selectedEngineerAbility == EngineerAbility.Demolish;
+    if (actor.HasAttackedThisTurn && !engineerDemolition)
     {
       return false;
     }
@@ -1432,6 +1437,7 @@ internal sealed class Game1 : Game
     _unitPricePercent = configuration.UnitPricePercent;
     _interestEnabled = configuration.InterestEnabled;
     _interestPercent = configuration.InterestPercent;
+    _escortRoyalHealthPercent = configuration.EscortRoyalHealthPercent;
     _playerCount = configuration.PlayerCount;
     ConfigureTeamsForPlayerCount();
     EnsurePurchaseSelectionIsValid();
@@ -1487,7 +1493,8 @@ internal sealed class Game1 : Game
         HasMovedThisTurn = networkPiece.HasMovedThisTurn,
         HasAttackedThisTurn = networkPiece.HasAttackedThisTurn,
         LastBid = networkPiece.LastBid,
-        EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn
+        EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn,
+        CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn
       };
       pieceSetup.AddPiece(piece);
       piecesByNetworkId[networkPiece.Id] = piece;
@@ -1935,7 +1942,9 @@ internal sealed class Game1 : Game
   private HashSet<(int x, int y)> GetValidAttackHighlightSquares(Piece piece)
   {
     HashSet<(int x, int y)> highlightedSquares = [];
-    if (piece.HasAttackedThisTurn ||
+    bool engineerDemolition = piece.Definition.Type == PieceType.Engineer &&
+      _selectedEngineerAbility == EngineerAbility.Demolish;
+    if ((piece.HasAttackedThisTurn && !engineerDemolition) ||
         (piece.Definition.Type == PieceType.Elephant && piece.HasMovedThisTurn))
     {
       return highlightedSquares;
@@ -2094,8 +2103,8 @@ internal sealed class Game1 : Game
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
   {
-    target.CurrentHealth -= 40;
-    Console.WriteLine($"Mine dealt 40 damage to {target.Definition.Type}.");
+    target.CurrentHealth -= 30;
+    Console.WriteLine($"Mine dealt 30 damage to {target.Definition.Type}.");
     HandlePieceDestroyed(target, mineOwner);
   }
 
@@ -2152,7 +2161,7 @@ internal sealed class Game1 : Game
       defeatedRoyal.Definition,
       FindRoyalSpawn(defeatedRoyal.Team, defeatedRoyal.Definition),
       defeatedRoyal.Team
-    );
+    ) { CurrentHealth = GetRoyalStartingHealth(defeatedRoyal.Definition) };
     pieceSetup.AddPiece(respawnedRoyal);
     Console.WriteLine($"{defeatedRoyal.Team}'s royal has respawned at the back line.");
   }
@@ -2164,7 +2173,9 @@ internal sealed class Game1 : Game
     KeyboardState keyboard
   )
   {
-    if (actor.HasAttackedThisTurn)
+    bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
+      _selectedEngineerAbility == EngineerAbility.Demolish;
+    if (actor.HasAttackedThisTurn && !engineerDemolition)
     {
       return false;
     }
@@ -2247,7 +2258,8 @@ internal sealed class Game1 : Game
     Piece targetPiece
   )
   {
-    if (engineer.EngineerBuildsThisTurn >= 2 ||
+    bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
+    if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
         !Actions.CanAttackSquare(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
@@ -2259,6 +2271,7 @@ internal sealed class Game1 : Game
       EngineerAbility.Road => TryBuildRoad(engineer, targetPosition, targetPiece),
       EngineerAbility.Barrier => TryBuildBarrier(targetPosition, targetPiece),
       EngineerAbility.Mine => TryBuildMine(engineer, targetPosition, targetPiece),
+      EngineerAbility.Demolish => targetPiece is null && TryDemolishImprovement(engineer, targetPosition),
       _ => false
     };
     if (!improvementChanged)
@@ -2266,8 +2279,11 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    engineer.EngineerBuildsThisTurn++;
-    engineer.HasAttackedThisTurn = engineer.EngineerBuildsThisTurn >= 2;
+    if (!demolition)
+    {
+      engineer.EngineerBuildsThisTurn++;
+      engineer.HasAttackedThisTurn = engineer.EngineerBuildsThisTurn >= 2;
+    }
     CompleteAction();
     return true;
   }
@@ -2278,7 +2294,8 @@ internal sealed class Game1 : Game
     Piece targetPiece
   )
   {
-    if (engineer.EngineerBuildsThisTurn >= 2 ||
+    bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
+    if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
         !Actions.CanAttackSquare(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
@@ -2293,6 +2310,7 @@ internal sealed class Game1 : Game
         !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
       EngineerAbility.Mine => targetPiece is null &&
         !IsEngineeringImprovementAt(targetPosition) && IsTraversableTerrainSquare(targetPosition),
+      EngineerAbility.Demolish => targetPiece is null && IsEngineeringImprovementAt(targetPosition),
       _ => false
     };
   }
@@ -2457,6 +2475,7 @@ internal sealed class Game1 : Game
       if (CanPlacePiece(companion.Definition, companionDestination, null, companion))
       {
         pieceSetup.MovePiece(companion, companionDestination);
+        companion.HasMovedThisTurn = true;
       }
     }
   }
@@ -2692,6 +2711,23 @@ internal sealed class Game1 : Game
         continue;
       }
       if (target != null && target.Team != attacker.Team) ResolveDamage(attacker, target);
+    }
+  }
+
+  private void PerformBombardAttack(Piece attacker, Piece target)
+  {
+    HashSet<Piece> affectedPieces = pieceSetup.Pieces
+      .Where(piece => piece != attacker && piece.OccupiedSquares().Any(square =>
+        target.OccupiedSquares().Any(targetSquare =>
+          Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1)))
+      .ToHashSet();
+
+    foreach (Piece affectedPiece in affectedPieces.ToArray())
+    {
+      if (pieceSetup.Pieces.Contains(affectedPiece))
+      {
+        ResolveDamage(attacker, affectedPiece, 10);
+      }
     }
   }
 
@@ -2971,7 +3007,7 @@ internal sealed class Game1 : Game
 
   private void CycleEngineerAbility(int direction)
   {
-    EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier, EngineerAbility.Mine];
+    EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier, EngineerAbility.Mine, EngineerAbility.Demolish];
     int selectedIndex = Array.IndexOf(abilities, _selectedEngineerAbility);
     if (selectedIndex < 0) selectedIndex = 0;
     _selectedEngineerAbility = abilities[(selectedIndex + direction + abilities.Length) % abilities.Length];
@@ -3532,11 +3568,11 @@ internal sealed class Game1 : Game
   }
 
   private bool IsEditableEconomyRow(int index) => index is 0 or 1 or 2 or 3 or 4 or 6 or 7 or 9 ||
-    (_gameMode == GameMode.Conquest && index == 10);
+    (_gameMode is GameMode.Conquest or GameMode.Escort && index == 10);
 
   private bool TryBeginEconomyTextInput(Point position)
   {
-    for (int index = 0; index <= (_gameMode == GameMode.Conquest ? 10 : 9); index++)
+    for (int index = 0; index <= (_gameMode is GameMode.Conquest or GameMode.Escort ? 10 : 9); index++)
     {
       if (IsEditableEconomyRow(index) && GetEconomyValueBounds(index).Contains(position))
       {
@@ -3616,6 +3652,10 @@ internal sealed class Game1 : Game
       case 10 when _gameMode == GameMode.Conquest &&
         int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int conquestScore):
         _conquestWinScore = Math.Max(1, conquestScore);
+        break;
+      case 10 when _gameMode == GameMode.Escort &&
+        int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int escortHealth):
+        _escortRoyalHealthPercent = Math.Clamp(escortHealth, 1, 100);
         break;
     }
 
@@ -3742,7 +3782,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    int height = _setupStage == SetupStage.Economy ? (_gameMode == GameMode.Conquest ? 920 : 870) : 620;
+    int height = _setupStage == SetupStage.Economy ? (_gameMode is GameMode.Conquest or GameMode.Escort ? 920 : 870) : 620;
     return UiLayout.Centered(viewport, 640, height, UiTheme.SpaceLg);
   }
 
@@ -3953,6 +3993,7 @@ internal sealed class Game1 : Game
     _unitPricePercent = Globals.UnitPricePercent;
     _interestEnabled = Globals.InterestEnabled;
     _interestPercent = Globals.InterestPercent;
+    _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
     CancelEconomyTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
@@ -3992,6 +4033,7 @@ internal sealed class Game1 : Game
     _unitPricePercent = Globals.UnitPricePercent;
     _interestEnabled = Globals.InterestEnabled;
     _interestPercent = Globals.InterestPercent;
+    _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -4034,7 +4076,8 @@ internal sealed class Game1 : Game
       _unitPricePercent,
       _playerCount,
       _interestEnabled,
-      _interestPercent
+      _interestPercent,
+      _escortRoyalHealthPercent
     );
   }
 
@@ -4465,6 +4508,14 @@ internal sealed class Game1 : Game
           {
             _conquestWinScore++;
           }
+          else if (_gameMode == GameMode.Escort && GetEconomyDecreaseButtonBounds(10).Contains(mousePosition))
+          {
+            _escortRoyalHealthPercent = Math.Max(1, _escortRoyalHealthPercent - 5);
+          }
+          else if (_gameMode == GameMode.Escort && GetEconomyIncreaseButtonBounds(10).Contains(mousePosition))
+          {
+            _escortRoyalHealthPercent = Math.Min(100, _escortRoyalHealthPercent + 5);
+          }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
             foreach (Team team in _teams)
@@ -4504,7 +4555,11 @@ internal sealed class Game1 : Game
           }
           Team setupTeam = _teams.Find(team => team.TeamName == _setupTeam);
           setupTeam.ChooseRoyal(royal.Type);
-          pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam));
+          Piece royalPiece = new(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam)
+          {
+            CurrentHealth = GetRoyalStartingHealth(royal)
+          };
+          pieceSetup.AddPiece(royalPiece);
 
           int teamIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
           if (teamIndex >= 0 && teamIndex + 1 < Team.ActiveTeams.Count)
@@ -4551,6 +4606,11 @@ internal sealed class Game1 : Game
 
     throw new InvalidOperationException("Could not find an empty royal spawn square.");
   }
+
+  private int GetRoyalStartingHealth(PieceDefinition royal) =>
+    _gameMode == GameMode.Escort
+      ? Math.Max(1, (int)Math.Ceiling(royal.Health * (_escortRoyalHealthPercent / 100d)))
+      : royal.Health;
 
   private int GetNextSelectableRoyalIndex(int currentIndex, int direction)
   {
@@ -4890,7 +4950,7 @@ internal sealed class Game1 : Game
       GameMode.Escort => (
         "ESCORT",
         "Get your royal onto the enemy back edge before the opposing royal does.",
-        "A defeated royal respawns at its own back edge. Palace is unavailable."
+        $"Royals start at {_escortRoyalHealthPercent}% health and respawn at their own back edge. Palace is unavailable."
       ),
       _ => (
         "REGICIDE",
@@ -4991,6 +5051,11 @@ internal sealed class Game1 : Game
     {
       labels.Add("Conquest control to win");
       values.Add(_conquestWinScore.ToString());
+    }
+    else if (_gameMode == GameMode.Escort)
+    {
+      labels.Add("Escort royal health");
+      values.Add($"{_escortRoyalHealthPercent}%");
     }
 
     for (int index = 0; index < labels.Count; index++)
@@ -5648,7 +5713,8 @@ internal sealed class Game1 : Game
     (string title, string detail) = _selectedEngineerAbility switch
     {
       EngineerAbility.Barrier => ("BARRIER", "20 HP wall; blocks movement and attacks."),
-      EngineerAbility.Mine => ("MINE", "Place on an adjacent empty square; detonates on enemies."),
+      EngineerAbility.Mine => ("MINE", "Place on an adjacent empty square; a triggering mine deals 30 damage in a 3 x 3 area."),
+      EngineerAbility.Demolish => ("DEMOLISH", "Remove an adjacent road, barrier, or mine without triggering it."),
       _ => ("ROAD", "Build on an adjacent empty square; forests cost 1 and open roads cost 0.")
     };
 
@@ -5674,7 +5740,9 @@ internal sealed class Game1 : Game
 
     if (piece.Definition.Type == PieceType.Engineer)
     {
-      return piece.HasAttackedThisTurn ? "ABILITY USED THIS TURN" : "RIGHT-CLICK to build";
+      return piece.HasAttackedThisTurn && _selectedEngineerAbility != EngineerAbility.Demolish
+        ? "ABILITY USED THIS TURN"
+        : "RIGHT-CLICK to use the selected ability";
     }
 
     if (piece.HasAttackedThisTurn)

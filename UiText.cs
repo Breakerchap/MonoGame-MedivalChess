@@ -22,6 +22,7 @@ internal static class UiText
       PieceType.Cannon => "Cn",
       PieceType.Spy => "Sy",
       PieceType.Catapult => "Ct",
+      PieceType.Bombard => "Bd",
       PieceType.Ox => "Ox",
       PieceType.Engineer => "En",
       PieceType.Ballista => "Bl",

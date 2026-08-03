@@ -30,7 +30,7 @@ public class UiTextTests
   [Fact]
   public void Encyclopedia_IncludesEveryDisplayablePieceType()
   {
-    Assert.Equal(22, PieceDefinitions.Encyclopedia.Length);
+    Assert.Equal(23, PieceDefinitions.Encyclopedia.Length);
     Assert.DoesNotContain(PieceDefinitions.Encyclopedia, piece => piece.Type is PieceType.Scout or PieceType.Spearman or PieceType.Cavalier);
     Assert.Equal(
       PieceDefinitions.Encyclopedia.Length,
@@ -47,7 +47,7 @@ public class UiTextTests
       (PieceDefinitions.Archer, "Ar"), (PieceDefinitions.Peasant, "Pe"),
       (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"), (PieceDefinitions.Chariot, "Ch"),
       (PieceDefinitions.Cannon, "Cn"), (PieceDefinitions.Spy, "Sy"),
-      (PieceDefinitions.Catapult, "Ct"),
+      (PieceDefinitions.Catapult, "Ct"), (PieceDefinitions.Bombard, "Bd"),
       (PieceDefinitions.Ox, "Ox"), (PieceDefinitions.Engineer, "En"),
       (PieceDefinitions.Ballista, "Bl"), (PieceDefinitions.Elephant, "El"),
       (PieceDefinitions.Guard, "Gd"), (PieceDefinitions.Mercenary, "Mc"),

@@ -481,6 +481,10 @@ public sealed class MatchStore
       {
         DamageBarricade(foundMatch, attacker, targetPosition);
       }
+      else if (attacker.Type == "Bombard")
+      {
+        ResolveBombardDamage(foundMatch, attacker, player, target);
+      }
       else
       {
         ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
@@ -537,7 +541,8 @@ public sealed class MatchStore
       }
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
-      if (actor.HasAttackedThisTurn)
+      bool engineerDemolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(request.Ability);
+      if (actor.HasAttackedThisTurn && !engineerDemolition)
       {
         return new(false, "That unit has already acted this turn.", foundMatch.State());
       }
@@ -621,7 +626,7 @@ public sealed class MatchStore
         return new(false, "That royal is not available for this match.", foundMatch.State());
       }
 
-      (int width, int height, int health) = GetRoyalStats(request.RoyalType);
+      (int width, int height, int health) = GetRoyalStats(foundMatch.Configuration, request.RoyalType);
       (int x, int y) spawn = NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, width, height);
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), request.RoyalType, player.Team, spawn.x, spawn.y, health));
       player.ChosenRoyal = request.RoyalType;
@@ -753,7 +758,8 @@ public sealed class MatchStore
           Team = player.Team,
           LastBid = (int)bid,
           HasMovedThisTurn = true,
-          HasAttackedThisTurn = true
+          HasAttackedThisTurn = true,
+          CannotContributeToConquestThisTurn = true
         };
         SpendAction(foundMatch, player);
         foundMatch.Version++;
@@ -775,7 +781,10 @@ public sealed class MatchStore
       player.Money = ClampCurrency((long)player.Money - unit.Cost);
       foundMatch.Pieces.Add(new NetworkPiece(
         Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health,
-        HasMovedThisTurn: true, HasAttackedThisTurn: true, LastBid: unit.Cost
+        HasMovedThisTurn: true,
+        HasAttackedThisTurn: true,
+        LastBid: unit.Cost,
+        CannotContributeToConquestThisTurn: true
       ));
       SpendAction(foundMatch, player);
       foundMatch.Version++;
@@ -926,6 +935,7 @@ public sealed class MatchStore
         configuration.ConquestWinScore < 1 ||
         configuration.UnitMaintenancePercent is < 0 or > 100 ||
         configuration.InterestPercent is < -100 or > 200 ||
+        configuration.EscortRoyalHealthPercent is < 1 or > 100 ||
         !float.IsFinite(configuration.KillerRefundMultiplier) ||
         !float.IsFinite(configuration.DefeatedTeamRefundMultiplier))
     {
@@ -937,10 +947,13 @@ public sealed class MatchStore
     return true;
   }
 
-  private static (int width, int height, int health) GetRoyalStats(string type)
+  private static (int width, int height, int health) GetRoyalStats(NetworkMatchConfiguration configuration, string type)
   {
     UnitRule rule = UnitRules.GetRequired(type);
-    return (rule.Width, rule.Height, rule.Health);
+    int health = configuration.GameMode == "Escort"
+      ? Math.Max(1, (int)Math.Ceiling(rule.Health * (configuration.EscortRoyalHealthPercent / 100d)))
+      : rule.Health;
+    return (rule.Width, rule.Height, health);
   }
 
   private static readonly HashSet<string> RoyalTypes = UnitRules.Royals
@@ -1217,6 +1230,28 @@ public sealed class MatchStore
     }
   }
 
+  private static void ResolveBombardDamage(
+    Match match,
+    NetworkPiece attacker,
+    PlayerSlot attackingPlayer,
+    NetworkPiece target
+  )
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return;
+    IReadOnlyList<NetworkPiece> affected = match.Pieces.Where(piece =>
+    {
+      if (!UnitRules.TryGet(piece.Type, out UnitRule pieceRule)) return false;
+      return OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(square =>
+        OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
+          Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1));
+    }).ToArray();
+
+    foreach (NetworkPiece affectedPiece in affected)
+    {
+      ResolvePieceDamage(match, attacker, attackingPlayer, affectedPiece.Id, 10);
+    }
+  }
+
   private static void DamageBarricade(Match match, NetworkPiece attacker, (int x, int y) position)
   {
     if (!match.Barricades.TryGetValue(position, out int health)) return;
@@ -1263,9 +1298,9 @@ public sealed class MatchStore
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
-    if (target.Health > 40)
+    if (target.Health > 30)
     {
-      match.Pieces[index] = target with { Health = target.Health - 40 };
+      match.Pieces[index] = target with { Health = target.Health - 30 };
     }
     else
     {
@@ -1303,7 +1338,8 @@ public sealed class MatchStore
     else if (match.Configuration.GameMode == "Escort" && defeatedPiece.Type != "Palace")
     {
       (int x, int y) respawn = FindRoyalRespawn(match, defeatedPiece.Team, rule);
-      match.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), defeatedPiece.Type, defeatedPiece.Team, respawn.x, respawn.y, rule.Health));
+      int health = GetRoyalStats(match.Configuration, defeatedPiece.Type).health;
+      match.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), defeatedPiece.Type, defeatedPiece.Team, respawn.x, respawn.y, health));
     }
   }
 
@@ -1417,7 +1453,15 @@ public sealed class MatchStore
   )
   {
     NetworkPiece engineer = match.Pieces[actorIndex];
-    if (engineer.EngineerBuildsThisTurn >= 2 || target is not null || !AbilityRules.IsEngineerBuild(ability)) return false;
+    bool demolition = AbilityRules.IsEngineerDemolition(ability);
+    if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) || target is not null ||
+        (!AbilityRules.IsEngineerBuild(ability) && !demolition)) return false;
+    if (demolition)
+    {
+      return match.Roads.Remove((targetX, targetY)) ||
+        match.Barricades.Remove((targetX, targetY)) ||
+        match.Mines.Remove((targetX, targetY));
+    }
     if (!CanBuildImprovementAt(match, targetX, targetY))
     {
       return false;
@@ -1570,7 +1614,13 @@ public sealed class MatchStore
       NetworkPiece piece = match.Pieces[index];
       if (piece.Team == team)
       {
-        match.Pieces[index] = piece with { HasMovedThisTurn = false, HasAttackedThisTurn = false, EngineerBuildsThisTurn = 0 };
+        match.Pieces[index] = piece with
+        {
+          HasMovedThisTurn = false,
+          HasAttackedThisTurn = false,
+          EngineerBuildsThisTurn = 0,
+          CannotContributeToConquestThisTurn = false
+        };
       }
     }
   }
@@ -1583,13 +1633,13 @@ public sealed class MatchStore
       return;
     }
 
-    if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount == 2 && player.Team == NetworkTeam.Blue)
+    if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount == 2)
     {
       Board board = NetworkBoardRules.GetBoard(match.Configuration);
-      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == NetworkTeam.Blue &&
-          UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square))) -
-        match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == NetworkTeam.Red &&
-          UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square)));
+      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None &&
+        !piece.CannotContributeToConquestThisTurn && piece.Team == player.Team &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square)));
+      if (player.Team == NetworkTeam.Red) pressure = -pressure;
       match.ConquestScore = Math.Clamp(match.ConquestScore + pressure, -match.Configuration.ConquestWinScore, match.Configuration.ConquestWinScore);
       if (Math.Abs(match.ConquestScore) >= match.Configuration.ConquestWinScore)
       {
@@ -1600,7 +1650,8 @@ public sealed class MatchStore
     else if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount > 2)
     {
       Board board = NetworkBoardRules.GetBoard(match.Configuration);
-      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None && piece.Team == player.Team &&
+      int pressure = match.Pieces.Count(piece => piece.AttachmentKind == NetworkAttachmentKind.None &&
+        !piece.CannotContributeToConquestThisTurn && piece.Team == player.Team &&
         UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Any(square => MatchRules.IsConquestSquare(board, square)));
       match.ConquestScores[player.Team] = Math.Clamp(
         match.ConquestScores[player.Team] + pressure,
@@ -1640,7 +1691,7 @@ public sealed class MatchStore
     int mercenaryCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Mercenary");
     if (mercenaryCount > 0)
     {
-      player.Money = ClampCurrency((long)player.Money - mercenaryCount * 5L);
+      player.Money = ClampCurrency((long)player.Money - mercenaryCount * 10L);
     }
 
     if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;

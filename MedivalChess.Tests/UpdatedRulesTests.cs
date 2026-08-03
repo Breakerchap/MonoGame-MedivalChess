@@ -14,15 +14,16 @@ public class UpdatedRulesTests
     AssertDefinition(PieceDefinitions.Archer, PieceCategory.Ranged, 3, Shape.Straight, 10, 10, (1, 1), 3, Shape.Any, 30, 2);
     AssertDefinition(PieceDefinitions.Peasant, PieceCategory.Melee, 1, Shape.Any, 5, 5, (1, 1), 1, Shape.Straight, 10);
     AssertDefinition(PieceDefinitions.Knight, PieceCategory.Melee, 4, Shape.Any, 20, 30, (1, 1), 1, Shape.Any, 50);
-    AssertDefinition(PieceDefinitions.Crossbowman, PieceCategory.Ranged, 2, Shape.Any, 20, 15, (1, 1), 3, Shape.Any, 45, 3);
+    AssertDefinition(PieceDefinitions.Crossbowman, PieceCategory.Ranged, 2, Shape.Any, 20, 15, (1, 1), 3, Shape.Any, 50);
     AssertDefinition(PieceDefinitions.Chariot, PieceCategory.Melee, 5, Shape.Straight, 15, 25, (1, 1), 2, Shape.Straight, 40, 2);
     AssertDefinition(PieceDefinitions.Cannon, PieceCategory.Mechanical, 2, Shape.Straight, 30, 15, (1, 2), 4, Shape.Straight, 50, 2);
-    AssertDefinition(PieceDefinitions.Spy, PieceCategory.Intelligence, 5, Shape.Any, 0, 15, (1, 1), 3, Shape.Any, 35, 3);
+    AssertDefinition(PieceDefinitions.Spy, PieceCategory.Intelligence, 5, Shape.Any, 0, 15, (1, 1), 3, Shape.Straight, 35);
     AssertDefinition(PieceDefinitions.Catapult, PieceCategory.Mechanical, 1, Shape.Any, 20, 20, (1, 2), 5, Shape.Any, 55, 3);
+    AssertDefinition(PieceDefinitions.Bombard, PieceCategory.Ranged, 2, Shape.Straight, 15, 20, (1, 1), 4, Shape.Straight, 55, 2);
     AssertDefinition(PieceDefinitions.Ox, PieceCategory.Transport, 4, Shape.Any, 5, 25, (1, 1), 1, Shape.Straight, 35);
-    AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 15, (1, 1), 1, Shape.Any, 20);
-    AssertDefinition(PieceDefinitions.Ballista, PieceCategory.Mechanical, 1, Shape.Straight, 25, 20, (1, 2), 5, Shape.Any, 55, 2);
-    AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 4, Shape.Straight, 15, 60, (2, 2), 0, Shape.None, 50, 0);
+    AssertDefinition(PieceDefinitions.Engineer, PieceCategory.Intelligence, 3, Shape.Any, 0, 20, (1, 1), 1, Shape.Any, 25);
+    AssertDefinition(PieceDefinitions.Ballista, PieceCategory.Mechanical, 1, Shape.Straight, 25, 20, (1, 2), 5, Shape.Straight, 55, 2);
+    AssertDefinition(PieceDefinitions.Elephant, PieceCategory.Melee, 4, Shape.Straight, 15, 60, (2, 2), 0, Shape.None, 55, 0);
     AssertDefinition(PieceDefinitions.Guard, PieceCategory.Melee, 3, Shape.Straight, 10, 25, (1, 1), 1, Shape.Straight, 35);
     AssertDefinition(PieceDefinitions.Mercenary, PieceCategory.Melee, 3, Shape.Any, 25, 20, (1, 1), 2, Shape.Any, 10);
     AssertDefinition(PieceDefinitions.Farm, PieceCategory.Structure, 0, Shape.None, 0, 30, (3, 3), 0, Shape.None, 60, 0);
@@ -39,6 +40,7 @@ public class UpdatedRulesTests
     Piece archer = new(PieceDefinitions.Archer, (5, 5), TeamName.Red);
     Piece catapult = new(PieceDefinitions.Catapult, (5, 5), TeamName.Red);
     Piece ballista = new(PieceDefinitions.Ballista, (5, 5), TeamName.Red);
+    Piece bombard = new(PieceDefinitions.Bombard, (5, 5), TeamName.Red);
 
     Assert.False(Actions.CanAttackSquare(archer, (6, 5)));
     Assert.True(Actions.CanAttackSquare(archer, (7, 5)));
@@ -46,7 +48,9 @@ public class UpdatedRulesTests
     Assert.True(Actions.CanAttackSquare(catapult, (8, 5)));
     Assert.False(Actions.CanAttackSquare(ballista, (5, 6)));
     Assert.True(Actions.CanAttackSquare(ballista, (5, 7)));
-    Assert.True(Actions.CanAttackSquare(ballista, (7, 7)));
+    Assert.False(Actions.CanAttackSquare(ballista, (7, 7)));
+    Assert.False(Actions.CanAttackSquare(bombard, (6, 5)));
+    Assert.True(Actions.CanAttackSquare(bombard, (7, 5)));
   }
 
   [Fact]
@@ -115,7 +119,7 @@ public class UpdatedRulesTests
     Assert.True(Actions.HandlePieceDeath(defender, attacker, defeated, 0.5f, 0f));
     Assert.Equal(20, attacker.Money);
 
-    Assert.Equal(300, Globals.StartingCash);
+    Assert.Equal(200, Globals.StartingCash);
     Assert.Equal(3, Team.ActionsPerTurn);
 
     attacker.ActionPoints = 3;
@@ -135,7 +139,7 @@ public class UpdatedRulesTests
     Assert.DoesNotContain(PieceDefinitions.Mercenary, PieceDefinitions.Royals);
     Assert.Equal(10, mercenary.LastBid);
     Assert.Equal(20, mercenary.NextMercenaryBid);
-    Assert.Equal(22, PieceDefinitions.All.Length);
+    Assert.Equal(23, PieceDefinitions.All.Length);
   }
 
   private static void AssertDefinition(

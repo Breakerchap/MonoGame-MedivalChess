@@ -29,7 +29,8 @@ public sealed record NetworkPiece(
   NetworkAttachmentKind AttachmentKind = NetworkAttachmentKind.None,
   string? MarkedTargetId = null,
   int LastBid = 0,
-  int EngineerBuildsThisTurn = 0
+  int EngineerBuildsThisTurn = 0,
+  bool CannotContributeToConquestThisTurn = false
 );
 
 public sealed record NetworkImprovement(
@@ -62,7 +63,8 @@ public sealed record NetworkMatchConfiguration(
   int UnitPricePercent = Globals.UnitPricePercent,
   int PlayerCount = 2,
   bool InterestEnabled = Globals.InterestEnabled,
-  int InterestPercent = Globals.InterestPercent
+  int InterestPercent = Globals.InterestPercent,
+  int EscortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on

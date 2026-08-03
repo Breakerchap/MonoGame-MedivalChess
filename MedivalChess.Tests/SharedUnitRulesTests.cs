@@ -69,18 +69,21 @@ public sealed class SharedUnitRulesTests
     Assert.False(UnitRules.CanAttack(archer, 0, 0, NetworkTeam.Red, soldier, 1, 0));
     Assert.True(UnitRules.CanAttack(archer, 0, 0, NetworkTeam.Red, soldier, 2, 0));
     Assert.True(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 0, 3));
-    Assert.True(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 2, 2));
+    Assert.False(UnitRules.CanAttack(ballista, 0, 0, NetworkTeam.Red, soldier, 2, 2));
   }
 
   [Fact]
   public void SharedRules_DefineCatapultAndAbilityMetadata()
   {
     UnitRule catapult = UnitRules.GetRequired("Catapult");
+    UnitRule bombard = UnitRules.GetRequired("Bombard");
 
     Assert.Equal(RuleShape.Any, catapult.AttackPattern);
     Assert.Equal("Attacks over terrain and enemies.", UnitRules.GetAbilityDescription("Catapult"));
+    Assert.Equal((2, 4), (bombard.MinimumAttackRange, bombard.AttackRange));
     Assert.Contains("barricade", UnitRules.GetAbilityDescription("Engineer"));
     Assert.Contains("Ignores terrain", UnitRules.GetAbilityDescription("Elephant"));
+    Assert.True(AbilityRules.IsEngineerDemolition("Demolish"));
   }
 
   [Fact]
