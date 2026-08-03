@@ -19,4 +19,5 @@ public static class Globals
   public const int DefaultDominionWinScore = 10;
   public const int DefaultPlunderWinScore = 9;
   public const int DefaultPlunderDeliveryScore = 3;
+  public const int DefaultPlunderRoyalKillPenalty = 1;
 }

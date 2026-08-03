@@ -69,7 +69,8 @@ public sealed record NetworkMatchConfiguration(
   int EscortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent,
   int DominionWinScore = Globals.DefaultDominionWinScore,
   int PlunderWinScore = Globals.DefaultPlunderWinScore,
-  int PlunderDeliveryScore = Globals.DefaultPlunderDeliveryScore
+  int PlunderDeliveryScore = Globals.DefaultPlunderDeliveryScore,
+  int PlunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on

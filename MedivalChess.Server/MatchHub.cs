@@ -944,6 +944,7 @@ public sealed class MatchStore
         configuration.DominionWinScore < 1 ||
         configuration.PlunderWinScore < 1 ||
         configuration.PlunderDeliveryScore < 1 ||
+        configuration.PlunderRoyalKillPenalty < 0 ||
         configuration.UnitMaintenancePercent is < 0 or > 100 ||
         configuration.InterestPercent is < -100 or > 200 ||
         configuration.EscortRoyalHealthPercent is < 1 or > 100 ||
@@ -1364,6 +1365,13 @@ public sealed class MatchStore
       (int x, int y) respawn = FindRoyalRespawn(match, defeatedPiece.Team, rule);
       int health = GetRoyalStats(match.Configuration, defeatedPiece.Type).health;
       match.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), defeatedPiece.Type, defeatedPiece.Team, respawn.x, respawn.y, health));
+    }
+    else if (match.Configuration.GameMode == "Plunder" && attackingPlayer.Team != defeatedPiece.Team)
+    {
+      match.ModeScores[attackingPlayer.Team] = Math.Max(
+        0,
+        match.ModeScores[attackingPlayer.Team] - match.Configuration.PlunderRoyalKillPenalty
+      );
     }
   }
 

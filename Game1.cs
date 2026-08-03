@@ -156,6 +156,7 @@ internal sealed class Game1 : Game
   private int _dominionWinScore = Globals.DefaultDominionWinScore;
   private int _plunderWinScore = Globals.DefaultPlunderWinScore;
   private int _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
+  private int _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
@@ -1526,6 +1527,7 @@ internal sealed class Game1 : Game
     _dominionWinScore = configuration.DominionWinScore;
     _plunderWinScore = configuration.PlunderWinScore;
     _plunderDeliveryScore = configuration.PlunderDeliveryScore;
+    _plunderRoyalKillPenalty = configuration.PlunderRoyalKillPenalty;
     _playerCount = configuration.PlayerCount;
     ConfigureTeamsForPlayerCount();
     EnsurePurchaseSelectionIsValid();
@@ -2246,6 +2248,18 @@ internal sealed class Game1 : Game
     {
       RespawnEscortRoyal(damagedPiece);
     }
+    else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Plunder &&
+      attackingTeamName is TeamName attacker && attacker != damagedPiece.Team)
+    {
+      ApplyPlunderRoyalKillPenalty(attacker);
+    }
+  }
+
+  private void ApplyPlunderRoyalKillPenalty(TeamName attacker)
+  {
+    int score = Math.Max(0, _modeScores.GetValueOrDefault(attacker) - _plunderRoyalKillPenalty);
+    _modeScores[attacker] = score;
+    Console.WriteLine($"{UiText.GetTeamDisplayName(attacker)} lost {_plunderRoyalKillPenalty} Plunder point(s) for destroying a royal.");
   }
 
   private void RespawnEscortRoyal(Piece defeatedRoyal)
@@ -3867,6 +3881,7 @@ internal sealed class Game1 : Game
     _dominionWinScore = Globals.DefaultDominionWinScore;
     _plunderWinScore = Globals.DefaultPlunderWinScore;
     _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
+    _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
     EnsurePurchaseSelectionIsValid();
     CancelEconomyTextInput();
   }
@@ -4248,6 +4263,7 @@ internal sealed class Game1 : Game
     _dominionWinScore = Globals.DefaultDominionWinScore;
     _plunderWinScore = Globals.DefaultPlunderWinScore;
     _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
+    _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
     CancelEconomyTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
@@ -4291,6 +4307,7 @@ internal sealed class Game1 : Game
     _dominionWinScore = Globals.DefaultDominionWinScore;
     _plunderWinScore = Globals.DefaultPlunderWinScore;
     _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
+    _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -4337,7 +4354,8 @@ internal sealed class Game1 : Game
       _escortRoyalHealthPercent,
       _dominionWinScore,
       _plunderWinScore,
-      _plunderDeliveryScore
+      _plunderDeliveryScore,
+      _plunderRoyalKillPenalty
     );
   }
 
@@ -4818,6 +4836,14 @@ internal sealed class Game1 : Game
           else if (_gameMode == GameMode.Plunder && GetModeSettingsIncreaseButtonBounds(1).Contains(mousePosition))
           {
             _plunderDeliveryScore++;
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsDecreaseButtonBounds(2).Contains(mousePosition))
+          {
+            _plunderRoyalKillPenalty = Math.Max(0, _plunderRoyalKillPenalty - 1);
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsIncreaseButtonBounds(2).Contains(mousePosition))
+          {
+            _plunderRoyalKillPenalty++;
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
@@ -5477,9 +5503,13 @@ internal sealed class Game1 : Game
       ),
       GameMode.Plunder => (
         "PLUNDER RULES",
-        "A 1 x 1 non-Royal unit spends an action beside the treasure to carry it home. Carriers move 1 less and drop it if defeated.",
-        ["Score to win", "Points per delivery"],
-        [_plunderWinScore.ToString(CultureInfo.InvariantCulture), _plunderDeliveryScore.ToString(CultureInfo.InvariantCulture)]
+        "A 1 x 1 non-Royal unit spends an action beside the treasure to carry it home. Carriers move 1 less and drop it if defeated; destroying a royal costs the attacker points.",
+        ["Score to win", "Points per delivery", "Royal kill penalty"],
+        [
+          _plunderWinScore.ToString(CultureInfo.InvariantCulture),
+          _plunderDeliveryScore.ToString(CultureInfo.InvariantCulture),
+          _plunderRoyalKillPenalty.ToString(CultureInfo.InvariantCulture)
+        ]
       ),
       _ => (
         "REGICIDE RULES",

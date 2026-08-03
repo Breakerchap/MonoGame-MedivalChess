@@ -177,7 +177,8 @@ public sealed class OnlineMatchTests
     {
       GameMode = "Plunder",
       PlunderWinScore = 9,
-      PlunderDeliveryScore = 3
+      PlunderDeliveryScore = 3,
+      PlunderRoyalKillPenalty = 1
     }));
 
     Assert.True(dominion.Accepted);

@@ -62,5 +62,6 @@ public sealed class EconomyRulesTests
     Assert.Equal(Globals.DefaultDominionWinScore, configuration.DominionWinScore);
     Assert.Equal(Globals.DefaultPlunderWinScore, configuration.PlunderWinScore);
     Assert.Equal(Globals.DefaultPlunderDeliveryScore, configuration.PlunderDeliveryScore);
+    Assert.Equal(Globals.DefaultPlunderRoyalKillPenalty, configuration.PlunderRoyalKillPenalty);
   }
 }
