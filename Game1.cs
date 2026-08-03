@@ -614,6 +614,7 @@ internal sealed class Game1 : Game
       targetPiece.LastBid = (int)buyoutCost;
       targetPiece.HasMovedThisTurn = true;
       targetPiece.HasAttackedThisTurn = true;
+      targetPiece.CannotContributeToConquestThisTurn = true;
 
       Console.WriteLine($"{Team.CurrentTurn} bought the Mercenary for {buyoutCost} gold.");
       CompletePurchase();
@@ -647,7 +648,8 @@ internal sealed class Game1 : Game
     {
       LastBid = price,
       HasMovedThisTurn = _initialBuyPhase is null,
-      HasAttackedThisTurn = _initialBuyPhase is null
+      HasAttackedThisTurn = _initialBuyPhase is null,
+      CannotContributeToConquestThisTurn = _initialBuyPhase is null
     };
     pieceSetup.AddPiece(boughtPiece);
 
@@ -3678,6 +3680,24 @@ internal sealed class Game1 : Game
   private static float TruncateRefundMultiplier(float value) =>
     (float)(Math.Truncate(value * 100d) / 100d);
 
+  private void ResetMatchConfigurationValues()
+  {
+    _startingCash = Globals.StartingCash;
+    _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
+    _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
+    _initialBuysPerTurn = Globals.InitialBuysPerTurn;
+    _initialBuyTurnsPerTeam = Globals.InitialBuyTurnsPerTeam;
+    _farmsEnabled = Globals.FarmsEnabled;
+    _farmIncomePerTurn = Globals.FarmIncomePerTurn;
+    _unitPricePercent = Globals.UnitPricePercent;
+    _interestEnabled = Globals.InterestEnabled;
+    _interestPercent = Globals.InterestPercent;
+    _conquestWinScore = MatchRules.DefaultConquestWinScore;
+    _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
+    EnsurePurchaseSelectionIsValid();
+    CancelEconomyTextInput();
+  }
+
   private void DrawOnlineServerUrlField(Rectangle bounds)
   {
     bool isFocused = _onlineInputFocus == OnlineInputField.ServerUrl;
@@ -3800,6 +3820,12 @@ internal sealed class Game1 : Game
     return new Rectangle(content.Right - 96, content.Y - 2, 96, 30);
   }
 
+  private Rectangle GetSetupResetButtonBounds()
+  {
+    Rectangle backButton = GetSetupBackButtonBounds();
+    return new Rectangle(backButton.X - 104, backButton.Y, 96, backButton.Height);
+  }
+
   private Rectangle GetSetupNextButtonBounds()
   {
     Rectangle panel = GetSetupPanelBounds();
@@ -3823,7 +3849,15 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetSetupPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Y + 326, content.Width, UiTheme.ButtonHeight);
+    return new Rectangle(content.X, content.Y + 386, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetModeOptionBounds(int index)
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    Rectangle row = new(content.X, content.Y + 324, content.Width, UiTheme.ButtonHeight);
+    return UiLayout.HorizontalSlot(row, Enum.GetValues<GameMode>().Length, index, UiTheme.SpaceSm);
   }
 
   private Rectangle GetPlayerCountDecreaseButtonBounds()
@@ -3881,13 +3915,30 @@ internal sealed class Game1 : Game
     return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
   }
 
-  private Rectangle GetBattlefieldRowBounds(int index) => GetEconomyRowBounds(index);
+  private Rectangle GetBattlefieldRowBounds(int index)
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 92 + index * 72, content.Width, UiTheme.ButtonHeight);
+  }
 
-  private Rectangle GetBattlefieldDecreaseButtonBounds(int index) => GetEconomyDecreaseButtonBounds(index);
+  private Rectangle GetBattlefieldDecreaseButtonBounds(int index)
+  {
+    Rectangle row = GetBattlefieldRowBounds(index);
+    return new Rectangle(row.Right - 204, row.Y, 44, row.Height);
+  }
 
-  private Rectangle GetBattlefieldValueBounds(int index) => GetEconomyValueBounds(index);
+  private Rectangle GetBattlefieldValueBounds(int index)
+  {
+    Rectangle row = GetBattlefieldRowBounds(index);
+    return new Rectangle(row.Right - 152, row.Y, 100, row.Height);
+  }
 
-  private Rectangle GetBattlefieldIncreaseButtonBounds(int index) => GetEconomyIncreaseButtonBounds(index);
+  private Rectangle GetBattlefieldIncreaseButtonBounds(int index)
+  {
+    Rectangle row = GetBattlefieldRowBounds(index);
+    return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
+  }
 
   private static string GetBoardFileName(BoardSize boardSize)
   {
@@ -4359,7 +4410,15 @@ internal sealed class Game1 : Game
         }
         else if (_setupStage == SetupStage.Mode)
         {
-          if (GetSetupPreviousButtonBounds().Contains(mousePosition))
+          GameMode? selectedMode = Enum.GetValues<GameMode>()
+            .Where(mode => GetModeOptionBounds((int)mode).Contains(mousePosition))
+            .Select(mode => (GameMode?)mode)
+            .FirstOrDefault();
+          if (selectedMode is GameMode mode)
+          {
+            _gameMode = mode;
+          }
+          else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
           {
             _gameMode = (GameMode)(((int)_gameMode - 1 + Enum.GetValues<GameMode>().Length) % Enum.GetValues<GameMode>().Length);
           }
@@ -4414,7 +4473,11 @@ internal sealed class Game1 : Game
         }
         else if (_setupStage == SetupStage.Economy)
         {
-          if (TryBeginEconomyTextInput(mousePosition))
+          if (GetSetupResetButtonBounds().Contains(mousePosition))
+          {
+            ResetMatchConfigurationValues();
+          }
+          else if (TryBeginEconomyTextInput(mousePosition))
           {
             break;
           }
@@ -4722,6 +4785,28 @@ internal sealed class Game1 : Game
     _ui.Button(bounds, label, tone, selected);
   }
 
+  private void DrawSetupProgress(Rectangle content)
+  {
+    SetupStage[] stages = [SetupStage.Mode, SetupStage.Battlefield, SetupStage.Economy, SetupStage.RoyalSelection];
+    string[] labels = ["MODE", "MAP", "ECONOMY", "ROYAL"];
+    Rectangle row = new(content.X, content.Y + 62, content.Width, 18);
+    int currentIndex = Array.IndexOf(stages, _setupStage);
+
+    for (int index = 0; index < stages.Length; index++)
+    {
+      bool isCurrent = index == currentIndex;
+      Color colour = index < currentIndex
+        ? UiTheme.TextPrimary
+        : isCurrent ? UiTheme.GoldBright : UiTheme.TextDim;
+      _ui.CenterText(
+        $"{index + 1}. {labels[index]}",
+        UiLayout.HorizontalSlot(row, stages.Length, index, UiTheme.SpaceSm),
+        colour,
+        isCurrent ? 0.6f : 0.54f
+      );
+    }
+  }
+
   private void DrawTitleScreen()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
@@ -4914,6 +4999,7 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text("Your royal is placed on the back row.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
 
     Rectangle preview = new(content.X, content.Y + 76, 112, 112);
     string label = UiText.BuildPieceLabel(royal);
@@ -4969,6 +5055,7 @@ internal sealed class Game1 : Game
       0.74f
     );
     _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
 
     Rectangle modeCard = new(content.X, content.Y + 86, content.Width, 216);
     DrawPanel(modeCard, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
@@ -4976,6 +5063,16 @@ internal sealed class Game1 : Game
     _ui.CenterText(objective, new Rectangle(modeCard.X + UiTheme.SpaceLg, modeCard.Y + 82, modeCard.Width - UiTheme.SpaceXl * 2, 42), UiTheme.TextPrimary, 0.72f);
     _ui.CenterText(detail, new Rectangle(modeCard.X + UiTheme.SpaceLg, modeCard.Y + 146, modeCard.Width - UiTheme.SpaceXl * 2, 40), UiTheme.TextMuted, 0.68f);
     _ui.CenterText($"{(int)_gameMode + 1}/{Enum.GetValues<GameMode>().Length}", new Rectangle(modeCard.X, modeCard.Bottom - 30, modeCard.Width, 18), UiTheme.TextDim, 0.64f);
+
+    foreach (GameMode mode in Enum.GetValues<GameMode>())
+    {
+      DrawMenuButton(
+        GetModeOptionBounds((int)mode),
+        mode.ToString().ToUpperInvariant(),
+        mode == _gameMode ? UiButtonTone.Accent : UiButtonTone.Neutral,
+        mode == _gameMode
+      );
+    }
 
     Rectangle playerCountRow = GetPlayerCountRowBounds();
     DrawPanel(playerCountRow, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
@@ -4999,8 +5096,15 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
     _ui.Text("Choose the battlefield before setting the match economy.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
 
     string[] labels = ["Board size", "Forest density", "Waterways"];
+    string[] details =
+    [
+      "Small is compact; Large gives armies more room to manoeuvre.",
+      "More forests slow movement and block direct ranged fire.",
+      "Waterways create choke points; bridges are the only crossings."
+    ];
     string[] values =
     [
       _selectedBoardSize.ToString(),
@@ -5018,10 +5122,10 @@ internal sealed class Game1 : Game
       DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
       _ui.CenterText(values[index].ToUpperInvariant(), valueBounds, UiTheme.GoldBright, 0.76f);
       DrawMenuButton(GetBattlefieldIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
+      _ui.Text(details[index], new Vector2(row.X, row.Bottom + 5), UiTheme.TextMuted, 0.6f);
     }
 
-    _ui.Text("Light waterways use 1 river; Standard 2; Heavy 3.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 58), UiTheme.TextMuted, 0.68f);
-    _ui.Text("Forests are always denser away from the edge.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), UiTheme.TextMuted, 0.68f);
+    _ui.Text("Light waterways use 1 river; Standard uses 2; Heavy uses 3.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), UiTheme.TextMuted, 0.68f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 
@@ -5031,8 +5135,10 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("MATCH ECONOMY", new Vector2(content.X, content.Y), UiTheme.Gold);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Click a number to type a value, or use the controls.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    DrawMenuButton(GetSetupResetButtonBounds(), "RESET", UiButtonTone.Neutral);
+    _ui.Text("Click a number to replace it; press Enter to keep it or use + / -.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
     _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
 
     List<string> labels = [
       "Starting cash", "Killer refund", "Defeated team refund", "Buys per buy turn", "Buy turns per team",
@@ -5092,6 +5198,14 @@ internal sealed class Game1 : Game
     if (_interestEnabled)
     {
       economyHint += $" Interest applies at the start of normal turns only: {_interestPercent}%.";
+    }
+    if (_gameMode == GameMode.Conquest)
+    {
+      economyHint += $" First side to {_conquestWinScore} control wins.";
+    }
+    else if (_gameMode == GameMode.Escort)
+    {
+      economyHint += $" Royals begin at {_escortRoyalHealthPercent}% health.";
     }
     int hintY = GetEconomyRowBounds(labels.Count - 1).Bottom + UiTheme.SpaceSm;
     _ui.TextWrapped(economyHint, new Rectangle(content.X, hintY, content.Width, GetSetupConfirmButtonBounds().Y - hintY - UiTheme.SpaceSm), UiTheme.TextMuted, 0.68f);
