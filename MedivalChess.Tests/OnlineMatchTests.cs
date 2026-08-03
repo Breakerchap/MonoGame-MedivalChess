@@ -165,6 +165,31 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void DominionAndPlunderConfigurationsExposeTheirObjectiveState()
+  {
+    MatchStore matches = new();
+    RoomJoinResult dominion = matches.Create("dominion-host", new CreateGameRequest(DefaultConfiguration with
+    {
+      GameMode = "Dominion",
+      DominionWinScore = 10
+    }));
+    RoomJoinResult plunder = matches.Create("plunder-host", new CreateGameRequest(DefaultConfiguration with
+    {
+      GameMode = "Plunder",
+      PlunderWinScore = 9,
+      PlunderDeliveryScore = 3
+    }));
+
+    Assert.True(dominion.Accepted);
+    Assert.All(dominion.State!.ModeScores!, score => Assert.Equal(0, score.Score));
+    Assert.True(plunder.Accepted);
+    Assert.NotNull(plunder.State!.Treasure);
+    Assert.Null(plunder.State.Treasure!.CarrierId);
+    Assert.NotNull(plunder.State.Treasure.X);
+    Assert.NotNull(plunder.State.Treasure.Y);
+  }
+
+  [Fact]
   public void ServerRejectsWrongOwnerAndKingDiagonalMoves()
   {
     MatchStore matches = new();

@@ -58,6 +58,35 @@ public static class MatchRules
     return board.ContainsCell(square) && Math.Abs(square.x - centreX) <= 1 && Math.Abs(square.y - centreY) <= 1;
   }
 
+  public static IReadOnlyList<(int x, int y)> GetDominionControlPoints(Board board)
+  {
+    int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
+    int centreY = board.MinY + board.BoardArray.GetLength(0) / 2;
+    // Keep all three points inside the central neutral zone on four-player boards too.
+    int spacing = 2;
+    return [
+      FindNearestBoardCell(board, (centreX - spacing, centreY)),
+      FindNearestBoardCell(board, (centreX, centreY)),
+      FindNearestBoardCell(board, (centreX + spacing, centreY))
+    ];
+  }
+
+  public static (int x, int y) GetTreasureSpawn(Board board)
+  {
+    int centreX = board.MinX + board.BoardArray.GetLength(1) / 2;
+    int centreY = board.MinY + board.BoardArray.GetLength(0) / 2;
+    return FindNearestBoardCell(board, (centreX, centreY));
+  }
+
+  private static (int x, int y) FindNearestBoardCell(Board board, (int x, int y) preferred)
+  {
+    return board.Cells
+      .OrderBy(square => Math.Abs(square.x - preferred.x) + Math.Abs(square.y - preferred.y))
+      .ThenBy(square => square.y)
+      .ThenBy(square => square.x)
+      .First();
+  }
+
   public static IEnumerable<(int x, int y)> GetRoyalSpawnCandidates(
     Board board,
     NetworkTeam team,

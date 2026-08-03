@@ -51,6 +51,7 @@ internal sealed class Game1 : Game
     Mode,
     Battlefield,
     Economy,
+    ModeSettings,
     RoyalSelection
   }
 
@@ -58,7 +59,9 @@ internal sealed class Game1 : Game
   {
     Regicide,
     Conquest,
-    Escort
+    Escort,
+    Dominion,
+    Plunder
   }
 
   private enum BoardSize
@@ -150,9 +153,15 @@ internal sealed class Game1 : Game
   private GameMode _gameMode = GameMode.Regicide;
   private int _conquestWinScore = MatchRules.DefaultConquestWinScore;
   private int _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
+  private int _dominionWinScore = Globals.DefaultDominionWinScore;
+  private int _plunderWinScore = Globals.DefaultPlunderWinScore;
+  private int _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
+  private readonly Dictionary<TeamName, int> _modeScores = [];
+  private (int x, int y)? _treasurePosition;
+  private string _treasureCarrierId;
   private BindingAction? _bindingToChange;
   private Screen _settingsReturnScreen = Screen.Title;
   private int _encyclopediaIndex;
@@ -662,6 +671,7 @@ internal sealed class Game1 : Game
 
   private void StartInitialBuyPhase()
   {
+    InitializeModeObjectives();
     _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam, Team.ActiveTeams, _farmsEnabled);
     EnsureInitialBuySelection();
     if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Mercenary)
@@ -834,7 +844,7 @@ internal sealed class Game1 : Game
 
     if (currentTeam.SpendAction())
     {
-      if (ApplyConquestPressure(Team.CurrentTurn))
+      if (ApplyEndOfTurnObjectives(Team.CurrentTurn))
       {
         return;
       }
@@ -974,6 +984,67 @@ internal sealed class Game1 : Game
     return pieceSetup.Pieces.Count(piece =>
       piece.Team == team && piece.AttachmentKind == AttachmentKind.None && !piece.CannotContributeToConquestThisTurn &&
       piece.OccupiedSquares().Any(IsConquestSquare));
+  }
+
+  private bool ApplyEndOfTurnObjectives(TeamName teamThatFinishedTurn)
+  {
+    if (_gameMode == GameMode.Conquest)
+    {
+      return ApplyConquestPressure(teamThatFinishedTurn);
+    }
+
+    if (_gameMode != GameMode.Dominion)
+    {
+      return false;
+    }
+
+    int score = Math.Clamp(
+      _modeScores.GetValueOrDefault(teamThatFinishedTurn) + GetDominionControlledPointCount(teamThatFinishedTurn),
+      0,
+      _dominionWinScore
+    );
+    _modeScores[teamThatFinishedTurn] = score;
+    if (score < _dominionWinScore)
+    {
+      return false;
+    }
+
+    _winningTeam = teamThatFinishedTurn;
+    _screen = Screen.GameOver;
+    selectedPiece = null;
+    return true;
+  }
+
+  private int GetDominionControlledPointCount(TeamName team)
+  {
+    int controlledPoints = 0;
+    foreach ((int x, int y) point in MatchRules.GetDominionControlPoints(_board))
+    {
+      bool friendlyTouching = pieceSetup.Pieces.Any(piece =>
+        piece.Team == team && piece.AttachedTo is null && piece.Occupies(point));
+      bool enemyTouching = pieceSetup.Pieces.Any(piece =>
+        piece.Team is not TeamName.Neutral && piece.Team != team && piece.AttachedTo is null && piece.Occupies(point));
+      if (friendlyTouching && !enemyTouching)
+      {
+        controlledPoints++;
+      }
+    }
+
+    return controlledPoints;
+  }
+
+  private void InitializeModeObjectives()
+  {
+    _modeScores.Clear();
+    foreach (TeamName team in Team.ActiveTeams)
+    {
+      _modeScores[team] = 0;
+    }
+
+    _treasureCarrierId = null;
+    _treasurePosition = _gameMode == GameMode.Plunder
+      ? MatchRules.GetTreasureSpawn(_board)
+      : null;
   }
 
   private bool IsOnlineLocalTurn()
@@ -1191,7 +1262,8 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    bool isSpecialTarget = actor.Definition.Type switch
+    bool plunderTreasureTarget = target is null && CanPickUpTreasure(actor, targetPosition);
+    bool isSpecialTarget = plunderTreasureTarget || actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
       PieceType.Engineer => true,
@@ -1204,7 +1276,9 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    string ability = actor.Definition.Type == PieceType.Engineer
+    string ability = plunderTreasureTarget
+      ? "PickUpTreasure"
+      : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
       : actor.Definition.Type == PieceType.Mercenary
         ? "Fire"
@@ -1346,6 +1420,15 @@ internal sealed class Game1 : Game
     {
       _conquestScores[score.Team.ToTeamName()] = score.Score;
     }
+    _modeScores.Clear();
+    foreach (NetworkModeTeamState score in state.ModeScores ?? [])
+    {
+      _modeScores[score.Team.ToTeamName()] = score.Score;
+    }
+    _treasurePosition = state.Treasure is { X: int treasureX, Y: int treasureY }
+      ? (treasureX, treasureY)
+      : null;
+    _treasureCarrierId = state.Treasure?.CarrierId;
     if (state.Winner is NetworkTeam winner)
     {
       _winningTeam = winner.ToTeamName();
@@ -1440,6 +1523,9 @@ internal sealed class Game1 : Game
     _interestEnabled = configuration.InterestEnabled;
     _interestPercent = configuration.InterestPercent;
     _escortRoyalHealthPercent = configuration.EscortRoyalHealthPercent;
+    _dominionWinScore = configuration.DominionWinScore;
+    _plunderWinScore = configuration.PlunderWinScore;
+    _plunderDeliveryScore = configuration.PlunderDeliveryScore;
     _playerCount = configuration.PlayerCount;
     ConfigureTeamsForPlayerCount();
     EnsurePurchaseSelectionIsValid();
@@ -1731,8 +1817,11 @@ internal sealed class Game1 : Game
     Piece cargo = piece.Definition.Type == PieceType.Ox
       ? pieceSetup.GetAttachedPiece(piece, AttachmentKind.Carried)
       : null;
-    return cargo?.Definition.Category == PieceCategory.Mechanical
+    rule = cargo?.Definition.Category == PieceCategory.Mechanical
       ? rule with { MoveRange = 3, MovePattern = RuleShape.Any }
+      : rule;
+    return IsTreasureCarrier(piece)
+      ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) }
       : rule;
   }
 
@@ -2001,6 +2090,11 @@ internal sealed class Game1 : Game
       return highlightedSquares;
     }
 
+    if (_treasurePosition is (int treasureX, int treasureY) treasurePosition && CanPickUpTreasure(piece, treasurePosition))
+    {
+      highlightedSquares.Add(treasurePosition);
+    }
+
     for (int y = 0; y < _board.BoardArray.GetLength(0); y++)
     {
       for (int x = 0; x < _board.BoardArray.GetLength(1); x++)
@@ -2117,6 +2211,8 @@ internal sealed class Game1 : Game
       return;
     }
 
+    DropTreasure(damagedPiece);
+
     if (damagedPiece.Team == TeamName.Neutral)
     {
       pieceSetup.RemovePiece(damagedPiece);
@@ -2168,6 +2264,22 @@ internal sealed class Game1 : Game
     Console.WriteLine($"{defeatedRoyal.Team}'s royal has respawned at the back line.");
   }
 
+  private bool IsTreasureCarrier(Piece piece) =>
+    _gameMode == GameMode.Plunder && !string.IsNullOrWhiteSpace(_treasureCarrierId) &&
+    piece.NetworkId == _treasureCarrierId;
+
+  private void DropTreasure(Piece piece)
+  {
+    if (!IsTreasureCarrier(piece))
+    {
+      return;
+    }
+
+    _treasureCarrierId = null;
+    _treasurePosition = piece.Position;
+    Console.WriteLine("The fallen carrier dropped the treasure.");
+  }
+
   private bool TryUseSpecialAbility(
     Piece actor,
     (int x, int y) targetPosition,
@@ -2185,6 +2297,11 @@ internal sealed class Game1 : Game
     if (actor.Definition.Type == PieceType.Mercenary && targetPosition == actor.Position)
     {
       return TryFireMercenary(actor);
+    }
+
+    if (TryPickUpTreasure(actor, targetPosition, targetPiece))
+    {
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Spy &&
@@ -2206,6 +2323,7 @@ internal sealed class Game1 : Game
     if (actor.Definition.Type == PieceType.Guard &&
         targetPiece != null &&
         targetPiece.Team == actor.Team &&
+        !IsTreasureCarrier(targetPiece) &&
         AbilityRules.CanGuardAttach(
           UnitRules.GetRequired(actor.Definition.Type.ToString()),
           UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
@@ -2223,6 +2341,7 @@ internal sealed class Game1 : Game
         targetPiece != null &&
         targetPiece.Team == actor.Team &&
         targetPiece != actor &&
+        !IsTreasureCarrier(targetPiece) &&
         AbilityRules.CanOxAttach(
           UnitRules.GetRequired(actor.Definition.Type.ToString()),
           UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
@@ -2237,6 +2356,30 @@ internal sealed class Game1 : Game
     }
 
     return false;
+  }
+
+  private bool TryPickUpTreasure(Piece actor, (int x, int y) targetPosition, Piece targetPiece)
+  {
+    if (targetPiece is not null || !CanPickUpTreasure(actor, targetPosition))
+    {
+      return false;
+    }
+
+    _treasureCarrierId = actor.NetworkId;
+    _treasurePosition = null;
+    actor.HasAttackedThisTurn = true;
+    Console.WriteLine($"{actor.Definition.Type} picked up the treasure.");
+    CompleteAction();
+    return true;
+  }
+
+  private bool CanPickUpTreasure(Piece actor, (int x, int y) position)
+  {
+    return _gameMode == GameMode.Plunder && _treasurePosition == position &&
+      string.IsNullOrWhiteSpace(_treasureCarrierId) && actor.AttachedTo is null &&
+      !actor.HasAttackedThisTurn && actor.Definition.Size == (1, 1) &&
+      actor.Definition.Category != PieceCategory.Royal &&
+      Math.Abs(actor.Position.x - position.x) + Math.Abs(actor.Position.y - position.y) == 1;
   }
 
   private bool TryFireMercenary(Piece mercenary)
@@ -2458,7 +2601,7 @@ internal sealed class Game1 : Game
     {
       foreach (Piece candidate in pieceSetup.Pieces)
       {
-        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
+        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null && !IsTreasureCarrier(candidate) &&
             candidate.Definition.Size == (1, 1) && AreAdjacent(piece, candidate))
         {
           companions.Add(candidate);
@@ -2587,6 +2730,14 @@ internal sealed class Game1 : Game
     }
 
     Console.WriteLine($"Moved {movedPiece.Definition.Type} to ({destination.x}, {destination.y}).");
+    if (TryDeliverTreasure(movedPiece))
+    {
+      selectedPiece = null;
+      if (_screen == Screen.GameOver)
+      {
+        return;
+      }
+    }
     if (HasEscortVictory(movedPiece))
     {
       _winningTeam = movedPiece.Team;
@@ -2714,6 +2865,34 @@ internal sealed class Game1 : Game
       }
       if (target != null && target.Team != attacker.Team) ResolveDamage(attacker, target);
     }
+  }
+
+  private bool TryDeliverTreasure(Piece piece)
+  {
+    if (_gameMode != GameMode.Plunder || !IsTreasureCarrier(piece) ||
+        !IsInTeamTerritory(piece.Position, piece.Team))
+    {
+      return false;
+    }
+
+    int score = Math.Clamp(
+      _modeScores.GetValueOrDefault(piece.Team) + _plunderDeliveryScore,
+      0,
+      _plunderWinScore
+    );
+    _modeScores[piece.Team] = score;
+    _treasureCarrierId = null;
+    _treasurePosition = MatchRules.GetTreasureSpawn(_board);
+    Console.WriteLine($"{UiText.GetTeamDisplayName(piece.Team)} delivered the treasure for {_plunderDeliveryScore} points.");
+
+    if (score < _plunderWinScore)
+    {
+      return true;
+    }
+
+    _winningTeam = piece.Team;
+    _screen = Screen.GameOver;
+    return true;
   }
 
   private void PerformBombardAttack(Piece attacker, Piece target)
@@ -3569,12 +3748,11 @@ internal sealed class Game1 : Game
     return character != default;
   }
 
-  private bool IsEditableEconomyRow(int index) => index is 0 or 1 or 2 or 3 or 4 or 6 or 7 or 9 ||
-    (_gameMode is GameMode.Conquest or GameMode.Escort && index == 10);
+  private static bool IsEditableEconomyRow(int index) => index is 0 or 1 or 2 or 3 or 4 or 6 or 7 or 9;
 
   private bool TryBeginEconomyTextInput(Point position)
   {
-    for (int index = 0; index <= (_gameMode is GameMode.Conquest or GameMode.Escort ? 10 : 9); index++)
+    for (int index = 0; index <= 9; index++)
     {
       if (IsEditableEconomyRow(index) && GetEconomyValueBounds(index).Contains(position))
       {
@@ -3651,14 +3829,6 @@ internal sealed class Game1 : Game
       case 9 when int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int interest):
         _interestPercent = Math.Clamp(interest, -100, 200);
         break;
-      case 10 when _gameMode == GameMode.Conquest &&
-        int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int conquestScore):
-        _conquestWinScore = Math.Max(1, conquestScore);
-        break;
-      case 10 when _gameMode == GameMode.Escort &&
-        int.TryParse(_economyInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int escortHealth):
-        _escortRoyalHealthPercent = Math.Clamp(escortHealth, 1, 100);
-        break;
     }
 
     _economyInputIndex = -1;
@@ -3694,6 +3864,9 @@ internal sealed class Game1 : Game
     _interestPercent = Globals.InterestPercent;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
     _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
+    _dominionWinScore = Globals.DefaultDominionWinScore;
+    _plunderWinScore = Globals.DefaultPlunderWinScore;
+    _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
     EnsurePurchaseSelectionIsValid();
     CancelEconomyTextInput();
   }
@@ -3802,7 +3975,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    int height = _setupStage == SetupStage.Economy ? (_gameMode is GameMode.Conquest or GameMode.Escort ? 920 : 870) : 620;
+    int height = _setupStage == SetupStage.Economy ? 870 : 620;
     return UiLayout.Centered(viewport, 640, height, UiTheme.SpaceLg);
   }
 
@@ -3940,6 +4113,31 @@ internal sealed class Game1 : Game
     return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
   }
 
+  private Rectangle GetModeSettingsRowBounds(int index)
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 146 + index * 62, content.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetModeSettingsDecreaseButtonBounds(int index)
+  {
+    Rectangle row = GetModeSettingsRowBounds(index);
+    return new Rectangle(row.Right - 204, row.Y, 44, row.Height);
+  }
+
+  private Rectangle GetModeSettingsValueBounds(int index)
+  {
+    Rectangle row = GetModeSettingsRowBounds(index);
+    return new Rectangle(row.Right - 152, row.Y, 100, row.Height);
+  }
+
+  private Rectangle GetModeSettingsIncreaseButtonBounds(int index)
+  {
+    Rectangle row = GetModeSettingsRowBounds(index);
+    return new Rectangle(row.Right - 44, row.Y, 44, row.Height);
+  }
+
   private static string GetBoardFileName(BoardSize boardSize)
   {
     return boardSize switch
@@ -3982,6 +4180,8 @@ internal sealed class Game1 : Game
     _setupTeam = activeTeams[0];
     _conquestScores.Clear();
     foreach (TeamName team in activeTeams) _conquestScores[team] = 0;
+    _modeScores.Clear();
+    foreach (TeamName team in activeTeams) _modeScores[team] = 0;
   }
 
   private void SetPlayerCount(int playerCount)
@@ -4045,6 +4245,9 @@ internal sealed class Game1 : Game
     _interestEnabled = Globals.InterestEnabled;
     _interestPercent = Globals.InterestPercent;
     _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
+    _dominionWinScore = Globals.DefaultDominionWinScore;
+    _plunderWinScore = Globals.DefaultPlunderWinScore;
+    _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
     CancelEconomyTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
@@ -4085,6 +4288,9 @@ internal sealed class Game1 : Game
     _interestEnabled = Globals.InterestEnabled;
     _interestPercent = Globals.InterestPercent;
     _escortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent;
+    _dominionWinScore = Globals.DefaultDominionWinScore;
+    _plunderWinScore = Globals.DefaultPlunderWinScore;
+    _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
@@ -4128,7 +4334,10 @@ internal sealed class Game1 : Game
       _playerCount,
       _interestEnabled,
       _interestPercent,
-      _escortRoyalHealthPercent
+      _escortRoyalHealthPercent,
+      _dominionWinScore,
+      _plunderWinScore,
+      _plunderDeliveryScore
     );
   }
 
@@ -4563,21 +4772,52 @@ internal sealed class Game1 : Game
           {
             _interestPercent = Math.Min(200, _interestPercent + 5);
           }
-          else if (_gameMode == GameMode.Conquest && GetEconomyDecreaseButtonBounds(10).Contains(mousePosition))
+          else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
+          {
+            _setupStage = SetupStage.ModeSettings;
+          }
+        }
+        else if (_setupStage == SetupStage.ModeSettings)
+        {
+          if (_gameMode == GameMode.Conquest && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
           {
             _conquestWinScore = Math.Max(1, _conquestWinScore - 1);
           }
-          else if (_gameMode == GameMode.Conquest && GetEconomyIncreaseButtonBounds(10).Contains(mousePosition))
+          else if (_gameMode == GameMode.Conquest && GetModeSettingsIncreaseButtonBounds(0).Contains(mousePosition))
           {
             _conquestWinScore++;
           }
-          else if (_gameMode == GameMode.Escort && GetEconomyDecreaseButtonBounds(10).Contains(mousePosition))
+          else if (_gameMode == GameMode.Escort && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
           {
             _escortRoyalHealthPercent = Math.Max(1, _escortRoyalHealthPercent - 5);
           }
-          else if (_gameMode == GameMode.Escort && GetEconomyIncreaseButtonBounds(10).Contains(mousePosition))
+          else if (_gameMode == GameMode.Escort && GetModeSettingsIncreaseButtonBounds(0).Contains(mousePosition))
           {
             _escortRoyalHealthPercent = Math.Min(100, _escortRoyalHealthPercent + 5);
+          }
+          else if (_gameMode == GameMode.Dominion && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
+          {
+            _dominionWinScore = Math.Max(1, _dominionWinScore - 1);
+          }
+          else if (_gameMode == GameMode.Dominion && GetModeSettingsIncreaseButtonBounds(0).Contains(mousePosition))
+          {
+            _dominionWinScore++;
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
+          {
+            _plunderWinScore = Math.Max(1, _plunderWinScore - 1);
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsIncreaseButtonBounds(0).Contains(mousePosition))
+          {
+            _plunderWinScore++;
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsDecreaseButtonBounds(1).Contains(mousePosition))
+          {
+            _plunderDeliveryScore = Math.Max(1, _plunderDeliveryScore - 1);
+          }
+          else if (_gameMode == GameMode.Plunder && GetModeSettingsIncreaseButtonBounds(1).Contains(mousePosition))
+          {
+            _plunderDeliveryScore++;
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
@@ -4702,11 +4942,14 @@ internal sealed class Game1 : Game
       case SetupStage.Economy:
         _setupStage = SetupStage.Battlefield;
         break;
+      case SetupStage.ModeSettings:
+        _setupStage = SetupStage.Economy;
+        break;
       case SetupStage.RoyalSelection:
         int setupIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
         if (setupIndex <= 0)
         {
-          _setupStage = SetupStage.Economy;
+          _setupStage = SetupStage.ModeSettings;
           break;
         }
         TeamName previousTeam = Team.ActiveTeams[setupIndex - 1];
@@ -4721,7 +4964,7 @@ internal sealed class Game1 : Game
         _selectedRoyalIndex = 0;
         break;
       default:
-        _setupStage = SetupStage.Economy;
+        _setupStage = SetupStage.ModeSettings;
         break;
     }
   }
@@ -4787,8 +5030,8 @@ internal sealed class Game1 : Game
 
   private void DrawSetupProgress(Rectangle content)
   {
-    SetupStage[] stages = [SetupStage.Mode, SetupStage.Battlefield, SetupStage.Economy, SetupStage.RoyalSelection];
-    string[] labels = ["MODE", "MAP", "ECONOMY", "ROYAL"];
+    SetupStage[] stages = [SetupStage.Mode, SetupStage.Battlefield, SetupStage.Economy, SetupStage.ModeSettings, SetupStage.RoyalSelection];
+    string[] labels = ["MODE", "MAP", "ECONOMY", "RULES", "ROYAL"];
     Rectangle row = new(content.X, content.Y + 62, content.Width, 18);
     int currentIndex = Array.IndexOf(stages, _setupStage);
 
@@ -4990,6 +5233,12 @@ internal sealed class Game1 : Game
       return;
     }
 
+    if (_setupStage == SetupStage.ModeSettings)
+    {
+      DrawModeSettingsSetup(panel);
+      return;
+    }
+
     PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
     Color teamColour = UiTheme.GetTeamColour(_setupTeam);
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
@@ -5037,6 +5286,16 @@ internal sealed class Game1 : Game
         "ESCORT",
         "Get your royal onto the enemy back edge before the opposing royal does.",
         $"Royals start at {_escortRoyalHealthPercent}% health and respawn at their own back edge. Palace is unavailable."
+      ),
+      GameMode.Dominion => (
+        "DOMINION",
+        "Hold any of three control points across No-Man's-Land to score at the end of your turn.",
+        $"Each uncontested point scores 1. First to {_dominionWinScore} wins."
+      ),
+      GameMode.Plunder => (
+        "PLUNDER",
+        "Claim the central treasure, then carry it back into your own territory.",
+        $"Each delivery scores {_plunderDeliveryScore}; first to {_plunderWinScore} wins."
       ),
       _ => (
         "REGICIDE",
@@ -5153,17 +5412,6 @@ internal sealed class Game1 : Game
       $"{_unitPricePercent}%",
       _interestEnabled ? "ON" : "OFF", $"{_interestPercent}%"
     ];
-    if (_gameMode == GameMode.Conquest)
-    {
-      labels.Add("Conquest control to win");
-      values.Add(_conquestWinScore.ToString());
-    }
-    else if (_gameMode == GameMode.Escort)
-    {
-      labels.Add("Escort royal health");
-      values.Add($"{_escortRoyalHealthPercent}%");
-    }
-
     for (int index = 0; index < labels.Count; index++)
     {
       Rectangle row = GetEconomyRowBounds(index);
@@ -5199,17 +5447,69 @@ internal sealed class Game1 : Game
     {
       economyHint += $" Interest applies at the start of normal turns only: {_interestPercent}%.";
     }
-    if (_gameMode == GameMode.Conquest)
-    {
-      economyHint += $" First side to {_conquestWinScore} control wins.";
-    }
-    else if (_gameMode == GameMode.Escort)
-    {
-      economyHint += $" Royals begin at {_escortRoyalHealthPercent}% health.";
-    }
     int hintY = GetEconomyRowBounds(labels.Count - 1).Bottom + UiTheme.SpaceSm;
     _ui.TextWrapped(economyHint, new Rectangle(content.X, hintY, content.Width, GetSetupConfirmButtonBounds().Y - hintY - UiTheme.SpaceSm), UiTheme.TextMuted, 0.68f);
-    DrawMenuButton(GetSetupConfirmButtonBounds(), _onlineHostingSetup ? "HOST ROOM" : "CONTINUE", UiButtonTone.Primary);
+    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
+  }
+
+  private void DrawModeSettingsSetup(Rectangle panel)
+  {
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    (string title, string description, string[] labels, string[] values) = _gameMode switch
+    {
+      GameMode.Conquest => (
+        "CONQUEST RULES",
+        "Units in the central zone push the control score at the end of their team's turn.",
+        ["Control to win"],
+        [_conquestWinScore.ToString(CultureInfo.InvariantCulture)]
+      ),
+      GameMode.Escort => (
+        "ESCORT RULES",
+        "Royals begin at the selected health and respawn at their own back edge when defeated.",
+        ["Royal starting health"],
+        [$"{_escortRoyalHealthPercent}%"]
+      ),
+      GameMode.Dominion => (
+        "DOMINION RULES",
+        "Three points span No-Man's-Land. Touch an uncontested point with any non-attached unit to score it.",
+        ["Score to win"],
+        [_dominionWinScore.ToString(CultureInfo.InvariantCulture)]
+      ),
+      GameMode.Plunder => (
+        "PLUNDER RULES",
+        "A 1 x 1 non-Royal unit spends an action beside the treasure to carry it home. Carriers move 1 less and drop it if defeated.",
+        ["Score to win", "Points per delivery"],
+        [_plunderWinScore.ToString(CultureInfo.InvariantCulture), _plunderDeliveryScore.ToString(CultureInfo.InvariantCulture)]
+      ),
+      _ => (
+        "REGICIDE RULES",
+        "Destroy the opposing royal to win. This classic mode has no extra objective settings.",
+        Array.Empty<string>(),
+        Array.Empty<string>()
+      )
+    };
+
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text(title, new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
+    _ui.Text("These settings apply only to the selected game mode.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
+    _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
+    _ui.TextWrapped(description, new Rectangle(content.X, content.Y + 88, content.Width, 42), UiTheme.TextPrimary, 0.7f);
+
+    for (int index = 0; index < labels.Length; index++)
+    {
+      Rectangle row = GetModeSettingsRowBounds(index);
+      Rectangle valueBounds = GetModeSettingsValueBounds(index);
+      DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+      _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
+      DrawMenuButton(GetModeSettingsDecreaseButtonBounds(index), "-", UiButtonTone.Neutral);
+      DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
+      _ui.CenterText(values[index], valueBounds, UiTheme.GoldBright, 0.78f);
+      DrawMenuButton(GetModeSettingsIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
+    }
+
+    DrawMenuButton(GetSetupConfirmButtonBounds(), _onlineHostingSetup ? "HOST ROOM" : "CHOOSE ROYALS", UiButtonTone.Primary);
   }
 
   private void DrawPauseScreen()
@@ -5367,6 +5667,8 @@ internal sealed class Game1 : Game
     {
       GameMode.Conquest => "Their control pushed the conquest bar to its side.",
       GameMode.Escort => "Their royal reached the opposing back edge.",
+      GameMode.Dominion => "They held enough uncontested control points.",
+      GameMode.Plunder => "They returned enough treasure to their territory.",
       _ => "The opposing royal has fallen."
     };
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
@@ -5415,6 +5717,10 @@ internal sealed class Game1 : Game
       if (_gameMode == GameMode.Conquest)
       {
         contentHeight += _playerCount > 2 ? 20 + _teams.Count * 26 : 60;
+      }
+      else if (_gameMode is GameMode.Dominion or GameMode.Plunder)
+      {
+        contentHeight += 20 + _teams.Count * 26;
       }
       if (_onlineClient is not null)
       {
@@ -5612,6 +5918,28 @@ internal sealed class Game1 : Game
     if (_gameMode == GameMode.Conquest)
     {
       DrawConquestControlBar(new Rectangle(content.X, moneyY + UiTheme.SpaceXs, content.Width, _playerCount > 2 ? 20 + _teams.Count * 26 : 48));
+    }
+    else if (_gameMode == GameMode.Dominion)
+    {
+      DrawModeScoreboard(new Rectangle(content.X, moneyY + UiTheme.SpaceXs, content.Width, 20 + _teams.Count * 26), "DOMINION SCORE", _dominionWinScore);
+    }
+    else if (_gameMode == GameMode.Plunder)
+    {
+      DrawModeScoreboard(new Rectangle(content.X, moneyY + UiTheme.SpaceXs, content.Width, 20 + _teams.Count * 26), "PLUNDER SCORE", _plunderWinScore);
+    }
+  }
+
+  private void DrawModeScoreboard(Rectangle bounds, string title, int scoreToWin)
+  {
+    _ui.Text(title, new Vector2(bounds.X, bounds.Y), UiTheme.Gold, 0.7f);
+    int rowY = bounds.Y + 20;
+    foreach (Team team in _teams)
+    {
+      Color colour = UiTheme.GetTeamColour(team.TeamName);
+      Rectangle row = new(bounds.X, rowY, bounds.Width, 22);
+      DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+      _ui.LabelValueRow(row, UiText.GetTeamDisplayName(team.TeamName), $"{_modeScores.GetValueOrDefault(team.TeamName)}/{scoreToWin}", colour);
+      rowY += 26;
     }
   }
 
@@ -5847,6 +6175,16 @@ internal sealed class Game1 : Game
 
   private string GetSelectedPieceControlHint(Piece piece)
   {
+    if (IsTreasureCarrier(piece))
+    {
+      return "CARRYING TREASURE - MOVE IS REDUCED BY 1; REACH YOUR TERRITORY";
+    }
+
+    if (_treasurePosition is (int treasureX, int treasureY) treasure && CanPickUpTreasure(piece, treasure))
+    {
+      return "RIGHT-CLICK THE TREASURE TO PICK IT UP";
+    }
+
     if (piece.Definition.Type == PieceType.Farm)
     {
       return $"STRUCTURE - EARNS {_farmIncomePerTurn} GOLD EACH OWNER TURN; UNITS PASS THROUGH";
@@ -5939,6 +6277,12 @@ internal sealed class Game1 : Game
           {
             DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0.101f);
             DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0.102f);
+          }
+          else if (_gameMode == GameMode.Dominion && MatchRules.GetDominionControlPoints(_board).Contains(boardPosition))
+          {
+            Rectangle objective = new(cellBounds.Center.X - 13, cellBounds.Center.Y - 13, 26, 26);
+            DrawWorldRectangle(objective, new Color(218, 180, 91, 150), 0.108f);
+            DrawWorldOutline(objective, UiTheme.GoldBright, 0.109f);
           }
 
           if (_terrain.IsLake(boardPosition))
@@ -6067,6 +6411,13 @@ internal sealed class Game1 : Game
             );
           }
 
+          if (_gameMode == GameMode.Plunder && _treasurePosition == boardPosition)
+          {
+            Rectangle treasure = new(cellBounds.Center.X - 10, cellBounds.Center.Y - 10, 20, 20);
+            DrawWorldRectangle(treasure, UiTheme.GoldBright, 0.113f);
+            DrawWorldOutline(treasure, UiTheme.Shadow, 0.114f);
+          }
+
           if (isValidMove)
           {
             DrawWorldRectangle(cellBounds, UiTheme.MoveOverlay, 0.102f);
@@ -6117,6 +6468,12 @@ internal sealed class Game1 : Game
       );
 
       DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), 0.111f);
+      if (IsTreasureCarrier(piece))
+      {
+        Rectangle treasureBadge = new(pieceBounds.Right - 20, pieceBounds.Y + 5, 15, 15);
+        DrawWorldRectangle(treasureBadge, UiTheme.GoldBright, 0.127f);
+        DrawWorldOutline(treasureBadge, UiTheme.Shadow, 0.128f);
+      }
     }
 
     // Attached units share their host's board position. Rendering them as badges keeps

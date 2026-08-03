@@ -7,6 +7,26 @@ namespace MedivalChess.Tests;
 public sealed class SharedUnitRulesTests
 {
   [Fact]
+  public void SharedMatchRules_PlaceDominionPointsAndTreasureOnTheBoardCentre()
+  {
+    Board board = new("board_medium.json");
+
+    IReadOnlyList<(int x, int y)> points = MatchRules.GetDominionControlPoints(board);
+    (int x, int y) treasure = MatchRules.GetTreasureSpawn(board);
+
+    Assert.Equal(3, points.Count);
+    Assert.Equal(3, points.Distinct().Count());
+    Assert.All(points, point =>
+    {
+      Assert.True(board.ContainsCell(point));
+      Assert.Null(MatchRules.GetSquareOwner(board, "Dominion", point));
+      Assert.Null(MatchRules.GetSquareOwner(board, "Dominion", point, 4));
+    });
+    Assert.True(board.ContainsCell(treasure));
+    Assert.Null(MatchRules.GetSquareOwner(board, "Plunder", treasure));
+  }
+
+  [Fact]
   public void Teacher_IsNotPartOfTheSharedOrClientRoster()
   {
     Assert.False(UnitRules.TryGet("Teacher", out _));

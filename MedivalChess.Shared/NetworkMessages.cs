@@ -43,6 +43,8 @@ public sealed record NetworkImprovement(
 
 public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal);
 public sealed record NetworkConquestTeamState(NetworkTeam Team, int Score);
+public sealed record NetworkModeTeamState(NetworkTeam Team, int Score);
+public sealed record NetworkTreasureState(int? X, int? Y, string? CarrierId);
 
 public sealed record NetworkMatchConfiguration(
   string BoardSize,
@@ -64,7 +66,10 @@ public sealed record NetworkMatchConfiguration(
   int PlayerCount = 2,
   bool InterestEnabled = Globals.InterestEnabled,
   int InterestPercent = Globals.InterestPercent,
-  int EscortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent
+  int EscortRoyalHealthPercent = Globals.DefaultEscortRoyalHealthPercent,
+  int DominionWinScore = Globals.DefaultDominionWinScore,
+  int PlunderWinScore = Globals.DefaultPlunderWinScore,
+  int PlunderDeliveryScore = Globals.DefaultPlunderDeliveryScore
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on
@@ -98,7 +103,9 @@ public sealed record NetworkGameState(
   IReadOnlyList<NetworkImprovement>? Improvements = null,
   NetworkTeam? Winner = null,
   int ConquestScore = 0,
-  IReadOnlyList<NetworkConquestTeamState>? ConquestScores = null
+  IReadOnlyList<NetworkConquestTeamState>? ConquestScores = null,
+  IReadOnlyList<NetworkModeTeamState>? ModeScores = null,
+  NetworkTreasureState? Treasure = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);

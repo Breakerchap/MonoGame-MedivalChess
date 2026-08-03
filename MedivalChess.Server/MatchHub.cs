@@ -381,6 +381,10 @@ public sealed class MatchStore
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
       MoveEmissaryCompanions(foundMatch, piece, oldX, oldY);
       TriggerMinesAlongMovement(foundMatch, piece, movementPath);
+      if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
+      {
+        TryDeliverTreasure(foundMatch, piece);
+      }
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id) &&
           IsEscortVictory(foundMatch, piece, request.ToX, request.ToY))
       {
@@ -542,25 +546,29 @@ public sealed class MatchStore
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
       bool engineerDemolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(request.Ability);
+      bool plunderPickup = foundMatch.Configuration.GameMode == "Plunder" &&
+        string.Equals(request.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
       if (actor.HasAttackedThisTurn && !engineerDemolition)
       {
         return new(false, "That unit has already acted this turn.", foundMatch.State());
       }
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
-      if (actor.Type != "Mercenary" && !CanUseActionSquare(actor, request.TargetX, request.TargetY))
+      if (!plunderPickup && actor.Type != "Mercenary" && !CanUseActionSquare(actor, request.TargetX, request.TargetY))
       {
         return new(false, "That square is outside the unit's special-action range.", foundMatch.State());
       }
 
-      bool applied = actor.Type switch
-      {
-        "Spy" => TryMarkSpyTarget(foundMatch, actorIndex, target),
-        "Engineer" => TryUseEngineerSpecial(foundMatch, actorIndex, request.Ability, request.TargetX, request.TargetY, target),
-        "Guard" => TryAttachGuard(foundMatch, actorIndex, targetIndex),
-        "Ox" => TryAttachOxCargo(foundMatch, actorIndex, targetIndex),
-        "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
-        _ => false
-      };
+      bool applied = plunderPickup
+        ? TryPickUpTreasure(foundMatch, actorIndex, request.TargetX, request.TargetY)
+        : actor.Type switch
+        {
+          "Spy" => TryMarkSpyTarget(foundMatch, actorIndex, target),
+          "Engineer" => TryUseEngineerSpecial(foundMatch, actorIndex, request.Ability, request.TargetX, request.TargetY, target),
+          "Guard" => TryAttachGuard(foundMatch, actorIndex, targetIndex),
+          "Ox" => TryAttachOxCargo(foundMatch, actorIndex, targetIndex),
+          "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
+          _ => false
+        };
       if (!applied) return new(false, "That special action has no valid target.", foundMatch.State());
 
       SpendAction(foundMatch, player);
@@ -927,12 +935,15 @@ public sealed class MatchStore
         !new[] { "Small", "Medium", "Large" }.Contains(configuration.BoardSize) ||
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.ForestDensity) ||
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.WaterwayDensity) ||
-        !new[] { "Regicide", "Conquest", "Escort" }.Contains(configuration.GameMode) ||
+        !new[] { "Regicide", "Conquest", "Escort", "Dominion", "Plunder" }.Contains(configuration.GameMode) ||
         !TeamRules.IsValidPlayerCount(configuration.PlayerCount) ||
         configuration.StartingCash < 0 ||
         configuration.InitialBuysPerTurn < 1 ||
         configuration.InitialBuyTurnsPerTeam < 1 ||
         configuration.ConquestWinScore < 1 ||
+        configuration.DominionWinScore < 1 ||
+        configuration.PlunderWinScore < 1 ||
+        configuration.PlunderDeliveryScore < 1 ||
         configuration.UnitMaintenancePercent is < 0 or > 100 ||
         configuration.InterestPercent is < -100 or > 200 ||
         configuration.EscortRoyalHealthPercent is < 1 or > 100 ||
@@ -1085,11 +1096,18 @@ public sealed class MatchStore
 
   private static UnitRule GetEffectiveMovementRule(Match match, NetworkPiece piece, UnitRule rule)
   {
-    if (rule.Type != "Ox") return rule;
-    NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
-      other.AttachmentKind == NetworkAttachmentKind.Carried);
-    return cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) && cargoRule.Category == RuleCategory.Mechanical
-      ? rule with { MoveRange = 3, MovePattern = RuleShape.Any }
+    if (rule.Type == "Ox")
+    {
+      NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
+        other.AttachmentKind == NetworkAttachmentKind.Carried);
+      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) && cargoRule.Category == RuleCategory.Mechanical)
+      {
+        rule = rule with { MoveRange = 3, MovePattern = RuleShape.Any };
+      }
+    }
+
+    return match.TreasureCarrierId == piece.Id
+      ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) }
       : rule;
   }
 
@@ -1310,6 +1328,12 @@ public sealed class MatchStore
 
   private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
   {
+    if (match.TreasureCarrierId == defeatedPiece.Id)
+    {
+      match.TreasureCarrierId = null;
+      match.TreasurePosition = (defeatedPiece.X, defeatedPiece.Y);
+    }
+
     if (defeatedPiece.Team == NetworkTeam.Neutral)
     {
       RemovePiece(match, defeatedPiece.Id);
@@ -1385,6 +1409,30 @@ public sealed class MatchStore
     return OccupiedSquares(rule, (x, y)).Any(square => MatchRules.IsOnEnemyBackEdge(board, piece.Team, square));
   }
 
+  private static bool TryDeliverTreasure(Match match, NetworkPiece piece)
+  {
+    if (match.Configuration.GameMode != "Plunder" || match.TreasureCarrierId != piece.Id ||
+        !NetworkBoardRules.IsInTeamTerritory(match.Configuration, piece.Team, piece.X, piece.Y))
+    {
+      return false;
+    }
+
+    int score = Math.Clamp(
+      match.ModeScores[piece.Team] + match.Configuration.PlunderDeliveryScore,
+      0,
+      match.Configuration.PlunderWinScore
+    );
+    match.ModeScores[piece.Team] = score;
+    match.TreasureCarrierId = null;
+    match.TreasurePosition = match.TreasureSpawn;
+    if (score >= match.Configuration.PlunderWinScore)
+    {
+      match.Winner = piece.Team;
+    }
+
+    return true;
+  }
+
   private static void MoveEmissaryCompanions(Match match, NetworkPiece emissary, int oldEmissaryX, int oldEmissaryY)
   {
     if (emissary.Type != "Emissary") return;
@@ -1392,7 +1440,7 @@ public sealed class MatchStore
     int deltaY = emissary.Y - oldEmissaryY;
     List<int> companions = match.Pieces
       .Select((piece, index) => (piece, index))
-      .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
+      .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Id != match.TreasureCarrierId && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
         UnitRules.TryGet(entry.piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
         Math.Abs(entry.piece.X - oldEmissaryX) + Math.Abs(entry.piece.Y - oldEmissaryY) == 1)
       .Select(entry => entry.index).ToList();
@@ -1440,6 +1488,28 @@ public sealed class MatchStore
     NetworkPiece actor = match.Pieces[actorIndex];
     if (target is null || target.Team == actor.Team) return false;
     match.Pieces[actorIndex] = actor with { MarkedTargetId = target.Id };
+    return true;
+  }
+
+  private static bool TryPickUpTreasure(Match match, int actorIndex, int targetX, int targetY)
+  {
+    if (match.Configuration.GameMode != "Plunder" || match.TreasureCarrierId is not null ||
+        !match.TreasurePosition.HasValue || match.TreasurePosition.Value != (targetX, targetY))
+    {
+      return false;
+    }
+
+    NetworkPiece actor = match.Pieces[actorIndex];
+    if (actor.AttachedToId is not null || !UnitRules.TryGet(actor.Type, out UnitRule rule) ||
+        rule.Width != 1 || rule.Height != 1 || rule.Category == RuleCategory.Royal ||
+        Math.Abs(actor.X - targetX) + Math.Abs(actor.Y - targetY) != 1)
+    {
+      return false;
+    }
+
+    match.TreasureCarrierId = actor.Id;
+    match.TreasurePosition = null;
+    match.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
     return true;
   }
 
@@ -1504,7 +1574,7 @@ public sealed class MatchStore
     if (targetIndex < 0) return false;
     NetworkPiece guard = match.Pieces[actorIndex];
     NetworkPiece target = match.Pieces[targetIndex];
-    if (target.Id == guard.Id || target.Team != guard.Team || !UnitRules.TryGet(guard.Type, out UnitRule guardRule) ||
+    if (target.Id == guard.Id || target.Id == match.TreasureCarrierId || target.Team != guard.Team || !UnitRules.TryGet(guard.Type, out UnitRule guardRule) ||
         !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
         !AbilityRules.CanGuardAttach(
           guardRule,
@@ -1537,7 +1607,7 @@ public sealed class MatchStore
     NetworkPiece target = match.Pieces[targetIndex];
     bool hasCargo = match.Pieces.Any(piece => piece.AttachedToId == ox.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Carried);
-    if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id ||
+    if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id || target.Id == match.TreasureCarrierId ||
         !AbilityRules.CanOxAttach(oxRule, targetRule, target.AttachedToId is not null, hasCargo)) return false;
 
     match.Pieces[targetIndex] = target with
@@ -1664,11 +1734,46 @@ public sealed class MatchStore
         return;
       }
     }
+    else if (match.Configuration.GameMode == "Dominion")
+    {
+      int score = Math.Clamp(
+        match.ModeScores[player.Team] + GetDominionControlledPointCount(match, player.Team),
+        0,
+        match.Configuration.DominionWinScore
+      );
+      match.ModeScores[player.Team] = score;
+      if (score >= match.Configuration.DominionWinScore)
+      {
+        match.Winner = player.Team;
+        return;
+      }
+    }
 
     player.ActionsRemaining = ActionsPerTurn;
     match.CurrentTurn = TeamRules.GetNextTeam(match.CurrentTurn, match.Configuration.PlayerCount);
     ApplyTurnEconomy(match, match.CurrentTurn);
     ResetTurnActions(match, match.CurrentTurn);
+  }
+
+  private static int GetDominionControlledPointCount(Match match, NetworkTeam team)
+  {
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    int controlledPoints = 0;
+    foreach ((int x, int y) point in MatchRules.GetDominionControlPoints(board))
+    {
+      bool friendlyTouching = match.Pieces.Any(piece =>
+        piece.Team == team && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        OccupiedSquares(rule, (piece.X, piece.Y)).Contains(point));
+      bool enemyTouching = match.Pieces.Any(piece =>
+        piece.Team is not NetworkTeam.Neutral && piece.Team != team && piece.AttachedToId is null &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && OccupiedSquares(rule, (piece.X, piece.Y)).Contains(point));
+      if (friendlyTouching && !enemyTouching)
+      {
+        controlledPoints++;
+      }
+    }
+
+    return controlledPoints;
   }
 
   private static void ApplyTurnEconomy(Match match, NetworkTeam team)
@@ -1746,6 +1851,13 @@ public sealed class MatchStore
     internal int ConquestScore { get; set; }
     internal Dictionary<NetworkTeam, int> ConquestScores { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
       .ToDictionary(team => team, _ => 0);
+    internal Dictionary<NetworkTeam, int> ModeScores { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
+      .ToDictionary(team => team, _ => 0);
+    internal (int x, int y) TreasureSpawn { get; } = MatchRules.GetTreasureSpawn(NetworkBoardRules.GetBoard(configuration));
+    internal (int x, int y)? TreasurePosition { get; set; } = configuration.GameMode == "Plunder"
+      ? MatchRules.GetTreasureSpawn(NetworkBoardRules.GetBoard(configuration))
+      : null;
+    internal string? TreasureCarrierId { get; set; }
     internal OpeningBuyPhase? InitialBuy { get; set; }
     internal NetworkTeam CurrentTurn { get; set; } = TeamRules.GetFirstTeam(configuration.PlayerCount);
     internal long Version { get; set; }
@@ -1798,7 +1910,11 @@ public sealed class MatchStore
       ],
       Winner,
       ConquestScore,
-      ConquestScores.Select(pair => new NetworkConquestTeamState(pair.Key, pair.Value)).ToArray()
+      ConquestScores.Select(pair => new NetworkConquestTeamState(pair.Key, pair.Value)).ToArray(),
+      ModeScores.Select(pair => new NetworkModeTeamState(pair.Key, pair.Value)).ToArray(),
+      Configuration.GameMode == "Plunder"
+        ? new NetworkTreasureState(TreasurePosition?.x, TreasurePosition?.y, TreasureCarrierId)
+        : null
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
   }
@@ -1970,6 +2086,13 @@ internal static class NetworkBoardRules
     Board board = GetBoard(configuration);
     bool inNoMansLand = MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) is null;
     return inNoMansLand && Contains(configuration, x, y);
+  }
+
+  internal static bool IsInTeamTerritory(NetworkMatchConfiguration configuration, NetworkTeam team, int x, int y)
+  {
+    Board board = GetBoard(configuration);
+    return board.ContainsCell((x, y)) &&
+      MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) == team;
   }
 }
 

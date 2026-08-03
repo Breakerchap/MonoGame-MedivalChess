@@ -16,4 +16,7 @@ public static class Globals
   public const bool InterestEnabled = false;
   public const int InterestPercent = 0;
   public const int DefaultEscortRoyalHealthPercent = 50;
+  public const int DefaultDominionWinScore = 10;
+  public const int DefaultPlunderWinScore = 9;
+  public const int DefaultPlunderDeliveryScore = 3;
 }

@@ -59,5 +59,8 @@ public sealed class EconomyRulesTests
     Assert.Equal(Globals.UnitPricePercent, configuration.UnitPricePercent);
     Assert.Equal(Globals.InterestEnabled, configuration.InterestEnabled);
     Assert.Equal(Globals.InterestPercent, configuration.InterestPercent);
+    Assert.Equal(Globals.DefaultDominionWinScore, configuration.DominionWinScore);
+    Assert.Equal(Globals.DefaultPlunderWinScore, configuration.PlunderWinScore);
+    Assert.Equal(Globals.DefaultPlunderDeliveryScore, configuration.PlunderDeliveryScore);
   }
 }
