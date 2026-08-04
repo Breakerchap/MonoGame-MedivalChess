@@ -1,6 +1,7 @@
 ﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using MedivalChess.CPU;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using MedivalChess.Shared;
@@ -175,6 +176,10 @@ internal sealed class Game1 : Game
   private Keys _zoomOutKey = Keys.Q;
   private Keys _buyKey = Keys.B;
   private OnlineMatchClient _onlineClient;
+  private readonly Dictionary<TeamName, CpuProfile> _cpuProfiles = [];
+  private readonly Queue<ICpuGameAction> _cpuActionQueue = [];
+  private CpuDecisionReport _lastCpuDecisionReport;
+  private float _cpuActionDelaySeconds;
   private string _onlineStatus = "OFFLINE";
   private string _onlineServerUrl = "https://crown-and-siege-server.onrender.com";
   private string _onlineJoinCode = string.Empty;
@@ -270,6 +275,15 @@ internal sealed class Game1 : Game
     if (_movementAnimation != null)
     {
       UpdateMovementAnimation(deltaTime);
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
+
+    if (IsCpuTurn())
+    {
+      UpdateCpuTurn(deltaTime);
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -851,9 +865,244 @@ internal sealed class Game1 : Game
       }
 
       Team.AdvanceTurn();
+      _cpuActionQueue.Clear();
       ApplyTurnEconomy(Team.CurrentTurn);
       ResetPieceTurnActions(Team.CurrentTurn);
     }
+  }
+
+  private bool IsCpuTurn()
+  {
+    return _screen == Screen.Playing && _onlineClient is null && _winningTeam is null &&
+      _cpuProfiles.ContainsKey(Team.CurrentTurn);
+  }
+
+  private void UpdateCpuTurn(float deltaTime)
+  {
+    if (_cpuActionDelaySeconds > 0f)
+    {
+      _cpuActionDelaySeconds = Math.Max(0f, _cpuActionDelaySeconds - deltaTime);
+      return;
+    }
+
+    if (_cpuActionQueue.Count == 0)
+    {
+      TeamName team = Team.CurrentTurn;
+      CpuGameState state = CreateCpuGameState();
+      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, team.ToNetworkTeam(), _cpuProfiles[team], System.Threading.CancellationToken.None);
+      _lastCpuDecisionReport = plan.Report;
+      foreach (ICpuGameAction action in plan.Actions)
+      {
+        _cpuActionQueue.Enqueue(action);
+      }
+
+      string actions = plan.Actions.Count == 0
+        ? "no legal action"
+        : string.Join(" -> ", plan.Actions.Select(action => action.Describe()));
+      Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0} | {plan.Report.SearchTime.TotalMilliseconds:0} ms | {plan.Report.NodesEvaluated} nodes");
+      if (_cpuActionQueue.Count == 0)
+      {
+        return;
+      }
+    }
+
+    ICpuGameAction nextAction = _cpuActionQueue.Dequeue();
+    CpuGameState currentState = CreateCpuGameState();
+    if (!nextAction.IsLegal(currentState) || !ExecuteCpuAction(nextAction))
+    {
+      // The visible match is always authoritative. Re-plan instead of applying a stale action.
+      _cpuActionQueue.Clear();
+      return;
+    }
+
+    _cpuActionDelaySeconds = 0.18f;
+  }
+
+  private CpuGameState CreateCpuGameState()
+  {
+    NetworkMatchConfiguration configuration = BuildOnlineMatchConfiguration();
+    NetworkInitialBuyState initialBuy = _initialBuyPhase is null ? null : new NetworkInitialBuyState(
+      _initialBuyPhase.CurrentTeam.ToNetworkTeam(),
+      _initialBuyPhase.PurchasesThisTurn,
+      _initialBuyPhase.PurchasesPerTurn,
+      _initialBuyPhase.GetBuyTurnsUsed(TeamName.Red),
+      _initialBuyPhase.GetBuyTurnsUsed(TeamName.Blue),
+      _initialBuyPhase.BuyTurnsPerTeam,
+      _initialBuyPhase.HasStopped(TeamName.Red),
+      _initialBuyPhase.HasStopped(TeamName.Blue),
+      _initialBuyPhase.IsComplete,
+      Team.ActiveTeams.Select(team => new NetworkInitialBuyTeamState(
+        team.ToNetworkTeam(),
+        _initialBuyPhase.GetBuyTurnsUsed(team),
+        _initialBuyPhase.HasStopped(team),
+        _initialBuyPhase.GetFarmsPlaced(team)
+      )).ToArray(),
+      _initialBuyPhase.IsFarmPlacementPhase
+    );
+    List<NetworkImprovement> improvements = [];
+    improvements.AddRange(_roads.Select(position => new NetworkImprovement("Road", position.x, position.y)));
+    improvements.AddRange(_barricades.Select(entry => new NetworkImprovement("Barrier", entry.Key.x, entry.Key.y, entry.Value)));
+    improvements.AddRange(_mines.Select(entry => new NetworkImprovement("Mine", entry.Key.x, entry.Key.y, Owner: entry.Value.ToNetworkTeam())));
+
+    return new CpuGameState(
+      configuration,
+      pieceSetup.Pieces.Select(piece => new NetworkPiece(
+        piece.NetworkId,
+        piece.Definition.Type.ToString(),
+        piece.Team.ToNetworkTeam(),
+        piece.Position.x,
+        piece.Position.y,
+        piece.CurrentHealth,
+        piece.HasMovedThisTurn,
+        piece.HasAttackedThisTurn,
+        piece.AttachedTo?.NetworkId,
+        (NetworkAttachmentKind)piece.AttachmentKind,
+        piece.MarkedTarget?.NetworkId,
+        piece.LastBid,
+        piece.EngineerBuildsThisTurn,
+        piece.CannotContributeToConquestThisTurn
+      )),
+      _teams.Select(team => new CpuTeamState(
+        team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString()
+      )),
+      Team.CurrentTurn.ToNetworkTeam(),
+      terrain: _terrain,
+      winner: _winningTeam?.ToNetworkTeam(),
+      initialBuy: initialBuy,
+      conquestScore: _conquestScore,
+      conquestScores: _conquestScores.Select(entry => KeyValuePair.Create(entry.Key.ToNetworkTeam(), entry.Value)),
+      modeScores: _modeScores.Select(entry => KeyValuePair.Create(entry.Key.ToNetworkTeam(), entry.Value)),
+      treasurePosition: _treasurePosition,
+      treasureCarrierId: _treasureCarrierId,
+      roads: _roads,
+      barricades: _barricades,
+      mines: _mines.Select(entry => KeyValuePair.Create(entry.Key, entry.Value.ToNetworkTeam())),
+      riverBridges: _riverBridges,
+      scenario: CpuScenarioDefinition.ForMatch(configuration)
+    );
+  }
+
+  private bool ExecuteCpuAction(ICpuGameAction action)
+  {
+    switch (action)
+    {
+      case MoveAction move:
+      {
+        Piece piece = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == move.PieceId);
+        if (piece is null || !TryGetMovementPathAt(piece, (move.DestinationX, move.DestinationY), out List<(int x, int y)> path))
+        {
+          return false;
+        }
+        if (piece.AttachedTo is not null && piece.AttachmentKind == AttachmentKind.Carried)
+        {
+          pieceSetup.Detach(piece);
+        }
+        BeginMovementAnimation(piece, path);
+        return true;
+      }
+      case AttackAction attack:
+        return ExecuteCpuAttack(attack);
+      case PurchaseAction purchase:
+      {
+        int index = GetPurchasablePieces().ToList().FindIndex(piece => piece.Type.ToString() == purchase.UnitType);
+        if (index < 0)
+        {
+          return false;
+        }
+
+        Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+        int moneyBefore = buyingTeam.Money;
+        int pieceCountBefore = pieceSetup.Pieces.Count;
+        Piece targetBefore = pieceSetup.GetPieceAt((purchase.X, purchase.Y));
+        TeamName? targetTeamBefore = targetBefore?.Team;
+        int actionPointsBefore = buyingTeam.ActionPoints;
+        int purchasesBefore = _initialBuyPhase?.PurchasesThisTurn ?? -1;
+        _selectedPurchaseIndex = index;
+        TryPurchaseAndPlace((purchase.X, purchase.Y));
+        return buyingTeam.Money != moneyBefore ||
+          pieceSetup.Pieces.Count != pieceCountBefore ||
+          targetBefore?.Team != targetTeamBefore ||
+          buyingTeam.ActionPoints != actionPointsBefore ||
+          (_initialBuyPhase?.PurchasesThisTurn ?? -1) != purchasesBefore;
+      }
+      case UseAbilityAction ability:
+      {
+        Piece actor = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.ActorId);
+        if (actor is null)
+        {
+          return false;
+        }
+        _selectedEngineerAbility = ability.Ability switch
+        {
+          "Barrier" => EngineerAbility.Barrier,
+          "Mine" => EngineerAbility.Mine,
+          "Demolish" => EngineerAbility.Demolish,
+          _ => EngineerAbility.Road
+        };
+        Piece target = ability.TargetPieceId is null
+          ? null
+          : pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.TargetPieceId);
+        return TryUseSpecialAbility(actor, (ability.TargetX, ability.TargetY), target, Keyboard.GetState());
+      }
+      case EndTurnAction:
+      {
+        TeamName before = Team.CurrentTurn;
+        TrySkipCurrentTurn();
+        return Team.CurrentTurn != before;
+      }
+      case StopInitialBuyingAction:
+      {
+        if (_initialBuyPhase is null || !_initialBuyPhase.CanStopCurrentBuyer)
+        {
+          return false;
+        }
+        _initialBuyPhase.StopCurrentBuyer();
+        UpdateInitialBuyPhaseState();
+        return true;
+      }
+      default:
+        return false;
+    }
+  }
+
+  private bool ExecuteCpuAttack(AttackAction action)
+  {
+    Piece attacker = pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == action.AttackerId);
+    Piece target = action.TargetPieceId is null
+      ? null
+      : pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == action.TargetPieceId);
+    var targetPosition = (action.TargetX, action.TargetY);
+    bool isValidAttack = attacker is not null && !attacker.HasAttackedThisTurn && attacker.Definition.Attack > 0 &&
+      Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
+      ((target is not null && target.Team != attacker.Team) || (target is null && _barricades.ContainsKey(targetPosition)));
+    if (!isValidAttack)
+    {
+      return false;
+    }
+
+    if (attacker.Definition.Type == PieceType.Ballista)
+    {
+      PerformPiercingAttack(attacker, targetPosition);
+    }
+    else if (attacker.Definition.Type == PieceType.Bombard && target is not null)
+    {
+      PerformBombardAttack(attacker, target);
+    }
+    else if (_barricades.ContainsKey(targetPosition))
+    {
+      DamageBarricade(attacker, targetPosition);
+    }
+    else
+    {
+      ResolveDamage(attacker, target);
+    }
+
+    attacker.HasAttackedThisTurn = true;
+    if (_screen == Screen.Playing)
+    {
+      CompleteAction();
+    }
+    return true;
   }
 
   private void ResetPieceTurnActions(TeamName teamName)
@@ -4207,6 +4456,56 @@ internal sealed class Game1 : Game
     _selectedRoyalIndex = 0;
   }
 
+  private void ConfigureCpuOpponents()
+  {
+    _cpuProfiles.Clear();
+    foreach (TeamName team in Team.ActiveTeams.Skip(1))
+    {
+      _cpuProfiles[team] = CpuProfile.Normal(_terrainSeed + (int)team);
+    }
+  }
+
+  private void PlaceCpuRoyal(TeamName teamName)
+  {
+    CpuProfile profile = _cpuProfiles[teamName];
+    PieceDefinition royal = profile.Personality.Aggression > 1.2f
+      ? PieceDefinitions.Baron
+      : profile.Personality.ObjectiveFocus > 1.2f && _gameMode == GameMode.Escort
+      ? PieceDefinitions.Emissary
+      : PieceDefinitions.King;
+    if (_gameMode == GameMode.Escort && royal.Type == PieceType.Palace)
+    {
+      royal = PieceDefinitions.King;
+    }
+
+    Team setupTeam = _teams.Find(team => team.TeamName == teamName);
+    setupTeam.ChooseRoyal(royal.Type);
+    pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(teamName, royal), teamName)
+    {
+      CurrentHealth = GetRoyalStartingHealth(royal)
+    });
+  }
+
+  private void ContinueRoyalSelection()
+  {
+    int currentIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
+    for (int index = currentIndex + 1; index < Team.ActiveTeams.Count; index++)
+    {
+      TeamName nextTeam = Team.ActiveTeams[index];
+      if (_cpuProfiles.ContainsKey(nextTeam))
+      {
+        PlaceCpuRoyal(nextTeam);
+        continue;
+      }
+
+      _setupTeam = nextTeam;
+      _selectedRoyalIndex = 0;
+      return;
+    }
+
+    StartInitialBuyPhase();
+  }
+
   private static IReadOnlyDictionary<TeamName, (int buyTurnsUsed, bool stopped, int farmsPlaced)> GetInitialBuyTeamStates(
     NetworkInitialBuyState initialBuy
   )
@@ -4237,6 +4536,10 @@ internal sealed class Game1 : Game
     _onlineMatchConfiguration = null;
     _onlineError = string.Empty;
     _onlineStatus = "OFFLINE";
+    _cpuProfiles.Clear();
+    _cpuActionQueue.Clear();
+    _lastCpuDecisionReport = null;
+    _cpuActionDelaySeconds = 0f;
     pieceSetup.ClearPieces();
     _playerCount = 2;
     ConfigureTeamsForPlayerCount();
@@ -4312,6 +4615,17 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
     _onlineHostingSetup = onlineHost;
+    _cpuActionQueue.Clear();
+    _lastCpuDecisionReport = null;
+    _cpuActionDelaySeconds = 0f;
+    if (onlineHost)
+    {
+      _cpuProfiles.Clear();
+    }
+    else
+    {
+      ConfigureCpuOpponents();
+    }
     _onlineMatchConfiguration = null;
     Team.ResetTurn();
   }
@@ -4890,16 +5204,7 @@ internal sealed class Game1 : Game
           };
           pieceSetup.AddPiece(royalPiece);
 
-          int teamIndex = Team.ActiveTeams.ToList().IndexOf(_setupTeam);
-          if (teamIndex >= 0 && teamIndex + 1 < Team.ActiveTeams.Count)
-          {
-            _setupTeam = Team.ActiveTeams[teamIndex + 1];
-            _selectedRoyalIndex = 0;
-          }
-          else
-          {
-            StartInitialBuyPhase();
-          }
+          ContinueRoyalSelection();
         }
         break;
 
@@ -5087,7 +5392,7 @@ internal sealed class Game1 : Game
     _ui.CenterText("A MEDIEVAL STRATEGY GAME", subtitleBounds, UiTheme.TextMuted, 0.72f);
     _ui.Divider(new Rectangle(viewport.Center.X - 150, subtitleBounds.Bottom + UiTheme.SpaceMd, 300, 1), subtitleBounds.Bottom + UiTheme.SpaceMd, UiTheme.PanelBorder);
 
-    DrawMenuButton(GetTitleButtonBounds(0), "START GAME", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(0), "PLAY VS CPU", UiButtonTone.Primary);
     DrawMenuButton(GetTitleButtonBounds(1), "ONLINE MULTIPLAYER", UiButtonTone.Accent);
     DrawMenuButton(GetTitleButtonBounds(2), "SETTINGS", UiButtonTone.Neutral);
     DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);

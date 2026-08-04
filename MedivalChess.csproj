@@ -27,6 +27,7 @@
     <Compile Remove="MedivalChess.Tests\**\*.cs" />
     <Compile Remove="MedivalChess.Shared\**\*.cs" />
     <Compile Remove="MedivalChess.Server\**\*.cs" />
+    <Compile Remove="MedivalChess.CPU\**\*.cs" />
     <Compile Remove="Globals.cs" />
     <Compile Remove="GameBoard\Board.cs" />
     <Compile Remove="GameBoard\BattlefieldTerrain.cs" />
@@ -49,6 +50,7 @@
 
   <ItemGroup>
     <ProjectReference Include="MedivalChess.Shared\MedivalChess.Shared.csproj" />
+    <ProjectReference Include="MedivalChess.CPU\MedivalChess.CPU.csproj" />
   </ItemGroup>
 
   <ItemGroup> 
