@@ -25,6 +25,7 @@ public static class CpuDebugFormatter
       .Append(", royal protection ").Append(personality.RoyalProtection.ToString("0.00", CultureInfo.InvariantCulture));
 
     if (report.TimedOut) builder.Append("; time limit reached");
+    if (report.NodeBudgetReached) builder.Append("; node limit reached");
     if (report.Cancelled) builder.Append("; cancelled");
     if (report.Intentions.Count > 0)
     {

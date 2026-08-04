@@ -7,6 +7,11 @@ public sealed class CpuSearchSettings
   public int CandidatesPerNode { get; init; } = 16;
   public int OpponentBeamWidth { get; init; } = 6;
   public int OpponentActionsToPredict { get; init; } = 1;
+  /// <summary>
+  /// Deterministic cap on simulated actions. This complements the wall-clock guard so a fixed
+  /// seed produces the same completed search work when the machine is otherwise busy.
+  /// </summary>
+  public int MaxSearchNodes { get; init; } = 800;
   /// <summary>Maximum purchase placements inspected by the bounded search; exhaustive generation is unchanged.</summary>
   public int MaximumPurchasePlacementCandidates { get; init; } = 48;
   /// <summary>Only near-equal plans inside this score window are eligible for seeded variety.</summary>
@@ -67,6 +72,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 6,
       OpponentBeamWidth = 0,
       OpponentActionsToPredict = 0,
+      MaxSearchNodes = 42,
       MaximumPurchasePlacementCandidates = 18,
       MaxSearchMilliseconds = 60,
       Randomness = 0.35f
@@ -89,6 +95,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 9,
       OpponentBeamWidth = 2,
       OpponentActionsToPredict = 1,
+      MaxSearchNodes = 180,
       MaximumPurchasePlacementCandidates = 12,
       MaxSearchMilliseconds = 70,
       Randomness = 0.06f
@@ -108,6 +115,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 24,
       OpponentBeamWidth = 8,
       OpponentActionsToPredict = 3,
+      MaxSearchNodes = 2_400,
       MaximumPurchasePlacementCandidates = 60,
       MaxSearchMilliseconds = 650,
       Randomness = 0f

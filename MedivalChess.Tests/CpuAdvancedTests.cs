@@ -295,6 +295,86 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void BeamSearch_NormalisesCommutingMovesAndReportsDuplicateRemoval()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, -1, 2, 15),
+        new NetworkPiece("red-right", "Soldier", NetworkTeam.Red, 1, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+      ],
+      redMoney: 0
+    );
+    CpuProfile profile = new()
+    {
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 32,
+        CandidatesPerNode = 32,
+        OpponentActionsToPredict = 0,
+        MaxSearchMilliseconds = 1_000,
+        Randomness = 0f
+      },
+      MistakeChance = 0f
+    };
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+
+    Assert.True(plan.Report.DuplicateStatesRemoved > 0, CpuDebugFormatter.FormatDecision(plan.Report));
+  }
+
+  [Fact]
+  public void CpuPlansOnlyLegalActionsAcrossEveryBuiltInMatchMode()
+  {
+    CpuProfile profile = new()
+    {
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 3,
+        CandidatesPerNode = 5,
+        OpponentActionsToPredict = 0,
+        MaximumPurchasePlacementCandidates = 4,
+        MaxSearchMilliseconds = 50,
+        Randomness = 0f
+      },
+      MistakeChance = 0f
+    };
+
+    foreach (string mode in new[] { "Regicide", "Conquest", "Escort", "Dominion", "Plunder" })
+    {
+      CpuGameState state = CreateBuiltInModeState(mode);
+      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+      CpuGameState simulated = state;
+
+      Assert.False(state.IsFinished, mode);
+      foreach (ICpuGameAction action in plan.Actions)
+      {
+        Assert.True(action.IsLegal(simulated), $"{mode}: {action.Describe()}");
+        simulated = action.Apply(simulated);
+      }
+    }
+  }
+
+  [Fact]
+  public void TerminalCampaignState_ReturnsNoCpuActions()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      scenario: scenario
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Easy(3), CancellationToken.None);
+
+    Assert.True(state.IsFinished);
+    Assert.Empty(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red));
+    Assert.Empty(plan.Actions);
+  }
+
+  [Fact]
   public void CampaignGoals_ReportHoldEscortProtectionEscapeAndSurvivalProgress()
   {
     CpuGameState state = CreateState(
@@ -491,6 +571,41 @@ public sealed class CpuAdvancedTests
   }
 
   private static CpuGameState CreateState(params NetworkPiece[] pieces) => CreateState(pieces, null, null, null, null, 200);
+
+  private static CpuGameState CreateBuiltInModeState(string mode)
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Small", "Light", "Light", mode, 1234, 0, 0f, 0f, 2, 1, 15,
+      FarmsEnabled: false
+    );
+    NetworkPiece[] pieces = mode == "Regicide"
+      ?
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 5, 110),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -5, 110),
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+      ]
+      :
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15),
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 1, 5, 110),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, -1, -5, 110)
+      ];
+    return new CpuGameState(
+      configuration,
+      pieces,
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      treasurePosition: mode == "Plunder" ? (0, 0) : null,
+      scenario: CpuScenarioDefinition.ForMatch(configuration)
+    );
+  }
 
   private static CpuGameState CreateState(
     NetworkPiece[] pieces,

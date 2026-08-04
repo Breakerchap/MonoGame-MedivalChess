@@ -34,6 +34,7 @@ public sealed class CpuDecisionReport
   public int NodesEvaluated { get; init; }
   public int DuplicateStatesRemoved { get; init; }
   public bool TimedOut { get; init; }
+  public bool NodeBudgetReached { get; init; }
   public bool Cancelled { get; init; }
   public IReadOnlyList<CpuChoiceReport> TopChoices { get; init; } = [];
 }
@@ -75,11 +76,12 @@ public sealed class CpuPlayer : ICpuPlayer
   {
     ArgumentNullException.ThrowIfNull(state);
     ArgumentNullException.ThrowIfNull(profile);
-    Stopwatch stopwatch = Stopwatch.StartNew();
+    Stopwatch stopwatch = new();
     CpuSearchSettings settings = profile.Search;
     ulong initialStateHash = _hasher.ComputeSearchHash(state);
     if (state.InitialBuy?.IsFarmPlacementPhase == true)
     {
+      stopwatch.Start();
       return ChooseOpeningFarmPlacement(state, team, profile, cancellationToken, stopwatch, initialStateHash);
     }
 
@@ -90,23 +92,28 @@ public sealed class CpuPlayer : ICpuPlayer
     int nodesEvaluated = 0;
     int duplicatesRemoved = 0;
     bool timedOut = false;
+    bool nodeBudgetReached = false;
     bool cancelled = cancellationToken.IsCancellationRequested;
     ICpuGameAction? fallbackAction = null;
     int rootLegalActionCount = 0;
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache = [];
     EvaluationBreakdown initialBreakdown = _evaluator.EvaluateWithBreakdown(state, team, context);
     List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
+    // Snapshot preparation has no branching and is done exactly once. Start the bounded timer
+    // after it so first-use JIT work cannot make an otherwise identical seed choose a shallower
+    // plan than subsequent turns.
+    stopwatch.Start();
     int maximumActions = state.InitialBuy is null
       ? Math.Clamp(state.ActionsRemaining, 0, MatchRules.ActionsPerTurn)
       : 1;
 
-    for (int depth = 0; depth < maximumActions && !cancelled && !timedOut; depth++)
+    for (int depth = 0; depth < maximumActions && !cancelled && !timedOut && !nodeBudgetReached; depth++)
     {
       List<SearchNode> expanded = [];
       Dictionary<ulong, float> bestScoreByState = [];
       foreach (SearchNode node in beam)
       {
-        if (ShouldStop(stopwatch, settings, cancellationToken, out timedOut, out cancelled))
+        if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
         {
           break;
         }
@@ -138,7 +145,7 @@ public sealed class CpuPlayer : ICpuPlayer
         }
         foreach (ScoredAction candidate in candidates)
         {
-          if (ShouldStop(stopwatch, settings, cancellationToken, out timedOut, out cancelled))
+          if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
           {
             break;
           }
@@ -176,7 +183,7 @@ public sealed class CpuPlayer : ICpuPlayer
     List<(SearchNode Node, float Score, float OpponentPenalty)> ranked = [];
     foreach (SearchNode node in beam)
     {
-      if (ShouldStop(stopwatch, settings, cancellationToken, out timedOut, out cancelled))
+      if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
       {
         break;
       }
@@ -185,7 +192,7 @@ public sealed class CpuPlayer : ICpuPlayer
       if (settings.OpponentActionsToPredict > 0 && node.State.Winner is null && node.State.CurrentTurn != team)
       {
         float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken,
-          searchActionCache, ref nodesGenerated, ref nodesEvaluated, ref timedOut, ref cancelled);
+          searchActionCache, ref nodesGenerated, ref nodesEvaluated, ref timedOut, ref nodeBudgetReached, ref cancelled);
         opponentPenalty = Math.Max(0f, node.Score - afterOpponent);
         adjustedScore = afterOpponent;
       }
@@ -227,6 +234,7 @@ public sealed class CpuPlayer : ICpuPlayer
       NodesEvaluated = nodesEvaluated,
       DuplicateStatesRemoved = duplicatesRemoved,
       TimedOut = timedOut,
+      NodeBudgetReached = nodeBudgetReached,
       Cancelled = cancelled,
       TopChoices = choices
     };
@@ -294,6 +302,7 @@ public sealed class CpuPlayer : ICpuPlayer
     ref int nodesGenerated,
     ref int nodesEvaluated,
     ref bool timedOut,
+    ref bool nodeBudgetReached,
     ref bool cancelled
   )
   {
@@ -302,7 +311,8 @@ public sealed class CpuPlayer : ICpuPlayer
     int actionsToPredict = Math.Min(profile.Search.OpponentActionsToPredict, current.ActionsRemaining);
     for (int actionCount = 0; actionCount < actionsToPredict; actionCount++)
     {
-      if (ShouldStop(stopwatch, profile.Search, cancellationToken, out timedOut, out cancelled) || current.CurrentTurn != opponent)
+      if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+        out timedOut, out nodeBudgetReached, out cancelled) || current.CurrentTurn != opponent)
       {
         break;
       }
@@ -325,7 +335,8 @@ public sealed class CpuPlayer : ICpuPlayer
       SearchNode? worstForPerspective = null;
       foreach (ScoredAction candidate in candidates)
       {
-        if (ShouldStop(stopwatch, profile.Search, cancellationToken, out timedOut, out cancelled))
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+          out timedOut, out nodeBudgetReached, out cancelled))
         {
           break;
         }
@@ -374,14 +385,17 @@ public sealed class CpuPlayer : ICpuPlayer
   private static bool ShouldStop(
     Stopwatch stopwatch,
     CpuSearchSettings settings,
+    int nodesGenerated,
     CancellationToken cancellationToken,
     out bool timedOut,
+    out bool nodeBudgetReached,
     out bool cancelled
   )
   {
     cancelled = cancellationToken.IsCancellationRequested;
     timedOut = stopwatch.ElapsedMilliseconds >= Math.Max(1, settings.MaxSearchMilliseconds);
-    return cancelled || timedOut;
+    nodeBudgetReached = nodesGenerated >= Math.Max(1, settings.MaxSearchNodes);
+    return cancelled || timedOut || nodeBudgetReached;
   }
 
   private static (SearchNode Node, float Score, float OpponentPenalty) ChooseRanked(
