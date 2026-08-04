@@ -183,6 +183,7 @@ internal sealed class Game1 : Game
   private OnlineMatchClient _onlineClient;
   private readonly Dictionary<TeamName, CpuProfile> _cpuProfiles = [];
   private readonly Queue<ICpuGameAction> _cpuActionQueue = [];
+  private readonly List<CpuMoveRecord> _cpuRecentMoves = [];
   private System.Threading.Tasks.Task<CpuTurnPlan> _cpuPlanningTask;
   private System.Threading.CancellationTokenSource _cpuPlanningCancellation;
   private NetworkTeam? _cpuPlanningTeam;
@@ -699,6 +700,7 @@ internal sealed class Game1 : Game
   private void StartInitialBuyPhase()
   {
     _cpuTurnNumber = 0;
+    _cpuRecentMoves.Clear();
     InitializeModeObjectives();
     _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam, Team.ActiveTeams, _farmsEnabled);
     EnsureInitialBuySelection();
@@ -963,6 +965,8 @@ internal sealed class Game1 : Game
       return;
     }
 
+    RecordCpuMove(currentState, nextAction);
+
     _cpuActionDelaySeconds = 0.18f;
   }
 
@@ -979,6 +983,34 @@ internal sealed class Game1 : Game
       : string.Join(" -> ", plan.Actions.Select(action => action.Describe()));
     Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0}");
     Console.WriteLine(CpuDebugFormatter.FormatDecision(plan.Report, maximumChoices: 1));
+  }
+
+  private void RecordCpuMove(CpuGameState stateBeforeAction, ICpuGameAction action)
+  {
+    if (action is not MoveAction move)
+    {
+      return;
+    }
+
+    NetworkPiece piece = stateBeforeAction.Pieces.FirstOrDefault(candidate => candidate.Id == move.PieceId);
+    if (piece is null)
+    {
+      return;
+    }
+
+    _cpuRecentMoves.Add(new CpuMoveRecord(
+      move.Team,
+      move.PieceId,
+      piece.X,
+      piece.Y,
+      move.DestinationX,
+      move.DestinationY,
+      stateBeforeAction.TurnNumber
+    ));
+    if (_cpuRecentMoves.Count > CpuMoveRecord.MaximumEntries)
+    {
+      _cpuRecentMoves.RemoveRange(0, _cpuRecentMoves.Count - CpuMoveRecord.MaximumEntries);
+    }
   }
 
   private void CancelCpuPlanning()
@@ -1175,7 +1207,8 @@ internal sealed class Game1 : Game
       barricades: _barricades,
       mines: _mines.Select(entry => KeyValuePair.Create(entry.Key, entry.Value.ToNetworkTeam())),
       riverBridges: _riverBridges,
-      scenario: CpuScenarioDefinition.ForMatch(configuration)
+      scenario: CpuScenarioDefinition.ForMatch(configuration),
+      recentMoves: _cpuRecentMoves
     );
   }
 
@@ -4736,6 +4769,7 @@ internal sealed class Game1 : Game
     _onlineStatus = "OFFLINE";
     _cpuProfiles.Clear();
     _cpuActionQueue.Clear();
+    _cpuRecentMoves.Clear();
     _lastCpuDecisionReport = null;
     _cpuActionDelaySeconds = 0f;
     pieceSetup.ClearPieces();
@@ -4817,6 +4851,7 @@ internal sealed class Game1 : Game
     _selectedEngineerAbility = EngineerAbility.Road;
     _onlineHostingSetup = onlineHost;
     _cpuActionQueue.Clear();
+    _cpuRecentMoves.Clear();
     _lastCpuDecisionReport = null;
     _cpuActionDelaySeconds = 0f;
     if (onlineHost || !cpuOpponent)

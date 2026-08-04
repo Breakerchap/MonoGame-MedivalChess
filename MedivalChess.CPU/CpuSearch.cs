@@ -454,6 +454,16 @@ public sealed class GameStateHasher
     Add(ref hash, state.TreasurePosition?.x ?? int.MinValue);
     Add(ref hash, state.TreasurePosition?.y ?? int.MinValue);
     Add(ref hash, state.TreasureCarrierId ?? string.Empty);
+    foreach (CpuMoveRecord move in state.RecentMoves)
+    {
+      Add(ref hash, move.Team);
+      Add(ref hash, move.PieceId);
+      Add(ref hash, move.FromX);
+      Add(ref hash, move.FromY);
+      Add(ref hash, move.ToX);
+      Add(ref hash, move.ToY);
+      Add(ref hash, move.TurnNumber);
+    }
     return hash;
   }
 

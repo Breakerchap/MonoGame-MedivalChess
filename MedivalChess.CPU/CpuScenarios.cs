@@ -27,11 +27,24 @@ public sealed class CpuScenarioDefinition
   public IReadOnlyList<ICpuScenarioGoal> SecondaryGoals { get; init; } = [];
   public CpuScenarioRestrictions Restrictions { get; init; } = new();
   public CpuScenarioWeights Weights { get; init; } = new();
+  /// <summary>
+  /// Optional number of completed player turns after which the mission ends.  A null value leaves
+  /// the ordinary match win conditions in control.
+  /// </summary>
+  public int? TurnLimit { get; init; }
+  /// <summary>
+  /// Optional defender/team that wins when <see cref="TurnLimit"/> is reached.  When omitted,
+  /// reaching the limit is a draw/terminal mission state rather than an inferred material win.
+  /// </summary>
+  public NetworkTeam? WinnerOnTurnLimit { get; init; }
+  /// <summary>Units introduced by the scenario at the beginning of an indicated player turn.</summary>
+  public IReadOnlyList<CpuScriptedReinforcement> ScriptedReinforcements { get; init; } = [];
   /// <summary>Optional campaign-owned profiles. Normal CPU is used when a team has no override.</summary>
   public IReadOnlyDictionary<NetworkTeam, CpuProfile> TeamProfiles { get; init; } =
     new Dictionary<NetworkTeam, CpuProfile>();
 
   public bool IsTerminal(CpuGameState state) => state.Winner is not null ||
+    (TurnLimit is int turnLimit && state.TurnNumber >= Math.Max(0, turnLimit)) ||
     TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Any(team =>
       VictoryGoals.Any(goal => goal.GetStatus(state, team) == CpuGoalStatus.Completed) ||
       DefeatConditions.Any(goal => goal.GetStatus(state, team) == CpuGoalStatus.Failed));
@@ -50,6 +63,20 @@ public sealed class CpuScenarioDefinition
     }
   };
 }
+
+/// <summary>
+/// A deterministic campaign spawn.  Reinforcements use the ordinary board occupancy and unit
+/// definitions, but intentionally do not consume money or a player action.
+/// </summary>
+public sealed record CpuScriptedReinforcement(
+  int TurnNumber,
+  NetworkTeam Team,
+  string UnitType,
+  int X,
+  int Y,
+  int? Health = null,
+  string? PieceId = null
+);
 
 /// <summary>Optional campaign restrictions applied before legal actions are generated.</summary>
 public sealed class CpuScenarioRestrictions
@@ -201,7 +228,11 @@ public sealed class SurviveTurnsGoal(int turnsToSurvive) : ICpuScenarioGoal
 }
 
 /// <summary>Scores control of a supplied set of campaign locations.</summary>
-public sealed class HoldLocationsGoal(IEnumerable<(int x, int y)> locations, int locationsRequired = 1) : ICpuScenarioGoal
+public class HoldLocationsGoal(
+  IEnumerable<(int x, int y)> locations,
+  int locationsRequired = 1,
+  CpuIntentType intentType = CpuIntentType.HoldLocation
+) : ICpuScenarioGoal
 {
   private readonly (int x, int y)[] _locations = locations.Distinct().ToArray();
 
@@ -212,13 +243,22 @@ public sealed class HoldLocationsGoal(IEnumerable<(int x, int y)> locations, int
   public float EvaluateProgress(CpuGameState state, NetworkTeam team) => ControlledLocations(state, team);
 
   public IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team) => _locations
-    .Select(location => new CpuIntent(CpuIntentType.HoldLocation, 65f, TargetPosition: location, ExpiryTurn: state.TurnNumber + 1));
+    .Select(location => new CpuIntent(intentType, 65f, TargetPosition: location, ExpiryTurn: state.TurnNumber + 1));
 
   private int ControlledLocations(CpuGameState state, NetworkTeam team) => _locations.Count(location =>
     state.Pieces.Any(piece => piece.Team == team && piece.AttachedToId is null &&
       UnitRules.TryGet(piece.Type, out UnitRule rule) && piece.OccupiedSquares(rule).Contains(location)) &&
     !state.Pieces.Any(piece => piece.Team is not NetworkTeam.Neutral && piece.Team != team && piece.AttachedToId is null &&
       UnitRules.TryGet(piece.Type, out UnitRule rule) && piece.OccupiedSquares(rule).Contains(location)));
+}
+
+/// <summary>
+/// A capture-location objective.  Capture remains state-based because campaign ownership is
+/// represented by an uncontested unit occupying the supplied square.
+/// </summary>
+public sealed class CaptureLocationsGoal(IEnumerable<(int x, int y)> locations, int locationsRequired = 1)
+  : HoldLocationsGoal(locations, locationsRequired, CpuIntentType.CaptureLocation)
+{
 }
 
 /// <summary>Escorts one stable-ID unit to a location while keeping it alive.</summary>
@@ -244,6 +284,51 @@ public sealed class EscortUnitGoal(string pieceId, (int x, int y) destination) :
 
   public IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team) =>
     [new CpuIntent(CpuIntentType.EscortUnit, 90f, PieceId: pieceId, TargetPosition: destination, ExpiryTurn: state.TurnNumber + 2)];
+}
+
+/// <summary>Wins when a selected unit, or any friendly unit when no ID is supplied, reaches the enemy edge.</summary>
+public sealed class EscapeBoardGoal(string? pieceId = null) : ICpuScenarioGoal
+{
+  public CpuGoalStatus GetStatus(CpuGameState state, NetworkTeam team)
+  {
+    if (state.Winner is NetworkTeam winner)
+    {
+      return winner == team ? CpuGoalStatus.Completed : CpuGoalStatus.Failed;
+    }
+
+    NetworkPiece[] eligible = GetEligiblePieces(state, team).ToArray();
+    if (pieceId is not null && eligible.Length == 0)
+    {
+      return CpuGoalStatus.Failed;
+    }
+
+    return eligible.Any(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      piece.OccupiedSquares(rule).Any(square => MatchRules.IsOnEnemyBackEdge(state.Board, team, square)))
+      ? CpuGoalStatus.Completed
+      : CpuGoalStatus.InProgress;
+  }
+
+  public float EvaluateProgress(CpuGameState state, NetworkTeam team) => GetEligiblePieces(state, team)
+    .Where(piece => UnitRules.TryGet(piece.Type, out _))
+    .Select(piece => piece.OccupiedSquares(UnitRules.GetRequired(piece.Type))
+      .Min(square => DistanceToEnemyEdge(state.Board, team, square)))
+    .DefaultIfEmpty(100)
+    .Min() * -1f;
+
+  public IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team) => GetEligiblePieces(state, team)
+    .Select(piece => new CpuIntent(CpuIntentType.Escape, 100f, PieceId: piece.Id, ExpiryTurn: state.TurnNumber + 1));
+
+  private IEnumerable<NetworkPiece> GetEligiblePieces(CpuGameState state, NetworkTeam team) => state.Pieces
+    .Where(piece => piece.Team == team && piece.AttachedToId is null && (pieceId is null || piece.Id == pieceId));
+
+  private static int DistanceToEnemyEdge(Board board, NetworkTeam team, (int x, int y) position) => team switch
+  {
+    NetworkTeam.Red => position.y - board.MinY,
+    NetworkTeam.Blue => board.MinY + board.BoardArray.GetLength(0) - 1 - position.y,
+    NetworkTeam.Green => board.MinX + board.BoardArray.GetLength(1) - 1 - position.x,
+    NetworkTeam.Yellow => position.x - board.MinX,
+    _ => 0
+  };
 }
 
 /// <summary>Requires a protected unit to remain alive, optionally until an existing goal completes.</summary>

@@ -293,273 +293,6 @@ public static partial class CpuGameRules
   private static bool IsLegalStopInitialBuying(CpuGameState state, NetworkTeam team) => state.InitialBuy is { IsComplete: false, IsFarmPlacementPhase: false } initialBuy &&
     IsCurrentInitialBuyer(initialBuy, team);
 
-  private static void ApplyMove(CpuMutableGameState state, MoveAction action)
-  {
-    int index = FindPieceIndex(state.Pieces, action.PieceId);
-    NetworkPiece piece = state.Pieces[index];
-    if (piece.AttachedToId is not null)
-    {
-      piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
-      state.Pieces[index] = piece;
-    }
-
-    IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> paths = GetLegalMovementPaths(state.Source, state.Pieces, piece, UnitRules.GetRequired(piece.Type));
-    List<(int x, int y)> path = paths[(action.DestinationX, action.DestinationY)];
-    int oldX = piece.X;
-    int oldY = piece.Y;
-    bool elephantDamaged = false;
-    if (piece.Type == "Elephant" && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
-    {
-      foreach (NetworkPiece crossed in state.Pieces.Where(other => other.Id != piece.Id && other.Team != piece.Team).ToArray())
-      {
-        if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) &&
-            AbilityRules.PathOverlapsUnit(elephantRule, path, crossedRule, crossed.X, crossed.Y))
-        {
-          ResolvePieceDamage(state, piece, action.Team, crossed.Id, 15);
-          elephantDamaged = true;
-        }
-      }
-    }
-
-    index = FindPieceIndex(state.Pieces, action.PieceId);
-    if (index < 0)
-    {
-      return;
-    }
-    piece = state.Pieces[index] with
-    {
-      X = action.DestinationX,
-      Y = action.DestinationY,
-      HasMovedThisTurn = true,
-      HasAttackedThisTurn = elephantDamaged || state.Pieces[index].HasAttackedThisTurn
-    };
-    state.Pieces[index] = piece;
-    MoveAttachedPieces(state, piece);
-    MoveEmissaryCompanions(state, piece, oldX, oldY);
-    TriggerMinesAlongMovement(state, piece, path);
-
-    NetworkPiece? moved = FindPiece(state.Pieces, piece.Id);
-    if (moved is not null)
-    {
-      TryDeliverTreasure(state, moved);
-      if (state.Winner is null && IsEscortVictory(state, moved))
-      {
-        state.Winner = moved.Team;
-      }
-    }
-
-    if (state.Winner is null)
-    {
-      SpendAction(state, action.Team);
-    }
-  }
-
-  private static void ApplyAttack(CpuMutableGameState state, AttackAction action)
-  {
-    int attackerIndex = FindPieceIndex(state.Pieces, action.AttackerId);
-    NetworkPiece attacker = state.Pieces[attackerIndex] with { HasAttackedThisTurn = true };
-    state.Pieces[attackerIndex] = attacker;
-    NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
-    if (target is null)
-    {
-      DamageBarricade(state, attacker, (action.TargetX, action.TargetY));
-    }
-    else if (attacker.Type == "Bombard")
-    {
-      ResolveBombardDamage(state, attacker, action.Team, target);
-    }
-    else
-    {
-      ResolvePieceDamage(state, attacker, action.Team, target.Id, null);
-    }
-
-    if (target is not null && attacker.Type == "Ballista" && UnitRules.TryGet(attacker.Type, out UnitRule ballistaRule))
-    {
-      foreach ((int x, int y) position in AbilityRules.GetPiercingRay(ballistaRule, attacker.X, attacker.Y, target.X, target.Y))
-      {
-        if (!BoardRules.Contains(state.Source.Configuration, position.x, position.y) ||
-            state.Source.Terrain.IsForest(position) || state.Barricades.ContainsKey(position))
-        {
-          break;
-        }
-
-        NetworkPiece? pierced = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id && piece.Id != target.Id &&
-          piece.Team != attacker.Team && piece.Type != "Farm" && piece.AttachedToId is null &&
-          UnitRules.TryGet(piece.Type, out UnitRule rule) && Occupies(rule, piece, position));
-        if (pierced is not null)
-        {
-          ResolvePieceDamage(state, attacker, action.Team, pierced.Id, null);
-        }
-      }
-    }
-
-    if (state.Winner is null)
-    {
-      SpendAction(state, action.Team);
-    }
-  }
-
-  private static void ApplyAbility(CpuMutableGameState state, UseAbilityAction action)
-  {
-    int actorIndex = FindPieceIndex(state.Pieces, action.ActorId);
-    NetworkPiece actor = state.Pieces[actorIndex];
-    NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
-    bool plunderPickup = state.Source.Configuration.GameMode == "Plunder" &&
-      string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
-
-    if (plunderPickup)
-    {
-      state.TreasureCarrierId = actor.Id;
-      state.TreasurePosition = null;
-      state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
-    }
-    else
-    {
-      switch (actor.Type)
-      {
-        case "Spy":
-          state.Pieces[actorIndex] = actor with { MarkedTargetId = target!.Id };
-          break;
-        case "Engineer":
-          ApplyEngineerAbility(state, actorIndex, action);
-          break;
-        case "Guard":
-          state.Pieces[actorIndex] = actor with
-          {
-            AttachedToId = target!.Id,
-            AttachmentKind = NetworkAttachmentKind.Guard,
-            X = target.X,
-            Y = target.Y
-          };
-          break;
-        case "Ox":
-          int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
-          state.Pieces[targetIndex] = target with
-          {
-            AttachedToId = actor.Id,
-            AttachmentKind = NetworkAttachmentKind.Carried,
-            X = actor.X,
-            Y = actor.Y
-          };
-          break;
-        case "Mercenary":
-          state.Pieces[actorIndex] = actor with
-          {
-            Team = NetworkTeam.Neutral,
-            HasMovedThisTurn = true,
-            HasAttackedThisTurn = true
-          };
-          break;
-      }
-    }
-
-    SpendAction(state, action.Team);
-  }
-
-  private static void ApplyEngineerAbility(CpuMutableGameState state, int actorIndex, UseAbilityAction action)
-  {
-    NetworkPiece engineer = state.Pieces[actorIndex];
-    (int x, int y) position = (action.TargetX, action.TargetY);
-    if (AbilityRules.IsEngineerDemolition(action.Ability))
-    {
-      _ = state.Roads.Remove(position) || state.Barricades.Remove(position) || state.Mines.Remove(position);
-      return;
-    }
-
-    if (string.Equals(action.Ability, "Road", StringComparison.OrdinalIgnoreCase))
-    {
-      state.Roads.Add(position);
-    }
-    else if (string.Equals(action.Ability, "Barrier", StringComparison.OrdinalIgnoreCase))
-    {
-      state.Barricades[position] = 20;
-    }
-    else if (string.Equals(action.Ability, "Mine", StringComparison.OrdinalIgnoreCase))
-    {
-      state.Mines[position] = engineer.Team;
-    }
-
-    int buildsUsed = engineer.EngineerBuildsThisTurn + 1;
-    state.Pieces[actorIndex] = engineer with
-    {
-      EngineerBuildsThisTurn = buildsUsed,
-      HasAttackedThisTurn = buildsUsed >= 2
-    };
-  }
-
-  private static void ApplyPurchase(CpuMutableGameState state, PurchaseAction action)
-  {
-    NetworkPiece? mercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&
-      piece.Team != action.Team && piece.X == action.X && piece.Y == action.Y);
-    if (mercenary is not null)
-    {
-      int index = FindPieceIndex(state.Pieces, mercenary.Id);
-      int cost = mercenary.Team == NetworkTeam.Neutral
-        ? Math.Max(1, mercenary.LastBid)
-        : Math.Max(mercenary.LastBid, GetUnitPrice(state.Source.Configuration, UnitRules.GetRequired("Mercenary"))) + 10;
-      SpendMoney(state, action.Team, cost);
-      if (mercenary.Team != NetworkTeam.Neutral)
-      {
-        AddMoney(state, mercenary.Team, cost);
-      }
-      state.Pieces[index] = mercenary with
-      {
-        Team = action.Team,
-        LastBid = cost,
-        HasMovedThisTurn = true,
-        HasAttackedThisTurn = true,
-        CannotContributeToConquestThisTurn = true
-      };
-      SpendAction(state, action.Team);
-      return;
-    }
-
-    UnitRule rule = UnitRules.GetRequired(action.UnitType);
-    bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true && rule.Type == "Farm";
-    if (!openingFarmPlacement)
-    {
-      SpendMoney(state, action.Team, GetUnitPrice(state.Source.Configuration, rule));
-    }
-
-    state.Pieces.Add(new NetworkPiece(
-      CreatePieceId(state, rule.Type),
-      rule.Type,
-      action.Team,
-      action.X,
-      action.Y,
-      rule.Health,
-      HasMovedThisTurn: state.InitialBuy is null,
-      HasAttackedThisTurn: state.InitialBuy is null,
-      LastBid: GetUnitPrice(state.Source.Configuration, rule),
-      CannotContributeToConquestThisTurn: state.InitialBuy is null
-    ));
-
-    if (state.InitialBuy is null)
-    {
-      SpendAction(state, action.Team);
-    }
-    else
-    {
-      RecordInitialPurchase(state, action.Team);
-    }
-  }
-
-  private static void ApplyEndTurn(CpuMutableGameState state, NetworkTeam team)
-  {
-    CpuTeamState current = state.Teams[team];
-    state.Teams[team] = current with { ActionsRemaining = 1 };
-    SpendAction(state, team);
-  }
-
-  private static void ApplyStopInitialBuying(CpuMutableGameState state, NetworkTeam team)
-  {
-    NetworkInitialBuyState current = state.InitialBuy!;
-    Dictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> records = GetInitialBuyRecords(current, state.Source.Configuration.PlayerCount);
-    (int turnsUsed, bool _, int farmsPlaced) = records[team];
-    records[team] = (turnsUsed, true, farmsPlaced);
-    AdvanceInitialBuyer(state, records, current.PurchasesThisTurn, current.IsFarmPlacementPhase);
-  }
-
   private static void ResolveBombardDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkTeam attackerTeam, NetworkPiece target)
   {
     if (!UnitRules.TryGet(target.Type, out UnitRule targetRule))
@@ -853,8 +586,55 @@ public static partial class CpuGameRules
     state.Teams[team] = state.Teams[team] with { ActionsRemaining = MatchRules.ActionsPerTurn };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;
+    ApplyScenarioReinforcements(state);
+    ApplyScenarioTurnLimit(state);
+    if (state.Winner is not null || state.Source.Scenario?.IsTerminal(state.Freeze()) == true)
+    {
+      return;
+    }
     ApplyTurnEconomy(state, state.CurrentTurn);
     ResetTurnActions(state, state.CurrentTurn);
+  }
+
+  private static void ApplyScenarioReinforcements(CpuMutableGameState state)
+  {
+    CpuScenarioDefinition? scenario = state.Source.Scenario;
+    if (scenario is null || scenario.ScriptedReinforcements.Count == 0)
+    {
+      return;
+    }
+
+    foreach (CpuScriptedReinforcement reinforcement in scenario.ScriptedReinforcements.Where(
+      candidate => candidate.TurnNumber == state.TurnNumber))
+    {
+      if (reinforcement.Team == NetworkTeam.Neutral || !UnitRules.TryGet(reinforcement.UnitType, out UnitRule rule) ||
+          !BoardRules.Contains(state.Source.Configuration, reinforcement.X, reinforcement.Y) ||
+          !CanPlace(state.Source, state.Pieces, rule, reinforcement.X, reinforcement.Y))
+      {
+        continue;
+      }
+
+      string id = string.IsNullOrWhiteSpace(reinforcement.PieceId)
+        ? CreatePieceId(state, rule.Type)
+        : reinforcement.PieceId;
+      if (FindPiece(state.Pieces, id) is not null)
+      {
+        continue;
+      }
+
+      int health = Math.Clamp(reinforcement.Health ?? rule.Health, 1, rule.Health);
+      state.Pieces.Add(new NetworkPiece(id, rule.Type, reinforcement.Team, reinforcement.X, reinforcement.Y, health));
+    }
+  }
+
+  private static void ApplyScenarioTurnLimit(CpuMutableGameState state)
+  {
+    CpuScenarioDefinition? scenario = state.Source.Scenario;
+    if (scenario?.TurnLimit is int limit && state.TurnNumber >= Math.Max(0, limit) &&
+        scenario.WinnerOnTurnLimit is NetworkTeam winner && state.Teams.ContainsKey(winner))
+    {
+      state.Winner = winner;
+    }
   }
 
   private static void ApplyEndOfTurnObjectives(CpuMutableGameState state, NetworkTeam team)
@@ -1002,170 +782,4 @@ public static partial class CpuGameRules
   private static bool IsInForest(CpuGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
     OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);
 
-  private static int GetUnitPrice(NetworkMatchConfiguration configuration, UnitRule rule) => rule.Type == "Farm"
-    ? rule.Cost
-    : EconomyRules.GetUnitPrice(rule.Cost, configuration.UnitPricePercent);
-
-  private static int GetUnitMaintenance(NetworkMatchConfiguration configuration, UnitRule rule) => rule.Type == "Farm"
-    ? 0
-    : EconomyRules.GetUnitMaintenance(rule.Cost, configuration.UnitMaintenancePercent);
-
-  private static void SpendMoney(CpuMutableGameState state, NetworkTeam team, int amount) => AddMoney(state, team, -amount);
-
-  private static void AddMoney(CpuMutableGameState state, NetworkTeam team, int amount)
-  {
-    if (state.Teams.TryGetValue(team, out CpuTeamState? existing))
-    {
-      state.Teams[team] = existing with { Money = ClampCurrency((long)existing.Money + amount) };
-    }
-  }
-
-  private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);
-
-  private static NetworkPiece? FindPiece(IEnumerable<NetworkPiece> pieces, string id) =>
-    pieces.FirstOrDefault(piece => string.Equals(piece.Id, id, StringComparison.Ordinal));
-
-  private static int FindPieceIndex(IReadOnlyList<NetworkPiece> pieces, string id)
-  {
-    for (int index = 0; index < pieces.Count; index++)
-    {
-      if (string.Equals(pieces[index].Id, id, StringComparison.Ordinal))
-      {
-        return index;
-      }
-    }
-    return -1;
-  }
-
-  private static string CreatePieceId(CpuMutableGameState state, string type)
-  {
-    int suffix = 1;
-    string id;
-    do
-    {
-      id = $"cpu-{type.ToLowerInvariant()}-{state.TurnNumber}-{suffix++}";
-    } while (state.Pieces.Any(piece => piece.Id == id));
-    return id;
-  }
-
-  private static bool IsCurrentInitialBuyer(NetworkInitialBuyState initialBuy, NetworkTeam team) => initialBuy.CurrentTeam == team;
-
-  private static void RecordInitialPurchase(CpuMutableGameState state, NetworkTeam team)
-  {
-    NetworkInitialBuyState current = state.InitialBuy!;
-    Dictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> records = GetInitialBuyRecords(current, state.Source.Configuration.PlayerCount);
-    if (current.IsFarmPlacementPhase)
-    {
-      (int farmTurnsUsed, bool farmStopped, int farmCount) = records[team];
-      records[team] = (farmTurnsUsed, farmStopped, farmCount + 1);
-      bool farmsDone = records.Values.All(value => value.farmsPlaced >= 2);
-      if (farmsDone)
-      {
-        state.InitialBuy = BuildInitialBuyState(state, records, TeamRules.GetFirstTeam(state.Source.Configuration.PlayerCount), 0, false, false);
-        state.CurrentTurn = state.InitialBuy.CurrentTeam;
-      }
-      else
-      {
-        AdvanceInitialBuyer(state, records, 0, true, requireFarms: true);
-      }
-      return;
-    }
-
-    int purchases = current.PurchasesThisTurn + 1;
-    if (purchases < current.PurchasesPerTurn)
-    {
-      state.InitialBuy = BuildInitialBuyState(state, records, team, purchases, false, false);
-      state.CurrentTurn = team;
-      return;
-    }
-
-    (int turnsUsed, bool stopped, int farmsPlaced) = records[team];
-    records[team] = (turnsUsed + 1, stopped, farmsPlaced);
-    AdvanceInitialBuyer(state, records, 0, false);
-  }
-
-  private static void AdvanceInitialBuyer(
-    CpuMutableGameState state,
-    Dictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> records,
-    int purchasesThisTurn,
-    bool farmPlacement,
-    bool requireFarms = false
-  )
-  {
-    IReadOnlyList<NetworkTeam> teams = TeamRules.GetActiveTeams(state.Source.Configuration.PlayerCount);
-    bool canContinue(NetworkTeam team) => requireFarms
-      ? records[team].farmsPlaced < 2
-      : !records[team].stopped && records[team].turnsUsed < state.InitialBuy!.BuyTurnsPerTeam;
-    if (teams.All(team => !canContinue(team)))
-    {
-      state.InitialBuy = BuildInitialBuyState(state, records, TeamRules.GetFirstTeam(state.Source.Configuration.PlayerCount), 0, farmPlacement, true);
-      state.CurrentTurn = state.InitialBuy.CurrentTeam;
-      if (!farmPlacement)
-      {
-        state.InitialBuy = null;
-        state.CurrentTurn = TeamRules.GetFirstTeam(state.Source.Configuration.PlayerCount);
-        foreach (NetworkTeam activeTeam in teams)
-        {
-          state.Teams[activeTeam] = state.Teams[activeTeam] with { ActionsRemaining = MatchRules.ActionsPerTurn };
-          ResetTurnActions(state, activeTeam);
-        }
-      }
-      return;
-    }
-
-    int currentIndex = Array.IndexOf(teams.ToArray(), state.InitialBuy!.CurrentTeam);
-    for (int offset = 1; offset <= teams.Count; offset++)
-    {
-      NetworkTeam next = teams[(currentIndex + offset) % teams.Count];
-      if (canContinue(next))
-      {
-        state.InitialBuy = BuildInitialBuyState(state, records, next, purchasesThisTurn, farmPlacement, false);
-        state.CurrentTurn = next;
-        return;
-      }
-    }
-  }
-
-  private static Dictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> GetInitialBuyRecords(
-    NetworkInitialBuyState initialBuy,
-    int playerCount
-  )
-  {
-    Dictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> result = TeamRules.GetActiveTeams(playerCount)
-      .ToDictionary(team => team, _ => (0, false, 0));
-    if (initialBuy.TeamStates is not null)
-    {
-      foreach (NetworkInitialBuyTeamState entry in initialBuy.TeamStates)
-      {
-        result[entry.Team] = (entry.BuyTurnsUsed, entry.Stopped, entry.FarmsPlaced);
-      }
-    }
-    else
-    {
-      result[NetworkTeam.Red] = (initialBuy.RedBuyTurnsUsed, initialBuy.RedStopped, 0);
-      result[NetworkTeam.Blue] = (initialBuy.BlueBuyTurnsUsed, initialBuy.BlueStopped, 0);
-    }
-    return result;
-  }
-
-  private static NetworkInitialBuyState BuildInitialBuyState(
-    CpuMutableGameState state,
-    IReadOnlyDictionary<NetworkTeam, (int turnsUsed, bool stopped, int farmsPlaced)> records,
-    NetworkTeam currentTeam,
-    int purchasesThisTurn,
-    bool farmPlacement,
-    bool complete
-  ) => new(
-    currentTeam,
-    purchasesThisTurn,
-    state.InitialBuy!.PurchasesPerTurn,
-    records.GetValueOrDefault(NetworkTeam.Red).turnsUsed,
-    records.GetValueOrDefault(NetworkTeam.Blue).turnsUsed,
-    state.InitialBuy.BuyTurnsPerTeam,
-    records.GetValueOrDefault(NetworkTeam.Red).stopped,
-    records.GetValueOrDefault(NetworkTeam.Blue).stopped,
-    complete,
-    records.Select(pair => new NetworkInitialBuyTeamState(pair.Key, pair.Value.turnsUsed, pair.Value.stopped, pair.Value.farmsPlaced)).ToArray(),
-    farmPlacement
-  );
 }

@@ -82,6 +82,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new MobilityEvaluation(),
       new FormationEvaluation(),
       new AssetSafetyEvaluation(_threatMapBuilder),
+      new RepetitionEvaluation(),
       new ActionEfficiencyEvaluation()
     ];
   }
@@ -129,9 +130,42 @@ public sealed class StateEvaluator : IStateEvaluator
       "Mobility" => weights.Mobility,
       "Formation" => weights.Formation * personality.FormationPreference,
       "AssetSafety" => weights.AssetSafety * personality.Caution,
+      "Repetition" => weights.RepetitionPenalty,
       "ActionEfficiency" => weights.ActionEfficiency,
       _ => 1f
     };
+  }
+}
+
+/// <summary>Discourages a unit from returning directly to its most recent position without forbidding retreats.</summary>
+public sealed class RepetitionEvaluation : IEvaluationTerm
+{
+  public string Name => "Repetition";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    if (state.RecentMoves.Count < 2)
+    {
+      return 0f;
+    }
+
+    CpuMoveRecord newest = state.RecentMoves[^1];
+    CpuMoveRecord? earlier = state.RecentMoves
+      .Take(state.RecentMoves.Count - 1)
+      .Reverse()
+      .FirstOrDefault(move => move.Team == newest.Team && move.PieceId == newest.PieceId);
+    if (earlier is null || !newest.Reverses(earlier) || newest.TurnNumber - earlier.TurnNumber > 2)
+    {
+      return 0f;
+    }
+
+    // Scale the discouragement from the unit's rule-derived value rather than hard-coding a
+    // per-piece constant, so balance changes continue to be reflected automatically.
+    float value = state.Pieces.FirstOrDefault(piece => piece.Id == newest.PieceId) is NetworkPiece piece
+      ? MaterialEvaluation.GetUnitValue(piece.Type)
+      : 40f;
+    float penalty = Math.Max(10f, value * 0.25f);
+    return newest.Team == perspective ? -penalty : penalty;
   }
 }
 

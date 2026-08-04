@@ -13,6 +13,7 @@ public sealed class CpuGameState
   private readonly Dictionary<(int x, int y), int> _barricades;
   private readonly Dictionary<(int x, int y), NetworkTeam> _mines;
   private readonly HashSet<TileEdge> _riverBridges;
+  private readonly CpuMoveRecord[] _recentMoves;
 
   public NetworkMatchConfiguration Configuration { get; }
   public Board Board { get; }
@@ -32,6 +33,8 @@ public sealed class CpuGameState
   public IReadOnlyDictionary<(int x, int y), int> Barricades => _barricades;
   public IReadOnlyDictionary<(int x, int y), NetworkTeam> Mines => _mines;
   public IReadOnlySet<TileEdge> RiverBridges => _riverBridges;
+  /// <summary>Recent completed moves used only to discourage immediately undoing a position.</summary>
+  public IReadOnlyList<CpuMoveRecord> RecentMoves => _recentMoves;
   public CpuScenarioDefinition? Scenario { get; }
 
   public int ActionsRemaining => Teams.TryGetValue(CurrentTurn, out CpuTeamState? team)
@@ -58,7 +61,8 @@ public sealed class CpuGameState
     IEnumerable<KeyValuePair<(int x, int y), int>>? barricades = null,
     IEnumerable<KeyValuePair<(int x, int y), NetworkTeam>>? mines = null,
     IEnumerable<TileEdge>? riverBridges = null,
-    CpuScenarioDefinition? scenario = null
+    CpuScenarioDefinition? scenario = null,
+    IEnumerable<CpuMoveRecord>? recentMoves = null
   )
   {
     Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -78,6 +82,7 @@ public sealed class CpuGameState
     _barricades = barricades?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _mines = mines?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _riverBridges = riverBridges is null ? [] : [.. riverBridges];
+    _recentMoves = recentMoves?.TakeLast(CpuMoveRecord.MaximumEntries).ToArray() ?? [];
     CurrentTurn = currentTurn;
     TurnNumber = Math.Max(0, turnNumber);
     Winner = winner;
@@ -92,7 +97,8 @@ public sealed class CpuGameState
   public static CpuGameState FromNetworkState(
     NetworkGameState state,
     int turnNumber = 0,
-    CpuScenarioDefinition? scenario = null
+    CpuScenarioDefinition? scenario = null,
+    IEnumerable<CpuMoveRecord>? recentMoves = null
   )
   {
     ArgumentNullException.ThrowIfNull(state);
@@ -129,7 +135,8 @@ public sealed class CpuGameState
       barricades: barricades,
       mines: mines,
       riverBridges: bridges,
-      scenario: scenario
+      scenario: scenario,
+      recentMoves: recentMoves
     );
   }
 
@@ -152,7 +159,8 @@ public sealed class CpuGameState
     _barricades,
     _mines,
     _riverBridges,
-    Scenario
+    Scenario,
+    _recentMoves
   );
 
   internal CpuMutableGameState ToMutable() => new(this);
@@ -160,6 +168,24 @@ public sealed class CpuGameState
 
 /// <summary>Gameplay data owned by one team in a CPU simulation.</summary>
 public sealed record CpuTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal = null);
+
+/// <summary>Compact, bounded move history retained in snapshots so repetition scoring is deterministic.</summary>
+public sealed record CpuMoveRecord(
+  NetworkTeam Team,
+  string PieceId,
+  int FromX,
+  int FromY,
+  int ToX,
+  int ToY,
+  int TurnNumber
+)
+{
+  public const int MaximumEntries = 8;
+
+  public bool Reverses(CpuMoveRecord earlier) =>
+    Team == earlier.Team && PieceId == earlier.PieceId &&
+    FromX == earlier.ToX && FromY == earlier.ToY && ToX == earlier.FromX && ToY == earlier.FromY;
+}
 
 internal sealed class CpuMutableGameState
 {
@@ -181,6 +207,7 @@ internal sealed class CpuMutableGameState
     ConquestScore = source.ConquestScore;
     TreasurePosition = source.TreasurePosition;
     TreasureCarrierId = source.TreasureCarrierId;
+    RecentMoves = source.RecentMoves.ToArray();
   }
 
   internal CpuGameState Source { get; }
@@ -199,6 +226,15 @@ internal sealed class CpuMutableGameState
   internal int ConquestScore { get; set; }
   internal (int x, int y)? TreasurePosition { get; set; }
   internal string? TreasureCarrierId { get; set; }
+  internal CpuMoveRecord[] RecentMoves { get; private set; }
+
+  internal void RecordMove(NetworkTeam team, string pieceId, int fromX, int fromY, int toX, int toY)
+  {
+    CpuMoveRecord move = new(team, pieceId, fromX, fromY, toX, toY, TurnNumber);
+    RecentMoves = RecentMoves.Length < CpuMoveRecord.MaximumEntries
+      ? [.. RecentMoves, move]
+      : [.. RecentMoves.Skip(1), move];
+  }
 
   internal CpuGameState Freeze() => new(
     Source.Configuration,
@@ -218,6 +254,7 @@ internal sealed class CpuMutableGameState
     Barricades,
     Mines,
     RiverBridges,
-    Source.Scenario
+    Source.Scenario,
+    RecentMoves
   );
 }

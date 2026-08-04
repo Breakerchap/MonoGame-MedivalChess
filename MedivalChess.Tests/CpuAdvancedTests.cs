@@ -138,6 +138,167 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void ReversalHistory_IsHashedAndPenalisedWithoutMakingMovesIllegal()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuMoveRecord forward = new(NetworkTeam.Red, "red-soldier", 0, 1, 0, 0, 2);
+    CpuMoveRecord reversal = new(NetworkTeam.Red, "red-soldier", 0, 0, 0, 1, 3);
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 1, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      turnNumber: 3,
+      terrain: new BattlefieldTerrain(),
+      recentMoves: [forward, reversal]
+    );
+    CpuGameState withoutHistory = new(
+      configuration,
+      state.Pieces,
+      state.Teams.Values,
+      NetworkTeam.Red,
+      turnNumber: 3,
+      terrain: new BattlefieldTerrain()
+    );
+
+    EvaluationBreakdown evaluation = new StateEvaluator().EvaluateWithBreakdown(
+      state, NetworkTeam.Red, new EvaluationContext(CpuProfile.Normal(1)));
+
+    Assert.True(evaluation.Terms["Repetition"] < 0f);
+    Assert.NotEqual(new GameStateHasher().ComputeSearchHash(state), new GameStateHasher().ComputeSearchHash(withoutHistory));
+  }
+
+  [Fact]
+  public void CampaignGoals_ReportHoldEscortProtectionEscapeAndSurvivalProgress()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("escort", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("protected", "Peasant", NetworkTeam.Red, 1, 0, 5),
+        new NetworkPiece("runner", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+      ],
+      scenario: new CpuScenarioDefinition()
+    );
+    HoldLocationsGoal hold = new([(0, 0)]);
+    EscortUnitGoal escort = new("escort", (0, 0));
+    ProtectUnitGoal protect = new("protected");
+    PreventEscapeGoal prevent = new([(0, -3)]);
+    SurviveTurnsGoal survive = new(3);
+
+    Assert.Equal(CpuGoalStatus.Completed, hold.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.Completed, escort.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.InProgress, protect.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.InProgress, prevent.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.InProgress, survive.GetStatus(state, NetworkTeam.Red));
+    Assert.Contains(escort.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.EscortUnit);
+    Assert.Contains(prevent.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.BlockRoute);
+  }
+
+  [Fact]
+  public void CampaignCaptureAndEscapeGoals_UseLocationsAndBoardEdgesWithoutSpecialCpuRules()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) exit = board.Cells.First(position => position.y == board.MinY);
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("capturer", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("runner", "Soldier", NetworkTeam.Red, exit.x, exit.y, 15)
+      ],
+      configuration: configuration,
+      scenario: new CpuScenarioDefinition()
+    );
+    CaptureLocationsGoal capture = new([(0, 0)]);
+    EscapeBoardGoal escape = new("runner");
+
+    Assert.Equal(CpuGoalStatus.Completed, capture.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.Completed, escape.GetStatus(state, NetworkTeam.Red));
+    Assert.Contains(capture.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.CaptureLocation);
+    Assert.Contains(escape.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.Escape && intent.PieceId == "runner");
+  }
+
+  [Fact]
+  public void CampaignTurnLimitAndReinforcement_AreAppliedAtTheSharedTurnBoundary()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    (int x, int y) reinforcementPosition = BoardRules.GetBoard(configuration).Cells
+      .First(position => position != (0, 0));
+    CpuScenarioDefinition scenario = new()
+    {
+      TurnLimit = 1,
+      WinnerOnTurnLimit = NetworkTeam.Blue,
+      ScriptedReinforcements =
+      [
+        new CpuScriptedReinforcement(1, NetworkTeam.Blue, "Peasant", reinforcementPosition.x, reinforcementPosition.y,
+          Health: 3, PieceId: "blue-reinforcement")
+      ]
+    };
+    CpuGameState state = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, 1),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      scenario: scenario
+    );
+
+    CpuGameState afterTurn = CpuGameRules.Apply(state, new EndTurnAction(NetworkTeam.Red));
+    NetworkPiece reinforcement = Assert.Single(afterTurn.Pieces);
+
+    Assert.Equal(1, afterTurn.TurnNumber);
+    Assert.Equal(NetworkTeam.Blue, afterTurn.Winner);
+    Assert.Equal("blue-reinforcement", reinforcement.Id);
+    Assert.Equal(3, reinforcement.Health);
+    Assert.True(afterTurn.IsFinished);
+  }
+
+  [Fact]
+  public void HeadlessSimulator_RunsRepeatedTurnsWithinBoundsWithoutRendering()
+  {
+    CpuProfile fastProfile = new()
+    {
+      Name = "Fast Test CPU",
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 2,
+        CandidatesPerNode = 4,
+        OpponentActionsToPredict = 0,
+        MaximumPurchasePlacementCandidates = 4,
+        MaxSearchMilliseconds = 10,
+        Randomness = 0f
+      },
+      MistakeChance = 0f
+    };
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+      ],
+      redMoney: 0
+    );
+
+    CpuMatchSimulationReport report = new CpuMatchSimulator().Run(new CpuMatchSimulationRequest
+    {
+      InitialState = state,
+      Profiles = new Dictionary<NetworkTeam, CpuProfile>
+      {
+        [NetworkTeam.Red] = fastProfile,
+        [NetworkTeam.Blue] = fastProfile
+      },
+      MaximumTurns = 12
+    });
+
+    Assert.InRange(report.TurnCount, 1, 12);
+    Assert.All(report.Turns, turn => Assert.NotNull(turn.Decision));
+    Assert.NotEmpty(report.EndReason);
+  }
+
+  [Fact]
   public void UnknownUnitType_DoesNotCauseGenerationOrSearchToThrow()
   {
     CpuGameState state = CreateState([new NetworkPiece("unknown", "FutureUnit", NetworkTeam.Red, 0, 0, 10)], redMoney: 0);
