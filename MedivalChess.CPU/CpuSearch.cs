@@ -23,6 +23,12 @@ public sealed record SearchNode(
 
 public sealed class CpuDecisionReport
 {
+  public string ProfileName { get; init; } = string.Empty;
+  public CpuDifficultyLevel Difficulty { get; init; }
+  public CpuPersonality Personality { get; init; } = CpuPersonality.Balanced;
+  public ulong InitialStateHash { get; init; }
+  public int RootLegalActionCount { get; init; }
+  public IReadOnlyList<CpuIntent> Intentions { get; init; } = [];
   public TimeSpan SearchTime { get; init; }
   public int NodesGenerated { get; init; }
   public int NodesEvaluated { get; init; }
@@ -48,18 +54,21 @@ public sealed class CpuPlayer : ICpuPlayer
   private readonly IActionCandidateSelector _candidateSelector;
   private readonly StateEvaluator _evaluator;
   private readonly GameStateHasher _hasher;
+  private readonly ICpuIntentGenerator _intentGenerator;
 
   public CpuPlayer(
     CpuActionGenerator? actionGenerator = null,
     IActionCandidateSelector? candidateSelector = null,
     StateEvaluator? evaluator = null,
-    GameStateHasher? hasher = null
+    GameStateHasher? hasher = null,
+    ICpuIntentGenerator? intentGenerator = null
   )
   {
     _actionGenerator = actionGenerator ?? new CpuActionGenerator();
     _candidateSelector = candidateSelector ?? new CpuActionCandidateSelector();
     _evaluator = evaluator ?? new StateEvaluator();
     _hasher = hasher ?? new GameStateHasher();
+    _intentGenerator = intentGenerator ?? new CpuIntentGenerator();
   }
 
   public CpuTurnPlan ChooseTurn(CpuGameState state, NetworkTeam team, CpuProfile profile, CancellationToken cancellationToken)
@@ -68,13 +77,18 @@ public sealed class CpuPlayer : ICpuPlayer
     ArgumentNullException.ThrowIfNull(profile);
     Stopwatch stopwatch = Stopwatch.StartNew();
     CpuSearchSettings settings = profile.Search;
-    EvaluationContext context = new(profile, GetIntents(state, team));
+    CpuEvaluationCache evaluationCache = new();
+    IReadOnlyList<CpuIntent> intents = _intentGenerator.Generate(state, team, profile, evaluationCache);
+    EvaluationContext context = new(profile, intents, evaluationCache);
+    ulong initialStateHash = _hasher.ComputeSearchHash(state);
     int nodesGenerated = 0;
     int nodesEvaluated = 0;
     int duplicatesRemoved = 0;
     bool timedOut = false;
     bool cancelled = cancellationToken.IsCancellationRequested;
     ICpuGameAction? fallbackAction = null;
+    int rootLegalActionCount = 0;
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache = [];
     EvaluationBreakdown initialBreakdown = _evaluator.EvaluateWithBreakdown(state, team, context);
     List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
     int maximumActions = state.InitialBuy is null
@@ -97,18 +111,25 @@ public sealed class CpuPlayer : ICpuPlayer
           continue;
         }
 
-        IReadOnlyList<ICpuGameAction> legal = _actionGenerator.GenerateSearchActions(
+        int placementLimit = GetPurchasePlacementLimit(settings, 16);
+        IReadOnlyList<ICpuGameAction> legal = GetSearchActions(
           node.State,
           team,
-          Math.Max(16, settings.CandidatesPerNode * 3)
+          placementLimit,
+          searchActionCache
         );
-        // Keep the first legal root action as a safe fallback. Generation can occasionally use
-        // most of a very small budget, but a live CPU turn must never stall because search timed out.
-        if (node.Actions.Count == 0 && fallbackAction is null)
+        if (node.Actions.Count == 0)
         {
-          fallbackAction = legal.FirstOrDefault();
+          rootLegalActionCount = legal.Count;
         }
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(node.State, team, legal, settings);
+        // Keep the strongest root candidate as a safe fallback. Generation can occasionally use
+        // most of a very small budget, but a live CPU turn must neither stall nor discard an
+        // immediately lethal action merely because deeper search timed out.
+        if (node.Actions.Count == 0 && fallbackAction is null)
+        {
+          fallbackAction = candidates.FirstOrDefault()?.Action;
+        }
         foreach (ScoredAction candidate in candidates)
         {
           if (ShouldStop(stopwatch, settings, cancellationToken, out timedOut, out cancelled))
@@ -157,7 +178,8 @@ public sealed class CpuPlayer : ICpuPlayer
       float opponentPenalty = 0f;
       if (settings.OpponentActionsToPredict > 0 && node.State.Winner is null && node.State.CurrentTurn != team)
       {
-        float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken, ref nodesGenerated, ref nodesEvaluated, ref timedOut, ref cancelled);
+        float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken,
+          searchActionCache, ref nodesGenerated, ref nodesEvaluated, ref timedOut, ref cancelled);
         opponentPenalty = Math.Max(0f, node.Score - afterOpponent);
         adjustedScore = afterOpponent;
       }
@@ -188,6 +210,12 @@ public sealed class CpuPlayer : ICpuPlayer
     stopwatch.Stop();
     CpuDecisionReport report = new()
     {
+      ProfileName = profile.Name,
+      Difficulty = profile.Difficulty,
+      Personality = profile.Personality,
+      InitialStateHash = initialStateHash,
+      RootLegalActionCount = rootLegalActionCount,
+      Intentions = intents,
       SearchTime = stopwatch.Elapsed,
       NodesGenerated = nodesGenerated,
       NodesEvaluated = nodesEvaluated,
@@ -206,6 +234,7 @@ public sealed class CpuPlayer : ICpuPlayer
     EvaluationContext context,
     Stopwatch stopwatch,
     CancellationToken cancellationToken,
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
     ref int nodesGenerated,
     ref int nodesEvaluated,
     ref bool timedOut,
@@ -221,15 +250,18 @@ public sealed class CpuPlayer : ICpuPlayer
       {
         break;
       }
-      IReadOnlyList<ICpuGameAction> legal = _actionGenerator.GenerateSearchActions(
+      int placementLimit = GetPurchasePlacementLimit(profile.Search, 12);
+      IReadOnlyList<ICpuGameAction> legal = GetSearchActions(
         current,
         opponent,
-        Math.Max(12, profile.Search.OpponentBeamWidth * 3)
+        placementLimit,
+        searchActionCache
       );
       CpuSearchSettings opponentSettings = new()
       {
         BeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth),
         CandidatesPerNode = Math.Max(1, profile.Search.OpponentBeamWidth),
+        MaximumPurchasePlacementCandidates = profile.Search.MaximumPurchasePlacementCandidates,
         MaxSearchMilliseconds = profile.Search.MaxSearchMilliseconds
       };
       IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(current, opponent, legal, opponentSettings);
@@ -260,6 +292,28 @@ public sealed class CpuPlayer : ICpuPlayer
     return _evaluator.Evaluate(current, perspective, context);
   }
 
+  private IReadOnlyList<ICpuGameAction> GetSearchActions(
+    CpuGameState state,
+    NetworkTeam team,
+    int placementLimit,
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> cache
+  )
+  {
+    (ulong stateHash, NetworkTeam team, int placementLimit) key = (_hasher.ComputeSearchHash(state), team, placementLimit);
+    if (!cache.TryGetValue(key, out IReadOnlyList<ICpuGameAction>? actions))
+    {
+      actions = _actionGenerator.GenerateSearchActions(state, team, placementLimit);
+      cache[key] = actions;
+    }
+    return actions;
+  }
+
+  private static int GetPurchasePlacementLimit(CpuSearchSettings settings, int minimumUsefulCandidates) =>
+    Math.Max(1, Math.Min(
+      Math.Max(1, settings.MaximumPurchasePlacementCandidates),
+      Math.Max(minimumUsefulCandidates, settings.CandidatesPerNode * 3)
+    ));
+
   private static bool ShouldStop(
     Stopwatch stopwatch,
     CpuSearchSettings settings,
@@ -289,9 +343,6 @@ public sealed class CpuPlayer : ICpuPlayer
     }
     return ranked[random.Next(Math.Min(ranked.Count, profile.TopChoicesForRandomSelection))];
   }
-
-  private static IReadOnlyList<CpuIntent> GetIntents(CpuGameState state, NetworkTeam team) =>
-    state.Scenario?.VictoryGoals.SelectMany(goal => goal.GenerateIntents(state, team)).ToArray() ?? [];
 
   private static string DescribeActions(IEnumerable<ICpuGameAction> actions) => string.Join(" | ", actions.Select(action => action.Describe()));
 

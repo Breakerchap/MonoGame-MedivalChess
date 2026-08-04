@@ -7,6 +7,8 @@ public sealed class CpuSearchSettings
   public int CandidatesPerNode { get; init; } = 16;
   public int OpponentBeamWidth { get; init; } = 6;
   public int OpponentActionsToPredict { get; init; } = 1;
+  /// <summary>Maximum purchase placements inspected by the bounded search; exhaustive generation is unchanged.</summary>
+  public int MaximumPurchasePlacementCandidates { get; init; } = 48;
   public int MaxSearchMilliseconds { get; init; } = 250;
   public float Randomness { get; init; } = 0.05f;
 }
@@ -61,6 +63,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 6,
       OpponentBeamWidth = 0,
       OpponentActionsToPredict = 0,
+      MaximumPurchasePlacementCandidates = 18,
       MaxSearchMilliseconds = 60,
       Randomness = 0.35f
     }
@@ -79,6 +82,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 14,
       OpponentBeamWidth = 4,
       OpponentActionsToPredict = 1,
+      MaximumPurchasePlacementCandidates = 42,
       MaxSearchMilliseconds = 250,
       Randomness = 0.05f
     }
@@ -97,6 +101,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 24,
       OpponentBeamWidth = 8,
       OpponentActionsToPredict = 3,
+      MaximumPurchasePlacementCandidates = 60,
       MaxSearchMilliseconds = 650,
       Randomness = 0f
     }

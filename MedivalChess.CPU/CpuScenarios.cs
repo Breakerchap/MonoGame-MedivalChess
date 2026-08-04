@@ -24,8 +24,12 @@ public sealed class CpuScenarioDefinition
   public string Id { get; init; } = "match";
   public IReadOnlyList<ICpuScenarioGoal> VictoryGoals { get; init; } = [];
   public IReadOnlyList<ICpuScenarioGoal> DefeatConditions { get; init; } = [];
+  public IReadOnlyList<ICpuScenarioGoal> SecondaryGoals { get; init; } = [];
   public CpuScenarioRestrictions Restrictions { get; init; } = new();
   public CpuScenarioWeights Weights { get; init; } = new();
+  /// <summary>Optional campaign-owned profiles. Normal CPU is used when a team has no override.</summary>
+  public IReadOnlyDictionary<NetworkTeam, CpuProfile> TeamProfiles { get; init; } =
+    new Dictionary<NetworkTeam, CpuProfile>();
 
   public bool IsTerminal(CpuGameState state) => state.Winner is not null ||
     TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Any(team =>

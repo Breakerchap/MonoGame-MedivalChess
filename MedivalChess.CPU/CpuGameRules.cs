@@ -69,12 +69,46 @@ public static class CpuGameRules
   /// <summary>Checks whether a unit can directly attack a target using shared attack geometry and line of sight.</summary>
   public static bool CanDirectlyAttack(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
   {
-    return attacker.Team != target.Team && target.AttachedToId is null &&
+    return attacker.AttachedToId is null && attacker.Team != target.Team && target.AttachedToId is null &&
       UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
       attackerRule.Attack > 0 && !attacker.HasAttackedThisTurn &&
       UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
       HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
+  }
+
+  /// <summary>Checks whether an unoccupied board square is currently threatened by an attacker.</summary>
+  public static bool CanDirectlyAttackSquare(CpuGameState state, NetworkPiece attacker, int targetX, int targetY)
+  {
+    string? occupiedTargetId = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id &&
+      UnitRules.TryGet(piece.Type, out UnitRule targetRule) && Occupies(targetRule, piece, (targetX, targetY)))?.Id;
+    return attacker.AttachedToId is null && UnitRules.TryGet(attacker.Type, out UnitRule rule) &&
+      rule.Attack > 0 && !attacker.HasAttackedThisTurn &&
+      CanUseActionSquare(attacker, targetX, targetY) &&
+      HasClearAttackPath(state, state.Pieces, attacker, (targetX, targetY), occupiedTargetId, state.Barricades);
+  }
+
+  /// <summary>Estimates direct-combat damage using the same shared combat modifiers as simulation.</summary>
+  public static int EstimateAttackDamage(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
+  {
+    NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+    int unmitigated = CombatRules.CalculateDamage(
+      UnitRules.GetRequired(attacker.Type).Attack,
+      HasAdjacentUnit(state, state.Pieces, attacker, attacker.Team, "Baron"),
+      state.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
+      false,
+      false,
+      0
+    );
+    return CombatRules.CalculateDamage(
+      unmitigated,
+      false,
+      false,
+      HasAdjacentUnit(state, state.Pieces, damaged, damaged.Team, "King"),
+      IsInForest(state, damaged),
+      state.Terrain.ForestDamageReduction
+    );
   }
 
   internal static bool CanUseActionSquare(NetworkPiece actor, int targetX, int targetY)
@@ -951,8 +985,22 @@ public static class CpuGameRules
       OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(first => OccupiedSquares(candidateRule, (candidate.X, candidate.Y))
         .Any(second => Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y) == 1)));
 
+  private static bool HasAdjacentUnit(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    NetworkTeam team,
+    string type
+  ) => UnitRules.TryGet(piece.Type, out UnitRule pieceRule) && pieces.Any(candidate => candidate.Id != piece.Id &&
+    candidate.Team == team && candidate.Type == type && UnitRules.TryGet(candidate.Type, out UnitRule candidateRule) &&
+    OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(first => OccupiedSquares(candidateRule, (candidate.X, candidate.Y))
+      .Any(second => Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y) == 1)));
+
   private static bool IsInForest(CpuMutableGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
     OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Source.Terrain.IsForest);
+
+  private static bool IsInForest(CpuGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+    OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);
 
   private static IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> GetLegalMovementPaths(
     CpuGameState source,

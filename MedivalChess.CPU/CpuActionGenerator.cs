@@ -28,7 +28,12 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
 
     if (state.InitialBuy is not null)
     {
-      return GenerateLegalActions(state, team);
+      // The public API below remains exhaustive. Search deliberately samples only the best
+      // placement zone because thousands of opening squares are strategically interchangeable.
+      List<ICpuGameAction> openingActions = [];
+      GeneratePurchases(state, team, openingActions, purchasePlacementLimit);
+      AddIfLegal(state, new StopInitialBuyingAction(team), openingActions);
+      return openingActions;
     }
 
     List<ICpuGameAction> actions = [];
@@ -111,7 +116,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     }
     else if (actor.Type == "Engineer")
     {
-      foreach ((int x, int y) position in state.Board.Cells.OrderBy(position => position.y).ThenBy(position => position.x))
+      foreach ((int x, int y) position in GetPotentialActionSquares(state, actor))
       {
         foreach (string ability in new[] { "Road", "Barrier", "Mine", "Demolish" })
         {
@@ -134,6 +139,29 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     }
   }
 
+  private static IEnumerable<(int x, int y)> GetPotentialActionSquares(CpuGameState state, NetworkPiece actor)
+  {
+    if (!UnitRules.TryGet(actor.Type, out UnitRule rule))
+    {
+      yield break;
+    }
+
+    int minimumX = actor.X - rule.AttackRange;
+    int maximumX = actor.X + rule.Width - 1 + rule.AttackRange;
+    int minimumY = actor.Y - rule.AttackRange;
+    int maximumY = actor.Y + rule.Height - 1 + rule.AttackRange;
+    for (int y = minimumY; y <= maximumY; y++)
+    {
+      for (int x = minimumX; x <= maximumX; x++)
+      {
+        if (BoardRules.Contains(state.Configuration, x, y) && CpuGameRules.CanUseActionSquare(actor, x, y))
+        {
+          yield return (x, y);
+        }
+      }
+    }
+  }
+
   private static void GeneratePurchases(
     CpuGameState state,
     NetworkTeam team,
@@ -143,14 +171,29 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
   {
     int centreX = state.Board.MinX + state.Board.BoardArray.GetLength(1) / 2;
     int centreY = state.Board.MinY + state.Board.BoardArray.GetLength(0) / 2;
-    IEnumerable<(int x, int y)> positions = state.Board.Cells
-      .OrderBy(position => MatchRules.GetSquareOwner(state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount) == team ? 0 : 1)
-      .ThenBy(position => Math.Abs(position.x - centreX) + Math.Abs(position.y - centreY))
-      .ThenBy(position => position.y)
-      .ThenBy(position => position.x);
+    bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true;
+    UnitRule farmRule = UnitRules.GetRequired("Farm");
+    int furthestForwardProjection = openingFarmPlacement
+      ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
+      : 0;
+    List<(int x, int y)> positions = openingFarmPlacement
+      ? state.Board.Cells
+        .Where(position => MatchRules.GetSquareOwner(state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount) == team)
+        .Where(position => BoardRules.CanPlaceForTeam(state.Configuration, team, position.x, position.y, farmRule.Width, farmRule.Height))
+        .OrderByDescending(position => CpuPlacementHeuristics.GetFarmProtectionScore(
+          state, team, position.x, position.y, furthestForwardProjection))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x)
+        .ToList()
+      : state.Board.Cells
+        .OrderBy(position => MatchRules.GetSquareOwner(state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount) == team ? 0 : 1)
+        .ThenBy(position => Math.Abs(position.x - centreX) + Math.Abs(position.y - centreY))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x)
+        .ToList();
     if (placementLimit is int limit)
     {
-      positions = positions.Take(Math.Max(1, limit));
+      positions = positions.Take(Math.Max(1, limit)).ToList();
     }
     foreach (UnitRule rule in UnitRules.Purchasable.OrderBy(rule => rule.Type, StringComparer.Ordinal))
     {

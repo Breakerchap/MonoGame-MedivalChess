@@ -100,6 +100,12 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
   {
     float value = MaterialEvaluation.GetUnitValue(action.UnitType);
     float affordability = state.Teams[action.Team].Money > 0 ? 2f : 0f;
+    if (action.UnitType == "Farm")
+    {
+      float protection = CpuPlacementHeuristics.GetFarmProtectionScore(state, action.Team, action.X, action.Y);
+      return new ScoredAction(action, value * 0.12f + affordability + protection,
+        protection > 0f ? "Places a farm in protected terrain" : "Places an income-producing farm");
+    }
     return new ScoredAction(action, value * 0.12f + affordability, "Adds an affordable unit");
   }
 
@@ -116,6 +122,10 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       "Fire" => -8f,
       _ => 4f
     };
+    if ((action.Ability is "Barrier" or "Mine") && CpuPlacementHeuristics.ProtectsFriendlyFarm(state, action.Team, (action.TargetX, action.TargetY)))
+    {
+      score += action.Ability == "Barrier" ? 36f : 24f;
+    }
     return new ScoredAction(action, score, $"Uses {action.Ability}");
   }
 

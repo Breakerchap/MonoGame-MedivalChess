@@ -16,15 +16,34 @@ public sealed class EvaluationWeights
   public float ImmediateThreats { get; init; } = 0.9f;
   public float RoyalSafety { get; init; } = 2f;
   public float ObjectiveProgress { get; init; } = 2.5f;
+  public float IntentProgress { get; init; } = 0.75f;
   public float MapControl { get; init; } = 0.4f;
   public float Economy { get; init; } = 0.5f;
   public float Mobility { get; init; } = 0.25f;
   public float Formation { get; init; } = 0.2f;
+  public float AssetSafety { get; init; } = 0.9f;
   public float ActionEfficiency { get; init; } = 0.4f;
   public float RepetitionPenalty { get; init; } = 0.8f;
 }
 
-public sealed record EvaluationContext(CpuProfile Profile, IReadOnlyList<CpuIntent>? Intents = null);
+/// <summary>Stable profile, short-term intent, and per-decision caches supplied to evaluation terms.</summary>
+public sealed class EvaluationContext
+{
+  public EvaluationContext(
+    CpuProfile profile,
+    IReadOnlyList<CpuIntent>? intents = null,
+    CpuEvaluationCache? cache = null
+  )
+  {
+    Profile = profile ?? throw new ArgumentNullException(nameof(profile));
+    Intents = intents ?? [];
+    Cache = cache ?? new CpuEvaluationCache();
+  }
+
+  public CpuProfile Profile { get; }
+  public IReadOnlyList<CpuIntent> Intents { get; }
+  public CpuEvaluationCache Cache { get; }
+}
 
 /// <summary>One independently testable contribution to CPU state utility.</summary>
 public interface IEvaluationTerm
@@ -45,20 +64,24 @@ public sealed record EvaluationBreakdown(float Total, IReadOnlyDictionary<string
 public sealed class StateEvaluator : IStateEvaluator
 {
   private readonly IReadOnlyList<IEvaluationTerm> _terms;
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
 
-  public StateEvaluator(IEnumerable<IEvaluationTerm>? terms = null)
+  public StateEvaluator(IEnumerable<IEvaluationTerm>? terms = null, ICpuThreatMapBuilder? threatMapBuilder = null)
   {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
     _terms = terms?.ToArray() ??
     [
       new MaterialEvaluation(),
       new HealthEvaluation(),
-      new ThreatEvaluation(),
-      new RoyalSafetyEvaluation(),
+      new ThreatEvaluation(_threatMapBuilder),
+      new RoyalSafetyEvaluation(_threatMapBuilder),
       new ObjectiveEvaluation(),
+      new IntentEvaluation(),
       new MapControlEvaluation(),
       new EconomyEvaluation(),
       new MobilityEvaluation(),
       new FormationEvaluation(),
+      new AssetSafetyEvaluation(_threatMapBuilder),
       new ActionEfficiencyEvaluation()
     ];
   }
@@ -100,10 +123,12 @@ public sealed class StateEvaluator : IStateEvaluator
       "Threat" => weights.ImmediateThreats * personality.Aggression,
       "RoyalSafety" => weights.RoyalSafety * personality.RoyalProtection * personality.Caution * scenario.RoyalSafety,
       "Objective" => weights.ObjectiveProgress * personality.ObjectiveFocus * scenario.ObjectiveProgress,
+      "Intent" => weights.IntentProgress * personality.ObjectiveFocus,
       "MapControl" => weights.MapControl * personality.ObjectiveFocus,
       "Economy" => weights.Economy * personality.EconomyFocus * scenario.Economy,
       "Mobility" => weights.Mobility,
       "Formation" => weights.Formation * personality.FormationPreference,
+      "AssetSafety" => weights.AssetSafety * personality.Caution,
       "ActionEfficiency" => weights.ActionEfficiency,
       _ => 1f
     };
@@ -150,34 +175,51 @@ public sealed class HealthEvaluation : IEvaluationTerm
 
 public sealed class ThreatEvaluation : IEvaluationTerm
 {
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
+
+  public ThreatEvaluation(ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
+  }
+
   public string Name => "Threat";
 
   public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
   {
-    float value = 0f;
-    foreach (NetworkPiece attacker in state.Pieces.Where(piece => piece.Team != NetworkTeam.Neutral))
+    float value = ScoreThreats(state, context.Cache.GetThreatMap(state, perspective, _threatMapBuilder));
+    foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != perspective))
     {
-      foreach (NetworkPiece target in state.Pieces.Where(target => target.Team != attacker.Team && target.Team != NetworkTeam.Neutral))
-      {
-        if (!CpuGameRules.CanDirectlyAttack(state, attacker, target))
-        {
-          continue;
-        }
-
-        float tacticalValue = Math.Min(MaterialEvaluation.GetUnitValue(target.Type), UnitRules.GetRequired(attacker.Type).Attack * 3f);
-        if (target.Health <= UnitRules.GetRequired(attacker.Type).Attack)
-        {
-          tacticalValue += MaterialEvaluation.GetUnitValue(target.Type) * 0.7f;
-        }
-        value += attacker.Team == perspective ? tacticalValue : -tacticalValue;
-      }
+      value -= ScoreThreats(state, context.Cache.GetThreatMap(state, enemy, _threatMapBuilder));
     }
     return value;
   }
+
+  private static float ScoreThreats(CpuGameState state, CpuThreatMap map) => map.ThreatsByPiece.Values.Sum(threat =>
+  {
+    NetworkPiece? target = state.Pieces.FirstOrDefault(piece => piece.Id == threat.PieceId);
+    if (target is null)
+    {
+      return 0f;
+    }
+
+    float targetValue = MaterialEvaluation.GetUnitValue(target.Type);
+    float damageValue = Math.Min(targetValue, threat.TotalExpectedDamage * 3f);
+    float lethalValue = threat.IsLethal ? targetValue * 0.7f : 0f;
+    float focusValue = Math.Max(0, threat.AttackerCount - 1) * 2f;
+    float importantValue = threat.IsStrategicallyImportant ? targetValue * 0.5f : 0f;
+    return damageValue + lethalValue + focusValue + importantValue;
+  });
 }
 
 public sealed class RoyalSafetyEvaluation : IEvaluationTerm
 {
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
+
+  public RoyalSafetyEvaluation(ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
+  }
+
   public string Name => "RoyalSafety";
 
   public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
@@ -187,9 +229,11 @@ public sealed class RoyalSafetyEvaluation : IEvaluationTerm
     {
       UnitRule royalRule = UnitRules.GetRequired(royal.Type);
       float health = royal.Health / (float)Math.Max(1, royalRule.Health) * 120f;
-      float danger = state.Pieces.Where(enemy => enemy.Team != royal.Team && enemy.Team != NetworkTeam.Neutral)
-        .Where(enemy => CpuGameRules.CanDirectlyAttack(state, enemy, royal))
-        .Sum(enemy => UnitRules.GetRequired(enemy.Type).Attack * 5f);
+      float danger = TeamRules.GetActiveTeams(state.Configuration.PlayerCount)
+        .Where(team => team != royal.Team)
+        .Select(team => context.Cache.GetThreatMap(state, team, _threatMapBuilder).GetThreat(royal.Id))
+        .Where(threat => threat is not null)
+        .Sum(threat => threat!.TotalExpectedDamage * 5f + (threat.IsLethal ? 120f : 0f));
       float score = health - danger;
       safety += royal.Team == perspective ? score : -score;
     }
@@ -203,16 +247,59 @@ public sealed class ObjectiveEvaluation : IEvaluationTerm
 
   public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
   {
-    IReadOnlyList<ICpuScenarioGoal> goals = state.Scenario?.VictoryGoals ??
-      CpuScenarioDefinition.ForMatch(state.Configuration).VictoryGoals;
-    float own = goals.Sum(goal => goal.EvaluateProgress(state, perspective));
+    CpuScenarioDefinition scenario = state.Scenario ?? CpuScenarioDefinition.ForMatch(state.Configuration);
+    float own = scenario.VictoryGoals.Sum(goal => goal.EvaluateProgress(state, perspective)) +
+      scenario.SecondaryGoals.Sum(goal => goal.EvaluateProgress(state, perspective) * 0.25f);
     float enemy = TeamRules.GetActiveTeams(state.Configuration.PlayerCount)
       .Where(team => team != perspective)
-      .Select(team => goals.Sum(goal => goal.EvaluateProgress(state, team)))
+      .Select(team => scenario.VictoryGoals.Sum(goal => goal.EvaluateProgress(state, team)) +
+        scenario.SecondaryGoals.Sum(goal => goal.EvaluateProgress(state, team) * 0.25f))
       .DefaultIfEmpty(0f)
       .Average();
     return own - enemy;
   }
+}
+
+/// <summary>Small, temporary directional score so intentions guide choices without overriding rules or objectives.</summary>
+public sealed class IntentEvaluation : IEvaluationTerm
+{
+  public string Name => "Intent";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float score = 0f;
+    foreach (CpuIntent intent in context.Intents.Where(intent => intent.ExpiryTurn >= state.TurnNumber))
+    {
+      NetworkPiece? piece = intent.PieceId is null ? null : state.Pieces.FirstOrDefault(candidate => candidate.Id == intent.PieceId);
+      NetworkPiece? target = intent.TargetPieceId is null ? null : state.Pieces.FirstOrDefault(candidate => candidate.Id == intent.TargetPieceId);
+      float priority = intent.Priority / 100f;
+      score += intent.Type switch
+      {
+        CpuIntentType.AttackTarget when target is null => priority * 30f,
+        CpuIntentType.AttackTarget when target.Team != perspective => priority * MaterialEvaluation.GetUnitValue(target.Type) * 0.1f,
+        CpuIntentType.DefendTarget when target?.Team == perspective => priority * target.Health * 0.08f,
+        CpuIntentType.ProtectRoyal when piece?.Team == perspective => priority * piece.Health * 0.08f,
+        CpuIntentType.EscortUnit or CpuIntentType.Escape when piece?.Team == perspective && intent.TargetPosition is (int x, int y) position =>
+          -priority * Distance((piece.X, piece.Y), position),
+        CpuIntentType.HoldLocation or CpuIntentType.CaptureLocation when intent.TargetPosition is (int x, int y) position =>
+          priority * OccupancyScore(state, perspective, position),
+        CpuIntentType.BlockRoute when intent.TargetPosition is (int x, int y) position =>
+          priority * -state.Pieces.Count(candidate => candidate.Team != perspective && candidate.Team != NetworkTeam.Neutral &&
+            candidate.X == position.x && candidate.Y == position.y),
+        CpuIntentType.PurchaseUnit => priority * state.Teams.GetValueOrDefault(perspective)?.Money * 0.01f ?? 0f,
+        _ => 0f
+      };
+    }
+    return score;
+  }
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
+
+  private static float OccupancyScore(CpuGameState state, NetworkTeam team, (int x, int y) position) =>
+    state.Pieces.Where(piece => piece.AttachedToId is null && piece.Team != NetworkTeam.Neutral)
+      .Sum(piece => piece.Team == team && piece.X == position.x && piece.Y == position.y ? 1f :
+        piece.Team != team && piece.X == position.x && piece.Y == position.y ? -1f : 0f);
 }
 
 public sealed class MapControlEvaluation : IEvaluationTerm
@@ -293,6 +380,57 @@ public sealed class FormationEvaluation : IEvaluationTerm
       score += (piece.Team == perspective ? 1f : -1f) * Math.Min(nearbyFriendlies, 3);
     }
     return score;
+  }
+}
+
+/// <summary>Values forest cover and defenders around farms, royals, and other strategic assets.</summary>
+public sealed class AssetSafetyEvaluation : IEvaluationTerm
+{
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
+
+  public AssetSafetyEvaluation(ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
+  }
+
+  public string Name => "AssetSafety";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float score = 0f;
+    foreach (NetworkPiece piece in state.Pieces.Where(piece => piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null))
+    {
+      if (!UnitRules.TryGet(piece.Type, out UnitRule rule))
+      {
+        continue;
+      }
+
+      int forestSquares = OccupiedSquares(piece, rule).Count(state.Terrain.IsForest);
+      int nearbyDefenders = state.Pieces.Count(other => other.Id != piece.Id && other.Team == piece.Team &&
+        other.AttachedToId is null && Math.Abs(other.X - piece.X) + Math.Abs(other.Y - piece.Y) <= 3);
+      float importance = rule.Type == "Farm" ? 4f : rule.Category == RuleCategory.Royal ? 2.5f : 0.35f;
+      float assetScore = forestSquares * importance * 3f + Math.Min(nearbyDefenders, 3) * importance;
+      foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != piece.Team))
+      {
+        CpuPieceThreat? threat = context.Cache.GetThreatMap(state, enemy, _threatMapBuilder).GetThreat(piece.Id);
+        if (threat is not null)
+        {
+          assetScore -= threat.TotalExpectedDamage * importance;
+          if (threat.IsLethal) assetScore -= MaterialEvaluation.GetUnitValue(piece.Type) * importance;
+        }
+      }
+      score += piece.Team == perspective ? assetScore : -assetScore;
+    }
+    return score;
+  }
+
+  private static IEnumerable<(int x, int y)> OccupiedSquares(NetworkPiece piece, UnitRule rule)
+  {
+    for (int y = 0; y < rule.Height; y++)
+    for (int x = 0; x < rule.Width; x++)
+    {
+      yield return (piece.X + x, piece.Y + y);
+    }
   }
 }
 

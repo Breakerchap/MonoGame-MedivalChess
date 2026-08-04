@@ -899,7 +899,8 @@ internal sealed class Game1 : Game
       string actions = plan.Actions.Count == 0
         ? "no legal action"
         : string.Join(" -> ", plan.Actions.Select(action => action.Describe()));
-      Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0} | {plan.Report.SearchTime.TotalMilliseconds:0} ms | {plan.Report.NodesEvaluated} nodes");
+      Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0}");
+      Console.WriteLine(CpuDebugFormatter.FormatDecision(plan.Report, maximumChoices: 1));
       if (_cpuActionQueue.Count == 0)
       {
         return;

@@ -2040,19 +2040,10 @@ public sealed class MatchStore
 
 internal static class NetworkBoardRules
 {
-  private static readonly Dictionary<string, Board> Boards = new(StringComparer.Ordinal)
-  {
-    ["Small"] = new Board("board_small.json"),
-    ["Medium"] = new Board("board_medium.json"),
-    ["Large"] = new Board("board_large.json")
-  };
+  internal static Board GetBoard(NetworkMatchConfiguration configuration) => BoardRules.GetBoard(configuration);
 
-  internal static Board GetBoard(NetworkMatchConfiguration configuration) => Boards[configuration.BoardSize];
-
-  internal static bool Contains(NetworkMatchConfiguration configuration, int x, int y)
-  {
-    return GetBoard(configuration).ContainsCell((x, y));
-  }
+  internal static bool Contains(NetworkMatchConfiguration configuration, int x, int y) =>
+    BoardRules.Contains(configuration, x, y);
 
   internal static (int x, int y) GetRoyalSpawn(NetworkMatchConfiguration configuration, NetworkTeam team, int width, int height)
   {
@@ -2074,33 +2065,17 @@ internal static class NetworkBoardRules
     int height
   )
   {
-    Board board = GetBoard(configuration);
-    for (int offsetY = 0; offsetY < height; offsetY++)
-    {
-      for (int offsetX = 0; offsetX < width; offsetX++)
-      {
-        if (MatchRules.GetSquareOwner(board, configuration.GameMode, (x + offsetX, y + offsetY), configuration.PlayerCount) != team ||
-            !board.ContainsCell((x + offsetX, y + offsetY)))
-        {
-          return false;
-        }
-      }
-    }
-    return true;
+    return BoardRules.CanPlaceForTeam(configuration, team, x, y, width, height);
   }
 
   internal static bool CanPlaceMercenary(NetworkMatchConfiguration configuration, int x, int y)
   {
-    Board board = GetBoard(configuration);
-    bool inNoMansLand = MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) is null;
-    return inNoMansLand && Contains(configuration, x, y);
+    return BoardRules.CanPlaceMercenary(configuration, x, y);
   }
 
   internal static bool IsInTeamTerritory(NetworkMatchConfiguration configuration, NetworkTeam team, int x, int y)
   {
-    Board board = GetBoard(configuration);
-    return board.ContainsCell((x, y)) &&
-      MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) == team;
+    return BoardRules.IsInTeamTerritory(configuration, team, x, y);
   }
 }
 
@@ -2123,17 +2098,7 @@ internal static class NetworkPieceRules
 
   internal static bool FootprintFitsBoard(
     NetworkMatchConfiguration configuration, int x, int y, int width, int height
-  )
-  {
-    for (int offsetY = 0; offsetY < height; offsetY++)
-    {
-      for (int offsetX = 0; offsetX < width; offsetX++)
-      {
-        if (!NetworkBoardRules.Contains(configuration, x + offsetX, y + offsetY)) return false;
-      }
-    }
-    return true;
-  }
+  ) => BoardRules.FootprintFitsBoard(configuration, x, y, width, height);
 
   internal static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
   {
