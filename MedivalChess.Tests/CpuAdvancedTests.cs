@@ -156,6 +156,65 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void HeadlessCpuMatch_RunsThroughFarmOpeningAndNormalTurnsWithoutStalling()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);
+    NetworkInitialBuyState initialBuy = new(
+      NetworkTeam.Red, 0, 1, 0, 0, 1, false, false, false,
+      [
+        new NetworkInitialBuyTeamState(NetworkTeam.Red, 0, false),
+        new NetworkInitialBuyTeamState(NetworkTeam.Blue, 0, false)
+      ],
+      IsFarmPlacementPhase: true
+    );
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 100, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 100, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      initialBuy: initialBuy
+    );
+    CpuProfile profile = new()
+    {
+      Name = "Opening Simulation CPU",
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 3,
+        CandidatesPerNode = 5,
+        OpponentActionsToPredict = 0,
+        MaxSearchNodes = 48,
+        MaximumPurchasePlacementCandidates = 8,
+        MaxSearchMilliseconds = 3_000,
+        Randomness = 0f
+      },
+      MistakeChance = 0f
+    };
+
+    CpuMatchSimulationReport report = new CpuMatchSimulator().Run(new CpuMatchSimulationRequest
+    {
+      InitialState = state,
+      Profiles = new Dictionary<NetworkTeam, CpuProfile>
+      {
+        [NetworkTeam.Red] = profile,
+        [NetworkTeam.Blue] = profile
+      },
+      MaximumTurns = 24
+    });
+
+    Assert.NotEmpty(report.Turns);
+    Assert.NotEqual("No legal action could advance the current turn.", report.EndReason);
+    Assert.True(report.Turns.Count(turn => turn.Actions.Any(action => action.StartsWith("Purchase Farm", StringComparison.Ordinal))) >= 4);
+    Assert.All(report.Turns, turn => Assert.InRange(turn.Decision.SearchTime.TotalMilliseconds, 0, 3_000));
+  }
+
+  [Fact]
   public void BeamSearch_FindsMoveThenAttackCombinationAgainstRoyalObjective()
   {
     CpuScenarioDefinition scenario = CpuScenarioDefinition.ForMatch(CreateConfiguration());
@@ -498,6 +557,59 @@ public sealed class CpuAdvancedTests
     Assert.Equal(CpuGoalStatus.Completed, escape.GetStatus(state, NetworkTeam.Red));
     Assert.Contains(capture.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.CaptureLocation);
     Assert.Contains(escape.GenerateIntents(state, NetworkTeam.Red), intent => intent.Type == CpuIntentType.Escape && intent.PieceId == "runner");
+  }
+
+  [Fact]
+  public void NarrowCandidateSelection_RetainsAnEscortMoveTowardTheCampaignDestination()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      VictoryGoals = [new EscortUnitGoal("escort", (0, -2))]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("escort", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      scenario: scenario,
+      redMoney: 0
+    );
+    IReadOnlyList<ICpuGameAction> legal = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red);
+
+    ScoredAction candidate = Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state,
+      NetworkTeam.Red,
+      legal,
+      new CpuSearchSettings { CandidatesPerNode = 1 },
+      CpuPersonality.ObjectiveFocused
+    ));
+
+    MoveAction move = Assert.IsType<MoveAction>(candidate.Action);
+    Assert.Equal("escort", move.PieceId);
+    Assert.True(move.DestinationY < 2, candidate.Reason);
+  }
+
+  [Fact]
+  public void CampaignDefeatCondition_ProducesABlockingIntentAndCandidateMove()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      DefeatConditions = [new PreventEscapeGoal([(0, -3)])]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      scenario: scenario,
+      redMoney: 0
+    );
+    IReadOnlyList<CpuIntent> intents = new CpuIntentGenerator().Generate(state, NetworkTeam.Red, CpuProfile.Normal(8));
+    IReadOnlyList<ICpuGameAction> legal = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red);
+    ScoredAction candidate = Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state,
+      NetworkTeam.Red,
+      legal,
+      new CpuSearchSettings { CandidatesPerNode = 1 }
+    ));
+
+    Assert.Contains(intents, intent => intent.Type == CpuIntentType.BlockRoute && intent.TargetPosition == (0, -3));
+    MoveAction move = Assert.IsType<MoveAction>(candidate.Action);
+    Assert.True(move.DestinationY < 2, candidate.Reason);
   }
 
   [Fact]

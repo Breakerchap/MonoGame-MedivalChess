@@ -31,8 +31,15 @@ public sealed class CpuIntentGenerator : ICpuIntentGenerator
   {
     ArgumentNullException.ThrowIfNull(state);
     ArgumentNullException.ThrowIfNull(profile);
-    List<CpuIntent> intents = state.Scenario?.VictoryGoals
-      .SelectMany(goal => goal.GenerateIntents(state, team)).ToList() ?? [];
+    List<CpuIntent> intents = state.Scenario is null
+      ? []
+      : state.Scenario.VictoryGoals
+        .Concat(state.Scenario.SecondaryGoals)
+        // A campaign failure condition is often the most urgent reason to defend a route or
+        // protected unit. Its intents remain advisory, but must participate in normal planning.
+        .Concat(state.Scenario.DefeatConditions)
+        .SelectMany(goal => goal.GenerateIntents(state, team))
+        .ToList();
 
     foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(candidate => candidate != team))
     {

@@ -155,21 +155,52 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
 
   private static IEnumerable<(int x, int y)> GetGoalPositions(CpuGameState state, NetworkTeam team)
   {
+    HashSet<(int x, int y)> positions = [];
     if (state.Configuration.GameMode == "Conquest")
     {
-      return state.Board.Cells.Where(position => MatchRules.IsConquestSquare(state.Board, position));
+      positions.UnionWith(state.Board.Cells.Where(position => MatchRules.IsConquestSquare(state.Board, position)));
     }
-    if (state.Configuration.GameMode == "Dominion")
+    else if (state.Configuration.GameMode == "Dominion")
     {
-      return MatchRules.GetDominionControlPoints(state.Board);
+      positions.UnionWith(MatchRules.GetDominionControlPoints(state.Board));
     }
-    if (state.Configuration.GameMode == "Plunder" && state.TreasurePosition is (int x, int y) treasure)
+    else if (state.Configuration.GameMode == "Plunder" && state.TreasurePosition is (int x, int y) treasure)
     {
-      return [treasure];
+      positions.Add(treasure);
     }
-    return state.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral &&
-      UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category == RuleCategory.Royal)
-      .Select(piece => (piece.X, piece.Y));
+
+    // Campaign intents carry the mission's target locations. Include them while candidates are
+    // pruned so a narrow beam still retains a move toward an escort, capture, defence, or block
+    // objective instead of relying on broad tactical evaluation to rediscover it later.
+    foreach (ICpuScenarioGoal goal in (state.Scenario?.VictoryGoals ?? [])
+      .Concat(state.Scenario?.SecondaryGoals ?? [])
+      .Concat(state.Scenario?.DefeatConditions ?? []))
+    {
+      foreach (CpuIntent intent in goal.GenerateIntents(state, team))
+      {
+        if (intent.TargetPosition is (int x, int y) targetPosition)
+        {
+          positions.Add(targetPosition);
+        }
+        if (intent.TargetPieceId is not null && state.Pieces.FirstOrDefault(piece => piece.Id == intent.TargetPieceId) is NetworkPiece targetPiece)
+        {
+          positions.Add((targetPiece.X, targetPiece.Y));
+        }
+        if (intent.Type == CpuIntentType.Escape && intent.TargetPosition is null)
+        {
+          positions.UnionWith(state.Board.Cells.Where(position => MatchRules.IsOnEnemyBackEdge(state.Board, team, position)));
+        }
+      }
+    }
+
+    if (positions.Count == 0)
+    {
+      positions.UnionWith(state.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category == RuleCategory.Royal)
+        .Select(piece => (piece.X, piece.Y)));
+    }
+
+    return positions.OrderBy(position => position.y).ThenBy(position => position.x);
   }
 
   private static int Distance((int x, int y) first, (int x, int y) second) =>
