@@ -198,7 +198,7 @@ public sealed class CpuPlayer : ICpuPlayer
       .OrderByDescending(entry => entry.Score)
       .ThenBy(entry => DescribeActions(entry.Node.Actions), StringComparer.Ordinal)
       .ToList();
-    (SearchNode Node, float Score, float OpponentPenalty) chosen = ChooseRanked(ranked, profile);
+    (SearchNode Node, float Score, float OpponentPenalty) chosen = ChooseRanked(ranked, profile, initialStateHash);
     List<CpuChoiceReport> choices = ranked.Take(5).Select(entry => new CpuChoiceReport
     {
       Actions = entry.Node.Actions.Select(action => action.Describe()).ToArray(),
@@ -329,19 +329,34 @@ public sealed class CpuPlayer : ICpuPlayer
 
   private static (SearchNode Node, float Score, float OpponentPenalty) ChooseRanked(
     IReadOnlyList<(SearchNode Node, float Score, float OpponentPenalty)> ranked,
-    CpuProfile profile
+    CpuProfile profile,
+    ulong stateHash
   )
   {
     if (ranked.Count == 1 || profile.TopChoicesForRandomSelection <= 1 || profile.MistakeChance <= 0f)
     {
       return ranked[0];
     }
-    Random random = new(profile.RandomSeed);
+
+    float scoreWindow = Math.Max(0f, profile.Search.TopChoiceScoreWindow);
+    IReadOnlyList<(SearchNode Node, float Score, float OpponentPenalty)> comparable = ranked
+      .Take(Math.Max(1, profile.TopChoicesForRandomSelection))
+      .Where(entry => ranked[0].Score - entry.Score <= scoreWindow)
+      .ToArray();
+    if (comparable.Count <= 1)
+    {
+      return ranked[0];
+    }
+
+    // The state hash makes a profile reproducible for a fixed seed while allowing later turns
+    // to vary naturally. Only plans already close to the best score are eligible.
+    int seed = unchecked(profile.RandomSeed ^ (int)stateHash ^ (int)(stateHash >> 32));
+    Random random = new(seed);
     if (random.NextDouble() >= Math.Clamp(profile.MistakeChance + profile.Search.Randomness, 0f, 1f))
     {
       return ranked[0];
     }
-    return ranked[random.Next(Math.Min(ranked.Count, profile.TopChoicesForRandomSelection))];
+    return comparable[1 + random.Next(comparable.Count - 1)];
   }
 
   private static string DescribeActions(IEnumerable<ICpuGameAction> actions) => string.Join(" | ", actions.Select(action => action.Describe()));
@@ -367,6 +382,31 @@ public sealed class GameStateHasher
     Add(ref hash, state.ActionsRemaining);
     Add(ref hash, state.TurnNumber);
     Add(ref hash, state.Winner ?? NetworkTeam.Neutral);
+    if (state.InitialBuy is NetworkInitialBuyState initialBuy)
+    {
+      Add(ref hash, true);
+      Add(ref hash, initialBuy.CurrentTeam);
+      Add(ref hash, initialBuy.PurchasesThisTurn);
+      Add(ref hash, initialBuy.PurchasesPerTurn);
+      Add(ref hash, initialBuy.RedBuyTurnsUsed);
+      Add(ref hash, initialBuy.BlueBuyTurnsUsed);
+      Add(ref hash, initialBuy.BuyTurnsPerTeam);
+      Add(ref hash, initialBuy.RedStopped);
+      Add(ref hash, initialBuy.BlueStopped);
+      Add(ref hash, initialBuy.IsComplete);
+      Add(ref hash, initialBuy.IsFarmPlacementPhase);
+      foreach (NetworkInitialBuyTeamState teamState in (initialBuy.TeamStates ?? []).OrderBy(entry => entry.Team))
+      {
+        Add(ref hash, teamState.Team);
+        Add(ref hash, teamState.BuyTurnsUsed);
+        Add(ref hash, teamState.Stopped);
+        Add(ref hash, teamState.FarmsPlaced);
+      }
+    }
+    else
+    {
+      Add(ref hash, false);
+    }
     foreach (NetworkPiece piece in state.Pieces.OrderBy(piece => piece.Id, StringComparer.Ordinal))
     {
       Add(ref hash, piece.Id);

@@ -28,8 +28,16 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     ArgumentNullException.ThrowIfNull(legalActions);
     ArgumentNullException.ThrowIfNull(settings);
 
+    // Candidate scoring is on the hot path. Derive board-wide inputs once instead of repeating
+    // a royal/objective scan and farm-territory scan for every legal movement or purchase.
+    IReadOnlyDictionary<string, NetworkPiece> piecesById = state.Pieces.ToDictionary(piece => piece.Id, StringComparer.Ordinal);
+    (int x, int y)[] goals = GetGoalPositions(state, team).ToArray();
+    int? farmForwardProjection = legalActions.Any(action => action is PurchaseAction { UnitType: "Farm" })
+      ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
+      : null;
+
     return legalActions
-      .Select(action => Score(state, team, action))
+      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection))
       .OrderByDescending(candidate => candidate.Score)
       .ThenBy(candidate => candidate.Action.Kind)
       .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
@@ -37,25 +45,33 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       .ToArray();
   }
 
-  private static ScoredAction Score(CpuGameState state, NetworkTeam team, ICpuGameAction action) => action switch
+  private static ScoredAction Score(
+    CpuGameState state,
+    NetworkTeam team,
+    ICpuGameAction action,
+    IReadOnlyDictionary<string, NetworkPiece> piecesById,
+    IReadOnlyList<(int x, int y)> goals,
+    int? farmForwardProjection
+  ) => action switch
   {
-    AttackAction attack => ScoreAttack(state, attack),
-    MoveAction move => ScoreMove(state, team, move),
-    PurchaseAction purchase => ScorePurchase(state, purchase),
+    AttackAction attack => ScoreAttack(attack, piecesById),
+    MoveAction move => ScoreMove(state, team, move, piecesById, goals),
+    PurchaseAction purchase => ScorePurchase(state, purchase, farmForwardProjection),
     UseAbilityAction ability => ScoreAbility(state, ability),
     EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
     StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
     _ => new ScoredAction(action, 0f, "Legal action")
   };
 
-  private static ScoredAction ScoreAttack(CpuGameState state, AttackAction action)
+  private static ScoredAction ScoreAttack(AttackAction action, IReadOnlyDictionary<string, NetworkPiece> piecesById)
   {
-    NetworkPiece? attacker = state.Pieces.FirstOrDefault(piece => piece.Id == action.AttackerId);
-    NetworkPiece? target = action.TargetPieceId is null ? null : state.Pieces.FirstOrDefault(piece => piece.Id == action.TargetPieceId);
-    if (attacker is null)
+    if (!piecesById.TryGetValue(action.AttackerId, out NetworkPiece? attacker))
     {
       return new ScoredAction(action, float.MinValue, "Missing attacker");
     }
+    NetworkPiece? target = action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? foundTarget)
+      ? foundTarget
+      : null;
     if (target is null)
     {
       return new ScoredAction(action, 12f, "Damages a barricade");
@@ -73,15 +89,19 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     return new ScoredAction(action, score, lethal ? "Immediate lethal attack" : "Damages an enemy unit");
   }
 
-  private static ScoredAction ScoreMove(CpuGameState state, NetworkTeam team, MoveAction action)
+  private static ScoredAction ScoreMove(
+    CpuGameState state,
+    NetworkTeam team,
+    MoveAction action,
+    IReadOnlyDictionary<string, NetworkPiece> piecesById,
+    IReadOnlyList<(int x, int y)> goals
+  )
   {
-    NetworkPiece? piece = state.Pieces.FirstOrDefault(candidate => candidate.Id == action.PieceId);
-    if (piece is null)
+    if (!piecesById.TryGetValue(action.PieceId, out NetworkPiece? piece))
     {
       return new ScoredAction(action, float.MinValue, "Missing unit");
     }
 
-    IEnumerable<(int x, int y)> goals = GetGoalPositions(state, team);
     int oldDistance = goals.Select(position => Distance((piece.X, piece.Y), position)).DefaultIfEmpty(0).Min();
     int newDistance = goals.Select(position => Distance((action.DestinationX, action.DestinationY), position)).DefaultIfEmpty(0).Min();
     float score = (oldDistance - newDistance) * 5f;
@@ -96,13 +116,14 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     return new ScoredAction(action, score, score > 0 ? "Moves toward an objective" : "Repositions a unit");
   }
 
-  private static ScoredAction ScorePurchase(CpuGameState state, PurchaseAction action)
+  private static ScoredAction ScorePurchase(CpuGameState state, PurchaseAction action, int? farmForwardProjection)
   {
     float value = MaterialEvaluation.GetUnitValue(action.UnitType);
     float affordability = state.Teams[action.Team].Money > 0 ? 2f : 0f;
     if (action.UnitType == "Farm")
     {
-      float protection = CpuPlacementHeuristics.GetFarmProtectionScore(state, action.Team, action.X, action.Y);
+      float protection = CpuPlacementHeuristics.GetFarmProtectionScore(
+        state, action.Team, action.X, action.Y, farmForwardProjection ?? 0);
       return new ScoredAction(action, value * 0.12f + affordability + protection,
         protection > 0f ? "Places a farm in protected terrain" : "Places an income-producing farm");
     }

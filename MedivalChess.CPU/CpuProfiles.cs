@@ -9,6 +9,8 @@ public sealed class CpuSearchSettings
   public int OpponentActionsToPredict { get; init; } = 1;
   /// <summary>Maximum purchase placements inspected by the bounded search; exhaustive generation is unchanged.</summary>
   public int MaximumPurchasePlacementCandidates { get; init; } = 48;
+  /// <summary>Only near-equal plans inside this score window are eligible for seeded variety.</summary>
+  public float TopChoiceScoreWindow { get; init; } = 24f;
   public int MaxSearchMilliseconds { get; init; } = 250;
   public float Randomness { get; init; } = 0.05f;
 }
@@ -74,17 +76,20 @@ public sealed class CpuProfile
     Name = "Normal CPU",
     Difficulty = CpuDifficultyLevel.Normal,
     RandomSeed = seed,
-    MistakeChance = 0.05f,
-    TopChoicesForRandomSelection = 2,
+    // Small seeded variety keeps repeated games from looking scripted without choosing a weak plan.
+    MistakeChance = 0.14f,
+    TopChoicesForRandomSelection = 3,
     Search = new CpuSearchSettings
     {
-      BeamWidth = 10,
-      CandidatesPerNode = 14,
-      OpponentBeamWidth = 4,
+      // This is the profile used by the interactive local opponent. Keep its work comfortably
+      // below a frame-sized budget; Hard remains available for deliberate/offline analysis.
+      BeamWidth = 6,
+      CandidatesPerNode = 9,
+      OpponentBeamWidth = 2,
       OpponentActionsToPredict = 1,
-      MaximumPurchasePlacementCandidates = 42,
-      MaxSearchMilliseconds = 250,
-      Randomness = 0.05f
+      MaximumPurchasePlacementCandidates = 12,
+      MaxSearchMilliseconds = 70,
+      Randomness = 0.06f
     }
   };
 

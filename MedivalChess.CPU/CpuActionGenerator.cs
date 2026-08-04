@@ -195,7 +195,14 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     {
       positions = positions.Take(Math.Max(1, limit)).ToList();
     }
-    foreach (UnitRule rule in UnitRules.Purchasable.OrderBy(rule => rule.Type, StringComparer.Ordinal))
+    // During opening farm placement every non-farm action is illegal. Avoid constructing and
+    // validating hundreds of guaranteed failures on the main search path.
+    int availableMoney = state.Teams.GetValueOrDefault(team)?.Money ?? 0;
+    IEnumerable<UnitRule> purchaseRules = openingFarmPlacement
+      ? [farmRule]
+      : UnitRules.Purchasable.Where(rule => rule.Type == "Mercenary" ||
+        availableMoney >= GetPurchaseCost(state, rule));
+    foreach (UnitRule rule in purchaseRules.OrderBy(rule => rule.Type, StringComparer.Ordinal))
     {
       foreach ((int x, int y) position in positions)
       {
@@ -203,6 +210,10 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       }
     }
   }
+
+  private static int GetPurchaseCost(CpuGameState state, UnitRule rule) => rule.Type == "Farm"
+    ? rule.Cost
+    : (int)Math.Ceiling(rule.Cost * state.Configuration.UnitPricePercent / 100d);
 
   private static void AddIfLegal(CpuGameState state, ICpuGameAction action, ICollection<ICpuGameAction> actions)
   {

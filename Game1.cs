@@ -41,6 +41,9 @@ internal sealed class Game1 : Game
     Buy
   }
 
+  /// <summary>A speculative CPU response that is usable only when the authoritative snapshot still matches.</summary>
+  private sealed record CpuPreplannedTurn(NetworkTeam Team, ulong ExpectedStateHash, CpuTurnPlan Plan);
+
   private enum OnlineInputField
   {
     ServerUrl,
@@ -160,6 +163,8 @@ internal sealed class Game1 : Game
   private int _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
+  // Mirrors the simulation turn counter so speculative CPU plans can be matched to live state.
+  private int _cpuTurnNumber;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
   private readonly Dictionary<TeamName, int> _modeScores = [];
   private (int x, int y)? _treasurePosition;
@@ -178,6 +183,11 @@ internal sealed class Game1 : Game
   private OnlineMatchClient _onlineClient;
   private readonly Dictionary<TeamName, CpuProfile> _cpuProfiles = [];
   private readonly Queue<ICpuGameAction> _cpuActionQueue = [];
+  private System.Threading.Tasks.Task<CpuTurnPlan> _cpuPlanningTask;
+  private System.Threading.CancellationTokenSource _cpuPlanningCancellation;
+  private NetworkTeam? _cpuPlanningTeam;
+  private System.Threading.Tasks.Task<CpuPreplannedTurn> _cpuPreplanningTask;
+  private System.Threading.CancellationTokenSource _cpuPreplanningCancellation;
   private CpuDecisionReport _lastCpuDecisionReport;
   private float _cpuActionDelaySeconds;
   private string _onlineStatus = "OFFLINE";
@@ -289,6 +299,8 @@ internal sealed class Game1 : Game
       base.Update(gameTime);
       return;
     }
+
+    UpdateCpuPreplanning();
 
     float cameraSpeed = 500f;
     float zoomSpeed = 1f;
@@ -686,6 +698,7 @@ internal sealed class Game1 : Game
 
   private void StartInitialBuyPhase()
   {
+    _cpuTurnNumber = 0;
     InitializeModeObjectives();
     _initialBuyPhase = new InitialBuyPhase(_initialBuysPerTurn, _initialBuyTurnsPerTeam, Team.ActiveTeams, _farmsEnabled);
     EnsureInitialBuySelection();
@@ -865,6 +878,7 @@ internal sealed class Game1 : Game
       }
 
       Team.AdvanceTurn();
+      _cpuTurnNumber++;
       _cpuActionQueue.Clear();
       ApplyTurnEconomy(Team.CurrentTurn);
       ResetPieceTurnActions(Team.CurrentTurn);
@@ -888,19 +902,52 @@ internal sealed class Game1 : Game
     if (_cpuActionQueue.Count == 0)
     {
       TeamName team = Team.CurrentTurn;
-      CpuGameState state = CreateCpuGameState();
-      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, team.ToNetworkTeam(), _cpuProfiles[team], System.Threading.CancellationToken.None);
-      _lastCpuDecisionReport = plan.Report;
-      foreach (ICpuGameAction action in plan.Actions)
+      if (TryConsumeCpuPreplan(team, out CpuTurnPlan preplannedPlan))
       {
-        _cpuActionQueue.Enqueue(action);
+        QueueCpuPlan(team, preplannedPlan);
+      }
+      else
+      {
+        if (_cpuPlanningTask is null)
+        {
+          // Search operates only on this immutable snapshot. Running it away from Update keeps
+          // movement, rendering, and input responsive even on a busy opening board.
+          CpuGameState snapshot = CreateCpuGameState();
+          CpuProfile profile = _cpuProfiles[team];
+          NetworkTeam cpuTeam = team.ToNetworkTeam();
+          _cpuPlanningTeam = cpuTeam;
+          _cpuPlanningCancellation = new System.Threading.CancellationTokenSource();
+          System.Threading.CancellationToken cancellationToken = _cpuPlanningCancellation.Token;
+          _cpuPlanningTask = StartCpuWorker(
+            () => new CpuPlayer().ChooseTurn(snapshot, cpuTeam, profile, cancellationToken),
+            cancellationToken
+          );
+          return;
+        }
+
+        if (!_cpuPlanningTask.IsCompleted)
+        {
+          return;
+        }
+
+        System.Threading.Tasks.Task<CpuTurnPlan> completedTask = _cpuPlanningTask;
+        _cpuPlanningTask = null;
+        _cpuPlanningCancellation?.Dispose();
+        _cpuPlanningCancellation = null;
+        NetworkTeam? plannedTeam = _cpuPlanningTeam;
+        _cpuPlanningTeam = null;
+        if (completedTask.IsCanceled || completedTask.IsFaulted || plannedTeam != team.ToNetworkTeam())
+        {
+          if (completedTask.Exception is not null)
+          {
+            Console.WriteLine($"CPU planning failed: {completedTask.Exception.GetBaseException().Message}");
+          }
+          return;
+        }
+
+        QueueCpuPlan(team, completedTask.Result);
       }
 
-      string actions = plan.Actions.Count == 0
-        ? "no legal action"
-        : string.Join(" -> ", plan.Actions.Select(action => action.Describe()));
-      Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0}");
-      Console.WriteLine(CpuDebugFormatter.FormatDecision(plan.Report, maximumChoices: 1));
       if (_cpuActionQueue.Count == 0)
       {
         return;
@@ -917,6 +964,154 @@ internal sealed class Game1 : Game
     }
 
     _cpuActionDelaySeconds = 0.18f;
+  }
+
+  private void QueueCpuPlan(TeamName team, CpuTurnPlan plan)
+  {
+    _lastCpuDecisionReport = plan.Report;
+    foreach (ICpuGameAction action in plan.Actions)
+    {
+      _cpuActionQueue.Enqueue(action);
+    }
+
+    string actions = plan.Actions.Count == 0
+      ? "no legal action"
+      : string.Join(" -> ", plan.Actions.Select(action => action.Describe()));
+    Console.WriteLine($"CPU {team}: {actions} | score {plan.EstimatedScore:0.0}");
+    Console.WriteLine(CpuDebugFormatter.FormatDecision(plan.Report, maximumChoices: 1));
+  }
+
+  private void CancelCpuPlanning()
+  {
+    _cpuPlanningCancellation?.Cancel();
+    _cpuPlanningCancellation = null;
+    _cpuPlanningTask = null;
+    _cpuPlanningTeam = null;
+    CancelCpuPreplanning();
+  }
+
+  private void UpdateCpuPreplanning()
+  {
+    if (_onlineClient is not null || _cpuPreplanningTask is not null || _cpuProfiles.Count == 0)
+    {
+      return;
+    }
+
+    CpuGameState snapshot = CreateCpuGameState();
+    NetworkTeam predictedOpponent = snapshot.CurrentTurn;
+    NetworkTeam predictedCpu = TeamRules.GetNextTeam(predictedOpponent, snapshot.Configuration.PlayerCount);
+    if (!_cpuProfiles.TryGetValue(predictedCpu.ToTeamName(), out CpuProfile cpuProfile))
+    {
+      return;
+    }
+
+    // Use a deliberately light opponent model. Its result is only a speculative cache entry;
+    // the exact state hash is checked before a real CPU action is ever queued.
+    CpuProfile opponentProfile = CpuProfile.Easy(snapshot.Configuration.TerrainSeed + (int)predictedOpponent);
+    _cpuPreplanningCancellation = new System.Threading.CancellationTokenSource();
+    System.Threading.CancellationToken cancellationToken = _cpuPreplanningCancellation.Token;
+    _cpuPreplanningTask = StartCpuWorker(
+      () => BuildCpuPreplan(snapshot, predictedOpponent, predictedCpu, opponentProfile, cpuProfile, cancellationToken),
+      cancellationToken
+    );
+  }
+
+  private bool TryConsumeCpuPreplan(TeamName team, out CpuTurnPlan plan)
+  {
+    plan = null;
+    if (_cpuPreplanningTask is null)
+    {
+      return false;
+    }
+
+    if (!_cpuPreplanningTask.IsCompleted)
+    {
+      // Do not compete with an obsolete prediction during the real CPU turn.
+      CancelCpuPreplanning();
+      return false;
+    }
+
+    System.Threading.Tasks.Task<CpuPreplannedTurn> completedTask = _cpuPreplanningTask;
+    _cpuPreplanningTask = null;
+    _cpuPreplanningCancellation?.Dispose();
+    _cpuPreplanningCancellation = null;
+    if (completedTask.IsCanceled || completedTask.IsFaulted)
+    {
+      return false;
+    }
+
+    CpuPreplannedTurn prepared = completedTask.Result;
+    if (prepared is null || prepared.Team != team.ToNetworkTeam())
+    {
+      return false;
+    }
+
+    ulong currentHash = new GameStateHasher().ComputeSearchHash(CreateCpuGameState());
+    if (prepared.ExpectedStateHash != currentHash)
+    {
+      return false;
+    }
+
+    plan = prepared.Plan;
+    return true;
+  }
+
+  private void CancelCpuPreplanning()
+  {
+    _cpuPreplanningCancellation?.Cancel();
+    _cpuPreplanningCancellation = null;
+    _cpuPreplanningTask = null;
+  }
+
+  private static System.Threading.Tasks.Task<T> StartCpuWorker<T>(
+    Func<T> work,
+    System.Threading.CancellationToken cancellationToken
+  ) => System.Threading.Tasks.Task.Factory.StartNew(
+    work,
+    cancellationToken,
+    System.Threading.Tasks.TaskCreationOptions.LongRunning | System.Threading.Tasks.TaskCreationOptions.DenyChildAttach,
+    System.Threading.Tasks.TaskScheduler.Default
+  );
+
+  private static CpuPreplannedTurn BuildCpuPreplan(
+    CpuGameState snapshot,
+    NetworkTeam opponent,
+    NetworkTeam expectedCpu,
+    CpuProfile opponentProfile,
+    CpuProfile cpuProfile,
+    System.Threading.CancellationToken cancellationToken
+  )
+  {
+    CpuPlayer player = new();
+    CpuGameState predicted = ApplyPlannedTurn(snapshot, opponent, player.ChooseTurn(snapshot, opponent, opponentProfile, cancellationToken));
+    if (cancellationToken.IsCancellationRequested || predicted.IsFinished || predicted.CurrentTurn != expectedCpu)
+    {
+      return null;
+    }
+
+    CpuTurnPlan response = player.ChooseTurn(predicted, expectedCpu, cpuProfile, cancellationToken);
+    return cancellationToken.IsCancellationRequested ? null : new CpuPreplannedTurn(
+      expectedCpu,
+      new GameStateHasher().ComputeSearchHash(predicted),
+      response
+    );
+  }
+
+  private static CpuGameState ApplyPlannedTurn(CpuGameState state, NetworkTeam team, CpuTurnPlan plan)
+  {
+    foreach (ICpuGameAction action in plan.Actions)
+    {
+      if (state.IsFinished || state.CurrentTurn != team || !action.IsLegal(state))
+      {
+        break;
+      }
+      state = action.Apply(state);
+    }
+
+    EndTurnAction endTurn = new(team);
+    return !state.IsFinished && state.CurrentTurn == team && endTurn.IsLegal(state)
+      ? endTurn.Apply(state)
+      : state;
   }
 
   private CpuGameState CreateCpuGameState()
@@ -967,6 +1162,7 @@ internal sealed class Game1 : Game
         team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString()
       )),
       Team.CurrentTurn.ToNetworkTeam(),
+      turnNumber: _cpuTurnNumber,
       terrain: _terrain,
       winner: _winningTeam?.ToNetworkTeam(),
       initialBuy: initialBuy,
@@ -4524,6 +4720,7 @@ internal sealed class Game1 : Game
 
   private void ReturnToTitle()
   {
+    CancelCpuPlanning();
     if (_onlineClient != null)
     {
       _ = _onlineClient.DisposeAsync().AsTask();
@@ -4573,6 +4770,7 @@ internal sealed class Game1 : Game
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
     _conquestScore = 0;
+    _cpuTurnNumber = 0;
     _setupTeam = TeamName.Red;
     _selectedRoyalIndex = 0;
     _setupStage = SetupStage.Mode;
@@ -4582,8 +4780,9 @@ internal sealed class Game1 : Game
     _screen = Screen.Title;
   }
 
-  private void BeginMatchSetup(bool onlineHost = false)
+  private void BeginMatchSetup(bool onlineHost = false, bool cpuOpponent = false)
   {
+    CancelCpuPlanning();
     _screen = Screen.Setup;
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
@@ -4591,6 +4790,7 @@ internal sealed class Game1 : Game
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
     _conquestScore = 0;
+    _cpuTurnNumber = 0;
     _selectedBoardSize = BoardSize.Medium;
     _forestDensity = TerrainDensity.Standard;
     _waterwayDensity = TerrainDensity.Standard;
@@ -4619,7 +4819,7 @@ internal sealed class Game1 : Game
     _cpuActionQueue.Clear();
     _lastCpuDecisionReport = null;
     _cpuActionDelaySeconds = 0f;
-    if (onlineHost)
+    if (onlineHost || !cpuOpponent)
     {
       _cpuProfiles.Clear();
     }
@@ -4791,14 +4991,18 @@ internal sealed class Game1 : Game
         }
         else if (GetTitleButtonBounds(1).Contains(mousePosition))
         {
-          _screen = Screen.OnlineLobby;
+          BeginMatchSetup(cpuOpponent: true);
         }
         else if (GetTitleButtonBounds(2).Contains(mousePosition))
+        {
+          _screen = Screen.OnlineLobby;
+        }
+        else if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
           _settingsReturnScreen = Screen.Title;
           _screen = Screen.Settings;
         }
-        else if (GetTitleButtonBounds(3).Contains(mousePosition))
+        else if (GetTitleButtonBounds(4).Contains(mousePosition))
         {
           Exit();
         }
@@ -5210,11 +5414,11 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.GameOver:
-        if (GetTitleButtonBounds(2).Contains(mousePosition))
+        if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
           ReturnToTitle();
         }
-        else if (GetTitleButtonBounds(3).Contains(mousePosition))
+        else if (GetTitleButtonBounds(4).Contains(mousePosition))
         {
           Exit();
         }
@@ -5393,10 +5597,11 @@ internal sealed class Game1 : Game
     _ui.CenterText("A MEDIEVAL STRATEGY GAME", subtitleBounds, UiTheme.TextMuted, 0.72f);
     _ui.Divider(new Rectangle(viewport.Center.X - 150, subtitleBounds.Bottom + UiTheme.SpaceMd, 300, 1), subtitleBounds.Bottom + UiTheme.SpaceMd, UiTheme.PanelBorder);
 
-    DrawMenuButton(GetTitleButtonBounds(0), "PLAY VS CPU", UiButtonTone.Primary);
-    DrawMenuButton(GetTitleButtonBounds(1), "ONLINE MULTIPLAYER", UiButtonTone.Accent);
-    DrawMenuButton(GetTitleButtonBounds(2), "SETTINGS", UiButtonTone.Neutral);
-    DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(0), "PLAY LOCAL", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(1), "PLAY VS CPU", UiButtonTone.Accent);
+    DrawMenuButton(GetTitleButtonBounds(2), "ONLINE MULTIPLAYER", UiButtonTone.Accent);
+    DrawMenuButton(GetTitleButtonBounds(3), "SETTINGS", UiButtonTone.Neutral);
+    DrawMenuButton(GetTitleButtonBounds(4), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawOnlineLobbyScreen()
@@ -6011,8 +6216,8 @@ internal sealed class Game1 : Game
     Color winnerColour = UiTheme.GetTeamColour(winner);
     _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
     _ui.CenterText(reason, new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
-    DrawMenuButton(GetTitleButtonBounds(2), "RETURN TO TITLE", UiButtonTone.Primary);
-    DrawMenuButton(GetTitleButtonBounds(3), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(3), "RETURN TO TITLE", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(4), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawMenuScreen()
