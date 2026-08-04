@@ -10,7 +10,8 @@ public interface IActionCandidateSelector
     CpuGameState state,
     NetworkTeam team,
     IReadOnlyList<ICpuGameAction> legalActions,
-    CpuSearchSettings settings
+    CpuSearchSettings settings,
+    CpuPersonality? personality = null
   );
 }
 
@@ -21,7 +22,8 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     CpuGameState state,
     NetworkTeam team,
     IReadOnlyList<ICpuGameAction> legalActions,
-    CpuSearchSettings settings
+    CpuSearchSettings settings,
+    CpuPersonality? personality = null
   )
   {
     ArgumentNullException.ThrowIfNull(state);
@@ -37,7 +39,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       : null;
 
     return legalActions
-      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection))
+      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection, personality ?? CpuPersonality.Balanced))
       .OrderByDescending(candidate => candidate.Score)
       .ThenBy(candidate => candidate.Action.Kind)
       .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
@@ -51,13 +53,14 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     ICpuGameAction action,
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
     IReadOnlyList<(int x, int y)> goals,
-    int? farmForwardProjection
+    int? farmForwardProjection,
+    CpuPersonality personality
   ) => action switch
   {
     AttackAction attack => ScoreAttack(attack, piecesById),
     MoveAction move => ScoreMove(state, team, move, piecesById, goals),
     PurchaseAction purchase => ScorePurchase(state, purchase, farmForwardProjection),
-    UseAbilityAction ability => ScoreAbility(state, ability),
+    UseAbilityAction ability => ScoreAbility(state, ability, personality),
     EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
     StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
     _ => new ScoredAction(action, 0f, "Legal action")
@@ -130,7 +133,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     return new ScoredAction(action, value * 0.12f + affordability, "Adds an affordable unit");
   }
 
-  private static ScoredAction ScoreAbility(CpuGameState state, UseAbilityAction action)
+  private static ScoredAction ScoreAbility(CpuGameState state, UseAbilityAction action, CpuPersonality personality)
   {
     float score = action.Ability switch
     {
@@ -147,7 +150,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     {
       score += action.Ability == "Barrier" ? 36f : 24f;
     }
-    return new ScoredAction(action, score, $"Uses {action.Ability}");
+    return new ScoredAction(action, score * Math.Max(0f, personality.AbilityUsage), $"Uses {action.Ability}");
   }
 
   private static IEnumerable<(int x, int y)> GetGoalPositions(CpuGameState state, NetworkTeam team)

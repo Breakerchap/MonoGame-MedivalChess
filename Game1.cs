@@ -1015,16 +1015,16 @@ internal sealed class Game1 : Game
 
   private void CancelCpuPlanning()
   {
-    _cpuPlanningCancellation?.Cancel();
-    _cpuPlanningCancellation = null;
-    _cpuPlanningTask = null;
+    CancelCpuWorker(ref _cpuPlanningTask, ref _cpuPlanningCancellation);
     _cpuPlanningTeam = null;
     CancelCpuPreplanning();
   }
 
   private void UpdateCpuPreplanning()
   {
-    if (_onlineClient is not null || _cpuPreplanningTask is not null || _cpuProfiles.Count == 0)
+    // Opening farms are selected by the fast deterministic path below; predicting human farm
+    // placement cannot be reused reliably and needlessly competes with rendering.
+    if (_onlineClient is not null || _initialBuyPhase is not null || _cpuPreplanningTask is not null || _cpuProfiles.Count == 0)
     {
       return;
     }
@@ -1090,9 +1090,40 @@ internal sealed class Game1 : Game
 
   private void CancelCpuPreplanning()
   {
-    _cpuPreplanningCancellation?.Cancel();
-    _cpuPreplanningCancellation = null;
-    _cpuPreplanningTask = null;
+    CancelCpuWorker(ref _cpuPreplanningTask, ref _cpuPreplanningCancellation);
+  }
+
+  /// <summary>
+  /// Releases cancelled CPU worker resources only after a running search has observed its token.
+  /// This keeps speculative plans from retaining cancellation sources across many human turns.
+  /// </summary>
+  private static void CancelCpuWorker<T>(
+    ref System.Threading.Tasks.Task<T> task,
+    ref System.Threading.CancellationTokenSource cancellation
+  )
+  {
+    System.Threading.Tasks.Task<T> pendingTask = task;
+    System.Threading.CancellationTokenSource cancellationSource = cancellation;
+    task = null;
+    cancellation = null;
+    if (cancellationSource is null)
+    {
+      return;
+    }
+
+    cancellationSource.Cancel();
+    if (pendingTask is null || pendingTask.IsCompleted)
+    {
+      cancellationSource.Dispose();
+      return;
+    }
+
+    _ = pendingTask.ContinueWith(
+      _ => cancellationSource.Dispose(),
+      System.Threading.CancellationToken.None,
+      System.Threading.Tasks.TaskContinuationOptions.ExecuteSynchronously,
+      System.Threading.Tasks.TaskScheduler.Default
+    );
   }
 
   private static System.Threading.Tasks.Task<T> StartCpuWorker<T>(

@@ -22,6 +22,7 @@ public sealed class EvaluationWeights
   public float Mobility { get; init; } = 0.25f;
   public float Formation { get; init; } = 0.2f;
   public float AssetSafety { get; init; } = 0.9f;
+  public float AbilityUsage { get; init; } = 0.45f;
   public float ActionEfficiency { get; init; } = 0.4f;
   public float RepetitionPenalty { get; init; } = 0.8f;
 }
@@ -82,6 +83,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new MobilityEvaluation(),
       new FormationEvaluation(),
       new AssetSafetyEvaluation(_threatMapBuilder),
+      new AbilityStateEvaluation(),
       new RepetitionEvaluation(),
       new ActionEfficiencyEvaluation()
     ];
@@ -130,6 +132,7 @@ public sealed class StateEvaluator : IStateEvaluator
       "Mobility" => weights.Mobility,
       "Formation" => weights.Formation * personality.FormationPreference,
       "AssetSafety" => weights.AssetSafety * personality.Caution,
+      "Ability" => weights.AbilityUsage * personality.AbilityUsage,
       "Repetition" => weights.RepetitionPenalty,
       "ActionEfficiency" => weights.ActionEfficiency,
       _ => 1f
@@ -149,23 +152,30 @@ public sealed class RepetitionEvaluation : IEvaluationTerm
       return 0f;
     }
 
-    CpuMoveRecord newest = state.RecentMoves[^1];
-    CpuMoveRecord? earlier = state.RecentMoves
-      .Take(state.RecentMoves.Count - 1)
-      .Reverse()
-      .FirstOrDefault(move => move.Team == newest.Team && move.PieceId == newest.PieceId);
-    if (earlier is null || !newest.Reverses(earlier) || newest.TurnNumber - earlier.TurnNumber > 2)
+    float score = 0f;
+    foreach (IGrouping<(NetworkTeam team, string pieceId), CpuMoveRecord> history in state.RecentMoves
+      .GroupBy(move => (move.Team, move.PieceId)))
     {
-      return 0f;
-    }
+      CpuMoveRecord[] moves = history.OrderBy(move => move.TurnNumber).ToArray();
+      for (int index = 1; index < moves.Length; index++)
+      {
+        CpuMoveRecord previous = moves[index - 1];
+        CpuMoveRecord current = moves[index];
+        if (!current.Reverses(previous) || current.TurnNumber - previous.TurnNumber > 2)
+        {
+          continue;
+        }
 
-    // Scale the discouragement from the unit's rule-derived value rather than hard-coding a
-    // per-piece constant, so balance changes continue to be reflected automatically.
-    float value = state.Pieces.FirstOrDefault(piece => piece.Id == newest.PieceId) is NetworkPiece piece
-      ? MaterialEvaluation.GetUnitValue(piece.Type)
-      : 40f;
-    float penalty = Math.Max(10f, value * 0.25f);
-    return newest.Team == perspective ? -penalty : penalty;
+        // Scale the discouragement from the unit's rule-derived value rather than hard-coding a
+        // per-piece constant, so balance changes continue to be reflected automatically.
+        float value = state.Pieces.FirstOrDefault(piece => piece.Id == current.PieceId) is NetworkPiece piece
+          ? MaterialEvaluation.GetUnitValue(piece.Type)
+          : 40f;
+        float penalty = Math.Max(10f, value * 0.25f);
+        score += current.Team == perspective ? -penalty : penalty;
+      }
+    }
+    return score;
   }
 }
 
@@ -412,6 +422,49 @@ public sealed class FormationEvaluation : IEvaluationTerm
       int nearbyFriendlies = state.Pieces.Count(other => other.Id != piece.Id && other.Team == piece.Team &&
         Math.Abs(other.X - piece.X) + Math.Abs(other.Y - piece.Y) <= 2);
       score += (piece.Team == perspective ? 1f : -1f) * Math.Min(nearbyFriendlies, 3);
+    }
+    return score;
+  }
+}
+
+/// <summary>
+/// Values concrete, already-applied ability effects.  This deliberately scores state rather than
+/// granting an abstract bonus for owning an ability, so the personality changes choices without
+/// changing unit statistics or legality.
+/// </summary>
+public sealed class AbilityStateEvaluation : IEvaluationTerm
+{
+  public string Name => "Ability";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float score = 0f;
+    IReadOnlyDictionary<string, NetworkPiece> pieces = state.Pieces.ToDictionary(piece => piece.Id, StringComparer.Ordinal);
+    foreach (NetworkPiece piece in state.Pieces.Where(piece => piece.Team != NetworkTeam.Neutral))
+    {
+      float effectValue = 0f;
+      if (piece.MarkedTargetId is not null && pieces.TryGetValue(piece.MarkedTargetId, out NetworkPiece? marked) &&
+          marked.Team != piece.Team)
+      {
+        // Marking improves the next allied attack; cap it by the target's rule-derived value so
+        // future balance changes do not make this a fixed per-unit valuation.
+        effectValue += Math.Min(20f, MaterialEvaluation.GetUnitValue(marked.Type) * 0.15f);
+      }
+      if (piece.AttachmentKind == NetworkAttachmentKind.Guard && piece.AttachedToId is not null)
+      {
+        effectValue += Math.Min(12f, MaterialEvaluation.GetUnitValue(piece.Type) * 0.12f);
+      }
+      if (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.AttachedToId is not null)
+      {
+        effectValue += Math.Min(8f, MaterialEvaluation.GetUnitValue(piece.Type) * 0.08f);
+      }
+      score += piece.Team == perspective ? effectValue : -effectValue;
+    }
+
+    foreach (NetworkTeam mineOwner in state.Mines.Values)
+    {
+      float mineValue = 5f;
+      score += mineOwner == perspective ? mineValue : -mineValue;
     }
     return score;
   }

@@ -191,10 +191,6 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
         .ThenBy(position => position.y)
         .ThenBy(position => position.x)
         .ToList();
-    if (placementLimit is int limit)
-    {
-      positions = positions.Take(Math.Max(1, limit)).ToList();
-    }
     // During opening farm placement every non-farm action is illegal. Avoid constructing and
     // validating hundreds of guaranteed failures on the main search path.
     int availableMoney = state.Teams.GetValueOrDefault(team)?.Money ?? 0;
@@ -204,9 +200,24 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
         availableMoney >= GetPurchaseCost(state, rule));
     foreach (UnitRule rule in purchaseRules.OrderBy(rule => rule.Type, StringComparer.Ordinal))
     {
+      int legalPlacements = 0;
       foreach ((int x, int y) position in positions)
       {
+        int actionCount = actions.Count;
         AddIfLegal(state, new PurchaseAction(team, rule.Type, position.x, position.y), actions);
+        if (actions.Count == actionCount)
+        {
+          continue;
+        }
+
+        legalPlacements++;
+        // Apply the search cap to legal placements, not to raw board squares. In the opening,
+        // many high-scoring farm squares can overlap the first farm; truncating before legality
+        // checks could leave the CPU with no second-farm action and make it re-plan forever.
+        if (placementLimit is int limit && legalPlacements >= Math.Max(1, limit))
+        {
+          break;
+        }
       }
     }
   }

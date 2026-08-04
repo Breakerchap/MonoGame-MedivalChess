@@ -77,10 +77,15 @@ public sealed class CpuPlayer : ICpuPlayer
     ArgumentNullException.ThrowIfNull(profile);
     Stopwatch stopwatch = Stopwatch.StartNew();
     CpuSearchSettings settings = profile.Search;
+    ulong initialStateHash = _hasher.ComputeSearchHash(state);
+    if (state.InitialBuy?.IsFarmPlacementPhase == true)
+    {
+      return ChooseOpeningFarmPlacement(state, team, profile, cancellationToken, stopwatch, initialStateHash);
+    }
+
     CpuEvaluationCache evaluationCache = new();
     IReadOnlyList<CpuIntent> intents = _intentGenerator.Generate(state, team, profile, evaluationCache);
     EvaluationContext context = new(profile, intents, evaluationCache);
-    ulong initialStateHash = _hasher.ComputeSearchHash(state);
     int nodesGenerated = 0;
     int nodesEvaluated = 0;
     int duplicatesRemoved = 0;
@@ -122,7 +127,8 @@ public sealed class CpuPlayer : ICpuPlayer
         {
           rootLegalActionCount = legal.Count;
         }
-        IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(node.State, team, legal, settings);
+        IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
+          node.State, team, legal, settings, profile.Personality);
         // Keep the strongest root candidate as a safe fallback. Generation can occasionally use
         // most of a very small budget, but a live CPU turn must neither stall nor discard an
         // immediately lethal action merely because deeper search timed out.
@@ -227,6 +233,56 @@ public sealed class CpuPlayer : ICpuPlayer
     return new CpuTurnPlan(chosen.Node.Actions, chosen.Score, report);
   }
 
+  /// <summary>
+  /// Opening farms are free, one-action placements with a deterministic terrain/territory ranking.
+  /// Running a full tactical beam search for them wastes the CPU budget and can make the opening
+  /// feel stalled, so select the first legal protected placement directly.
+  /// </summary>
+  private CpuTurnPlan ChooseOpeningFarmPlacement(
+    CpuGameState state,
+    NetworkTeam team,
+    CpuProfile profile,
+    CancellationToken cancellationToken,
+    Stopwatch stopwatch,
+    ulong initialStateHash
+  )
+  {
+    bool cancelled = cancellationToken.IsCancellationRequested;
+    int placementLimit = Math.Clamp(profile.Search.MaximumPurchasePlacementCandidates, 1, 8);
+    IReadOnlyList<ICpuGameAction> actions = cancelled
+      ? []
+      : _actionGenerator.GenerateSearchActions(state, team, placementLimit);
+    PurchaseAction? farm = actions.OfType<PurchaseAction>().FirstOrDefault(action => action.UnitType == "Farm");
+    float score = farm is null
+      ? 0f
+      : CpuPlacementHeuristics.GetFarmProtectionScore(state, team, farm.X, farm.Y);
+    stopwatch.Stop();
+    IReadOnlyList<ICpuGameAction> planActions = farm is null ? [] : [farm];
+    CpuDecisionReport report = new()
+    {
+      ProfileName = profile.Name,
+      Difficulty = profile.Difficulty,
+      Personality = profile.Personality,
+      InitialStateHash = initialStateHash,
+      RootLegalActionCount = actions.Count,
+      SearchTime = stopwatch.Elapsed,
+      Cancelled = cancelled,
+      TimedOut = !cancelled && stopwatch.ElapsedMilliseconds >= Math.Max(1, profile.Search.MaxSearchMilliseconds),
+      TopChoices =
+      [
+        new CpuChoiceReport
+        {
+          Actions = planActions.Select(action => action.Describe()).ToArray(),
+          FinalScore = score,
+          Reason = farm is null
+            ? "No legal opening farm placement was available."
+            : "Places the highest-ranked legal farm square for terrain cover and rear-territory safety."
+        }
+      ]
+    };
+    return new CpuTurnPlan(planActions, score, report);
+  }
+
   private float PredictOpponentResponse(
     CpuGameState state,
     NetworkTeam perspective,
@@ -264,7 +320,8 @@ public sealed class CpuPlayer : ICpuPlayer
         MaximumPurchasePlacementCandidates = profile.Search.MaximumPurchasePlacementCandidates,
         MaxSearchMilliseconds = profile.Search.MaxSearchMilliseconds
       };
-      IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(current, opponent, legal, opponentSettings);
+      IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
+        current, opponent, legal, opponentSettings, CpuPersonality.Balanced);
       SearchNode? worstForPerspective = null;
       foreach (ScoredAction candidate in candidates)
       {
@@ -429,6 +486,7 @@ public sealed class GameStateHasher
       Add(ref hash, team);
       Add(ref hash, stateTeam.Money);
       Add(ref hash, stateTeam.ActionsRemaining);
+      Add(ref hash, stateTeam.ChosenRoyal ?? string.Empty);
     }
     foreach ((int x, int y) road in state.Roads.OrderBy(position => position.y).ThenBy(position => position.x))
     {
@@ -441,6 +499,13 @@ public sealed class GameStateHasher
     foreach (KeyValuePair<(int x, int y), NetworkTeam> mine in state.Mines.OrderBy(pair => pair.Key.y).ThenBy(pair => pair.Key.x))
     {
       Add(ref hash, mine.Key.x); Add(ref hash, mine.Key.y); Add(ref hash, mine.Value);
+    }
+    foreach (TileEdge bridge in state.RiverBridges
+      .OrderBy(edge => edge.First.x).ThenBy(edge => edge.First.y)
+      .ThenBy(edge => edge.Second.x).ThenBy(edge => edge.Second.y))
+    {
+      Add(ref hash, bridge.First.x); Add(ref hash, bridge.First.y);
+      Add(ref hash, bridge.Second.x); Add(ref hash, bridge.Second.y);
     }
     Add(ref hash, state.ConquestScore);
     foreach (KeyValuePair<NetworkTeam, int> score in state.ConquestScores.OrderBy(pair => pair.Key))

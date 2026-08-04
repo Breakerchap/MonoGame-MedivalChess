@@ -75,6 +75,39 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void OpeningFarmCpu_RemainsFastAndFindsTheSecondFarmAfterOccupiedTopSquares()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);
+    NetworkInitialBuyState initialBuy = new(
+      NetworkTeam.Red, 0, 1, 0, 0, 1, false, false, false,
+      [
+        new NetworkInitialBuyTeamState(NetworkTeam.Red, 0, false),
+        new NetworkInitialBuyTeamState(NetworkTeam.Blue, 0, false)
+      ],
+      IsFarmPlacementPhase: true
+    );
+    CpuGameState state = CreateState([], configuration, new BattlefieldTerrain(), initialBuy);
+    CpuPlayer player = new();
+    CpuProfile profile = CpuProfile.Normal(91);
+
+    for (int placement = 0; placement < 3; placement++)
+    {
+      NetworkTeam expectedTeam = placement == 1 ? NetworkTeam.Blue : NetworkTeam.Red;
+      CpuTurnPlan plan = player.ChooseTurn(state, expectedTeam, profile, CancellationToken.None);
+      PurchaseAction farm = Assert.Single(plan.Actions.OfType<PurchaseAction>());
+
+      Assert.Equal(expectedTeam, farm.Team);
+      Assert.Equal("Farm", farm.UnitType);
+      Assert.True(farm.IsLegal(state), farm.Describe());
+      Assert.True(plan.Report.SearchTime.TotalMilliseconds < 100, plan.Report.SearchTime.ToString());
+      state = farm.Apply(state);
+    }
+
+    Assert.Equal(2, state.Pieces.Count(piece => piece.Team == NetworkTeam.Red && piece.Type == "Farm"));
+    Assert.Equal(1, state.Pieces.Count(piece => piece.Team == NetworkTeam.Blue && piece.Type == "Farm"));
+  }
+
+  [Fact]
   public void BeamSearch_FindsMoveThenAttackCombinationAgainstRoyalObjective()
   {
     CpuScenarioDefinition scenario = CpuScenarioDefinition.ForMatch(CreateConfiguration());
@@ -169,6 +202,96 @@ public sealed class CpuAdvancedTests
 
     Assert.True(evaluation.Terms["Repetition"] < 0f);
     Assert.NotEqual(new GameStateHasher().ComputeSearchHash(state), new GameStateHasher().ComputeSearchHash(withoutHistory));
+  }
+
+  [Fact]
+  public void StateHash_DistinguishesBridgesAndRoyalSelection()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState withoutBridge = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuGameState withBridge = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, "King"),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      riverBridges: [TileEdge.Between((0, 0), (0, 1))]
+    );
+    GameStateHasher hasher = new();
+
+    Assert.NotEqual(hasher.ComputeSearchHash(withoutBridge), hasher.ComputeSearchHash(withBridge));
+  }
+
+  [Fact]
+  public void AbilityPersonality_ChangesAbilityCandidateAndAppliedEffectValue()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-spy", "Spy", NetworkTeam.Red, 0, 0, 10),
+      new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+    );
+    UseAbilityAction mark = Assert.Single(
+      new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red).OfType<UseAbilityAction>(),
+      action => action.Ability == "Mark"
+    );
+    CpuPersonality lowAbility = new() { AbilityUsage = 0.2f };
+    CpuPersonality highAbility = new() { AbilityUsage = 2f };
+    CpuSearchSettings settings = new() { CandidatesPerNode = 1 };
+    CpuActionCandidateSelector selector = new();
+
+    float lowCandidateScore = Assert.Single(selector.SelectCandidates(
+      state, NetworkTeam.Red, [mark], settings, lowAbility)).Score;
+    float highCandidateScore = Assert.Single(selector.SelectCandidates(
+      state, NetworkTeam.Red, [mark], settings, highAbility)).Score;
+    CpuGameState marked = mark.Apply(state);
+    float lowEffect = new StateEvaluator().EvaluateWithBreakdown(
+      marked, NetworkTeam.Red, new EvaluationContext(new CpuProfile { Personality = lowAbility })).Terms["Ability"];
+    float highEffect = new StateEvaluator().EvaluateWithBreakdown(
+      marked, NetworkTeam.Red, new EvaluationContext(new CpuProfile { Personality = highAbility })).Terms["Ability"];
+
+    Assert.True(highCandidateScore > lowCandidateScore);
+    Assert.True(highEffect > lowEffect);
+  }
+
+  [Fact]
+  public void LargeFourPlayerBoard_GeneratesAndSimulatesOnlyLegalActions()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration(boardSize: "Large", playerCount: 4);
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) redStart = board.Cells.First(position =>
+      BoardRules.CanPlaceForTeam(configuration, NetworkTeam.Red, position.x, position.y, 1, 1));
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, redStart.x, redStart.y, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Green, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Yellow, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Easy(18), CancellationToken.None);
+    CpuGameState simulated = state;
+
+    Assert.NotEmpty(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red));
+    foreach (ICpuGameAction action in plan.Actions)
+    {
+      Assert.True(action.IsLegal(simulated), action.Describe());
+      simulated = action.Apply(simulated);
+    }
   }
 
   [Fact]
@@ -389,8 +512,14 @@ public sealed class CpuAdvancedTests
     scenario: scenario
   );
 
-  private static NetworkMatchConfiguration CreateConfiguration(bool farmsEnabled = false) => new(
-    "Small", "Light", "Light", "Regicide", 1234, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: farmsEnabled
+  private static NetworkMatchConfiguration CreateConfiguration(
+    bool farmsEnabled = false,
+    string boardSize = "Small",
+    int playerCount = 2
+  ) => new(
+    boardSize, "Light", "Light", "Regicide", 1234, 200, 0f, 0f, 2, 1, 15,
+    FarmsEnabled: farmsEnabled,
+    PlayerCount: playerCount
   );
 
   private static IEnumerable<(int x, int y)> OccupiedSquares((int x, int y) position, UnitRule rule)

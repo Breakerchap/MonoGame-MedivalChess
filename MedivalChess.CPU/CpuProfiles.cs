@@ -37,7 +37,9 @@ public sealed class CpuPersonality
   public static CpuPersonality Aggressive { get; } = new() { Aggression = 1.45f, Caution = 0.7f, RoyalProtection = 0.8f };
   public static CpuPersonality Defensive { get; } = new() { Aggression = 0.7f, Caution = 1.4f, RoyalProtection = 1.5f, FormationPreference = 1.3f };
   public static CpuPersonality Greedy { get; } = new() { EconomyFocus = 1.6f, ObjectiveFocus = 0.8f, Aggression = 0.8f };
+  public static CpuPersonality Reckless { get; } = new() { Aggression = 1.65f, Caution = 0.55f, RoyalProtection = 0.6f, AbilityUsage = 1.3f };
   public static CpuPersonality ObjectiveFocused { get; } = new() { ObjectiveFocus = 1.75f, EconomyFocus = 0.8f };
+  public static CpuPersonality Swarmer { get; } = new() { Aggression = 1.2f, FormationPreference = 1.55f, EconomyFocus = 1.15f };
 }
 
 /// <summary>A complete deterministic CPU configuration for one team or campaign opponent.</summary>

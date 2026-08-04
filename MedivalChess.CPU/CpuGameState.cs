@@ -82,7 +82,7 @@ public sealed class CpuGameState
     _barricades = barricades?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _mines = mines?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _riverBridges = riverBridges is null ? [] : [.. riverBridges];
-    _recentMoves = recentMoves?.TakeLast(CpuMoveRecord.MaximumEntries).ToArray() ?? [];
+    _recentMoves = NormaliseRecentMoves(recentMoves ?? []);
     CurrentTurn = currentTurn;
     TurnNumber = Math.Max(0, turnNumber);
     Winner = winner;
@@ -164,6 +164,21 @@ public sealed class CpuGameState
   );
 
   internal CpuMutableGameState ToMutable() => new(this);
+
+  /// <summary>
+  /// Keeps only the most recent bounded movement history, but stores independent piece histories
+  /// in a canonical order.  Search branches that reach the same board through commuting moves can
+  /// then share a state hash without losing the per-piece information needed for reversal scoring.
+  /// </summary>
+  internal static CpuMoveRecord[] NormaliseRecentMoves(IEnumerable<CpuMoveRecord> moves) => moves
+    .OrderBy(move => move.TurnNumber)
+    .TakeLast(CpuMoveRecord.MaximumEntries)
+    .OrderBy(move => move.Team)
+    .ThenBy(move => move.PieceId, StringComparer.Ordinal)
+    .ThenBy(move => move.TurnNumber)
+    .ThenBy(move => move.FromY).ThenBy(move => move.FromX)
+    .ThenBy(move => move.ToY).ThenBy(move => move.ToX)
+    .ToArray();
 }
 
 /// <summary>Gameplay data owned by one team in a CPU simulation.</summary>
@@ -231,9 +246,7 @@ internal sealed class CpuMutableGameState
   internal void RecordMove(NetworkTeam team, string pieceId, int fromX, int fromY, int toX, int toY)
   {
     CpuMoveRecord move = new(team, pieceId, fromX, fromY, toX, toY, TurnNumber);
-    RecentMoves = RecentMoves.Length < CpuMoveRecord.MaximumEntries
-      ? [.. RecentMoves, move]
-      : [.. RecentMoves.Skip(1), move];
+    RecentMoves = CpuGameState.NormaliseRecentMoves(RecentMoves.Append(move));
   }
 
   internal CpuGameState Freeze() => new(
