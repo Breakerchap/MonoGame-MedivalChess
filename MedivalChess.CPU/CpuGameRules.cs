@@ -150,7 +150,7 @@ public static partial class CpuGameRules
   private static bool IsLegalAttack(CpuGameState state, AttackAction action)
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
-    if (attacker is null || attacker.Team != action.Team || attacker.HasAttackedThisTurn ||
+    if (attacker is null || attacker.Team != action.Team || attacker.AttachedToId is not null || attacker.HasAttackedThisTurn ||
         !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || attackerRule.Attack <= 0)
     {
       return false;
@@ -228,7 +228,7 @@ public static partial class CpuGameRules
   private static bool IsLegalAbility(CpuGameState state, UseAbilityAction action)
   {
     NetworkPiece? actor = FindPiece(state.Pieces, action.ActorId);
-    if (actor is null || actor.Team != action.Team)
+    if (actor is null || actor.Team != action.Team || actor.AttachedToId is not null)
     {
       return false;
     }

@@ -261,6 +261,33 @@ public sealed class CpuGameStateTests
     Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(reachable));
   }
 
+  [Fact]
+  public void AttachedUnits_CannotAttackOrUseAnAbilityIndependently()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("red-guard", "Guard", NetworkTeam.Red, 0, 0, 25,
+          AttachedToId: "red-soldier", AttachmentKind: NetworkAttachmentKind.Guard),
+        new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Red, "red-guard", "blue-peasant", 0, -1);
+    UseAbilityAction ability = new(NetworkTeam.Red, "red-guard", "Attach", "red-soldier", 0, 0);
+
+    Assert.False(attack.IsLegal(state));
+    Assert.False(ability.IsLegal(state));
+    Assert.DoesNotContain(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action =>
+      action is AttackAction { AttackerId: "red-guard" } or UseAbilityAction { ActorId: "red-guard" });
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
