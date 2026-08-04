@@ -25,6 +25,27 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void CloneAndSimulatedMovement_LeaveTheAuthoritativeSnapshotUntouched()
+  {
+    CpuGameState original = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    CpuGameState clone = original.Clone();
+    MoveAction move = new(NetworkTeam.Red, "red-soldier", 0, -1);
+
+    Assert.NotSame(original, clone);
+    Assert.True(move.IsLegal(clone));
+    CpuGameState simulated = move.Apply(clone);
+
+    NetworkPiece originalPiece = Assert.Single(original.Pieces);
+    NetworkPiece clonePiece = Assert.Single(clone.Pieces);
+    NetworkPiece movedPiece = Assert.Single(simulated.Pieces);
+    Assert.Equal((0, 0), (originalPiece.X, originalPiece.Y));
+    Assert.Equal((0, 0), (clonePiece.X, clonePiece.Y));
+    Assert.Equal((0, -1), (movedPiece.X, movedPiece.Y));
+    Assert.Equal(MatchRules.ActionsPerTurn, original.ActionsRemaining);
+    Assert.Equal(MatchRules.ActionsPerTurn - 1, simulated.ActionsRemaining);
+  }
+
+  [Fact]
   public void LegalActionGenerator_ReturnsOnlyActionsThatApplyToTheCurrentTeam()
   {
     CpuGameState state = CreateState(
