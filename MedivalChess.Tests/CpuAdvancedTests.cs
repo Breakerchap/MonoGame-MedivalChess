@@ -511,6 +511,60 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void CampaignTerminalEvaluation_TreatsCompletedCaptureAsADecisiveResult()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      scenario: scenario
+    );
+    EvaluationContext context = new(CpuProfile.Normal(44), [], new CpuEvaluationCache());
+
+    Assert.True(state.IsFinished);
+    Assert.Equal(EvaluationScores.Win, new StateEvaluator().Evaluate(state, NetworkTeam.Red, context));
+    Assert.Equal(EvaluationScores.Loss, new StateEvaluator().Evaluate(state, NetworkTeam.Blue, context));
+  }
+
+  [Fact]
+  public void CpuSelectsAnImmediateCampaignFinishingMoveBeforeOtherImprovements()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("capturer", "Soldier", NetworkTeam.Red, 0, 1, 15)],
+      scenario: scenario
+    );
+    CpuProfile profile = new()
+    {
+      RandomSeed = 55,
+      Personality = CpuPersonality.ObjectiveFocused,
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 8,
+        CandidatesPerNode = 12,
+        MaxSearchNodes = 100,
+        MaxSearchMilliseconds = 1_000,
+        OpponentActionsToPredict = 0
+      }
+    };
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+    Assert.True(plan.Actions[0] is MoveAction, string.Join(" | ", plan.Actions.Select(action => action.Describe())));
+    MoveAction action = Assert.IsType<MoveAction>(Assert.Single(plan.Actions));
+    CpuGameState result = action.Apply(state);
+
+    Assert.Equal("capturer", action.PieceId);
+    Assert.Equal((0, 0), (action.DestinationX, action.DestinationY));
+    Assert.True(result.IsFinished);
+    Assert.Equal(EvaluationScores.Win, plan.EstimatedScore);
+  }
+
+  [Fact]
   public void CampaignGoals_ReportHoldEscortProtectionEscapeAndSurvivalProgress()
   {
     CpuGameState state = CreateState(

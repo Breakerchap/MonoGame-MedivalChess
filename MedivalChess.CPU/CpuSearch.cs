@@ -157,7 +157,12 @@ public sealed class CpuPlayer : ICpuPlayer
           // Preserve tactical urgency across the turn. Pure material evaluation otherwise
           // overvalues buying before taking an immediately available kill.
           float accumulatedActionPriority = node.Score - node.Breakdown.Total;
-          float score = breakdown.Total + accumulatedActionPriority + candidate.Score;
+          // A completed match or campaign objective is decisive. Do not let accumulated
+          // convenience bonuses make a purchase-before-win line outrank the move that ends
+          // the mission immediately.
+          float score = result.IsFinished
+            ? breakdown.Total
+            : breakdown.Total + accumulatedActionPriority + candidate.Score;
           ulong hash = _hasher.ComputeSearchHash(result);
           if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
           {

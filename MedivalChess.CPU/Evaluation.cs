@@ -102,6 +102,24 @@ public sealed class StateEvaluator : IStateEvaluator
         new Dictionary<string, float> { ["Terminal"] = winner == perspective ? EvaluationScores.Win : EvaluationScores.Loss });
     }
 
+    // Campaign goals can end a mission in a state where the ordinary match winner is deliberately
+    // unset (for example, a headless capture-location mission). Treat that outcome as decisive
+    // during search so completing the mission cannot lose to an unrelated material improvement.
+    if (state.Scenario is CpuScenarioDefinition scenario)
+    {
+      bool ownVictory = scenario.VictoryGoals.Any(goal => goal.GetStatus(state, perspective) == CpuGoalStatus.Completed);
+      bool enemyVictory = TeamRules.GetActiveTeams(state.Configuration.PlayerCount)
+        .Where(team => team != perspective)
+        .Any(team => scenario.VictoryGoals.Any(goal => goal.GetStatus(state, team) == CpuGoalStatus.Completed));
+      bool ownDefeat = scenario.DefeatConditions.Any(goal => goal.GetStatus(state, perspective) == CpuGoalStatus.Failed);
+      if (ownVictory || enemyVictory || ownDefeat)
+      {
+        float terminalScore = ownVictory ? EvaluationScores.Win : EvaluationScores.Loss;
+        return new EvaluationBreakdown(terminalScore,
+          new Dictionary<string, float> { ["CampaignTerminal"] = terminalScore });
+      }
+    }
+
     Dictionary<string, float> scores = [];
     float total = 0f;
     foreach (IEvaluationTerm term in _terms)

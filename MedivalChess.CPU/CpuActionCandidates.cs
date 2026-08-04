@@ -108,6 +108,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int oldDistance = goals.Select(position => Distance((piece.X, piece.Y), position)).DefaultIfEmpty(0).Min();
     int newDistance = goals.Select(position => Distance((action.DestinationX, action.DestinationY), position)).DefaultIfEmpty(0).Min();
     float score = (oldDistance - newDistance) * 5f;
+    // A target square can otherwise be pruned behind expensive purchases before beam search
+    // gets the opportunity to recognise a campaign-completing move. Retain it decisively;
+    // final state evaluation still decides whether the objective truly ends the mission.
+    if (goals.Count > 0 && newDistance == 0)
+    {
+      score += 1_000f;
+    }
     if (state.Configuration.GameMode == "Conquest" && MatchRules.IsConquestSquare(state.Board, (action.DestinationX, action.DestinationY)))
     {
       score += 25f;

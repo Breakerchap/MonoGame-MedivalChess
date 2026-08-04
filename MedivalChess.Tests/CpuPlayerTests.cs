@@ -86,6 +86,28 @@ public sealed class CpuPlayerTests
     Assert.True(stopwatch.ElapsedMilliseconds < 500);
   }
 
+  [Fact]
+  public void Cpu_DoesNotPlanActionsOutsideItsOwnTurn()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Small", "Light", "Light", "Regicide", 1234, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: false
+    );
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Easy(72), CancellationToken.None);
+
+    Assert.Empty(plan.Actions);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = new(
