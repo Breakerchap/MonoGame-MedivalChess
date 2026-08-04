@@ -605,6 +605,46 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void TeamScopedCampaignGoal_OnlyInfluencesItsOwningTeam()
+  {
+    CpuTeamScopedGoal goal = new(NetworkTeam.Red, new CaptureLocationsGoal([(0, 0)]));
+    CpuScenarioDefinition scenario = new()
+    {
+      VictoryGoals = [goal]
+    };
+    CpuGameState state = CreateState(
+      [new NetworkPiece("red-capturer", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      scenario: scenario
+    );
+    EvaluationContext context = new(CpuProfile.Normal(45), [], new CpuEvaluationCache());
+
+    Assert.Equal(CpuGoalStatus.Completed, goal.GetStatus(state, NetworkTeam.Red));
+    Assert.Equal(CpuGoalStatus.InProgress, goal.GetStatus(state, NetworkTeam.Blue));
+    Assert.Contains(new CpuIntentGenerator().Generate(state, NetworkTeam.Red, CpuProfile.Normal(45)),
+      intent => intent.Type == CpuIntentType.CaptureLocation);
+    Assert.DoesNotContain(new CpuIntentGenerator().Generate(state, NetworkTeam.Blue, CpuProfile.Normal(45)),
+      intent => intent.Type == CpuIntentType.CaptureLocation);
+    Assert.True(state.IsFinished);
+    Assert.Equal(EvaluationScores.Win, new StateEvaluator().Evaluate(state, NetworkTeam.Red, context));
+    Assert.Equal(EvaluationScores.Loss, new StateEvaluator().Evaluate(state, NetworkTeam.Blue, context));
+  }
+
+  [Fact]
+  public void TeamScopedDefeatCondition_GivesTheOpponentADecisiveWin()
+  {
+    CpuScenarioDefinition scenario = new()
+    {
+      DefeatConditions = [new CpuTeamScopedGoal(NetworkTeam.Red, new ProtectUnitGoal("red-escort"))]
+    };
+    CpuGameState state = CreateState([], scenario: scenario);
+    EvaluationContext context = new(CpuProfile.Normal(46), [], new CpuEvaluationCache());
+
+    Assert.True(state.IsFinished);
+    Assert.Equal(EvaluationScores.Loss, new StateEvaluator().Evaluate(state, NetworkTeam.Red, context));
+    Assert.Equal(EvaluationScores.Win, new StateEvaluator().Evaluate(state, NetworkTeam.Blue, context));
+  }
+
+  [Fact]
   public void CampaignTerminalEvaluation_TreatsCompletedCaptureAsADecisiveResult()
   {
     CpuScenarioDefinition scenario = new()

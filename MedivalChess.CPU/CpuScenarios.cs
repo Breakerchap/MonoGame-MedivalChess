@@ -18,6 +18,30 @@ public interface ICpuScenarioGoal
   IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team);
 }
 
+/// <summary>
+/// Assigns a goal to one campaign team while preserving the shared goal interface. This is useful
+/// for asymmetric missions such as escort, assassination, or protecting a named unit: the owning
+/// CPU pursues it, while opponents score its progress as an enemy objective instead of pursuing
+/// the same piece themselves.
+/// </summary>
+public sealed class CpuTeamScopedGoal(NetworkTeam team, ICpuScenarioGoal goal) : ICpuScenarioGoal
+{
+  public NetworkTeam Team { get; } = team;
+  public ICpuScenarioGoal Goal { get; } = goal ?? throw new ArgumentNullException(nameof(goal));
+
+  public CpuGoalStatus GetStatus(CpuGameState state, NetworkTeam team) => team == Team
+    ? Goal.GetStatus(state, team)
+    : CpuGoalStatus.InProgress;
+
+  public float EvaluateProgress(CpuGameState state, NetworkTeam team) => team == Team
+    ? Goal.EvaluateProgress(state, team)
+    : 0f;
+
+  public IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team) => team == Team
+    ? Goal.GenerateIntents(state, team)
+    : [];
+}
+
 /// <summary>CPU-only campaign configuration. Match rules remain enforced by the action simulator.</summary>
 public sealed class CpuScenarioDefinition
 {

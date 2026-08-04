@@ -24,6 +24,35 @@ public sealed class CpuPlayerTests
   }
 
   [Fact]
+  public void Cpu_FinishesADamagedEnemyBeforeSpreadingNonlethalDamage()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("blue-damaged-soldier", "Soldier", NetworkTeam.Blue, 0, -1, 10),
+      new NetworkPiece("blue-healthy-knight", "Knight", NetworkTeam.Blue, 1, 1, 30)
+    );
+    CpuProfile profile = new()
+    {
+      RandomSeed = 82,
+      MistakeChance = 0f,
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 8,
+        CandidatesPerNode = 12,
+        OpponentActionsToPredict = 0,
+        MaxSearchNodes = 300,
+        MaxSearchMilliseconds = 1_000,
+        Randomness = 0f
+      }
+    };
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+    AttackAction firstAttack = Assert.IsType<AttackAction>(plan.Actions.First());
+
+    Assert.Equal("blue-damaged-soldier", firstAttack.TargetPieceId);
+  }
+
+  [Fact]
   public void Cpu_ReturnsOnlyActionsThatRemainLegalAsItsPlanIsApplied()
   {
     CpuGameState state = CreateState(
@@ -106,6 +135,42 @@ public sealed class CpuPlayerTests
     CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Easy(72), CancellationToken.None);
 
     Assert.Empty(plan.Actions);
+  }
+
+  [Fact]
+  public void Cpu_HandlesAStateWithNoAvailableAction()
+  {
+    CpuGameState state = CreateState(new NetworkPiece("red-farm", "Farm", NetworkTeam.Red, 0, 0, 30));
+    CpuGameState noMoney = new(
+      state.Configuration,
+      state.Pieces,
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: state.Terrain
+    );
+
+    Assert.Empty(new CpuActionGenerator().GenerateLegalActions(noMoney, NetworkTeam.Red));
+    Assert.Empty(new CpuPlayer().ChooseTurn(noMoney, NetworkTeam.Red, CpuProfile.Easy(83), CancellationToken.None).Actions);
+  }
+
+  [Fact]
+  public void DifficultyProfiles_UseIncreasingBoundedSearchQuality()
+  {
+    CpuProfile easy = CpuProfile.Easy(84);
+    CpuProfile normal = CpuProfile.Normal(84);
+    CpuProfile hard = CpuProfile.Hard(84);
+
+    Assert.True(easy.Search.BeamWidth < normal.Search.BeamWidth && normal.Search.BeamWidth < hard.Search.BeamWidth);
+    Assert.True(easy.Search.CandidatesPerNode < normal.Search.CandidatesPerNode &&
+      normal.Search.CandidatesPerNode < hard.Search.CandidatesPerNode);
+    Assert.True(easy.Search.MaxSearchNodes < normal.Search.MaxSearchNodes &&
+      normal.Search.MaxSearchNodes < hard.Search.MaxSearchNodes);
+    Assert.Equal(0, easy.Search.OpponentActionsToPredict);
+    Assert.Equal(1, normal.Search.OpponentActionsToPredict);
+    Assert.Equal(MatchRules.ActionsPerTurn, hard.Search.OpponentActionsToPredict);
   }
 
   private static CpuGameState CreateState(params NetworkPiece[] pieces)

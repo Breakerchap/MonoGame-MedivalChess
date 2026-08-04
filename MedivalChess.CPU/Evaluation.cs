@@ -112,9 +112,17 @@ public sealed class StateEvaluator : IStateEvaluator
         .Where(team => team != perspective)
         .Any(team => scenario.VictoryGoals.Any(goal => goal.GetStatus(state, team) == CpuGoalStatus.Completed));
       bool ownDefeat = scenario.DefeatConditions.Any(goal => goal.GetStatus(state, perspective) == CpuGoalStatus.Failed);
-      if (ownVictory || enemyVictory || ownDefeat)
+      bool enemyDefeat = TeamRules.GetActiveTeams(state.Configuration.PlayerCount)
+        .Where(team => team != perspective)
+        .Any(team => scenario.DefeatConditions.Any(goal => goal.GetStatus(state, team) == CpuGoalStatus.Failed));
+      if (ownVictory || enemyVictory || ownDefeat || enemyDefeat)
       {
-        float terminalScore = ownVictory ? EvaluationScores.Win : EvaluationScores.Loss;
+        // Mirror the shared turn-boundary resolution order: completing this team's victory is
+        // decisive; otherwise its own failure or another team's victory is a loss. A defender's
+        // failed scoped condition is a win for the remaining opponent.
+        float terminalScore = ownVictory || (!ownDefeat && !enemyVictory && enemyDefeat)
+          ? EvaluationScores.Win
+          : EvaluationScores.Loss;
         return new EvaluationBreakdown(terminalScore,
           new Dictionary<string, float> { ["CampaignTerminal"] = terminalScore });
       }
