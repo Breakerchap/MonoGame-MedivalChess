@@ -166,8 +166,9 @@ public static partial class CpuGameRules
 
     return target.Team != attacker.Team && target.AttachedToId is null &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
-      UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
-      HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
+      Occupies(targetRule, target, (action.TargetX, action.TargetY)) &&
+      CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
+      HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), target.Id, state.Barricades);
   }
 
   private static bool IsLegalPurchase(CpuGameState state, PurchaseAction action)
@@ -244,6 +245,12 @@ public static partial class CpuGameRules
       return false;
     }
 
+    if (target is not null && (!UnitRules.TryGet(target.Type, out UnitRule actionTargetRule) ||
+      !Occupies(actionTargetRule, target, (action.TargetX, action.TargetY))))
+    {
+      return false;
+    }
+
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     if (!plunderPickup && actor.Type != "Mercenary" && !CanUseActionSquare(actor, action.TargetX, action.TargetY))
@@ -251,20 +258,32 @@ public static partial class CpuGameRules
       return false;
     }
 
+    // Treasure pickup is available to every eligible non-royal 1x1 unit, including a
+    // Mercenary. Check it before unit-specific abilities so a Mercenary may either fire or
+    // pick up Plunder treasure, matching the live action flow.
+    if (plunderPickup)
+    {
+      return CanPickUpTreasure(state, actor, action.TargetX, action.TargetY);
+    }
+
     return actor.Type switch
     {
-      "Spy" => target is not null && target.Team != actor.Team && actor.AttachedToId is null,
+      "Spy" => string.Equals(action.Ability, "Mark", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team != actor.Team && actor.AttachedToId is null,
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
-      "Guard" => target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
+      "Guard" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
         UnitRules.TryGet(target.Type, out UnitRule targetRule) && UnitRules.TryGet(actor.Type, out UnitRule guardRule) &&
         AbilityRules.CanGuardAttach(guardRule, targetRule, actor.AttachedToId is not null,
           state.Pieces.Any(piece => piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Guard)),
-      "Ox" => target is not null && target.Team == actor.Team && target.Id != actor.Id && target.Id != state.TreasureCarrierId &&
+      "Ox" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id && target.Id != state.TreasureCarrierId &&
         UnitRules.TryGet(target.Type, out UnitRule cargoRule) && UnitRules.TryGet(actor.Type, out UnitRule oxRule) &&
         AbilityRules.CanOxAttach(oxRule, cargoRule, target.AttachedToId is not null,
           state.Pieces.Any(piece => piece.AttachedToId == actor.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)),
-      "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) && actor.Team != NetworkTeam.Neutral,
-      _ when plunderPickup => CanPickUpTreasure(state, actor, action.TargetX, action.TargetY),
+      "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
+        actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
+        action.TargetX == actor.X && action.TargetY == actor.Y,
       _ => false
     };
   }
@@ -281,7 +300,8 @@ public static partial class CpuGameRules
     (int x, int y) position = (action.TargetX, action.TargetY);
     if (demolition)
     {
-      return state.Roads.Contains(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position);
+      return state.Roads.Contains(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position) ||
+        state.RiverBridges.Contains(TileEdge.Between((actor.X, actor.Y), position));
     }
 
     return BoardRules.Contains(state.Configuration, action.TargetX, action.TargetY) &&
@@ -300,7 +320,7 @@ public static partial class CpuGameRules
       return;
     }
 
-    foreach (NetworkPiece affected in state.Pieces.Where(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+    foreach (NetworkPiece affected in state.Pieces.Where(piece => piece.Id != attacker.Id && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
       OccupiedSquares(rule, (piece.X, piece.Y)).Any(square =>
         OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
           Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1))).ToArray())
@@ -469,11 +489,18 @@ public static partial class CpuGameRules
     foreach (((int x, int y) position, NetworkTeam owner) mine in triggered.Distinct())
     {
       state.Mines.Remove(mine.position);
-      foreach (NetworkPiece affected in state.Pieces.Where(piece => UnitRules.TryGet(piece.Type, out UnitRule affectedRule) &&
+      // The live match always includes the mover in the blast, even when it finishes beyond
+      // the one-square radius after crossing a mine. Preserve that rule in simulation so search
+      // never evaluates such a path as safely escaping the explosion.
+      HashSet<string> affectedIds = state.Pieces.Where(piece => UnitRules.TryGet(piece.Type, out UnitRule affectedRule) &&
         OccupiedSquares(affectedRule, (piece.X, piece.Y)).Any(square =>
-          Math.Abs(square.x - mine.position.x) <= 1 && Math.Abs(square.y - mine.position.y) <= 1)).ToArray())
+          Math.Abs(square.x - mine.position.x) <= 1 && Math.Abs(square.y - mine.position.y) <= 1))
+        .Select(piece => piece.Id)
+        .ToHashSet(StringComparer.Ordinal);
+      affectedIds.Add(movingPiece.Id);
+      foreach (string affectedId in affectedIds)
       {
-        ResolveMineDamage(state, affected.Id, mine.owner);
+        ResolveMineDamage(state, affectedId, mine.owner);
       }
     }
   }

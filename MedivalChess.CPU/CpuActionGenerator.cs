@@ -31,7 +31,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       // The public API below remains exhaustive. Search deliberately samples only the best
       // placement zone because thousands of opening squares are strategically interchangeable.
       List<ICpuGameAction> openingActions = [];
-      GeneratePurchases(state, team, openingActions, purchasePlacementLimit);
+      GeneratePurchases(state, team, openingActions, purchasePlacementLimit, avoidOccupiedPlacements: true);
       AddIfLegal(state, new StopInitialBuyingAction(team), openingActions);
       return openingActions;
     }
@@ -43,7 +43,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       GenerateAttacks(state, piece, actions);
       GenerateAbilities(state, piece, actions);
     }
-    GeneratePurchases(state, team, actions, purchasePlacementLimit);
+    GeneratePurchases(state, team, actions, purchasePlacementLimit, avoidOccupiedPlacements: true);
     AddIfLegal(state, new EndTurnAction(team), actions);
     return actions;
   }
@@ -90,7 +90,10 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     foreach (NetworkPiece target in state.Pieces.Where(target => target.Team != attacker.Team &&
       target.Team != NetworkTeam.Neutral && target.AttachedToId is null).OrderBy(target => target.Id, StringComparer.Ordinal))
     {
-      AddIfLegal(state, new AttackAction(attacker.Team, attacker.Id, target.Id, target.X, target.Y), actions);
+      foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+      {
+        AddIfLegal(state, new AttackAction(attacker.Team, attacker.Id, target.Id, targetSquare.x, targetSquare.y), actions);
+      }
     }
     foreach ((int x, int y) barricade in state.Barricades.Keys.OrderBy(position => position.y).ThenBy(position => position.x))
     {
@@ -103,15 +106,16 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     if (actor.Type == "Mercenary")
     {
       AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Fire", null, actor.X, actor.Y), actions);
-      return;
     }
-
-    if (actor.Type == "Spy")
+    else if (actor.Type == "Spy")
     {
       foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team != actor.Team && piece.Team != NetworkTeam.Neutral)
         .OrderBy(piece => piece.Id, StringComparer.Ordinal))
       {
-        AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Mark", target.Id, target.X, target.Y), actions);
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Mark", target.Id, targetSquare.x, targetSquare.y), actions);
+        }
       }
     }
     else if (actor.Type == "Engineer")
@@ -129,7 +133,10 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team == actor.Team && piece.Id != actor.Id)
         .OrderBy(piece => piece.Id, StringComparer.Ordinal))
       {
-        AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Attach", target.Id, target.X, target.Y), actions);
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Attach", target.Id, targetSquare.x, targetSquare.y), actions);
+        }
       }
     }
 
@@ -162,11 +169,28 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     }
   }
 
+  private static IEnumerable<(int x, int y)> GetTargetSquares(NetworkPiece target)
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule rule))
+    {
+      yield break;
+    }
+
+    for (int y = target.Y; y < target.Y + rule.Height; y++)
+    {
+      for (int x = target.X; x < target.X + rule.Width; x++)
+      {
+        yield return (x, y);
+      }
+    }
+  }
+
   private static void GeneratePurchases(
     CpuGameState state,
     NetworkTeam team,
     List<ICpuGameAction> actions,
-    int? placementLimit = null
+    int? placementLimit = null,
+    bool avoidOccupiedPlacements = false
   )
   {
     int centreX = state.Board.MinX + state.Board.BoardArray.GetLength(1) / 2;
@@ -203,6 +227,17 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       int legalPlacements = 0;
       foreach ((int x, int y) position in positions)
       {
+        // A normal unit can legally share a Farm tile in the game rules, but putting a newly
+        // bought piece underneath any existing piece is unreadable and has repeatedly looked
+        // like a stalled CPU turn. Search therefore avoids all occupied footprints while the
+        // exhaustive public legal-action API still exposes every rule-legal action. Mercenary
+        // buyouts remain the intentional exception.
+        if (avoidOccupiedPlacements && rule.Type != "Mercenary" &&
+            OverlapsExistingPiece(state, rule, position.x, position.y))
+        {
+          continue;
+        }
+
         int actionCount = actions.Count;
         AddIfLegal(state, new PurchaseAction(team, rule.Type, position.x, position.y), actions);
         if (actions.Count == actionCount)
@@ -221,6 +256,11 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       }
     }
   }
+
+  private static bool OverlapsExistingPiece(CpuGameState state, UnitRule rule, int x, int y) => state.Pieces.Any(piece =>
+    UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
+    UnitRules.FootprintsOverlap(x, y, rule.Width, rule.Height,
+      piece.X, piece.Y, existingRule.Width, existingRule.Height));
 
   private static int GetPurchaseCost(CpuGameState state, UnitRule rule) => rule.Type == "Farm"
     ? rule.Cost

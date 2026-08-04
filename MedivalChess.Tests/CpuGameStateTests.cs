@@ -105,6 +105,162 @@ public sealed class CpuGameStateTests
     Assert.Contains(next.Pieces, piece => piece.Team == NetworkTeam.Blue && piece.Type == "Peasant");
   }
 
+  [Fact]
+  public void PlunderMercenary_CanPickUpTreasureThroughTheSharedAbilityFlow()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration("Plunder");
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece("red-mercenary", "Mercenary", NetworkTeam.Red, 0, 1, 20)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      treasurePosition: (0, 0)
+    );
+    UseAbilityAction pickup = new(NetworkTeam.Red, "red-mercenary", "PickUpTreasure", null, 0, 0);
+
+    Assert.True(pickup.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(pickup));
+
+    CpuGameState afterPickup = pickup.Apply(state);
+
+    Assert.Equal("red-mercenary", afterPickup.TreasureCarrierId);
+    Assert.Null(afterPickup.TreasurePosition);
+    Assert.True(afterPickup.Pieces.Single(piece => piece.Id == "red-mercenary").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void TreasurePickup_RejectsAnOccupiedTreasureSquare()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration("Plunder");
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 1, 15),
+        new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 0, 5)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      treasurePosition: (0, 0)
+    );
+
+    Assert.False(new UseAbilityAction(NetworkTeam.Red, "red-soldier", "PickUpTreasure", null, 0, 0).IsLegal(state));
+  }
+
+  [Fact]
+  public void CrossingAMine_DamagesTheMoverEvenWhenItFinishesBeyondTheBlastRadius()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      mines: [KeyValuePair.Create((0, 1), NetworkTeam.Blue)]
+    );
+    MoveAction move = new(NetworkTeam.Red, "red-soldier", 0, -1);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState afterMove = move.Apply(state);
+
+    Assert.DoesNotContain(afterMove.Pieces, piece => piece.Id == "red-soldier");
+    Assert.Empty(afterMove.Mines);
+  }
+
+  [Fact]
+  public void EngineerCanDemolishAScenarioProvidedRiverBridge()
+  {
+    TileEdge bridge = TileEdge.Between((0, 0), (0, -1));
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("red-engineer", "Engineer", NetworkTeam.Red, 0, 0, 20)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      riverBridges: [bridge]
+    );
+    UseAbilityAction demolish = new(NetworkTeam.Red, "red-engineer", "Demolish", null, 0, -1);
+
+    Assert.True(demolish.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(demolish));
+
+    CpuGameState afterDemolish = demolish.Apply(state);
+
+    Assert.DoesNotContain(bridge, afterDemolish.RiverBridges);
+  }
+
+  [Fact]
+  public void SearchPurchaseGeneration_AvoidsEveryExistingPieceFootprint()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Small", "Light", "Light", "Regicide", 1234, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: true
+    );
+    UnitRule farmRule = UnitRules.GetRequired("Farm");
+    (int x, int y) farmPosition = BoardRules.GetBoard(configuration).Cells.First(position =>
+      BoardRules.CanPlaceForTeam(configuration, NetworkTeam.Red, position.x, position.y, farmRule.Width, farmRule.Height));
+    NetworkPiece existingFarm = new("red-farm", "Farm", NetworkTeam.Red, farmPosition.x, farmPosition.y, farmRule.Health);
+    CpuGameState state = new(
+      configuration,
+      [existingFarm],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+
+    IReadOnlyList<PurchaseAction> purchases = new CpuActionGenerator().GenerateSearchActions(state, NetworkTeam.Red, 12)
+      .OfType<PurchaseAction>()
+      .Where(action => action.UnitType != "Mercenary")
+      .ToArray();
+
+    Assert.NotEmpty(purchases);
+    Assert.All(purchases, action =>
+    {
+      UnitRule purchasedRule = UnitRules.GetRequired(action.UnitType);
+      Assert.False(UnitRules.FootprintsOverlap(
+        action.X, action.Y, purchasedRule.Width, purchasedRule.Height,
+        existingFarm.X, existingFarm.Y, farmRule.Width, farmRule.Height), action.Describe());
+    });
+  }
+
+  [Fact]
+  public void AttackGeneration_TargetsTheReachableSquareOfALargePiece()
+  {
+    NetworkPiece soldier = new("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15);
+    NetworkPiece farm = new("blue-farm", "Farm", NetworkTeam.Blue, -1, -3, 30);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [soldier, farm],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction reachable = new(NetworkTeam.Red, soldier.Id, farm.Id, 0, -1);
+    AttackAction unreachableOrigin = new(NetworkTeam.Red, soldier.Id, farm.Id, farm.X, farm.Y);
+
+    Assert.True(reachable.IsLegal(state));
+    Assert.False(unreachableOrigin.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(reachable));
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
@@ -120,11 +276,11 @@ public sealed class CpuGameStateTests
     );
   }
 
-  private static NetworkMatchConfiguration CreateConfiguration() => new(
+  private static NetworkMatchConfiguration CreateConfiguration(string gameMode = "Regicide") => new(
       "Small",
       "Light",
       "Light",
-      "Regicide",
+      gameMode,
       1234,
       200,
       0f,

@@ -181,7 +181,8 @@ public static partial class CpuGameRules
   private static bool CanPickUpTreasure(CpuGameState state, NetworkPiece actor, int targetX, int targetY) =>
     state.Configuration.GameMode == "Plunder" && state.TreasureCarrierId is null && state.TreasurePosition == (targetX, targetY) &&
     actor.AttachedToId is null && UnitRules.TryGet(actor.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-    rule.Category != RuleCategory.Royal && Math.Abs(actor.X - targetX) + Math.Abs(actor.Y - targetY) == 1;
+    rule.Category != RuleCategory.Royal && !PieceOccupies(state.Pieces, (targetX, targetY)) &&
+    Math.Abs(actor.X - targetX) + Math.Abs(actor.Y - targetY) == 1;
 
   private static bool PieceOccupies(IEnumerable<NetworkPiece> pieces, (int x, int y) position) => pieces.Any(piece =>
     UnitRules.TryGet(piece.Type, out UnitRule rule) && Occupies(rule, piece, position));

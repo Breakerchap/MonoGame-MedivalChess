@@ -89,15 +89,16 @@ public sealed class CpuProfile
     TopChoicesForRandomSelection = 3,
     Search = new CpuSearchSettings
     {
-      // This is the profile used by the interactive local opponent. Keep its work comfortably
-      // below a frame-sized budget; Hard remains available for deliberate/offline analysis.
+      // The local CPU runs on a worker, but it still has a visible hard ceiling. The deterministic
+      // node cap normally finishes this much sooner; three seconds is the requested failsafe for
+      // unusually complex boards or slow machines.
       BeamWidth = 6,
       CandidatesPerNode = 9,
       OpponentBeamWidth = 2,
       OpponentActionsToPredict = 1,
       MaxSearchNodes = 180,
       MaximumPurchasePlacementCandidates = 12,
-      MaxSearchMilliseconds = 70,
+      MaxSearchMilliseconds = 3_000,
       Randomness = 0.06f
     }
   };

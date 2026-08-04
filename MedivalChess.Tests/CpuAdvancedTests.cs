@@ -108,6 +108,54 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void CpuVsCpuOpening_CompletesBothFarmPlacementsAndTheInitialBuyPhase()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);
+    NetworkInitialBuyState initialBuy = new(
+      NetworkTeam.Red, 0, 1, 0, 0, 1, false, false, false,
+      [
+        new NetworkInitialBuyTeamState(NetworkTeam.Red, 0, false),
+        new NetworkInitialBuyTeamState(NetworkTeam.Blue, 0, false)
+      ],
+      IsFarmPlacementPhase: true
+    );
+    CpuGameState state = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      initialBuy: initialBuy
+    );
+    CpuPlayer player = new();
+    CpuProfile profile = CpuProfile.Normal(122);
+    List<string> simulatedActions = [];
+
+    for (int decision = 0; decision < 8 && state.InitialBuy is not null; decision++)
+    {
+      NetworkTeam team = state.CurrentTurn;
+      CpuTurnPlan plan = player.ChooseTurn(state, team, profile, CancellationToken.None);
+      ICpuGameAction action = Assert.Single(plan.Actions);
+      Assert.True(action.IsLegal(state), action.Describe());
+      Assert.InRange(plan.Report.SearchTime.TotalMilliseconds, 0, 3_000);
+
+      simulatedActions.Add(action.Describe());
+      state = action.Apply(state);
+    }
+
+    Assert.Null(state.InitialBuy);
+    Assert.Equal(NetworkTeam.Red, state.CurrentTurn);
+    Assert.Equal(2, state.Pieces.Count(piece => piece.Team == NetworkTeam.Red && piece.Type == "Farm"));
+    Assert.Equal(2, state.Pieces.Count(piece => piece.Team == NetworkTeam.Blue && piece.Type == "Farm"));
+    Assert.Equal(6, simulatedActions.Count);
+    Assert.Equal(4, simulatedActions.Count(action => action.StartsWith("Purchase Farm", StringComparison.Ordinal)));
+    Assert.Equal(2, simulatedActions.Count(action => action == "Stop initial buying"));
+  }
+
+  [Fact]
   public void BeamSearch_FindsMoveThenAttackCombinationAgainstRoyalObjective()
   {
     CpuScenarioDefinition scenario = CpuScenarioDefinition.ForMatch(CreateConfiguration());
@@ -161,7 +209,7 @@ public sealed class CpuAdvancedTests
     CpuProfile profile = CpuProfile.Normal(123);
 
     Assert.Equal(CpuDifficultyLevel.Normal, profile.Difficulty);
-    Assert.InRange(profile.Search.MaxSearchMilliseconds, 1, 70);
+    Assert.InRange(profile.Search.MaxSearchMilliseconds, 1, 3_000);
     Assert.InRange(profile.Search.BeamWidth, 1, 6);
     Assert.InRange(profile.Search.CandidatesPerNode, 1, 9);
     Assert.InRange(profile.Search.MaximumPurchasePlacementCandidates, 1, 12);

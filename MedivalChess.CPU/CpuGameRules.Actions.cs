@@ -175,7 +175,8 @@ public static partial class CpuGameRules
     (int x, int y) position = (action.TargetX, action.TargetY);
     if (AbilityRules.IsEngineerDemolition(action.Ability))
     {
-      _ = state.Roads.Remove(position) || state.Barricades.Remove(position) || state.Mines.Remove(position);
+      _ = state.Roads.Remove(position) || state.Barricades.Remove(position) || state.Mines.Remove(position) ||
+        state.RiverBridges.Remove(TileEdge.Between((engineer.X, engineer.Y), position));
       return;
     }
 
