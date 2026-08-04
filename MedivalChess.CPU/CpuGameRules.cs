@@ -745,8 +745,29 @@ public static partial class CpuGameRules
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
     int palaces = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Palace");
-    int mercenaries = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Mercenary");
-    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn + palaces * 5L - mercenaries * 10L);
+    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn + palaces * 5L);
+    for (int index = 0; index < state.Pieces.Count; index++)
+    {
+      NetworkPiece mercenary = state.Pieces[index];
+      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
+      {
+        continue;
+      }
+
+      const int mercenaryPayroll = 10;
+      if (money < mercenaryPayroll)
+      {
+        state.Pieces[index] = mercenary with
+        {
+          Team = NetworkTeam.Neutral,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true
+        };
+        continue;
+      }
+
+      money = ClampCurrency((long)money - mercenaryPayroll);
+    }
     if (state.Source.Configuration.UnitMaintenanceEnabled && state.Source.Configuration.UnitMaintenancePercent > 0)
     {
       long upkeep = state.Pieces.Where(piece => piece.Team == team && piece.AttachedToId is null)

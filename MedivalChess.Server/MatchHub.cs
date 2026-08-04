@@ -1801,10 +1801,27 @@ public sealed class MatchStore
       player.Money = ClampCurrency((long)player.Money + income);
     }
 
-    int mercenaryCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Mercenary");
-    if (mercenaryCount > 0)
+    for (int index = 0; index < match.Pieces.Count; index++)
     {
-      player.Money = ClampCurrency((long)player.Money - mercenaryCount * 10L);
+      NetworkPiece mercenary = match.Pieces[index];
+      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
+      {
+        continue;
+      }
+
+      const int mercenaryPayroll = 10;
+      if (player.Money < mercenaryPayroll)
+      {
+        match.Pieces[index] = mercenary with
+        {
+          Team = NetworkTeam.Neutral,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true
+        };
+        continue;
+      }
+
+      player.Money = ClampCurrency((long)player.Money - mercenaryPayroll);
     }
 
     if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;

@@ -358,6 +358,50 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void UnaffordableMercenaryIsFiredBeforeItCanPutItsOwnerIntoDebt()
+  {
+    NetworkMatchConfiguration configuration = DefaultConfiguration with
+    {
+      StartingCash = 10,
+      ForestDensity = "Light",
+      WaterwayDensity = "Light"
+    };
+    Board board = new("board_medium.json");
+    BattlefieldTerrain terrain = TerrainRules.Create(
+      board, configuration.TerrainSeed, configuration.ForestDensity, configuration.WaterwayDensity
+    );
+    (int x, int y) noMansLand = board.Cells.First(position =>
+      MatchRules.GetSquareOwner(board, configuration.GameMode, position) is null && !terrain.IsLake(position));
+
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(configuration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("King")).Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    Assert.True(matches.StopInitialBuying(redConnection).Accepted);
+    Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
+
+    ActionResult purchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Mercenary", noMansLand.x, noMansLand.y));
+    Assert.True(purchase.Accepted);
+    NetworkPiece mercenary = purchase.State!.Pieces.Single(piece => piece.Type == "Mercenary" && piece.Team == NetworkTeam.Red);
+    Assert.Equal(0, purchase.State.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+
+    Assert.True(matches.TrySkipTurn(redConnection).Accepted);
+    NetworkPiece blueKing = purchase.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Blue);
+    Assert.True(matches.TryMove(blueConnection, new MoveRequest(blueKing.Id, blueKing.X, blueKing.Y + 1)).Accepted);
+    ActionResult nextRedTurn = matches.TrySkipTurn(blueConnection);
+
+    Assert.True(nextRedTurn.Accepted);
+    Assert.Equal(0, nextRedTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Contains(nextRedTurn.State.Pieces, piece =>
+      piece.Id == mercenary.Id && piece.Team == NetworkTeam.Neutral &&
+      piece.HasMovedThisTurn && piece.HasAttackedThisTurn);
+  }
+
+  [Fact]
   public void GuardAttachmentIsAuthoritativeAndMovesWithItsProtectedUnit()
   {
     MatchStore matches = new();

@@ -42,7 +42,7 @@ internal sealed class UiRenderer
     );
   }
 
-  internal void Button(Rectangle bounds, string label, UiButtonTone tone, bool selected = false)
+  internal void Button(Rectangle bounds, string label, UiButtonTone tone, bool selected = false, float textScale = 1f)
   {
     MouseState mouse = Mouse.GetState();
     bool isHovered = bounds.Contains(mouse.Position);
@@ -73,7 +73,7 @@ internal sealed class UiRenderer
       new Rectangle(drawBounds.X + 2, drawBounds.Y + 2, Math.Max(1, drawBounds.Width - 4), 1),
       Color.Lerp(fill, UiTheme.TextPrimary, 0.16f)
     );
-    CenterText(label, drawBounds, UiTheme.TextPrimary);
+    CenterTextFitted(label, drawBounds, UiTheme.TextPrimary, textScale);
   }
 
   internal void ProgressBar(Rectangle bounds, float progress, Color fill)
@@ -90,6 +90,18 @@ internal sealed class UiRenderer
   internal void Text(string text, Vector2 position, Color colour, float scale = 1f)
   {
     _spriteBatch.DrawString(_font, text, position, colour, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+  }
+
+  internal void TextFitted(
+    string text,
+    Vector2 position,
+    int maximumWidth,
+    Color colour,
+    float preferredScale = 1f,
+    float minimumScale = 0.5f
+  )
+  {
+    Text(text, position, colour, GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale));
   }
 
   internal void TextWrapped(string text, Rectangle bounds, Color colour, float scale = 1f)
@@ -138,6 +150,52 @@ internal sealed class UiRenderer
       colour,
       scale
     );
+  }
+
+  internal void CenterTextFitted(
+    string text,
+    Rectangle bounds,
+    Color colour,
+    float preferredScale = 1f,
+    float minimumScale = 0.5f,
+    int horizontalPadding = 8
+  )
+  {
+    int maximumWidth = Math.Max(1, bounds.Width - horizontalPadding * 2);
+    CenterText(text, bounds, colour, GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale));
+  }
+
+  internal void CenterTextWrapped(string text, Rectangle bounds, Color colour, float scale = 1f)
+  {
+    if (string.IsNullOrWhiteSpace(text) || bounds.Width <= 0 || bounds.Height <= 0)
+    {
+      return;
+    }
+
+    List<string> lines = new();
+    foreach (string line in WrapText(text, bounds.Width, scale))
+    {
+      lines.Add(line);
+    }
+
+    if (lines.Count == 0)
+    {
+      return;
+    }
+
+    float lineHeight = _font.LineSpacing * scale;
+    int visibleLineCount = Math.Min(lines.Count, Math.Max(1, (int)Math.Floor(bounds.Height / lineHeight)));
+    float y = bounds.Y + (bounds.Height - visibleLineCount * lineHeight) / 2f;
+    for (int index = 0; index < visibleLineCount; index++)
+    {
+      CenterText(
+        lines[index],
+        new Rectangle(bounds.X, (int)Math.Floor(y), bounds.Width, (int)Math.Ceiling(lineHeight)),
+        colour,
+        scale
+      );
+      y += lineHeight;
+    }
   }
 
   internal void RightText(string text, Rectangle bounds, Color colour, float scale = 1f)
@@ -202,6 +260,23 @@ internal sealed class UiRenderer
         yield return currentLine;
       }
     }
+  }
+
+  private float GetFittedTextScale(string text, int maximumWidth, float preferredScale, float minimumScale)
+  {
+    if (string.IsNullOrEmpty(text) || maximumWidth <= 0)
+    {
+      return preferredScale;
+    }
+
+    float textWidth = _font.MeasureString(text).X;
+    if (textWidth <= 0f)
+    {
+      return preferredScale;
+    }
+
+    float fittedScale = maximumWidth / textWidth;
+    return MathHelper.Clamp(Math.Min(preferredScale, fittedScale), minimumScale, preferredScale);
   }
 
   private IEnumerable<string> SplitLongWord(string word, int maximumWidth, float scale)
