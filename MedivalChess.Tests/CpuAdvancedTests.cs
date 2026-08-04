@@ -171,6 +171,35 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void Search_NodeBudgetBoundsWorkBeforeTheWallClockLimit()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+    );
+    CpuProfile profile = new()
+    {
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 8,
+        CandidatesPerNode = 12,
+        OpponentActionsToPredict = 0,
+        MaxSearchNodes = 1,
+        MaxSearchMilliseconds = 1_000,
+        Randomness = 0f
+      },
+      MistakeChance = 0f
+    };
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+
+    Assert.True(plan.Report.NodeBudgetReached, CpuDebugFormatter.FormatDecision(plan.Report));
+    Assert.False(plan.Report.TimedOut);
+    Assert.Equal(1, plan.Report.NodesGenerated);
+    Assert.All(plan.Actions, action => Assert.True(action.IsLegal(state), action.Describe()));
+  }
+
+  [Fact]
   public void ReversalHistory_IsHashedAndPenalisedWithoutMakingMovesIllegal()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
