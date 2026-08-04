@@ -24,6 +24,45 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void CpuMovesItsRoyalOutOfAnImmediateLethalThreat()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("blue-knight", "Knight", NetworkTeam.Blue, 0, -1, 30),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+      ],
+      scenario: CpuScenarioDefinition.ForMatch(CreateConfiguration()),
+      redMoney: 0
+    );
+    CpuProfile profile = new()
+    {
+      RandomSeed = 12,
+      MistakeChance = 0f,
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 12,
+        CandidatesPerNode = 16,
+        OpponentActionsToPredict = 0,
+        MaxSearchNodes = 500,
+        MaxSearchMilliseconds = 1_000,
+        Randomness = 0f
+      }
+    };
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+    CpuGameState simulated = state;
+    foreach (ICpuGameAction action in plan.Actions)
+    {
+      Assert.True(action.IsLegal(simulated), action.Describe());
+      simulated = action.Apply(simulated);
+    }
+
+    CpuPieceThreat? threat = new CpuThreatMapBuilder().Build(simulated, NetworkTeam.Blue).GetThreat("red-king");
+    Assert.False(threat?.IsLethal ?? false, string.Join(" | ", plan.Actions.Select(action => action.Describe())));
+  }
+
+  [Fact]
   public void ScenarioRestrictions_BlockDisallowedPurchaseBeforeSimulation()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
@@ -247,6 +286,61 @@ public sealed class CpuAdvancedTests
     string planDescription = string.Join(" | ", plan.Actions.Select(action => action.Describe()));
     Assert.True(moveIndex >= 0, planDescription);
     Assert.True(attackIndex > moveIndex, planDescription);
+  }
+
+  [Fact]
+  public void OpponentPrediction_UsesABoundedBeamAcrossTheHardProfileFullReply()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+      ],
+      redMoney: 0
+    );
+    CpuProfile withoutPrediction = new()
+    {
+      RandomSeed = 81,
+      MistakeChance = 0f,
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = 1,
+        CandidatesPerNode = 1,
+        OpponentBeamWidth = 2,
+        OpponentActionsToPredict = 0,
+        MaxSearchNodes = 1_000,
+        MaxSearchMilliseconds = 1_000,
+        Randomness = 0f
+      }
+    };
+    CpuProfile fullReply = new()
+    {
+      RandomSeed = withoutPrediction.RandomSeed,
+      MistakeChance = 0f,
+      Search = new CpuSearchSettings
+      {
+        BeamWidth = withoutPrediction.Search.BeamWidth,
+        CandidatesPerNode = withoutPrediction.Search.CandidatesPerNode,
+        OpponentBeamWidth = withoutPrediction.Search.OpponentBeamWidth,
+        OpponentActionsToPredict = MatchRules.ActionsPerTurn,
+        MaxSearchNodes = withoutPrediction.Search.MaxSearchNodes,
+        MaxSearchMilliseconds = withoutPrediction.Search.MaxSearchMilliseconds,
+        Randomness = 0f
+      }
+    };
+
+    CpuTurnPlan baseline = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, withoutPrediction, CancellationToken.None);
+    CpuTurnPlan predicted = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, fullReply, CancellationToken.None);
+
+    CpuGameState simulated = state;
+    foreach (ICpuGameAction action in predicted.Actions)
+    {
+      Assert.True(action.IsLegal(simulated), action.Describe());
+      simulated = action.Apply(simulated);
+    }
+    Assert.True(predicted.Report.NodesGenerated >= baseline.Report.NodesGenerated + 8,
+      $"expected a reply beam, baseline={baseline.Report.NodesGenerated}, predicted={predicted.Report.NodesGenerated}");
+    Assert.All(predicted.Report.TopChoices, choice => Assert.True(choice.OpponentResponsePenalty >= 0f));
   }
 
   [Fact]

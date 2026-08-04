@@ -312,57 +312,93 @@ public sealed class CpuPlayer : ICpuPlayer
   )
   {
     NetworkTeam opponent = state.CurrentTurn;
-    CpuGameState current = state;
-    int actionsToPredict = Math.Min(profile.Search.OpponentActionsToPredict, current.ActionsRemaining);
-    for (int actionCount = 0; actionCount < actionsToPredict; actionCount++)
+    int actionsToPredict = Math.Min(profile.Search.OpponentActionsToPredict, state.ActionsRemaining);
+    if (actionsToPredict <= 0)
     {
-      if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
-        out timedOut, out nodeBudgetReached, out cancelled) || current.CurrentTurn != opponent)
-      {
-        break;
-      }
-      int placementLimit = GetPurchasePlacementLimit(profile.Search, 12);
-      IReadOnlyList<ICpuGameAction> legal = GetSearchActions(
-        current,
-        opponent,
-        placementLimit,
-        searchActionCache
-      );
-      CpuSearchSettings opponentSettings = new()
-      {
-        BeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth),
-        CandidatesPerNode = Math.Max(1, profile.Search.OpponentBeamWidth),
-        MaximumPurchasePlacementCandidates = profile.Search.MaximumPurchasePlacementCandidates,
-        MaxSearchMilliseconds = profile.Search.MaxSearchMilliseconds
-      };
-      IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
-        current, opponent, legal, opponentSettings, CpuPersonality.Balanced);
-      SearchNode? worstForPerspective = null;
-      foreach (ScoredAction candidate in candidates)
+      return _evaluator.Evaluate(state, perspective, context);
+    }
+
+    // Normal mode looks only one opponent action ahead. Hard mode passes three here, so it
+    // models the whole enemy turn with a deliberately narrower beam instead of greedily fixing
+    // the first reply and missing a move-then-attack combination.
+    int opponentBeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth);
+    int placementLimit = GetPurchasePlacementLimit(profile.Search, 12);
+    CpuSearchSettings opponentSettings = new()
+    {
+      BeamWidth = opponentBeamWidth,
+      CandidatesPerNode = opponentBeamWidth,
+      MaximumPurchasePlacementCandidates = profile.Search.MaximumPurchasePlacementCandidates,
+      MaxSearchMilliseconds = profile.Search.MaxSearchMilliseconds
+    };
+    EvaluationBreakdown initialBreakdown = _evaluator.EvaluateWithBreakdown(state, perspective, context);
+    List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
+
+    for (int depth = 0; depth < actionsToPredict; depth++)
+    {
+      List<SearchNode> expanded = [];
+      Dictionary<ulong, float> worstScoreByState = [];
+      foreach (SearchNode node in beam)
       {
         if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
           out timedOut, out nodeBudgetReached, out cancelled))
         {
           break;
         }
-        CpuGameState result = candidate.Action.Apply(current);
-        nodesGenerated++;
-        EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, perspective, context);
-        nodesEvaluated++;
-        SearchNode node = new(result, [candidate.Action], breakdown.Total, breakdown);
-        if (worstForPerspective is null || node.Score < worstForPerspective.Score ||
-            (node.Score == worstForPerspective.Score && DescribeActions(node.Actions).CompareTo(DescribeActions(worstForPerspective.Actions)) < 0))
+
+        if (node.State.IsFinished || node.State.CurrentTurn != opponent)
         {
-          worstForPerspective = node;
+          expanded.Add(node);
+          continue;
+        }
+
+        IReadOnlyList<ICpuGameAction> legal = GetSearchActions(
+          node.State,
+          opponent,
+          placementLimit,
+          searchActionCache
+        );
+        IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
+          node.State, opponent, legal, opponentSettings, CpuPersonality.Balanced);
+        foreach (ScoredAction candidate in candidates)
+        {
+          if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+            out timedOut, out nodeBudgetReached, out cancelled))
+          {
+            break;
+          }
+
+          CpuGameState result = candidate.Action.Apply(node.State);
+          nodesGenerated++;
+          EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, perspective, context);
+          nodesEvaluated++;
+          // The opponent minimises the CPU perspective. Collapse equivalent continuations at
+          // each depth so a transposition cannot consume the narrow reply beam twice.
+          ulong hash = _hasher.ComputeSearchHash(result);
+          if (worstScoreByState.TryGetValue(hash, out float existingScore) && existingScore <= breakdown.Total)
+          {
+            continue;
+          }
+          worstScoreByState[hash] = breakdown.Total;
+          expanded.Add(new SearchNode(result, [.. node.Actions, candidate.Action], breakdown.Total, breakdown));
         }
       }
-      if (worstForPerspective is null)
+
+      if (expanded.Count == 0)
       {
         break;
       }
-      current = worstForPerspective.State;
+      beam = expanded
+        .OrderBy(node => node.Score)
+        .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
+        .Take(opponentBeamWidth)
+        .ToList();
+      if (cancelled || timedOut || nodeBudgetReached)
+      {
+        break;
+      }
     }
-    return _evaluator.Evaluate(current, perspective, context);
+
+    return beam.Min(node => node.Score);
   }
 
   private IReadOnlyList<ICpuGameAction> GetSearchActions(
