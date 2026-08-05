@@ -1,6 +1,7 @@
 ﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using MedivalChess.Campaign;
 using MedivalChess.CPU;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
@@ -27,7 +28,10 @@ internal sealed class Game1 : Game
     Playing,
     Pause,
     Encyclopedia,
-    GameOver
+    GameOver,
+    LevelEditor,
+    CustomLevels,
+    EditorDiscardConfirm
   }
 
   private enum BindingAction
@@ -39,6 +43,12 @@ internal sealed class Game1 : Game
     ZoomIn,
     ZoomOut,
     Buy
+  }
+
+  private enum EditorConfirmAction
+  {
+    Exit,
+    New
   }
 
   /// <summary>A speculative CPU response that is usable only when the authoritative snapshot still matches.</summary>
@@ -202,6 +212,12 @@ internal sealed class Game1 : Game
   private NetworkMatchConfiguration _onlineMatchConfiguration;
   private DateTimeOffset _nextOnlineJoinAttemptAt;
   private string _onlineError = string.Empty;
+  private LevelEditorScreen _levelEditor;
+  private IReadOnlyList<CustomLevelSummary> _customLevels = [];
+  private bool _campaignTestPlay;
+  private EditorConfirmAction _editorConfirmAction;
+  private CampaignLevelDefinition _campaignTestDefinition;
+  private int _campaignCompletedRounds;
 
   internal Game1()
   {
@@ -236,6 +252,7 @@ internal sealed class Game1 : Game
     _pixel.SetData(new[] { Color.White });
     _pieceLabelFont = Content.Load<SpriteFont>("PieceLabel");
     _ui = new UiRenderer(_spriteBatch, _pixel, _pieceLabelFont);
+    _levelEditor = new LevelEditorScreen(_ui, _spriteBatch, _pixel);
   }
 
   protected override void Update(GameTime gameTime)
@@ -260,13 +277,61 @@ internal sealed class Game1 : Game
     bool wasLeftClick =
       mouse.LeftButton == ButtonState.Pressed &&
       _previousMouseState.LeftButton == ButtonState.Released;
+    bool wasRightClick =
+      mouse.RightButton == ButtonState.Pressed &&
+      _previousMouseState.RightButton == ButtonState.Released;
     bool wasEscapePressed =
       keyboard.IsKeyDown(Keys.Escape) &&
       !_previousKeyboardState.IsKeyDown(Keys.Escape);
     _onlineClient?.DrainStates(ApplyOnlineState, error => _onlineError = error);
 
+    if (_screen == Screen.LevelEditor)
+    {
+      _levelEditor.Update(
+        keyboard,
+        _previousKeyboardState,
+        mouse,
+        wasLeftClick,
+        mouse.LeftButton == ButtonState.Pressed,
+        wasRightClick,
+        wasEscapePressed,
+        new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height)
+      );
+      HandleLevelEditorRequests();
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
+
+    if (_screen == Screen.CustomLevels)
+    {
+      UpdateCustomLevels(mouse, wasLeftClick, wasEscapePressed);
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
+
+    if (_screen == Screen.EditorDiscardConfirm)
+    {
+      UpdateEditorDiscardConfirmation(mouse, wasLeftClick, wasEscapePressed);
+      _previousMouseState = mouse;
+      _previousKeyboardState = keyboard;
+      base.Update(gameTime);
+      return;
+    }
+
     if (_screen == Screen.Playing && wasEscapePressed)
     {
+      if (_campaignTestPlay)
+      {
+        ReturnToEditorFromTestPlay();
+        _previousMouseState = mouse;
+        _previousKeyboardState = keyboard;
+        base.Update(gameTime);
+        return;
+      }
       _screen = Screen.Pause;
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
@@ -357,10 +422,6 @@ internal sealed class Game1 : Game
 
     // Move camera so the same world point stays under the mouse
     _cameraPosition += mouseWorldBefore - mouseWorldAfter;
-
-    bool wasRightClick =
-      mouse.RightButton == ButtonState.Pressed &&
-      _previousMouseState.RightButton == ButtonState.Released;
 
     bool wasPurchaseModeToggle =
       keyboard.IsKeyDown(_buyKey) &&
@@ -583,6 +644,11 @@ internal sealed class Game1 : Game
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
     PieceDefinition definition = GetPurchasablePieces()[_selectedPurchaseIndex];
+    if (!IsCampaignPurchaseAllowed(Team.CurrentTurn, definition.Type))
+    {
+      Console.WriteLine($"{definition.Type} is not available for {Team.CurrentTurn} in this campaign level.");
+      return;
+    }
     if (_initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type != PieceType.Farm)
     {
       _onlineError = "Place your two farms before buying units.";
@@ -780,7 +846,7 @@ internal sealed class Game1 : Game
       Team.ResetTurn();
       foreach (Team team in _teams)
       {
-        team.ActionPoints = Team.ActionsPerTurn;
+        team.ActionPoints = team.ActionLimit;
       }
       foreach (TeamName team in Team.ActiveTeams)
       {
@@ -841,7 +907,7 @@ internal sealed class Game1 : Game
     }
 
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
-    if (currentTeam.ActionPoints >= Team.ActionsPerTurn)
+    if (currentTeam.ActionPoints >= currentTeam.ActionLimit)
     {
       return;
     }
@@ -872,6 +938,11 @@ internal sealed class Game1 : Game
   {
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
 
+    if (ApplyCampaignRuntimeObjectives())
+    {
+      return;
+    }
+
     if (currentTeam.SpendAction())
     {
       if (ApplyEndOfTurnObjectives(Team.CurrentTurn))
@@ -879,12 +950,39 @@ internal sealed class Game1 : Game
         return;
       }
 
+      bool completedRound = Team.CurrentTurn == Team.ActiveTeams[^1];
       Team.AdvanceTurn();
+      if (completedRound) _campaignCompletedRounds++;
       _cpuTurnNumber++;
       _cpuActionQueue.Clear();
       ApplyTurnEconomy(Team.CurrentTurn);
       ResetPieceTurnActions(Team.CurrentTurn);
+      ApplyCampaignRuntimeObjectives();
     }
+  }
+
+  private bool ApplyCampaignRuntimeObjectives()
+  {
+    if (!_campaignTestPlay || _campaignTestDefinition is null || _screen != Screen.Playing)
+    {
+      return false;
+    }
+    NetworkTeam? winner = CampaignRuntimeObjectives.FindWinner(
+      _campaignTestDefinition,
+      pieceSetup.Pieces,
+      _teams,
+      _campaignCompletedRounds
+    );
+    if (!winner.HasValue && _campaignTestDefinition.Scenario.TurnLimit is int turnLimit && _campaignCompletedRounds >= turnLimit)
+    {
+      winner = _campaignTestDefinition.Teams
+        .FirstOrDefault(team => team.Controller == CampaignTeamController.Cpu)?.Team ??
+        _campaignTestDefinition.Scenario.FirstTeam;
+    }
+    if (!winner.HasValue) return false;
+    _winningTeam = winner.Value.ToTeamName();
+    _screen = Screen.GameOver;
+    return true;
   }
 
   private bool IsCpuTurn()
@@ -1222,7 +1320,7 @@ internal sealed class Game1 : Game
         piece.CannotContributeToConquestThisTurn
       )),
       _teams.Select(team => new CpuTeamState(
-        team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString()
+        team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString(), team.ActionLimit
       )),
       Team.CurrentTurn.ToNetworkTeam(),
       turnNumber: _cpuTurnNumber,
@@ -1238,9 +1336,74 @@ internal sealed class Game1 : Game
       barricades: _barricades,
       mines: _mines.Select(entry => KeyValuePair.Create(entry.Key, entry.Value.ToNetworkTeam())),
       riverBridges: _riverBridges,
-      scenario: CpuScenarioDefinition.ForMatch(configuration),
-      recentMoves: _cpuRecentMoves
+      scenario: CreateCampaignCpuScenario(configuration),
+      recentMoves: _cpuRecentMoves,
+      board: _campaignTestPlay ? _board : null
     );
+  }
+
+  private CpuScenarioDefinition CreateCampaignCpuScenario(NetworkMatchConfiguration configuration)
+  {
+    CpuScenarioDefinition match = CpuScenarioDefinition.ForMatch(configuration);
+    if (!_campaignTestPlay || _campaignTestDefinition is null)
+    {
+      return match;
+    }
+
+    return new CpuScenarioDefinition
+    {
+      Id = "campaign-" + match.Id,
+      VictoryGoals = match.VictoryGoals,
+      DefeatConditions = match.DefeatConditions,
+      SecondaryGoals = match.SecondaryGoals,
+      Weights = match.Weights,
+      TurnLimit = match.TurnLimit,
+      WinnerOnTurnLimit = match.WinnerOnTurnLimit,
+      ScriptedReinforcements = match.ScriptedReinforcements,
+      Restrictions = new CpuScenarioRestrictions
+      {
+        AdditionalActionRule = (state, action) => IsCampaignCpuActionAllowed(state, action)
+      }
+    };
+  }
+
+  private bool IsCampaignCpuActionAllowed(CpuGameState state, ICpuGameAction action)
+  {
+    if (action is PurchaseAction purchase && !IsCampaignPurchaseAllowed(purchase.Team.ToTeamName(), ParsePieceType(purchase.UnitType)))
+    {
+      return false;
+    }
+    if (action is UseAbilityAction ability)
+    {
+      NetworkPiece actor = state.Pieces.FirstOrDefault(piece => piece.Id == ability.ActorId);
+      if (actor is null || !IsCampaignAbilityAllowed(ability.Team.ToTeamName(), ParsePieceType(actor.Type))) return false;
+    }
+    return true;
+  }
+
+  private static PieceType ParsePieceType(string type) =>
+    Enum.TryParse(type, ignoreCase: false, out PieceType parsed) ? parsed : PieceType.Peasant;
+
+  private bool IsCampaignPurchaseAllowed(TeamName teamName, PieceType type)
+  {
+    if (!_campaignTestPlay || _campaignTestDefinition is null) return true;
+    CampaignRestrictionsDefinition restrictions = _campaignTestDefinition.Restrictions;
+    CampaignTeamDefinition team = _campaignTestDefinition.Teams.FirstOrDefault(candidate => candidate.Team == teamName.ToNetworkTeam());
+    string unitType = type.ToString();
+    return restrictions.PurchasesEnabled && team is not null && team.PurchasesEnabled &&
+      (restrictions.AllowedUnitTypes.Count == 0 || restrictions.AllowedUnitTypes.Contains(unitType)) &&
+      !restrictions.DisabledUnitTypes.Contains(unitType) && team.AvailableUnitTypes.Contains(unitType);
+  }
+
+  private bool IsCampaignAbilityAllowed(TeamName teamName, PieceType type)
+  {
+    if (!_campaignTestPlay || _campaignTestDefinition is null) return true;
+    CampaignRestrictionsDefinition restrictions = _campaignTestDefinition.Restrictions;
+    CampaignTeamDefinition team = _campaignTestDefinition.Teams.FirstOrDefault(candidate => candidate.Team == teamName.ToNetworkTeam());
+    string unitType = type.ToString();
+    return restrictions.AbilitiesEnabled && team is not null &&
+      !restrictions.DisabledAbilityUnitTypes.Contains(unitType) &&
+      !team.DisabledAbilityUnitTypes.Contains(unitType);
   }
 
   private bool ExecuteCpuAction(ICpuGameAction action)
@@ -2829,6 +2992,11 @@ internal sealed class Game1 : Game
     KeyboardState keyboard
   )
   {
+    if (!IsCampaignAbilityAllowed(actor.Team, actor.Definition.Type))
+    {
+      Console.WriteLine($"{actor.Definition.Type}'s ability is disabled for this campaign level.");
+      return false;
+    }
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
     if (actor.HasAttackedThisTurn && !engineerDemolition)
@@ -4806,6 +4974,7 @@ internal sealed class Game1 : Game
   private void ReturnToTitle()
   {
     CancelCpuPlanning();
+    _campaignTestPlay = false;
     if (_onlineClient != null)
     {
       _ = _onlineClient.DisposeAsync().AsTask();
@@ -5086,10 +5255,15 @@ internal sealed class Game1 : Game
         }
         else if (GetTitleButtonBounds(3).Contains(mousePosition))
         {
+          _levelEditor ??= new LevelEditorScreen(_ui, _spriteBatch, _pixel);
+          _screen = Screen.LevelEditor;
+        }
+        else if (GetTitleButtonBounds(4).Contains(mousePosition))
+        {
           _settingsReturnScreen = Screen.Title;
           _screen = Screen.Settings;
         }
-        else if (GetTitleButtonBounds(4).Contains(mousePosition))
+        else if (GetTitleButtonBounds(5).Contains(mousePosition))
         {
           Exit();
         }
@@ -5456,7 +5630,7 @@ internal sealed class Game1 : Game
             foreach (Team team in _teams)
             {
               team.Money = _startingCash;
-              team.ActionPoints = Team.ActionsPerTurn;
+              team.ActionPoints = team.ActionLimit;
             }
 
             if (_onlineHostingSetup)
@@ -5501,11 +5675,12 @@ internal sealed class Game1 : Game
         break;
 
       case Screen.GameOver:
-        if (GetTitleButtonBounds(3).Contains(mousePosition))
+        if (GetTitleButtonBounds(4).Contains(mousePosition))
         {
-          ReturnToTitle();
+          if (_campaignTestPlay) ReturnToEditorFromTestPlay();
+          else ReturnToTitle();
         }
-        else if (GetTitleButtonBounds(4).Contains(mousePosition))
+        else if (GetTitleButtonBounds(5).Contains(mousePosition))
         {
           Exit();
         }
@@ -5688,8 +5863,274 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetTitleButtonBounds(0), "PLAY LOCAL", UiButtonTone.Primary);
     DrawMenuButton(GetTitleButtonBounds(1), "PLAY VS CPU", UiButtonTone.Accent);
     DrawMenuButton(GetTitleButtonBounds(2), "ONLINE MULTIPLAYER", UiButtonTone.Accent);
-    DrawMenuButton(GetTitleButtonBounds(3), "SETTINGS", UiButtonTone.Neutral);
-    DrawMenuButton(GetTitleButtonBounds(4), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(3), "CAMPAIGN LEVEL BUILDER", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(4), "SETTINGS", UiButtonTone.Neutral);
+    DrawMenuButton(GetTitleButtonBounds(5), "QUIT GAME", UiButtonTone.Danger);
+  }
+
+  private void HandleLevelEditorRequests()
+  {
+    if (_levelEditor.RequestTestPlay)
+    {
+      _levelEditor.ClearRequests();
+      StartCampaignTestPlay();
+      return;
+    }
+    if (_levelEditor.RequestBrowse)
+    {
+      _customLevels = CustomLevelBrowser.Browse();
+      _levelEditor.ClearRequests();
+      _screen = Screen.CustomLevels;
+      return;
+    }
+    if (_levelEditor.RequestNew)
+    {
+      _levelEditor.ClearRequests();
+      if (_levelEditor.State.HasUnsavedChanges)
+      {
+        _editorConfirmAction = EditorConfirmAction.New;
+        _screen = Screen.EditorDiscardConfirm;
+      }
+      else
+      {
+        _levelEditor.ReplaceState(LevelEditorState.CreateNew());
+      }
+      return;
+    }
+    if (_levelEditor.RequestExit)
+    {
+      _levelEditor.ClearRequests();
+      if (_levelEditor.State.HasUnsavedChanges)
+      {
+        _editorConfirmAction = EditorConfirmAction.Exit;
+        _screen = Screen.EditorDiscardConfirm;
+      }
+      else
+      {
+        _screen = Screen.Title;
+      }
+    }
+  }
+
+  private void StartCampaignTestPlay()
+  {
+    CampaignLevelLoadResult snapshot = _levelEditor.State.CreateTestPlaySnapshot();
+    if (!snapshot.IsSuccess || snapshot.Level is null)
+    {
+      return;
+    }
+    CampaignPlayableStateResult converted = CampaignLevelConverter.CreatePlayableState(snapshot.Level);
+    if (!converted.IsSuccess || converted.State is null)
+    {
+      return;
+    }
+
+    CampaignPlayableState state = converted.State;
+    CancelCpuPlanning();
+    _cpuProfiles.Clear();
+    _cpuActionQueue.Clear();
+    pieceSetup.ClearPieces();
+    _board = state.Board;
+    _terrain = state.Terrain;
+    _roads.Clear();
+    _roads.UnionWith(state.Roads);
+    _barricades.Clear();
+    foreach (KeyValuePair<(int x, int y), int> entry in state.Barricades) _barricades[entry.Key] = entry.Value;
+    _mines.Clear();
+    foreach (KeyValuePair<(int x, int y), TeamName> entry in state.Mines) _mines[entry.Key] = entry.Value;
+    _riverBridges.Clear();
+    _riverBridges.UnionWith(state.RiverBridges);
+    _restoredLakeTiles.Clear();
+    _teams = state.Teams.ToList();
+    _playerCount = _teams.Count;
+    Team.ConfigureTurnOrder(_teams.Select(team => team.TeamName));
+    Team.SetCurrentTurn(state.FirstTeam.ToTeamName());
+    foreach (Piece piece in state.Pieces) pieceSetup.AddPiece(piece);
+    selectedPiece = null;
+    _movementAnimation = null;
+    _initialBuyPhase = null;
+    _isPurchaseMode = false;
+    _winningTeam = null;
+    _conquestScore = 0;
+    _conquestScores.Clear();
+    _modeScores.Clear();
+    foreach (Team team in _teams)
+    {
+      _conquestScores[team.TeamName] = 0;
+      _modeScores[team.TeamName] = 0;
+    }
+    foreach (CampaignTeamDefinition team in snapshot.Level.Teams.Where(team => team.Controller == CampaignTeamController.Cpu))
+    {
+      _cpuProfiles[team.Team.ToTeamName()] = CreateCampaignCpuProfile(team.CpuProfile, _terrainSeed + (int)team.Team);
+    }
+    if (Enum.TryParse(state.GameMode, ignoreCase: false, out GameMode mode)) _gameMode = mode;
+    _cameraPosition = Vector2.Zero;
+    _zoom = 1f;
+    _campaignTestDefinition = CampaignLevelCloner.Clone(snapshot.Level);
+    _campaignCompletedRounds = 0;
+    _campaignTestPlay = true;
+    _screen = Screen.Playing;
+  }
+
+  private static CpuProfile CreateCampaignCpuProfile(CampaignCpuProfileDefinition definition, int seed)
+  {
+    CpuProfile baseline = definition.Difficulty switch
+    {
+      "Easy" => CpuProfile.Easy(seed),
+      "Hard" => CpuProfile.Hard(seed),
+      _ => CpuProfile.Normal(seed)
+    };
+    CpuPersonality personality = definition.Personality switch
+    {
+      "Aggressive" => CpuPersonality.Aggressive,
+      "Defensive" => CpuPersonality.Defensive,
+      "Greedy" => CpuPersonality.Greedy,
+      "Reckless" => CpuPersonality.Reckless,
+      "ObjectiveFocused" => CpuPersonality.ObjectiveFocused,
+      "Swarmer" => CpuPersonality.Swarmer,
+      _ => CpuPersonality.Balanced
+    };
+    return new CpuProfile
+    {
+      Name = $"{baseline.Difficulty} {definition.Personality} CPU",
+      Difficulty = baseline.Difficulty,
+      Search = baseline.Search,
+      Weights = baseline.Weights,
+      Personality = personality,
+      RandomSeed = baseline.RandomSeed,
+      MistakeChance = baseline.MistakeChance,
+      TopChoicesForRandomSelection = baseline.TopChoicesForRandomSelection
+    };
+  }
+
+  private void ReturnToEditorFromTestPlay()
+  {
+    CancelCpuPlanning();
+    _cpuProfiles.Clear();
+    _cpuActionQueue.Clear();
+    selectedPiece = null;
+    _movementAnimation = null;
+    _isPurchaseMode = false;
+    _campaignTestDefinition = null;
+    _campaignCompletedRounds = 0;
+    _campaignTestPlay = false;
+    _screen = Screen.LevelEditor;
+  }
+
+  private Rectangle GetCustomLevelPanelBounds() => UiLayout.Centered(
+    UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height),
+    820,
+    620,
+    UiTheme.SpaceLg
+  );
+
+  private Rectangle GetCustomLevelButtonBounds(int index)
+  {
+    Rectangle content = UiLayout.Inset(GetCustomLevelPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 88 + index * 58, content.Width, 50);
+  }
+
+  private Rectangle GetCustomLevelsBackButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetCustomLevelPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, 170, UiTheme.ButtonHeight);
+  }
+
+  private void UpdateCustomLevels(MouseState mouse, bool wasLeftClick, bool wasEscapePressed)
+  {
+    if (wasEscapePressed)
+    {
+      _screen = Screen.LevelEditor;
+      return;
+    }
+    if (!wasLeftClick) return;
+    Point point = mouse.Position;
+    if (GetCustomLevelsBackButtonBounds().Contains(point))
+    {
+      _screen = Screen.LevelEditor;
+      return;
+    }
+    for (int index = 0; index < _customLevels.Count && index < 8; index++)
+    {
+      if (!GetCustomLevelButtonBounds(index).Contains(point)) continue;
+      CustomLevelSummary summary = _customLevels[index];
+      CampaignLevelLoadResult result = CampaignLevelSerializer.Load(summary.Path);
+      if (result.IsSuccess && result.Level is not null)
+      {
+        _levelEditor.ReplaceState(new LevelEditorState(result.Level, summary.Path));
+        _screen = Screen.LevelEditor;
+      }
+      return;
+    }
+  }
+
+  private void DrawCustomLevelsScreen()
+  {
+    Rectangle panel = GetCustomLevelPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("CUSTOM CAMPAIGN LEVELS", new Vector2(content.X, content.Y), UiTheme.GoldBright, 1.05f);
+    _ui.Text("Saved levels are validated before they can be opened.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.66f);
+    if (_customLevels.Count == 0)
+    {
+      _ui.Text($"No local levels yet. Save one to {CampaignLevelSerializer.LocalLevelDirectory}", new Vector2(content.X, content.Y + 90), UiTheme.TextMuted, 0.62f);
+    }
+    for (int index = 0; index < _customLevels.Count && index < 8; index++)
+    {
+      CustomLevelSummary summary = _customLevels[index];
+      Rectangle bounds = GetCustomLevelButtonBounds(index);
+      DrawMenuButton(bounds, string.Empty, summary.IsValid ? UiButtonTone.Neutral : UiButtonTone.Danger);
+      _ui.TextFitted(summary.Name, new Vector2(bounds.X + 12, bounds.Y + 7), bounds.Width - 240, UiTheme.TextPrimary, 0.75f);
+      _ui.TextFitted($"{summary.Author}  •  {summary.Difficulty}  •  v{summary.FormatVersion?.ToString() ?? "?"}", new Vector2(bounds.X + 12, bounds.Y + 28), bounds.Width - 240, UiTheme.TextMuted, 0.56f);
+      _ui.RightText(summary.IsValid ? "VALID" : "INVALID", new Rectangle(bounds.X, bounds.Y, bounds.Width - 12, bounds.Height), summary.IsValid ? UiTheme.Health : UiTheme.Attack, 0.65f);
+    }
+    DrawMenuButton(GetCustomLevelsBackButtonBounds(), "BACK TO EDITOR", UiButtonTone.Primary);
+  }
+
+  private Rectangle GetEditorConfirmationPanelBounds() => UiLayout.Centered(
+    UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height),
+    480,
+    230,
+    UiTheme.SpaceLg
+  );
+
+  private Rectangle GetEditorConfirmationButtonBounds(int index)
+  {
+    Rectangle panel = GetEditorConfirmationPanelBounds();
+    int width = (panel.Width - UiTheme.SpaceLg * 3) / 2;
+    return new Rectangle(panel.X + UiTheme.SpaceLg + index * (width + UiTheme.SpaceLg), panel.Bottom - UiTheme.SpaceLg - UiTheme.ButtonHeight, width, UiTheme.ButtonHeight);
+  }
+
+  private void UpdateEditorDiscardConfirmation(MouseState mouse, bool wasLeftClick, bool wasEscapePressed)
+  {
+    if (wasEscapePressed)
+    {
+      _screen = Screen.LevelEditor;
+      return;
+    }
+    if (!wasLeftClick) return;
+    if (GetEditorConfirmationButtonBounds(0).Contains(mouse.Position))
+    {
+      if (_editorConfirmAction == EditorConfirmAction.New) _levelEditor.ReplaceState(LevelEditorState.CreateNew());
+      else _screen = Screen.Title;
+      if (_editorConfirmAction == EditorConfirmAction.New) _screen = Screen.LevelEditor;
+    }
+    else if (GetEditorConfirmationButtonBounds(1).Contains(mouse.Position))
+    {
+      _screen = Screen.LevelEditor;
+    }
+  }
+
+  private void DrawEditorDiscardConfirmation()
+  {
+    Rectangle panel = GetEditorConfirmationPanelBounds();
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Attack);
+    _ui.CenterText("DISCARD UNSAVED LEVEL CHANGES?", new Rectangle(panel.X, panel.Y + 28, panel.Width, 28), UiTheme.GoldBright, 0.9f);
+    _ui.CenterText(_editorConfirmAction == EditorConfirmAction.New
+      ? "Starting a new level will lose unsaved edits."
+      : "Leaving the editor will lose unsaved edits.", new Rectangle(panel.X + 20, panel.Y + 74, panel.Width - 40, 38), UiTheme.TextMuted, 0.7f);
+    DrawMenuButton(GetEditorConfirmationButtonBounds(0), "DISCARD", UiButtonTone.Danger);
+    DrawMenuButton(GetEditorConfirmationButtonBounds(1), "KEEP EDITING", UiButtonTone.Primary);
   }
 
   private void DrawOnlineLobbyScreen()
@@ -6314,8 +6755,8 @@ internal sealed class Game1 : Game
     Color winnerColour = UiTheme.GetTeamColour(winner);
     _ui.CenterText(message, new Rectangle(viewport.X, viewport.Center.Y - 110, viewport.Width, 42), winnerColour, 1.3f);
     _ui.CenterText(reason, new Rectangle(viewport.X, viewport.Center.Y - 54, viewport.Width, 24), UiTheme.TextPrimary, 0.85f);
-    DrawMenuButton(GetTitleButtonBounds(3), "RETURN TO TITLE", UiButtonTone.Primary);
-    DrawMenuButton(GetTitleButtonBounds(4), "QUIT GAME", UiButtonTone.Danger);
+    DrawMenuButton(GetTitleButtonBounds(4), _campaignTestPlay ? "RETURN TO EDITOR" : "RETURN TO TITLE", UiButtonTone.Primary);
+    DrawMenuButton(GetTitleButtonBounds(5), "QUIT GAME", UiButtonTone.Danger);
   }
 
   private void DrawMenuScreen()
@@ -6332,6 +6773,9 @@ internal sealed class Game1 : Game
       case Screen.Pause: DrawPauseScreen(); break;
       case Screen.Encyclopedia: DrawEncyclopediaScreen(); break;
       case Screen.GameOver: DrawGameOverScreen(); break;
+      case Screen.LevelEditor: _levelEditor.Draw(new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height)); break;
+      case Screen.CustomLevels: DrawCustomLevelsScreen(); break;
+      case Screen.EditorDiscardConfirm: DrawEditorDiscardConfirmation(); break;
     }
   }
 
@@ -6515,7 +6959,7 @@ internal sealed class Game1 : Game
     _ui.Divider(content, content.Y + 30);
     _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
 
-    for (int index = 0; index < Team.ActionsPerTurn; index++)
+    for (int index = 0; index < currentTeam.ActionLimit; index++)
     {
       Rectangle actionPoint = new(content.X + index * 34, content.Y + 66, 26, 12);
       _spriteBatch.Draw(
@@ -6526,7 +6970,7 @@ internal sealed class Game1 : Game
     }
 
     _ui.Text(
-      $"{currentTeam.ActionPoints}/{Team.ActionsPerTurn} REMAINING",
+      $"{currentTeam.ActionPoints}/{currentTeam.ActionLimit} REMAINING",
       new Vector2(content.X + 116, content.Y + 61),
       UiTheme.TextPrimary,
       0.76f
@@ -6553,7 +6997,7 @@ internal sealed class Game1 : Game
       }
     }
 
-    bool canSkipTurn = IsOnlineLocalTurn() && currentTeam.ActionPoints < Team.ActionsPerTurn;
+    bool canSkipTurn = IsOnlineLocalTurn() && currentTeam.ActionPoints < currentTeam.ActionLimit;
     DrawMenuButton(
       GetSkipTurnButtonBounds(),
       canSkipTurn ? "END TURN" : "END TURN",

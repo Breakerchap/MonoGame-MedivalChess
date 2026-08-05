@@ -14,13 +14,15 @@ internal sealed class Team
   internal PieceType? ChosenRoyal { get; private set; }
   internal int Money { get; set; }
   internal int ActionPoints { get; set; }
+  internal int ActionLimit { get; }
 
-  internal Team(TeamName teamName, PieceType? chosenRoyal, int? money = null)
+  internal Team(TeamName teamName, PieceType? chosenRoyal, int? money = null, int? actionLimit = null)
   {
     TeamName = teamName;
     ChosenRoyal = chosenRoyal;
     Money = money ?? Globals.StartingCash;
-    ActionPoints = ActionsPerTurn;
+    ActionLimit = Math.Max(1, actionLimit ?? ActionsPerTurn);
+    ActionPoints = ActionLimit;
   }
 
   private static IReadOnlyList<TeamName> _turnOrder = [TeamName.Red, TeamName.Blue];
@@ -83,7 +85,7 @@ internal sealed class Team
       return false;
     }
 
-    ActionPoints = ActionsPerTurn;
+    ActionPoints = ActionLimit;
     return true;
   }
 

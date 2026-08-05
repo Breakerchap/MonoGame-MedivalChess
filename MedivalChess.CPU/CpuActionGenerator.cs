@@ -161,7 +161,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     {
       for (int x = minimumX; x <= maximumX; x++)
       {
-        if (BoardRules.Contains(state.Configuration, x, y) && CpuGameRules.CanUseActionSquare(actor, x, y))
+        if (BoardRules.Contains(state.Board, x, y) && CpuGameRules.CanUseActionSquare(actor, x, y))
         {
           yield return (x, y);
         }
@@ -203,7 +203,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     List<(int x, int y)> positions = openingFarmPlacement
       ? state.Board.Cells
         .Where(position => MatchRules.GetSquareOwner(state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount) == team)
-        .Where(position => BoardRules.CanPlaceForTeam(state.Configuration, team, position.x, position.y, farmRule.Width, farmRule.Height))
+        .Where(position => BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, team, position.x, position.y, farmRule.Width, farmRule.Height))
         .OrderByDescending(position => CpuPlacementHeuristics.GetFarmProtectionScore(
           state, team, position.x, position.y, furthestForwardProjection))
         .ThenBy(position => position.y)

@@ -24,7 +24,8 @@ public static partial class CpuGameRules
       AttackAction attack => IsLegalAttack(state, attack),
       PurchaseAction purchase => IsLegalPurchase(state, purchase),
       UseAbilityAction ability => IsLegalAbility(state, ability),
-      EndTurnAction => state.InitialBuy is null && state.ActionsRemaining is > 0 and < MatchRules.ActionsPerTurn,
+      EndTurnAction => state.InitialBuy is null && state.Teams.TryGetValue(action.Team, out CpuTeamState? team) &&
+        team.ActionsRemaining is > 0 && team.ActionsRemaining < team.ActionLimit,
       StopInitialBuyingAction => IsLegalStopInitialBuying(state, action.Team),
       _ => false
     };
@@ -186,7 +187,7 @@ public static partial class CpuGameRules
     {
       if (state.InitialBuy is not null || action.UnitType != "Mercenary" ||
           (occupyingMercenary.Team != NetworkTeam.Neutral &&
-           !BoardRules.IsInTeamTerritory(state.Configuration, action.Team, action.X, action.Y)))
+           !BoardRules.IsInTeamTerritory(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y)))
       {
         return false;
       }
@@ -220,8 +221,8 @@ public static partial class CpuGameRules
     }
 
     bool inValidZone = rule.Type == "Mercenary" && !initialBuy
-      ? BoardRules.CanPlaceMercenary(state.Configuration, action.X, action.Y)
-      : BoardRules.CanPlaceForTeam(state.Configuration, action.Team, action.X, action.Y, rule.Width, rule.Height);
+      ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
+      : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
     return inValidZone && CanPlace(state, state.Pieces, rule, action.X, action.Y);
   }
 
@@ -304,7 +305,7 @@ public static partial class CpuGameRules
         state.RiverBridges.Contains(TileEdge.Between((actor.X, actor.Y), position));
     }
 
-    return BoardRules.Contains(state.Configuration, action.TargetX, action.TargetY) &&
+    return BoardRules.Contains(state.Board, action.TargetX, action.TargetY) &&
       !state.Terrain.IsLake(position) && !state.Roads.Contains(position) &&
       !state.Barricades.ContainsKey(position) && !state.Mines.ContainsKey(position) &&
       !PieceOccupies(state.Pieces, position);
@@ -438,7 +439,7 @@ public static partial class CpuGameRules
       rule.Height,
       state.Source.Configuration.PlayerCount))
     {
-      if (BoardRules.CanPlaceForTeam(state.Source.Configuration, defeated.Team, position.x, position.y, rule.Width, rule.Height) &&
+      if (BoardRules.CanPlaceForTeam(state.Source.Board, state.Source.Configuration.GameMode, state.Source.Configuration.PlayerCount, defeated.Team, position.x, position.y, rule.Width, rule.Height) &&
           CanPlace(state.Source, state.Pieces, rule, position.x, position.y))
       {
         int health = Math.Max(1, (int)Math.Ceiling(rule.Health * (state.Source.Configuration.EscortRoyalHealthPercent / 100d)));
@@ -571,7 +572,7 @@ public static partial class CpuGameRules
   private static void TryDeliverTreasure(CpuMutableGameState state, NetworkPiece piece)
   {
     if (state.Source.Configuration.GameMode != "Plunder" || state.TreasureCarrierId != piece.Id ||
-        !BoardRules.IsInTeamTerritory(state.Source.Configuration, piece.Team, piece.X, piece.Y))
+        !BoardRules.IsInTeamTerritory(state.Source.Board, state.Source.Configuration.GameMode, state.Source.Configuration.PlayerCount, piece.Team, piece.X, piece.Y))
     {
       return;
     }
@@ -610,7 +611,7 @@ public static partial class CpuGameRules
       return;
     }
 
-    state.Teams[team] = state.Teams[team] with { ActionsRemaining = MatchRules.ActionsPerTurn };
+    state.Teams[team] = state.Teams[team] with { ActionsRemaining = state.Teams[team].ActionLimit };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;
     ApplyScenarioReinforcements(state);
@@ -635,7 +636,7 @@ public static partial class CpuGameRules
       candidate => candidate.TurnNumber == state.TurnNumber))
     {
       if (reinforcement.Team == NetworkTeam.Neutral || !UnitRules.TryGet(reinforcement.UnitType, out UnitRule rule) ||
-          !BoardRules.Contains(state.Source.Configuration, reinforcement.X, reinforcement.Y) ||
+          !BoardRules.Contains(state.Source.Board, reinforcement.X, reinforcement.Y) ||
           !CanPlace(state.Source, state.Pieces, rule, reinforcement.X, reinforcement.Y))
       {
         continue;

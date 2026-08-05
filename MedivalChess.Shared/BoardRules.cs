@@ -19,6 +19,10 @@ public static class BoardRules
   public static bool Contains(NetworkMatchConfiguration configuration, int x, int y) =>
     GetBoard(configuration).ContainsCell((x, y));
 
+  /// <summary>Uses a supplied board for campaign/editor CPU simulations.</summary>
+  public static bool Contains(Board board, int x, int y) =>
+    (board ?? throw new ArgumentNullException(nameof(board))).ContainsCell((x, y));
+
   public static bool FootprintFitsBoard(
     NetworkMatchConfiguration configuration,
     int x,
@@ -38,6 +42,18 @@ public static class BoardRules
       }
     }
 
+    return true;
+  }
+
+  public static bool FootprintFitsBoard(Board board, int x, int y, int width, int height)
+  {
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    {
+      for (int offsetX = 0; offsetX < width; offsetX++)
+      {
+        if (!Contains(board, x + offsetX, y + offsetY)) return false;
+      }
+    }
     return true;
   }
 
@@ -67,6 +83,31 @@ public static class BoardRules
     return true;
   }
 
+  public static bool CanPlaceForTeam(
+    Board board,
+    string gameMode,
+    int playerCount,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height
+  )
+  {
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    {
+      for (int offsetX = 0; offsetX < width; offsetX++)
+      {
+        (int x, int y) square = (x + offsetX, y + offsetY);
+        if (!board.ContainsCell(square) || MatchRules.GetSquareOwner(board, gameMode, square, playerCount) != team)
+        {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   public static bool CanPlaceMercenary(NetworkMatchConfiguration configuration, int x, int y)
   {
     Board board = GetBoard(configuration);
@@ -74,10 +115,16 @@ public static class BoardRules
       MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) is null;
   }
 
+  public static bool CanPlaceMercenary(Board board, string gameMode, int playerCount, int x, int y) =>
+    board.ContainsCell((x, y)) && MatchRules.GetSquareOwner(board, gameMode, (x, y), playerCount) is null;
+
   public static bool IsInTeamTerritory(NetworkMatchConfiguration configuration, NetworkTeam team, int x, int y)
   {
     Board board = GetBoard(configuration);
     return board.ContainsCell((x, y)) &&
       MatchRules.GetSquareOwner(board, configuration.GameMode, (x, y), configuration.PlayerCount) == team;
   }
+
+  public static bool IsInTeamTerritory(Board board, string gameMode, int playerCount, NetworkTeam team, int x, int y) =>
+    board.ContainsCell((x, y)) && MatchRules.GetSquareOwner(board, gameMode, (x, y), playerCount) == team;
 }
