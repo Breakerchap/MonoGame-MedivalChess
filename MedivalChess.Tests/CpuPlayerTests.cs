@@ -138,6 +138,20 @@ public sealed class CpuPlayerTests
   }
 
   [Fact]
+  public void Cpu_DiscardsAnIllegalCandidateBeforeItCanBeSimulatedOrReturned()
+  {
+    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    IllegalCandidateSelector selector = new();
+
+    CpuTurnPlan plan = new CpuPlayer(candidateSelector: selector).ChooseTurn(
+      state, NetworkTeam.Red, CpuProfile.Easy(85), CancellationToken.None);
+
+    Assert.True(selector.Calls > 0);
+    Assert.Equal(0, plan.Report.NodesGenerated);
+    Assert.Empty(plan.Actions);
+  }
+
+  [Fact]
   public void Cpu_HandlesAStateWithNoAvailableAction()
   {
     CpuGameState state = CreateState(new NetworkPiece("red-farm", "Farm", NetworkTeam.Red, 0, 0, 30));
@@ -188,5 +202,22 @@ public sealed class CpuPlayerTests
       NetworkTeam.Red,
       terrain: new BattlefieldTerrain()
     );
+  }
+
+  private sealed class IllegalCandidateSelector : IActionCandidateSelector
+  {
+    public int Calls { get; private set; }
+
+    public IReadOnlyList<ScoredAction> SelectCandidates(
+      CpuGameState state,
+      NetworkTeam team,
+      IReadOnlyList<ICpuGameAction> legalActions,
+      CpuSearchSettings settings,
+      CpuPersonality? personality = null
+    )
+    {
+      Calls++;
+      return [new ScoredAction(new MoveAction(team, "missing-piece", 99, 99), 10_000f, "Injected illegal action")];
+    }
   }
 }

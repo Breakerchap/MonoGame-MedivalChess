@@ -136,18 +136,27 @@ public sealed class CpuPlayer : ICpuPlayer
         }
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
           node.State, team, legal, settings, profile.Personality);
-        // Keep the strongest root candidate as a safe fallback. Generation can occasionally use
-        // most of a very small budget, but a live CPU turn must neither stall nor discard an
-        // immediately lethal action merely because deeper search timed out.
-        if (node.Actions.Count == 0 && fallbackAction is null)
-        {
-          fallbackAction = candidates.FirstOrDefault()?.Action;
-        }
         foreach (ScoredAction candidate in candidates)
         {
           if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
           {
             break;
+          }
+
+          // Candidate selection is strategic and may be replaced in tests or future profiles;
+          // never trust it as a legality authority. This also protects cached plans if a rule
+          // changes while a background worker is still finishing its snapshot.
+          if (!candidate.Action.IsLegal(node.State))
+          {
+            continue;
+          }
+
+          // Keep the strongest legal root candidate as a safe fallback. Generation can
+          // occasionally use most of a very small budget, but a live CPU turn must neither stall
+          // nor discard an immediately lethal action merely because deeper search timed out.
+          if (node.Actions.Count == 0 && fallbackAction is null)
+          {
+            fallbackAction = candidate.Action;
           }
 
           CpuGameState result = candidate.Action.Apply(node.State);
@@ -243,7 +252,32 @@ public sealed class CpuPlayer : ICpuPlayer
       Cancelled = cancelled,
       TopChoices = choices
     };
-    return new CpuTurnPlan(chosen.Node.Actions, chosen.Score, report);
+    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, chosen.Node.Actions);
+    return new CpuTurnPlan(verifiedActions, chosen.Score, report);
+  }
+
+  /// <summary>
+  /// Final defence before a worker result leaves CPU code. It is intentionally small (at most one
+  /// turn) and ensures a stale or externally supplied candidate cannot be handed to presentation.
+  /// </summary>
+  private static IReadOnlyList<ICpuGameAction> VerifyActionSequence(
+    CpuGameState state,
+    NetworkTeam team,
+    IReadOnlyList<ICpuGameAction> actions
+  )
+  {
+    List<ICpuGameAction> verified = [];
+    CpuGameState current = state;
+    foreach (ICpuGameAction action in actions)
+    {
+      if (current.IsFinished || current.CurrentTurn != team || !action.IsLegal(current))
+      {
+        break;
+      }
+      verified.Add(action);
+      current = action.Apply(current);
+    }
+    return verified;
   }
 
   /// <summary>
@@ -265,7 +299,8 @@ public sealed class CpuPlayer : ICpuPlayer
     IReadOnlyList<ICpuGameAction> actions = cancelled
       ? []
       : _actionGenerator.GenerateSearchActions(state, team, placementLimit);
-    PurchaseAction? farm = actions.OfType<PurchaseAction>().FirstOrDefault(action => action.UnitType == "Farm");
+    PurchaseAction? farm = actions.OfType<PurchaseAction>()
+      .FirstOrDefault(action => action.UnitType == "Farm" && action.IsLegal(state));
     float score = farm is null
       ? 0f
       : CpuPlacementHeuristics.GetFarmProtectionScore(state, team, farm.X, farm.Y);
@@ -365,6 +400,13 @@ public sealed class CpuPlayer : ICpuPlayer
             out timedOut, out nodeBudgetReached, out cancelled))
           {
             break;
+          }
+
+          // The opponent model uses the same extension point as the primary search, so apply
+          // the same non-negotiable legality gate before simulating any reply.
+          if (!candidate.Action.IsLegal(node.State))
+          {
+            continue;
           }
 
           CpuGameState result = candidate.Action.Apply(node.State);
