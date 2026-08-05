@@ -62,11 +62,12 @@ public sealed class CpuGameState
     IEnumerable<KeyValuePair<(int x, int y), NetworkTeam>>? mines = null,
     IEnumerable<TileEdge>? riverBridges = null,
     CpuScenarioDefinition? scenario = null,
-    IEnumerable<CpuMoveRecord>? recentMoves = null
+    IEnumerable<CpuMoveRecord>? recentMoves = null,
+    Board? board = null
   )
   {
     Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
-    Board = BoardRules.GetBoard(configuration);
+    Board = board ?? BoardRules.GetBoard(configuration);
     Terrain = terrain ?? TerrainRules.Create(
       Board,
       configuration.TerrainSeed,
@@ -160,7 +161,8 @@ public sealed class CpuGameState
     _mines,
     _riverBridges,
     Scenario,
-    _recentMoves
+    _recentMoves,
+    Board
   );
 
   internal CpuMutableGameState ToMutable() => new(this);
@@ -182,7 +184,14 @@ public sealed class CpuGameState
 }
 
 /// <summary>Gameplay data owned by one team in a CPU simulation.</summary>
-public sealed record CpuTeamState(NetworkTeam Team, int Money, int ActionsRemaining, string? ChosenRoyal = null);
+/// <summary>CPU-side team economy and per-turn action budget. Campaigns may override the normal limit per team.</summary>
+public sealed record CpuTeamState(
+  NetworkTeam Team,
+  int Money,
+  int ActionsRemaining,
+  string? ChosenRoyal = null,
+  int ActionLimit = MatchRules.ActionsPerTurn
+);
 
 /// <summary>Compact, bounded move history retained in snapshots so repetition scoring is deterministic.</summary>
 public sealed record CpuMoveRecord(
@@ -268,6 +277,7 @@ internal sealed class CpuMutableGameState
     Mines,
     RiverBridges,
     Source.Scenario,
-    RecentMoves
+    RecentMoves,
+    Source.Board
   );
 }

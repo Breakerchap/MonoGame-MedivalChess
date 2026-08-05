@@ -46,6 +46,27 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void CampaignCpuSnapshotUsesTheSuppliedCustomBoardGeometry()
+  {
+    Board campaignBoard = new(new[] { (0, 0) });
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("campaign-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: campaignBoard
+    );
+
+    Assert.Same(campaignBoard, state.Board);
+    Assert.False(new MoveAction(NetworkTeam.Red, "campaign-soldier", 0, 1).IsLegal(state));
+    Assert.Same(campaignBoard, state.Clone().Board);
+  }
+
+  [Fact]
   public void LegalActionGenerator_ReturnsOnlyActionsThatApplyToTheCurrentTeam()
   {
     CpuGameState state = CreateState(

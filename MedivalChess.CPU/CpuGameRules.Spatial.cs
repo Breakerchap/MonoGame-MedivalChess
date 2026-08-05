@@ -50,7 +50,7 @@ public static partial class CpuGameRules
     bool elephantCanIgnoreLakes = false
   )
   {
-    if (!BoardRules.FootprintFitsBoard(state.Configuration, x, y, rule.Width, rule.Height))
+    if (!BoardRules.FootprintFitsBoard(state.Board, x, y, rule.Width, rule.Height))
     {
       return false;
     }
@@ -83,7 +83,7 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        if (!BoardRules.Contains(state.Configuration, square.x, square.y) ||
+        if (!BoardRules.Contains(state.Board, square.x, square.y) ||
             (piece.Type != "Elephant" && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
         {
           return false;

@@ -90,7 +90,7 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) position in AbilityRules.GetPiercingRay(ballistaRule, attacker.X, attacker.Y, target.X, target.Y))
       {
-        if (!BoardRules.Contains(state.Source.Configuration, position.x, position.y) ||
+        if (!BoardRules.Contains(state.Source.Board, position.x, position.y) ||
             state.Source.Terrain.IsForest(position) || state.Barricades.ContainsKey(position))
         {
           break;
