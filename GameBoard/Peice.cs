@@ -362,7 +362,7 @@ internal static class PieceDefinitions
     (2, Shape.Any),
     10,
     1,
-    "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."
+    "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill."
   );
 
   internal static readonly PieceDefinition King = new(

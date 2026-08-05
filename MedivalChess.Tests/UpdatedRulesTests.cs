@@ -1,5 +1,6 @@
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 using Xunit;
 
 namespace MedivalChess.Tests;

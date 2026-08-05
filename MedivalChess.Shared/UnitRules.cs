@@ -63,7 +63,7 @@ public static class UnitRules
     new("Ballista", RuleCategory.Mechanical, 1, RuleShape.Straight, 25, 20, 1, 2, 5, RuleShape.Straight, 55, 2, "Its attack pierces enemies in a straight line."),
     new("Elephant", RuleCategory.Melee, 4, RuleShape.Straight, 15, 60, 2, 2, 0, RuleShape.None, 55, 0, "May move through enemies, damaging each crossed unit. Ignores terrain."),
     new("Guard", RuleCategory.Melee, 3, RuleShape.Straight, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly non-royal unit and takes damage for it."),
-    new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 10, 1, "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn. Fire it to leave it neutral for either player to hire or kill."),
+    new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 10, 1, "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill."),
     new("Farm", RuleCategory.Structure, 0, RuleShape.None, 0, 30, 3, 3, 0, RuleShape.None, 60, 0, "Earns the configured gold amount at the start of each owner turn (default 5). Units may move and attack over it."),
     new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 110, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
     new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 10, 80, 1, 1, 4, RuleShape.Any, 0, 1, "May attack over friendly units."),

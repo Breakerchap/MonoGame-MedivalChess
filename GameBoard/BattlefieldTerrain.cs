@@ -84,7 +84,7 @@ public sealed class BattlefieldTerrain
     IEnumerable<(int x, int y)>? forests = null,
     IEnumerable<(int x, int y)>? lakes = null,
     IEnumerable<TileEdge>? rivers = null,
-    int forestDamageReduction = 3
+    int forestDamageReduction = 0
   )
   {
     _forests = forests == null ? [] : [.. forests];

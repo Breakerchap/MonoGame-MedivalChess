@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.Server", "Medi
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.Tests", "MedivalChess.Tests\MedivalChess.Tests.csproj", "{4C97B9EB-58A5-49F8-B598-E948B236F3D1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.CPU", "MedivalChess.CPU\MedivalChess.CPU.csproj", "{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -24,5 +26,7 @@ Global
 		{83F4FE00-7F27-4990-B9D5-807D1AF74D7C}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4C97B9EB-58A5-49F8-B598-E948B236F3D1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{4C97B9EB-58A5-49F8-B598-E948B236F3D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}.Debug|Any CPU.Build.0 = Debug|Any CPU
 	EndGlobalSection
 EndGlobal
