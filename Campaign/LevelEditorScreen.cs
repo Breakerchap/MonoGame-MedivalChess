@@ -34,6 +34,7 @@ internal sealed class LevelEditorScreen
   private float _zoom = 1f;
   private TextField _textField;
   private PropertiesView _propertiesView;
+  private bool _editingScenarioObjectives;
   private ObjectiveTargetMode _objectiveTargetMode;
   private bool _editingDefeatConditions;
   private CampaignObjectiveType _objectivePaletteType = CampaignObjectiveType.DefeatEnemyRoyal;
@@ -65,6 +66,10 @@ internal sealed class LevelEditorScreen
     _camera = Vector2.Zero;
     _zoom = 1f;
     _textField = TextField.None;
+    _editingScenarioObjectives = false;
+    _objectiveTargetMode = ObjectiveTargetMode.None;
+    _selectedObjectiveId = null;
+    _pendingObjectiveUnitId = null;
     _problems.Clear();
     _status = "Level opened in the editor.";
     SynchronisePlacementTeam();
@@ -174,10 +179,11 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.UnitPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.UnitNext, ">", UiButtonTone.Neutral);
     _ui.PiecePreview(layout.UnitPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), selectedUnit.Type);
-    _ui.Text($"{selectedUnit.Width}x{selectedUnit.Height}  {selectedUnit.Health} HP", new Vector2(layout.Tools.X + 12, layout.UnitPreview.Bottom + 5), UiTheme.TextMuted, 0.65f);
+    _ui.CenterTextFitted(selectedUnit.Type.ToUpperInvariant(), layout.UnitName, UiTheme.TextPrimary, 0.7f, 0.5f, 1);
+    _ui.Text($"{selectedUnit.Width}x{selectedUnit.Height}  {selectedUnit.Health} HP", new Vector2(layout.Tools.X + 12, layout.UnitName.Bottom + 3), UiTheme.TextMuted, 0.59f);
     _ui.Button(layout.TeamPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.TeamNext, ">", UiButtonTone.Neutral);
-    _ui.CenterText(_placementTeam.ToString().ToUpperInvariant(), layout.TeamPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), 0.75f);
+    _ui.CenterText($"FOR {_placementTeam}".ToUpperInvariant(), layout.TeamPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), 0.68f);
 
     CampaignBoardObjectType selectedObject = (CampaignBoardObjectType)(_objectPaletteIndex % Enum.GetValues<CampaignBoardObjectType>().Length);
     _ui.Text("OBJECT PALETTE", new Vector2(layout.Tools.X + 12, layout.ObjectPaletteTop + 4), UiTheme.GoldBright, 0.72f);
@@ -253,10 +259,27 @@ internal sealed class LevelEditorScreen
     {
       case PropertiesView.Teams:
         DrawTeamSettings(layout);
-        return;
+        break;
       case PropertiesView.Restrictions:
         DrawRestrictionSettings(layout);
-        return;
+        break;
+      default:
+        DrawScenarioSettings(layout);
+        break;
+    }
+    // Scenario editing uses the full panel for objectives. Selected-unit details remain available
+    // in the compact Teams and Rules views instead of being hidden below the objective controls.
+    if (_propertiesView != PropertiesView.Scenario) DrawSelectionProperties(layout);
+  }
+
+  private void DrawScenarioSettings(EditorLayout layout)
+  {
+    _ui.Button(layout.ScenarioDetailsButton, "DETAILS", UiButtonTone.Neutral, !_editingScenarioObjectives, 0.58f);
+    _ui.Button(layout.ScenarioObjectivesButton, "OBJECTIVES", UiButtonTone.Neutral, _editingScenarioObjectives, 0.58f);
+    if (_editingScenarioObjectives)
+    {
+      DrawObjectiveSettings(layout);
+      return;
     }
     DrawTextField(layout.NameField, "NAME", State.Level.Metadata.Name, TextField.Name);
     DrawTextField(layout.AuthorField, "AUTHOR", State.Level.Metadata.Author, TextField.Author);
@@ -268,7 +291,6 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.TurnLimitDown, "-", UiButtonTone.Neutral);
     _ui.Button(layout.TurnLimitUp, "+", UiButtonTone.Neutral);
     _ui.CenterText($"TURN LIMIT: {turns}", layout.TurnLimitLabel, UiTheme.TextMuted, 0.65f);
-    DrawObjectiveSettings(layout);
   }
 
   private void DrawObjectiveSettings(EditorLayout layout)
@@ -288,7 +310,7 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.ObjectiveRemoveButton, "REMOVE", UiButtonTone.Danger, false, 0.6f);
     if (selected is not null)
     {
-      _ui.CenterTextFitted($"ACTIVE: {selected.Type}  ({selected.RequiredAmount})", layout.ObjectiveActiveLabel, UiTheme.TextMuted, 0.58f, 0.44f, 2);
+      _ui.Button(layout.ObjectiveActiveLabel, $"ACTIVE: {selected.Type}  ({selected.RequiredAmount})  ›", UiButtonTone.Neutral, false, 0.52f);
       _ui.Button(layout.ObjectiveAmountDown, "-", UiButtonTone.Neutral);
       _ui.Button(layout.ObjectiveAmountUp, "+", UiButtonTone.Neutral);
       _ui.Button(layout.ObjectiveTargetButton, "PICK UNIT", UiButtonTone.Accent, _objectiveTargetMode == ObjectiveTargetMode.Unit, 0.57f);
@@ -352,7 +374,7 @@ internal sealed class LevelEditorScreen
       if (unit is not null)
       {
         _ui.Text("SELECTED UNIT", new Vector2(layout.Properties.X + 12, layout.SelectionTop + 10), UiTheme.GoldBright, 0.75f);
-        _ui.LabelValueRow(layout.SelectedRowOne, unit.UnitType, unit.Team.ToString(), UiTheme.GetTeamColour(unit.Team.ToTeamName()));
+        _ui.Button(layout.SelectedRowOne, $"{unit.UnitType}  •  TEAM: {unit.Team}  (CHANGE)", UiButtonTone.Neutral, false, 0.58f);
         _ui.Button(layout.SelectedPrevious, "HEALTH -", UiButtonTone.Neutral, false, 0.65f);
         _ui.Button(layout.SelectedNext, "HEALTH +", UiButtonTone.Neutral, false, 0.65f);
         _ui.Button(layout.RotateButton, "ROTATE", UiButtonTone.Accent, false, 0.7f);
@@ -443,7 +465,16 @@ internal sealed class LevelEditorScreen
     {
       if (!bounds.Contains(point)) continue;
       State.ActiveTool = tool;
-      _status = $"{tool} tool selected.";
+      _status = tool switch
+      {
+        EditorTool.Unit => "Choose a unit and team, then click a valid tile to place it.",
+        EditorTool.Move => "Select a unit, then click a valid destination to move it.",
+        EditorTool.Tile => "Drag across empty space to paint playable tiles. Right-click erases.",
+        EditorTool.Terrain => "Choose Forest or Lake, then drag across the board to paint terrain.",
+        EditorTool.Object => "Choose an object, then click or drag to place it.",
+        EditorTool.Delete => "Drag across content to erase it. Right-click also erases.",
+        _ => "Click a unit, terrain tile, or object to inspect it."
+      };
       return true;
     }
     if (layout.UndoButton.Contains(point)) { _status = State.Undo() ? "Undid last editor operation." : "Nothing to undo."; return true; }
@@ -475,24 +506,30 @@ internal sealed class LevelEditorScreen
     if (layout.ScenarioTab.Contains(point)) { _propertiesView = PropertiesView.Scenario; return true; }
     if (layout.TeamsTab.Contains(point)) { _propertiesView = PropertiesView.Teams; return true; }
     if (layout.RestrictionsTab.Contains(point)) { _propertiesView = PropertiesView.Restrictions; return true; }
-    if (_propertiesView == PropertiesView.Teams) return HandleTeamSettingsClick(layout, point);
-    if (_propertiesView == PropertiesView.Restrictions) return HandleRestrictionsClick(layout, point);
-    if (layout.NameField.Contains(point)) { _textField = TextField.Name; return true; }
-    if (layout.AuthorField.Contains(point)) { _textField = TextField.Author; return true; }
-    if (layout.DescriptionField.Contains(point)) { _textField = TextField.Description; return true; }
-    if (layout.DialogueField.Contains(point)) { _textField = TextField.Dialogue; return true; }
-    if (layout.ModeButton.Contains(point)) { CycleGameMode(); return true; }
-    if (layout.FirstTeamButton.Contains(point)) { CycleFirstTeam(); return true; }
-    if (layout.TurnLimitDown.Contains(point)) { State.UpdateScenario(scenario => scenario.TurnLimit = Math.Max(1, (scenario.TurnLimit ?? 11) - 1)); return true; }
-    if (layout.TurnLimitUp.Contains(point)) { State.UpdateScenario(scenario => scenario.TurnLimit = Math.Min(10_000, (scenario.TurnLimit ?? 0) + 1)); return true; }
-    if (HandleObjectiveClick(layout, point)) return true;
-    if (State.Selection.Kind == EditorSelectionKind.Unit && State.Selection.Id is string unitId)
+    if (_propertiesView == PropertiesView.Teams && HandleTeamSettingsClick(layout, point)) return true;
+    if (_propertiesView == PropertiesView.Restrictions && HandleRestrictionsClick(layout, point)) return true;
+    if (_propertiesView == PropertiesView.Scenario)
     {
+      if (layout.ScenarioDetailsButton.Contains(point)) { _editingScenarioObjectives = false; return true; }
+      if (layout.ScenarioObjectivesButton.Contains(point)) { _editingScenarioObjectives = true; return true; }
+      if (_editingScenarioObjectives) return HandleObjectiveClick(layout, point);
+      if (layout.NameField.Contains(point)) { _textField = TextField.Name; return true; }
+      if (layout.AuthorField.Contains(point)) { _textField = TextField.Author; return true; }
+      if (layout.DescriptionField.Contains(point)) { _textField = TextField.Description; return true; }
+      if (layout.DialogueField.Contains(point)) { _textField = TextField.Dialogue; return true; }
+      if (layout.ModeButton.Contains(point)) { CycleGameMode(); return true; }
+      if (layout.FirstTeamButton.Contains(point)) { CycleFirstTeam(); return true; }
+      if (layout.TurnLimitDown.Contains(point)) { State.UpdateScenario(scenario => scenario.TurnLimit = Math.Max(1, (scenario.TurnLimit ?? 11) - 1)); return true; }
+      if (layout.TurnLimitUp.Contains(point)) { State.UpdateScenario(scenario => scenario.TurnLimit = Math.Min(10_000, (scenario.TurnLimit ?? 0) + 1)); return true; }
+    }
+    if (_propertiesView != PropertiesView.Scenario && State.Selection.Kind == EditorSelectionKind.Unit && State.Selection.Id is string unitId)
+    {
+      if (layout.SelectedRowOne.Contains(point)) { CycleSelectedUnitTeam(unitId); return true; }
       if (layout.SelectedPrevious.Contains(point)) { AdjustSelectedHealth(unitId, -1); return true; }
       if (layout.SelectedNext.Contains(point)) { AdjustSelectedHealth(unitId, 1); return true; }
       if (layout.RotateButton.Contains(point)) { State.RotateUnit(unitId); return true; }
     }
-    if (State.Selection.Kind == EditorSelectionKind.Object && State.Selection.Id is string objectId && layout.RotateButton.Contains(point))
+    if (_propertiesView != PropertiesView.Scenario && State.Selection.Kind == EditorSelectionKind.Object && State.Selection.Id is string objectId && layout.RotateButton.Contains(point))
     {
       State.DeleteObject(objectId);
       return true;
@@ -522,6 +559,16 @@ internal sealed class LevelEditorScreen
     }
     CampaignObjectiveDefinition? selected = GetSelectedObjective();
     if (selected is null) return false;
+    if (layout.ObjectiveActiveLabel.Contains(point))
+    {
+      IReadOnlyList<CampaignObjectiveDefinition> objectives = _editingDefeatConditions
+        ? State.Level.Scenario.DefeatConditions
+        : State.Level.Scenario.VictoryConditions;
+      int current = objectives.ToList().FindIndex(objective => objective.Id == selected.Id);
+      _selectedObjectiveId = objectives[(current + 1 + objectives.Count) % objectives.Count].Id;
+      _status = "Switched active condition.";
+      return true;
+    }
     if (layout.ObjectiveRemoveButton.Contains(point))
     {
       State.RemoveObjective(_editingDefeatConditions, selected.Id);
@@ -606,14 +653,27 @@ internal sealed class LevelEditorScreen
     if (State.ActiveTool == EditorTool.Delete) { DeleteAt(position); return; }
     if (State.ActiveTool == EditorTool.Unit)
     {
-      if (State.Selection.Kind == EditorSelectionKind.Unit && State.Selection.Id is string selectedUnitId)
+      UnitRule unit = UnitRules.All[_unitPaletteIndex % UnitRules.All.Count];
+      CampaignUnitDefinition candidate = new() { UnitType = unit.Type, Team = _placementTeam, Position = position };
+      if (State.TryPlaceUnit(candidate, out string reason))
       {
-        State.MoveUnit(selectedUnitId, position);
-        _status = "Moved selected unit.";
+        _status = $"Placed {unit.Type} for {_placementTeam}.";
+      }
+      else _status = reason;
+      return;
+    }
+    if (State.ActiveTool == EditorTool.Move)
+    {
+      if (State.Selection.Kind != EditorSelectionKind.Unit || State.Selection.Id is not string selectedUnitId)
+      {
+        _status = "Select a unit first, then use MOVE UNIT.";
         return;
       }
-      UnitRule unit = UnitRules.All[_unitPaletteIndex % UnitRules.All.Count];
-      State.PlaceUnit(new CampaignUnitDefinition { UnitType = unit.Type, Team = _placementTeam, Position = position });
+      if (State.TryMoveUnit(selectedUnitId, position, out string reason))
+      {
+        _status = "Moved selected unit.";
+      }
+      else _status = reason;
       return;
     }
     if (State.ActiveTool == EditorTool.Terrain)
@@ -672,11 +732,27 @@ internal sealed class LevelEditorScreen
       _status = "Objective destination selected.";
       return;
     }
-    if (unit is not null) { State.SelectUnit(unit.Id); return; }
+    if (unit is not null)
+    {
+      State.SelectUnit(unit.Id);
+      _status = $"Selected {unit.UnitType}. Use MOVE UNIT to reposition it; edit its details in TEAMS or RULES.";
+      return;
+    }
     CampaignBoardObjectDefinition? boardObject = State.Level.Objects.LastOrDefault(candidate => candidate.Position == position);
-    if (boardObject is not null) { State.SelectObject(boardObject.Id); return; }
-    if (State.Level.Terrain.Any(terrain => terrain.Position == position)) { State.SelectTerrain(position); return; }
+    if (boardObject is not null)
+    {
+      State.SelectObject(boardObject.Id);
+      _status = $"Selected {boardObject.Type}. Its inspector is available in TEAMS or RULES.";
+      return;
+    }
+    if (State.Level.Terrain.Any(terrain => terrain.Position == position))
+    {
+      State.SelectTerrain(position);
+      _status = "Selected terrain. Use TERRAIN to repaint it or DELETE to remove it.";
+      return;
+    }
     State.SelectUnit(null);
+    _status = "Nothing selected.";
   }
 
   private void DeleteAt(CampaignCoordinate position)
@@ -720,11 +796,18 @@ internal sealed class LevelEditorScreen
     if (teams.Length == 0) return;
     int current = Array.IndexOf(teams, _placementTeam);
     _placementTeam = teams[(current + direction + teams.Length) % teams.Length];
-    if (State.Selection.Kind == EditorSelectionKind.Unit && State.Selection.Id is string unitId)
-    {
-      State.UpdateUnit(unitId, unit => unit.Team = _placementTeam);
-      _status = $"Selected unit assigned to {_placementTeam}.";
-    }
+    _status = $"New units will be placed for {_placementTeam}.";
+  }
+
+  private void CycleSelectedUnitTeam(string unitId)
+  {
+    NetworkTeam[] teams = State.Level.Teams.Select(team => team.Team).ToArray();
+    CampaignUnitDefinition? unit = State.Level.Units.FirstOrDefault(candidate => candidate.Id == unitId);
+    if (unit is null || teams.Length == 0) return;
+    int current = Array.IndexOf(teams, unit.Team);
+    NetworkTeam next = teams[(current + 1 + teams.Length) % teams.Length];
+    State.UpdateUnit(unitId, value => value.Team = next);
+    _status = $"Selected unit assigned to {next}.";
   }
 
   private void ResizeBoard(int adjustment)
@@ -883,6 +966,13 @@ internal sealed class LevelEditorScreen
   {
     _problems.Clear();
     _problems.AddRange(result.Problems);
+    if (result.IsSuccess)
+    {
+      _objectiveTargetMode = ObjectiveTargetMode.None;
+      _selectedObjectiveId = null;
+      _pendingObjectiveUnitId = null;
+      SynchronisePlacementTeam();
+    }
     _status = result.IsSuccess ? success : "Level was not imported. Review validation issues.";
   }
 
@@ -929,6 +1019,7 @@ internal sealed class LevelEditorScreen
     internal Rectangle UnitPrevious { get; }
     internal Rectangle UnitNext { get; }
     internal Rectangle UnitPreview { get; }
+    internal Rectangle UnitName { get; }
     internal Rectangle TeamPrevious { get; }
     internal Rectangle TeamNext { get; }
     internal Rectangle TeamPreview { get; }
@@ -954,6 +1045,8 @@ internal sealed class LevelEditorScreen
     internal Rectangle ScenarioTab { get; }
     internal Rectangle TeamsTab { get; }
     internal Rectangle RestrictionsTab { get; }
+    internal Rectangle ScenarioDetailsButton { get; }
+    internal Rectangle ScenarioObjectivesButton { get; }
     internal int ObjectiveTop { get; }
     internal Rectangle ObjectiveOutcomeButton { get; }
     internal Rectangle ObjectivePrevious { get; }
@@ -992,8 +1085,8 @@ internal sealed class LevelEditorScreen
 
     internal EditorLayout(Rectangle screen)
     {
-      int toolsWidth = 196;
-      int propertiesWidth = 306;
+      int toolsWidth = 212;
+      int propertiesWidth = 320;
       Header = new Rectangle(0, 0, screen.Width, 64);
       Status = new Rectangle(0, Math.Max(64, screen.Height - 66), screen.Width, 66);
       Tools = new Rectangle(0, 64, toolsWidth, Math.Max(1, Status.Y - 64));
@@ -1008,60 +1101,73 @@ internal sealed class LevelEditorScreen
       ExitButton = new Rectangle(buttonX + 440, 12, 70, 38);
       (EditorTool tool, string label)[] tools =
       [
-        (EditorTool.Select, "SELECT"), (EditorTool.Tile, "TILE"), (EditorTool.Unit, "UNIT"),
-        (EditorTool.Terrain, "TERRAIN"), (EditorTool.Object, "OBJECT"), (EditorTool.Delete, "DELETE")
+        (EditorTool.Select, "SELECT"), (EditorTool.Tile, "PAINT TILE"), (EditorTool.Unit, "PLACE UNIT"),
+        (EditorTool.Move, "MOVE UNIT"), (EditorTool.Terrain, "TERRAIN"), (EditorTool.Object, "OBJECT"),
+        (EditorTool.Delete, "DELETE")
       ];
-      ToolButtons = tools.Select((tool, index) => (tool.tool, tool.label, new Rectangle(12, 94 + index * 42, 172, 34))).ToArray();
-      UndoButton = new Rectangle(12, 352, 82, 34);
-      RedoButton = new Rectangle(102, 352, 82, 34);
-      NewButton = new Rectangle(12, 394, 172, 34);
-      BoardSmallerButton = new Rectangle(12, 436, 30, 28);
-      BoardSizeLabel = new Rectangle(46, 436, 104, 28);
-      BoardLargerButton = new Rectangle(154, 436, 30, 28);
-      BoardShapeButton = new Rectangle(12, 470, 172, 28);
-      BoardBasePrevious = new Rectangle(12, 504, 30, 28);
-      BoardBaseLabel = new Rectangle(46, 504, 104, 28);
-      BoardBaseNext = new Rectangle(154, 504, 30, 28);
-      BoardBaseApply = new Rectangle(12, 538, 172, 28);
-      PaletteTop = 576;
-      UnitPrevious = new Rectangle(12, 601, 34, 34);
-      UnitNext = new Rectangle(150, 601, 34, 34);
-      UnitPreview = new Rectangle(52, 601, 92, 34);
-      TeamPrevious = new Rectangle(12, 662, 34, 30);
-      TeamNext = new Rectangle(150, 662, 34, 30);
-      TeamPreview = new Rectangle(52, 662, 92, 30);
-      ObjectPaletteTop = 708;
-      ObjectPrevious = new Rectangle(12, 728, 34, 30);
-      ObjectNext = new Rectangle(150, 728, 34, 30);
-      ObjectPreview = new Rectangle(52, 728, 92, 30);
-      TerrainButton = new Rectangle(12, 766, 172, 30);
+      ToolButtons = tools.Select((tool, index) => (
+        tool.tool,
+        tool.label,
+        new Rectangle(
+          index == tools.Length - 1 && index % 2 == 0 ? 10 : 10 + index % 2 * 100,
+          94 + index / 2 * 34,
+          index == tools.Length - 1 && index % 2 == 0 ? 192 : 92,
+          28
+        )
+      )).ToArray();
+      UndoButton = new Rectangle(10, 232, 92, 30);
+      RedoButton = new Rectangle(110, 232, 92, 30);
+      NewButton = new Rectangle(10, 270, 192, 30);
+      BoardSmallerButton = new Rectangle(10, 310, 30, 28);
+      BoardSizeLabel = new Rectangle(44, 310, 124, 28);
+      BoardLargerButton = new Rectangle(172, 310, 30, 28);
+      BoardShapeButton = new Rectangle(10, 344, 192, 28);
+      BoardBasePrevious = new Rectangle(10, 378, 30, 28);
+      BoardBaseLabel = new Rectangle(44, 378, 124, 28);
+      BoardBaseNext = new Rectangle(172, 378, 30, 28);
+      BoardBaseApply = new Rectangle(10, 412, 192, 28);
+      PaletteTop = 448;
+      UnitPrevious = new Rectangle(10, 470, 34, 34);
+      UnitNext = new Rectangle(168, 470, 34, 34);
+      UnitPreview = new Rectangle(50, 470, 112, 34);
+      UnitName = new Rectangle(10, 507, 192, 18);
+      TeamPrevious = new Rectangle(10, 538, 34, 28);
+      TeamNext = new Rectangle(168, 538, 34, 28);
+      TeamPreview = new Rectangle(50, 538, 112, 28);
+      ObjectPaletteTop = 572;
+      ObjectPrevious = new Rectangle(10, 590, 34, 28);
+      ObjectNext = new Rectangle(168, 590, 34, 28);
+      ObjectPreview = new Rectangle(50, 590, 112, 28);
+      TerrainButton = new Rectangle(10, 624, 192, 28);
       int propertyX = Properties.X + 12;
       int fieldWidth = Properties.Width - 24;
       ScenarioTab = new Rectangle(propertyX, 88, (fieldWidth - 8) / 3, 28);
       TeamsTab = new Rectangle(propertyX + (fieldWidth + 4) / 3, 88, (fieldWidth - 8) / 3, 28);
       RestrictionsTab = new Rectangle(propertyX + (fieldWidth + 4) * 2 / 3, 88, (fieldWidth - 8) / 3, 28);
-      NameField = new Rectangle(propertyX, 124, fieldWidth, 38);
-      AuthorField = new Rectangle(propertyX, 168, fieldWidth, 38);
-      DescriptionField = new Rectangle(propertyX, 212, fieldWidth, 48);
-      DialogueField = new Rectangle(propertyX, 266, fieldWidth, 40);
-      ModeButton = new Rectangle(propertyX, 312, fieldWidth, 30);
-      FirstTeamButton = new Rectangle(propertyX, 348, fieldWidth, 30);
-      TurnLimitDown = new Rectangle(propertyX, 386, 32, 28);
-      TurnLimitLabel = new Rectangle(propertyX + 36, 386, fieldWidth - 72, 28);
-      TurnLimitUp = new Rectangle(propertyX + fieldWidth - 32, 386, 32, 28);
-      ObjectiveTop = 426;
-      ObjectiveOutcomeButton = new Rectangle(propertyX, 452, fieldWidth, 28);
-      ObjectivePrevious = new Rectangle(propertyX, 486, 30, 28);
-      ObjectiveTypeLabel = new Rectangle(propertyX + 34, 486, fieldWidth - 68, 28);
-      ObjectiveNext = new Rectangle(propertyX + fieldWidth - 30, 486, 30, 28);
-      ObjectiveTeamButton = new Rectangle(propertyX, 520, fieldWidth, 28);
-      ObjectiveAddButton = new Rectangle(propertyX, 554, (fieldWidth - 6) / 2, 28);
-      ObjectiveRemoveButton = new Rectangle(propertyX + (fieldWidth + 6) / 2, 554, (fieldWidth - 6) / 2, 28);
-      ObjectiveActiveLabel = new Rectangle(propertyX, 588, fieldWidth, 26);
-      ObjectiveAmountDown = new Rectangle(propertyX, 618, 32, 28);
-      ObjectiveAmountUp = new Rectangle(propertyX + fieldWidth - 32, 618, 32, 28);
-      ObjectiveTargetButton = new Rectangle(propertyX, 652, (fieldWidth - 6) / 2, 28);
-      ObjectiveLocationButton = new Rectangle(propertyX + (fieldWidth + 6) / 2, 652, (fieldWidth - 6) / 2, 28);
+      ScenarioDetailsButton = new Rectangle(propertyX, 124, (fieldWidth - 4) / 2, 28);
+      ScenarioObjectivesButton = new Rectangle(propertyX + (fieldWidth + 4) / 2, 124, (fieldWidth - 4) / 2, 28);
+      NameField = new Rectangle(propertyX, 160, fieldWidth, 38);
+      AuthorField = new Rectangle(propertyX, 204, fieldWidth, 38);
+      DescriptionField = new Rectangle(propertyX, 248, fieldWidth, 48);
+      DialogueField = new Rectangle(propertyX, 302, fieldWidth, 40);
+      ModeButton = new Rectangle(propertyX, 348, fieldWidth, 30);
+      FirstTeamButton = new Rectangle(propertyX, 384, fieldWidth, 30);
+      TurnLimitDown = new Rectangle(propertyX, 422, 32, 28);
+      TurnLimitLabel = new Rectangle(propertyX + 36, 422, fieldWidth - 72, 28);
+      TurnLimitUp = new Rectangle(propertyX + fieldWidth - 32, 422, 32, 28);
+      ObjectiveTop = 160;
+      ObjectiveOutcomeButton = new Rectangle(propertyX, 186, fieldWidth, 28);
+      ObjectivePrevious = new Rectangle(propertyX, 220, 30, 28);
+      ObjectiveTypeLabel = new Rectangle(propertyX + 34, 220, fieldWidth - 68, 28);
+      ObjectiveNext = new Rectangle(propertyX + fieldWidth - 30, 220, 30, 28);
+      ObjectiveTeamButton = new Rectangle(propertyX, 254, fieldWidth, 28);
+      ObjectiveAddButton = new Rectangle(propertyX, 288, (fieldWidth - 6) / 2, 28);
+      ObjectiveRemoveButton = new Rectangle(propertyX + (fieldWidth + 6) / 2, 288, (fieldWidth - 6) / 2, 28);
+      ObjectiveActiveLabel = new Rectangle(propertyX, 322, fieldWidth, 26);
+      ObjectiveAmountDown = new Rectangle(propertyX, 352, 32, 28);
+      ObjectiveAmountUp = new Rectangle(propertyX + fieldWidth - 32, 352, 32, 28);
+      ObjectiveTargetButton = new Rectangle(propertyX, 386, (fieldWidth - 6) / 2, 28);
+      ObjectiveLocationButton = new Rectangle(propertyX + (fieldWidth + 6) / 2, 386, (fieldWidth - 6) / 2, 28);
       SettingsTop = 124;
       SettingsTeamPrevious = new Rectangle(propertyX, 150, 30, 28);
       SettingsTeamLabel = new Rectangle(propertyX + 34, 150, fieldWidth - 68, 28);
@@ -1083,12 +1189,12 @@ internal sealed class LevelEditorScreen
       CpuPersonalityButton = new Rectangle(propertyX, 470, fieldWidth, 30);
       GlobalPurchasesButton = new Rectangle(propertyX, 150, fieldWidth, 30);
       AbilitiesButton = new Rectangle(propertyX, 188, fieldWidth, 30);
-      RulesHelp = new Rectangle(propertyX, 442, fieldWidth, 100);
-      SelectionTop = 690;
-      SelectedRowOne = new Rectangle(propertyX, 717, fieldWidth, 26);
-      SelectedPrevious = new Rectangle(propertyX, 750, (fieldWidth - 6) / 2, 32);
-      SelectedNext = new Rectangle(propertyX + (fieldWidth + 6) / 2, 750, (fieldWidth - 6) / 2, 32);
-      RotateButton = new Rectangle(propertyX, 790, fieldWidth, 34);
+      RulesHelp = new Rectangle(propertyX, 434, fieldWidth, 60);
+      SelectionTop = 510;
+      SelectedRowOne = new Rectangle(propertyX, 537, fieldWidth, 26);
+      SelectedPrevious = new Rectangle(propertyX, 571, (fieldWidth - 6) / 2, 30);
+      SelectedNext = new Rectangle(propertyX + (fieldWidth + 6) / 2, 571, (fieldWidth - 6) / 2, 30);
+      RotateButton = new Rectangle(propertyX, 609, fieldWidth, 30);
     }
   }
 }

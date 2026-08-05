@@ -12,6 +12,7 @@ public enum EditorTool
   Select,
   Tile,
   Unit,
+  Move,
   Terrain,
   Object,
   Delete
@@ -211,11 +212,101 @@ public sealed class LevelEditorState
     });
   }
 
+  /// <summary>
+  /// Checks the same immediate placement constraints used by the runtime validator so the editor
+  /// does not let the user accidentally build an impossible starting position.
+  /// </summary>
+  public bool CanPlaceUnit(CampaignUnitDefinition unit, out string reason, string? ignoredUnitId = null)
+  {
+    ArgumentNullException.ThrowIfNull(unit);
+    if (!UnitRules.TryGet(unit.UnitType, out UnitRule rule))
+    {
+      reason = $"Unknown unit type: {unit.UnitType}.";
+      return false;
+    }
+    if (unit.Team == NetworkTeam.Neutral && unit.UnitType != "Mercenary")
+    {
+      reason = "Only Mercenaries can start neutral.";
+      return false;
+    }
+    if (unit.Team != NetworkTeam.Neutral && !Level.Teams.Any(team => team.Team == unit.Team))
+    {
+      reason = $"{unit.Team} is not configured for this level.";
+      return false;
+    }
+
+    HashSet<CampaignCoordinate> boardCells = Level.Board.Tiles.ToHashSet();
+    HashSet<CampaignCoordinate> lakes = Level.Terrain
+      .Where(terrain => terrain.Type == CampaignTerrainType.Lake)
+      .Select(terrain => terrain.Position)
+      .ToHashSet();
+    for (int y = 0; y < rule.Height; y++)
+    for (int x = 0; x < rule.Width; x++)
+    {
+      CampaignCoordinate square = new(unit.Position.X + x, unit.Position.Y + y);
+      if (!boardCells.Contains(square))
+      {
+        reason = $"{unit.UnitType} does not fit on the board at ({square.X}, {square.Y}).";
+        return false;
+      }
+      if (unit.UnitType != "Elephant" && lakes.Contains(square))
+      {
+        reason = $"{unit.UnitType} cannot start on a lake.";
+        return false;
+      }
+    }
+
+    foreach (CampaignUnitDefinition other in Level.Units.Where(other => other.Id != ignoredUnitId))
+    {
+      if (!UnitRules.TryGet(other.UnitType, out UnitRule otherRule)) continue;
+      if (unit.UnitType == "Farm" || other.UnitType == "Farm") continue;
+      if (UnitRules.FootprintsOverlap(
+        unit.Position.X, unit.Position.Y, rule.Width, rule.Height,
+        other.Position.X, other.Position.Y, otherRule.Width, otherRule.Height))
+      {
+        reason = $"That space is occupied by {other.UnitType}.";
+        return false;
+      }
+    }
+
+    reason = string.Empty;
+    return true;
+  }
+
+  public bool TryPlaceUnit(CampaignUnitDefinition unit, out string reason)
+  {
+    if (!CanPlaceUnit(unit, out reason)) return false;
+    PlaceUnit(unit);
+    return true;
+  }
+
   public void MoveUnit(string unitId, CampaignCoordinate position)
   {
     CampaignUnitDefinition? unit = Level.Units.FirstOrDefault(candidate => candidate.Id == unitId);
     if (unit is null || unit.Position == position) return;
     Change("Move unit", level => level.Units.First(candidate => candidate.Id == unitId).Position = position);
+  }
+
+  public bool TryMoveUnit(string unitId, CampaignCoordinate position, out string reason)
+  {
+    CampaignUnitDefinition? unit = Level.Units.FirstOrDefault(candidate => candidate.Id == unitId);
+    if (unit is null)
+    {
+      reason = "The selected unit no longer exists.";
+      return false;
+    }
+    CampaignUnitDefinition candidate = new()
+    {
+      Id = unit.Id,
+      UnitType = unit.UnitType,
+      Team = unit.Team,
+      Position = position,
+      Health = unit.Health,
+      Rotation = unit.Rotation
+    };
+    if (!CanPlaceUnit(candidate, out reason, unitId)) return false;
+    MoveUnit(unitId, position);
+    return true;
   }
 
   public void RotateUnit(string unitId)

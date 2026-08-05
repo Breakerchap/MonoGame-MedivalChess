@@ -108,4 +108,29 @@ public sealed class LevelEditorStateTests
     Assert.Equal(CampaignTerrainType.Lake, terrain.Type);
     Assert.Equal(position, terrain.Position);
   }
+
+  [Fact]
+  public void UnitPlacementRejectsImpossibleFootprintsBeforeTheyReachValidation()
+  {
+    LevelEditorState editor = LevelEditorState.CreateNew(4, 4);
+    CampaignUnitDefinition first = new()
+    {
+      Id = "first-soldier",
+      UnitType = "Soldier",
+      Team = NetworkTeam.Red,
+      Position = new CampaignCoordinate(1, 1)
+    };
+
+    Assert.True(editor.TryPlaceUnit(first, out string firstReason), firstReason);
+    Assert.False(editor.TryPlaceUnit(new CampaignUnitDefinition
+    {
+      UnitType = "Soldier",
+      Team = NetworkTeam.Blue,
+      Position = new CampaignCoordinate(1, 1)
+    }, out string overlapReason));
+    Assert.Contains("occupied", overlapReason, StringComparison.OrdinalIgnoreCase);
+    Assert.False(editor.TryMoveUnit(first.Id, new CampaignCoordinate(9, 9), out string boundsReason));
+    Assert.Contains("does not fit", boundsReason, StringComparison.OrdinalIgnoreCase);
+    Assert.Equal(new CampaignCoordinate(1, 1), Assert.Single(editor.Level.Units).Position);
+  }
 }
