@@ -27,6 +27,15 @@ public sealed class SharedUnitRulesTests
   }
 
   [Fact]
+  public void PlunderNoMansLandExtendsTwoTilesBeyondTheDefault()
+  {
+    Assert.Equal(
+      MatchRules.DefaultNoMansLandHalfHeight + MatchRules.PlunderNoMansLandExtraHalfHeight,
+      MatchRules.GetNoMansLandHalfHeight("Plunder")
+    );
+  }
+
+  [Fact]
   public void Teacher_IsNotPartOfTheSharedOrClientRoster()
   {
     Assert.False(UnitRules.TryGet("Teacher", out _));

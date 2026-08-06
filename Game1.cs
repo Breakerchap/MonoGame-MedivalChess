@@ -143,6 +143,7 @@ internal sealed class Game1 : Game
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
+  private PieceDefinition _royalAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
@@ -444,7 +445,7 @@ internal sealed class Game1 : Game
       TrySkipCurrentTurn();
     }
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null)
+    if (wasPurchaseModeToggle && _initialBuyPhase == null && _royalAwaitingPlacement is null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -461,7 +462,7 @@ internal sealed class Game1 : Game
     }
 
     bool clickedPurchasePanel =
-      wasLeftClick && HandlePurchasePanelClick(mouse.Position);
+      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(mouse.Position);
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
     bool clickedSkipTurn =
@@ -481,7 +482,14 @@ internal sealed class Game1 : Game
       var targetPosition = (x: boardX, y: boardY);
       Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
 
-      if (_isPurchaseMode)
+      if (_royalAwaitingPlacement is not null)
+      {
+        if (wasLeftClick)
+        {
+          TryPlaceSelectedRoyal(targetPosition);
+        }
+      }
+      else if (_isPurchaseMode)
       {
         if (wasLeftClick)
         {
@@ -904,7 +912,7 @@ internal sealed class Game1 : Game
 
   private void TrySkipCurrentTurn()
   {
-    if (_screen != Screen.Playing || _initialBuyPhase != null || !IsOnlineLocalTurn())
+    if (_screen != Screen.Playing || _initialBuyPhase != null || _royalAwaitingPlacement is not null || !IsOnlineLocalTurn())
     {
       return;
     }
@@ -2482,6 +2490,49 @@ internal sealed class Game1 : Game
       : UiTheme.Attack;
     Color fill = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)46 : (byte)30);
     Color border = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)190 : (byte)145);
+
+    DrawWorldRectangle(footprint, fill, 0.104f);
+    DrawWorldOutline(footprint, border, 0.105f);
+  }
+
+  private void DrawRoyalPlacementPreview(int cellSize)
+  {
+    if (_royalAwaitingPlacement is null)
+    {
+      return;
+    }
+
+    MouseState mouse = Mouse.GetState();
+    if (GetStatusPanelBounds().Contains(mouse.Position))
+    {
+      return;
+    }
+
+    Vector2 mouseWorld = Vector2.Transform(
+      mouse.Position.ToVector2(),
+      Matrix.Invert(CreateCameraTransform())
+    );
+    (int x, int y) targetPosition = (
+      (int)MathF.Floor(mouseWorld.X / cellSize) + _board.MinX,
+      (int)MathF.Floor(mouseWorld.Y / cellSize) + _board.MinY
+    );
+    if (!IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return;
+    }
+
+    bool canPlace = CanPlacePiece(_royalAwaitingPlacement, targetPosition, _setupTeam);
+    Rectangle footprint = new(
+      (targetPosition.x - _board.MinX) * cellSize,
+      (targetPosition.y - _board.MinY) * cellSize,
+      _royalAwaitingPlacement.Size.x * cellSize,
+      _royalAwaitingPlacement.Size.y * cellSize
+    );
+    Color outline = canPlace
+      ? Color.Lerp(UiTheme.GetTeamColour(_setupTeam), UiTheme.GoldBright, 0.4f)
+      : UiTheme.Attack;
+    Color fill = new(outline.R, outline.G, outline.B, canPlace ? (byte)46 : (byte)30);
+    Color border = new(outline.R, outline.G, outline.B, canPlace ? (byte)190 : (byte)145);
 
     DrawWorldRectangle(footprint, fill, 0.104f);
     DrawWorldOutline(footprint, border, 0.105f);
@@ -4935,22 +4986,13 @@ internal sealed class Game1 : Game
   private void PlaceCpuRoyal(TeamName teamName)
   {
     CpuProfile profile = _cpuProfiles[teamName];
-    PieceDefinition royal = profile.Personality.Aggression > 1.2f
-      ? PieceDefinitions.Baron
-      : profile.Personality.ObjectiveFocus > 1.2f && _gameMode == GameMode.Escort
-      ? PieceDefinitions.Emissary
-      : PieceDefinitions.King;
-    if (_gameMode == GameMode.Escort && royal.Type == PieceType.Palace)
-    {
-      royal = PieceDefinitions.King;
-    }
-
-    Team setupTeam = _teams.Find(team => team.TeamName == teamName);
-    setupTeam.ChooseRoyal(royal.Type);
-    pieceSetup.AddPiece(new Piece(royal, FindRoyalSpawn(teamName, royal), teamName)
-    {
-      CurrentHealth = GetRoyalStartingHealth(royal)
-    });
+    PieceDefinition[] eligibleRoyals = PieceDefinitions.Royals
+      .Where(royal => _gameMode != GameMode.Escort || royal.Type != PieceType.Palace)
+      .ToArray();
+    Random random = new(profile.RandomSeed ^ _terrainSeed ^ ((int)teamName * 7919));
+    PieceDefinition royal = eligibleRoyals[random.Next(eligibleRoyals.Length)];
+    (int x, int y) position = ChooseCpuRoyalPlacement(teamName, royal, profile, random);
+    PlaceRoyal(teamName, royal, position);
   }
 
   private void ContinueRoyalSelection()
@@ -4967,6 +5009,7 @@ internal sealed class Game1 : Game
 
       _setupTeam = nextTeam;
       _selectedRoyalIndex = 0;
+      _screen = Screen.Setup;
       return;
     }
 
@@ -5000,6 +5043,7 @@ internal sealed class Game1 : Game
 
     _onlineIsHost = false;
     _onlineRoyalChoicePending = false;
+    _royalAwaitingPlacement = null;
     _debugTeamSwitchPending = false;
     _onlineHostingSetup = false;
     _onlineMatchConfiguration = null;
@@ -5058,6 +5102,7 @@ internal sealed class Game1 : Game
     _screen = Screen.Setup;
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
+    _royalAwaitingPlacement = null;
     _setupStage = SetupStage.Mode;
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
@@ -5704,15 +5749,7 @@ internal sealed class Game1 : Game
             _selectedRoyalIndex = GetNextSelectableRoyalIndex(_selectedRoyalIndex, 1);
             return;
           }
-          Team setupTeam = _teams.Find(team => team.TeamName == _setupTeam);
-          setupTeam.ChooseRoyal(royal.Type);
-          Piece royalPiece = new(royal, FindRoyalSpawn(_setupTeam, royal), _setupTeam)
-          {
-            CurrentHealth = GetRoyalStartingHealth(royal)
-          };
-          pieceSetup.AddPiece(royalPiece);
-
-          ContinueRoyalSelection();
+          BeginRoyalPlacement(royal);
         }
         break;
 
@@ -5748,6 +5785,100 @@ internal sealed class Game1 : Game
     }
 
     throw new InvalidOperationException("Could not find an empty royal spawn square.");
+  }
+
+  private void BeginRoyalPlacement(PieceDefinition royal)
+  {
+    _royalAwaitingPlacement = royal;
+    Team.SetCurrentTurn(_setupTeam);
+    selectedPiece = null;
+    _isPurchaseMode = false;
+    _screen = Screen.Playing;
+    Console.WriteLine($"Choose a starting position for {_setupTeam}'s {royal.Type}.");
+  }
+
+  private void TryPlaceSelectedRoyal((int x, int y) position)
+  {
+    PieceDefinition royal = _royalAwaitingPlacement;
+    if (royal is null)
+    {
+      return;
+    }
+
+    if (!CanPlacePiece(royal, position, _setupTeam))
+    {
+      Console.WriteLine("Royals must be placed on empty, traversable squares in their own territory.");
+      return;
+    }
+
+    PlaceRoyal(_setupTeam, royal, position);
+    _royalAwaitingPlacement = null;
+    ContinueRoyalSelection();
+  }
+
+  private void PlaceRoyal(TeamName teamName, PieceDefinition royal, (int x, int y) position)
+  {
+    Team setupTeam = _teams.Find(team => team.TeamName == teamName);
+    setupTeam.ChooseRoyal(royal.Type);
+    pieceSetup.AddPiece(new Piece(royal, position, teamName)
+    {
+      CurrentHealth = GetRoyalStartingHealth(royal)
+    });
+  }
+
+  private (int x, int y) ChooseCpuRoyalPlacement(
+    TeamName teamName,
+    PieceDefinition royal,
+    CpuProfile profile,
+    Random random
+  )
+  {
+    List<(int x, int y)> candidates = MatchRules.GetRoyalSpawnCandidates(
+      _board,
+      teamName.ToNetworkTeam(),
+      royal.Size.x,
+      royal.Size.y,
+      _playerCount
+    ).Where(position => CanPlacePiece(royal, position, teamName)).ToList();
+
+    if (candidates.Count == 0)
+    {
+      throw new InvalidOperationException("Could not find an empty royal spawn square.");
+    }
+
+    int centreX = _board.MinX + _board.BoardArray.GetLength(1) / 2;
+    int centreY = _board.MinY + _board.BoardArray.GetLength(0) / 2;
+    float Score((int x, int y) position)
+    {
+      IEnumerable<(int x, int y)> footprint =
+        from offsetY in Enumerable.Range(0, royal.Size.y)
+        from offsetX in Enumerable.Range(0, royal.Size.x)
+        select (position.x + offsetX, position.y + offsetY);
+      int forestCover = footprint.Count(_terrain.IsForest);
+      int nearbyForests = Enumerable.Range(-1, royal.Size.x + 2)
+        .SelectMany(offsetX => Enumerable.Range(-1, royal.Size.y + 2)
+          .Select(offsetY => (position.x + offsetX, position.y + offsetY)))
+        .Count(_terrain.IsForest);
+      int riverEdges = footprint.Sum(square => new[]
+      {
+        (square.x - 1, square.y), (square.x + 1, square.y),
+        (square.x, square.y - 1), (square.x, square.y + 1)
+      }.Count(neighbour => _board.ContainsCell(neighbour) && _terrain.HasRiverBetween(square, neighbour)));
+      int centreDistance = Math.Abs(position.x - centreX) + Math.Abs(position.y - centreY);
+
+      // Cover and nearby river crossings affect safety, while personality determines
+      // whether the CPU favours a protected back position or a forward one.
+      return forestCover * 5f * profile.Personality.RoyalProtection +
+        nearbyForests * profile.Personality.Caution -
+        riverEdges * 3f * profile.Personality.Caution +
+        centreDistance * (profile.Personality.Caution + profile.Personality.RoyalProtection - profile.Personality.Aggression);
+    }
+
+    float bestScore = candidates.Max(Score);
+    List<(int x, int y)> bestCandidates = candidates
+      .Where(candidate => Score(candidate) >= bestScore - 0.001f)
+      .ToList();
+    return bestCandidates[random.Next(bestCandidates.Count)];
   }
 
   private int GetRoyalStartingHealth(PieceDefinition royal) =>
@@ -6356,7 +6487,7 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, teamColour);
     _ui.Text($"{UiText.GetTeamDisplayName(_setupTeam)} CHOOSE YOUR ROYAL", new Vector2(content.X, content.Y), teamColour);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Your royal is placed on the back row.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
+    _ui.Text("Confirm your royal, then choose its starting square on your territory.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.76f);
     _ui.Divider(content, content.Y + 56);
     DrawSetupProgress(content);
 
@@ -6963,6 +7094,25 @@ internal sealed class Game1 : Game
     Color turnColour = UiTheme.GetTeamColour(Team.CurrentTurn);
 
     DrawPanel(panel, UiTheme.Panel, turnColour);
+
+    if (_royalAwaitingPlacement is not null)
+    {
+      _ui.Text("PLACE YOUR ROYAL", new Vector2(content.X, content.Y), UiTheme.Gold);
+      _ui.Divider(content, content.Y + 30);
+      _ui.Text(
+        $"{UiText.GetTeamDisplayName(_setupTeam)} {_royalAwaitingPlacement.Type.ToString().ToUpperInvariant()}",
+        new Vector2(content.X, content.Y + 43),
+        UiTheme.GetTeamColour(_setupTeam),
+        0.78f
+      );
+      _ui.TextWrapped(
+        "Click an empty, traversable square in your territory to choose its starting position. The opening farm placement begins next.",
+        new Rectangle(content.X, content.Y + 74, content.Width, panel.Bottom - content.Y - 86),
+        UiTheme.TextPrimary,
+        0.66f
+      );
+      return;
+    }
 
     if (_initialBuyPhase != null)
     {
@@ -7592,6 +7742,7 @@ internal sealed class Game1 : Game
     }
 
     DrawPurchasePlacementPreview(cellSize);
+    DrawRoyalPlacementPreview(cellSize);
 
     if (selectedPiece != null)
     {
@@ -7655,7 +7806,10 @@ internal sealed class Game1 : Game
     {
       DrawStatusPanel();
       DrawSelectedPiecePanel();
-      DrawPurchasePanel();
+      if (_royalAwaitingPlacement is null)
+      {
+        DrawPurchasePanel();
+      }
     }
     else
     {

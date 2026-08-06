@@ -6,12 +6,16 @@ public static class MatchRules
   public const int ActionsPerTurn = 3;
   public const int DefaultNoMansLandHalfHeight = 3;
   public const int ConquestNoMansLandExtraHalfHeight = 1;
+  public const int PlunderNoMansLandExtraHalfHeight = 2;
   public const int DefaultConquestWinScore = 15;
 
   public static int GetNoMansLandHalfHeight(string gameMode) =>
-    string.Equals(gameMode, "Conquest", StringComparison.Ordinal) ?
-      DefaultNoMansLandHalfHeight + ConquestNoMansLandExtraHalfHeight :
-      DefaultNoMansLandHalfHeight;
+    gameMode switch
+    {
+      "Conquest" => DefaultNoMansLandHalfHeight + ConquestNoMansLandExtraHalfHeight,
+      "Plunder" => DefaultNoMansLandHalfHeight + PlunderNoMansLandExtraHalfHeight,
+      _ => DefaultNoMansLandHalfHeight
+    };
 
   public static NetworkTeam? GetSquareOwner(Board board, string gameMode, (int x, int y) square, int playerCount = 2)
   {
