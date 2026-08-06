@@ -223,7 +223,14 @@ public static partial class CpuGameRules
     bool inValidZone = rule.Type == "Mercenary" && !initialBuy
       ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
       : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
-    return inValidZone && CanPlace(state, state.Pieces, rule, action.X, action.Y);
+    // Ordinary units may share a Farm footprint, but the live Mercenary rule is stricter: a
+    // newly hired Mercenary must occupy a completely empty No-Man's-Land square. Keep buyouts
+    // above as the only intentional occupied-square exception.
+    bool mercenarySquareIsEmpty = rule.Type != "Mercenary" || !state.Pieces.Any(piece =>
+      UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
+      UnitRules.FootprintsOverlap(action.X, action.Y, rule.Width, rule.Height,
+        piece.X, piece.Y, existingRule.Width, existingRule.Height));
+    return inValidZone && mercenarySquareIsEmpty && CanPlace(state, state.Pieces, rule, action.X, action.Y);
   }
 
   private static bool IsLegalAbility(CpuGameState state, UseAbilityAction action)

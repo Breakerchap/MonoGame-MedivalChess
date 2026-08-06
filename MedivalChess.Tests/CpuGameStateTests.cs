@@ -281,6 +281,29 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void MercenaryPurchase_RequiresACompletelyEmptyNoMansLandSquare()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) noMansLand = board.Cells.First(position =>
+      BoardRules.CanPlaceMercenary(board, configuration.GameMode, configuration.PlayerCount, position.x, position.y));
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece("blocking-farm", "Farm", NetworkTeam.Red, noMansLand.x, noMansLand.y, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    PurchaseAction purchase = new(NetworkTeam.Red, "Mercenary", noMansLand.x, noMansLand.y);
+
+    Assert.False(purchase.IsLegal(state));
+    Assert.DoesNotContain(new CpuActionGenerator().GenerateSearchActions(state, NetworkTeam.Red, 24), action => action.Equals(purchase));
+  }
+
+  [Fact]
   public void AttackGeneration_TargetsTheReachableSquareOfALargePiece()
   {
     NetworkPiece soldier = new("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15);
