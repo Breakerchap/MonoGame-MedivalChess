@@ -63,7 +63,7 @@ public sealed class CpuScenarioDefinition
   public NetworkTeam? WinnerOnTurnLimit { get; init; }
   /// <summary>Units introduced by the scenario at the beginning of an indicated player turn.</summary>
   public IReadOnlyList<CpuScriptedReinforcement> ScriptedReinforcements { get; init; } = [];
-  /// <summary>Optional campaign-owned profiles. Normal CPU is used when a team has no override.</summary>
+  /// <summary>Optional campaign-owned profiles. Medium CPU is used when a team has no override.</summary>
   public IReadOnlyDictionary<NetworkTeam, CpuProfile> TeamProfiles { get; init; } =
     new Dictionary<NetworkTeam, CpuProfile>();
 

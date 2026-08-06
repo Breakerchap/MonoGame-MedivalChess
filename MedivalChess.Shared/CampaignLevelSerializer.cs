@@ -280,5 +280,15 @@ public static class CampaignLevelMigrator
     level.Restrictions.DisabledAbilityUnitTypes ??= [];
     level.Reinforcements ??= [];
     level.ScriptedEvents ??= [];
+    foreach (CampaignTeamDefinition team in level.Teams)
+    {
+      team.CpuProfile ??= new CampaignCpuProfileDefinition();
+      // Normal was the original name for the middle CPU tier. Preserve old levels while
+      // serialising and presenting the clearer Easy / Medium / Hard / Best ladder.
+      if (string.Equals(team.CpuProfile.Difficulty, "Normal", StringComparison.OrdinalIgnoreCase))
+      {
+        team.CpuProfile.Difficulty = "Medium";
+      }
+    }
   }
 }

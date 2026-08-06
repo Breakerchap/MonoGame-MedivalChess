@@ -179,7 +179,7 @@ public enum CampaignTeamController
 
 public sealed class CampaignCpuProfileDefinition
 {
-  public string Difficulty { get; set; } = "Normal";
+  public string Difficulty { get; set; } = "Medium";
   public string Personality { get; set; } = "Balanced";
 }
 

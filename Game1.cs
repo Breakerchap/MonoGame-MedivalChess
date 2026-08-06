@@ -209,6 +209,9 @@ internal sealed class Game1 : Game
   private bool _onlineRoyalChoicePending;
   private bool _debugTeamSwitchPending;
   private bool _onlineHostingSetup;
+  private bool _cpuOpponentSetup;
+  private CpuDifficultyLevel _selectedCpuDifficulty = CpuDifficultyLevel.Medium;
+  private CpuPersonality _selectedCpuPersonality = CpuPersonality.Balanced;
   private NetworkMatchConfiguration _onlineMatchConfiguration;
   private DateTimeOffset _nextOnlineJoinAttemptAt;
   private string _onlineError = string.Empty;
@@ -4759,6 +4762,20 @@ internal sealed class Game1 : Game
     return GetStepperIncreaseButtonBounds(GetPlayerCountRowBounds());
   }
 
+  private Rectangle GetCpuDifficultyRowBounds()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 438, content.Width, 34);
+  }
+
+  private Rectangle GetCpuPersonalityRowBounds()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 478, content.Width, 34);
+  }
+
   private static Rectangle GetStepperDecreaseButtonBounds(Rectangle row)
   {
     return new Rectangle(row.Right - 228, row.Y, 44, row.Height);
@@ -4911,7 +4928,7 @@ internal sealed class Game1 : Game
     _cpuProfiles.Clear();
     foreach (TeamName team in Team.ActiveTeams.Skip(1))
     {
-      _cpuProfiles[team] = CpuProfile.Normal(_terrainSeed + (int)team);
+      _cpuProfiles[team] = CpuProfile.ForDifficulty(_selectedCpuDifficulty, _terrainSeed + (int)team, _selectedCpuPersonality);
     }
   }
 
@@ -5071,6 +5088,9 @@ internal sealed class Game1 : Game
     _isPurchaseMode = false;
     _selectedEngineerAbility = EngineerAbility.Road;
     _onlineHostingSetup = onlineHost;
+    _cpuOpponentSetup = cpuOpponent;
+    _selectedCpuDifficulty = CpuDifficultyLevel.Medium;
+    _selectedCpuPersonality = CpuPersonality.Balanced;
     _cpuActionQueue.Clear();
     _cpuRecentMoves.Clear();
     _lastCpuDecisionReport = null;
@@ -5417,6 +5437,25 @@ internal sealed class Game1 : Game
         }
         else if (_setupStage == SetupStage.Mode)
         {
+          if (_cpuOpponentSetup && GetCpuDifficultyRowBounds().Contains(mousePosition))
+          {
+            CpuDifficultyLevel[] difficulties = [CpuDifficultyLevel.Easy, CpuDifficultyLevel.Medium, CpuDifficultyLevel.Hard, CpuDifficultyLevel.Best];
+            int current = Array.IndexOf(difficulties, _selectedCpuDifficulty);
+            _selectedCpuDifficulty = difficulties[(Math.Max(0, current) + 1) % difficulties.Length];
+            ConfigureCpuOpponents();
+          }
+          else if (_cpuOpponentSetup && GetCpuPersonalityRowBounds().Contains(mousePosition))
+          {
+            CpuPersonality[] personalities = [
+              CpuPersonality.Balanced, CpuPersonality.Aggressive, CpuPersonality.Defensive,
+              CpuPersonality.Greedy, CpuPersonality.Reckless, CpuPersonality.ObjectiveFocused, CpuPersonality.Swarmer
+            ];
+            int current = Array.FindIndex(personalities, personality => ReferenceEquals(personality, _selectedCpuPersonality));
+            _selectedCpuPersonality = personalities[(Math.Max(0, current) + 1) % personalities.Length];
+            ConfigureCpuOpponents();
+          }
+          else
+          {
           GameMode? selectedMode = Enum.GetValues<GameMode>()
             .Where(mode => GetModeOptionBounds((int)mode).Contains(mousePosition))
             .Select(mode => (GameMode?)mode)
@@ -5436,14 +5475,17 @@ internal sealed class Game1 : Game
           else if (GetPlayerCountDecreaseButtonBounds().Contains(mousePosition))
           {
             SetPlayerCount(_playerCount - 1);
+            if (_cpuOpponentSetup) ConfigureCpuOpponents();
           }
           else if (GetPlayerCountIncreaseButtonBounds().Contains(mousePosition))
           {
             SetPlayerCount(_playerCount + 1);
+            if (_cpuOpponentSetup) ConfigureCpuOpponents();
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
             _setupStage = SetupStage.Battlefield;
+          }
           }
         }
         else if (_setupStage == SetupStage.Battlefield)
@@ -5974,11 +6016,12 @@ internal sealed class Game1 : Game
 
   private static CpuProfile CreateCampaignCpuProfile(CampaignCpuProfileDefinition definition, int seed)
   {
-    CpuProfile baseline = definition.Difficulty switch
+    CpuDifficultyLevel difficulty = definition.Difficulty switch
     {
-      "Easy" => CpuProfile.Easy(seed),
-      "Hard" => CpuProfile.Hard(seed),
-      _ => CpuProfile.Normal(seed)
+      "Easy" => CpuDifficultyLevel.Easy,
+      "Hard" => CpuDifficultyLevel.Hard,
+      "Best" => CpuDifficultyLevel.Best,
+      _ => CpuDifficultyLevel.Medium
     };
     CpuPersonality personality = definition.Personality switch
     {
@@ -5990,6 +6033,7 @@ internal sealed class Game1 : Game
       "Swarmer" => CpuPersonality.Swarmer,
       _ => CpuPersonality.Balanced
     };
+    CpuProfile baseline = CpuProfile.ForDifficulty(difficulty, seed);
     return new CpuProfile
     {
       Name = $"{baseline.Difficulty} {definition.Personality} CPU",
@@ -6418,10 +6462,24 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetPlayerCountIncreaseButtonBounds(), "+", UiButtonTone.Neutral);
     _ui.Text("Green and Gold join from the left and right edges.", new Vector2(content.X, playerCountRow.Bottom + 8), UiTheme.TextMuted, 0.62f);
 
+    if (_cpuOpponentSetup)
+    {
+      DrawMenuButton(GetCpuDifficultyRowBounds(), $"CPU DIFFICULTY: {_selectedCpuDifficulty}".ToUpperInvariant(), UiButtonTone.Accent);
+      DrawMenuButton(GetCpuPersonalityRowBounds(), $"CPU STYLE: {GetCpuPersonalityName(_selectedCpuPersonality)}".ToUpperInvariant(), UiButtonTone.Neutral);
+    }
+
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
+
+  private static string GetCpuPersonalityName(CpuPersonality personality) =>
+    ReferenceEquals(personality, CpuPersonality.Aggressive) ? "Aggressive" :
+    ReferenceEquals(personality, CpuPersonality.Defensive) ? "Defensive" :
+    ReferenceEquals(personality, CpuPersonality.Greedy) ? "Greedy" :
+    ReferenceEquals(personality, CpuPersonality.Reckless) ? "Reckless" :
+    ReferenceEquals(personality, CpuPersonality.ObjectiveFocused) ? "Objective Focused" :
+    ReferenceEquals(personality, CpuPersonality.Swarmer) ? "Swarmer" : "Balanced";
 
   private void DrawBattlefieldSetup(Rectangle panel)
   {

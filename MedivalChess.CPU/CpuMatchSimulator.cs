@@ -166,7 +166,7 @@ public sealed class CpuMatchSimulator
     {
       return campaignProfile;
     }
-    return CpuProfile.Normal(state.Configuration.TerrainSeed + (int)team);
+    return CpuProfile.Medium(state.Configuration.TerrainSeed + (int)team);
   }
 
   private static void RecordActionMetrics(

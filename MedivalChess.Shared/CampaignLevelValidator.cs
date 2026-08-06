@@ -175,9 +175,9 @@ public static class CampaignLevelValidator
       }
       ValidateUnitIdentifiers(team.AvailableUnitTypes, $"team.{team.Team}.availableUnits", problems);
       ValidateUnitIdentifiers(team.DisabledAbilityUnitTypes, $"team.{team.Team}.disabledAbilities", problems);
-      if (team.CpuProfile is null || team.CpuProfile.Difficulty is not ("Easy" or "Normal" or "Hard"))
+      if (team.CpuProfile is null || team.CpuProfile.Difficulty is not ("Easy" or "Medium" or "Hard" or "Best"))
       {
-        problems.Add(CampaignValidationProblem.Error("team.cpu.difficulty", $"{team.Team} CPU difficulty must be Easy, Normal, or Hard."));
+        problems.Add(CampaignValidationProblem.Error("team.cpu.difficulty", $"{team.Team} CPU difficulty must be Easy, Medium, Hard, or Best."));
       }
       if (team.CpuProfile is null || team.CpuProfile.Personality is not ("Balanced" or "Aggressive" or "Defensive" or "Greedy" or "Reckless" or "ObjectiveFocused" or "Swarmer"))
       {

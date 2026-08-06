@@ -23,8 +23,11 @@ public sealed class CpuSearchSettings
 public enum CpuDifficultyLevel
 {
   Easy,
-  Normal,
-  Hard
+  Medium,
+  Hard,
+  Best,
+  // Retained so existing saved/debug code can compile. New UI and profiles use Medium.
+  Normal = Medium
 }
 
 /// <summary>Evaluation modifiers that change priorities without changing gameplay legality.</summary>
@@ -51,7 +54,7 @@ public sealed class CpuPersonality
 public sealed class CpuProfile
 {
   public string Name { get; init; } = "CPU";
-  public CpuDifficultyLevel Difficulty { get; init; } = CpuDifficultyLevel.Normal;
+  public CpuDifficultyLevel Difficulty { get; init; } = CpuDifficultyLevel.Medium;
   public CpuSearchSettings Search { get; init; } = new();
   public EvaluationWeights Weights { get; init; } = new();
   public CpuPersonality Personality { get; init; } = CpuPersonality.Balanced;
@@ -64,8 +67,10 @@ public sealed class CpuProfile
     Name = "Easy CPU",
     Difficulty = CpuDifficultyLevel.Easy,
     RandomSeed = seed,
-    MistakeChance = 0.3f,
-    TopChoicesForRandomSelection = 3,
+    // Easy is a shallow, understandable opponent rather than a random one. It only varies
+    // between close plans and never samples from the full legal-action list.
+    MistakeChance = 0.12f,
+    TopChoicesForRandomSelection = 2,
     Search = new CpuSearchSettings
     {
       BeamWidth = 3,
@@ -75,14 +80,15 @@ public sealed class CpuProfile
       MaxSearchNodes = 42,
       MaximumPurchasePlacementCandidates = 18,
       MaxSearchMilliseconds = 60,
-      Randomness = 0.35f
+      TopChoiceScoreWindow = 14f,
+      Randomness = 0.08f
     }
   };
 
-  public static CpuProfile Normal(int seed = 1) => new()
+  public static CpuProfile Medium(int seed = 1) => new()
   {
-    Name = "Normal CPU",
-    Difficulty = CpuDifficultyLevel.Normal,
+    Name = "Medium CPU",
+    Difficulty = CpuDifficultyLevel.Medium,
     RandomSeed = seed,
     // Small seeded variety keeps repeated games from looking scripted without choosing a weak plan.
     MistakeChance = 0.14f,
@@ -103,13 +109,18 @@ public sealed class CpuProfile
     }
   };
 
+  /// <summary>Compatibility alias for code and levels authored before Medium replaced Normal.</summary>
+  public static CpuProfile Normal(int seed = 1) => Medium(seed);
+
   public static CpuProfile Hard(int seed = 1) => new()
   {
     Name = "Hard CPU",
     Difficulty = CpuDifficultyLevel.Hard,
     RandomSeed = seed,
-    MistakeChance = 0f,
-    TopChoicesForRandomSelection = 1,
+    // Hard remains very strong, but a small seeded choice among essentially equal plans keeps
+    // repeated matches from becoming a memorised script.
+    MistakeChance = 0.03f,
+    TopChoicesForRandomSelection = 2,
     Search = new CpuSearchSettings
     {
       BeamWidth = 18,
@@ -119,7 +130,58 @@ public sealed class CpuProfile
       MaxSearchNodes = 2_400,
       MaximumPurchasePlacementCandidates = 60,
       MaxSearchMilliseconds = 650,
+      TopChoiceScoreWindow = 12f,
+      Randomness = 0.02f
+    }
+  };
+
+  /// <summary>
+  /// The strongest local profile. It is intentionally bounded and cancellable so it cannot freeze
+  /// the game, but examines a much wider decision tree and assumes a strong full-turn reply.
+  /// </summary>
+  public static CpuProfile Best(int seed = 1) => new()
+  {
+    Name = "Best CPU",
+    Difficulty = CpuDifficultyLevel.Best,
+    RandomSeed = seed,
+    MistakeChance = 0f,
+    TopChoicesForRandomSelection = 1,
+    Search = new CpuSearchSettings
+    {
+      BeamWidth = 36,
+      CandidatesPerNode = 48,
+      OpponentBeamWidth = 16,
+      OpponentActionsToPredict = 3,
+      MaxSearchNodes = 20_000,
+      MaximumPurchasePlacementCandidates = 96,
+      MaxSearchMilliseconds = 5_000,
       Randomness = 0f
     }
   };
+
+  public static CpuProfile ForDifficulty(CpuDifficultyLevel difficulty, int seed = 1, CpuPersonality? personality = null)
+  {
+    CpuProfile baseline = difficulty switch
+    {
+      CpuDifficultyLevel.Easy => Easy(seed),
+      CpuDifficultyLevel.Hard => Hard(seed),
+      CpuDifficultyLevel.Best => Best(seed),
+      _ => Medium(seed)
+    };
+    if (personality is null || ReferenceEquals(personality, baseline.Personality))
+    {
+      return baseline;
+    }
+    return new CpuProfile
+    {
+      Name = $"{baseline.Difficulty} CPU",
+      Difficulty = baseline.Difficulty,
+      Search = baseline.Search,
+      Weights = baseline.Weights,
+      Personality = personality,
+      RandomSeed = baseline.RandomSeed,
+      MistakeChance = baseline.MistakeChance,
+      TopChoicesForRandomSelection = baseline.TopChoicesForRandomSelection
+    };
+  }
 }

@@ -606,7 +606,13 @@ internal sealed class LevelEditorScreen
     {
       State.UpdateTeam(_settingsTeam, value =>
       {
-        value.CpuProfile.Difficulty = value.CpuProfile.Difficulty switch { "Easy" => "Normal", "Normal" => "Hard", _ => "Easy" };
+        value.CpuProfile.Difficulty = value.CpuProfile.Difficulty switch
+        {
+          "Easy" => "Medium",
+          "Medium" or "Normal" => "Hard",
+          "Hard" => "Best",
+          _ => "Easy"
+        };
       });
       return true;
     }

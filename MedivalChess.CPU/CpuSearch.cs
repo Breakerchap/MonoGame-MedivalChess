@@ -299,8 +299,7 @@ public sealed class CpuPlayer : ICpuPlayer
     IReadOnlyList<ICpuGameAction> actions = cancelled
       ? []
       : _actionGenerator.GenerateSearchActions(state, team, placementLimit);
-    PurchaseAction? farm = actions.OfType<PurchaseAction>()
-      .FirstOrDefault(action => action.UnitType == "Farm" && action.IsLegal(state));
+    PurchaseAction? farm = ChooseOpeningFarm(actions, state, profile, initialStateHash);
     float score = farm is null
       ? 0f
       : CpuPlacementHeuristics.GetFarmProtectionScore(state, team, farm.X, farm.Y);
@@ -331,6 +330,52 @@ public sealed class CpuPlayer : ICpuPlayer
     return new CpuTurnPlan(planActions, score, report);
   }
 
+  /// <summary>
+  /// Opening farms should not make every non-Best match begin identically. Variety is limited to
+  /// similarly protected legal squares, so a lower difficulty has a recognisable opening style
+  /// without making an arbitrary or self-destructive placement.
+  /// </summary>
+  private static PurchaseAction? ChooseOpeningFarm(
+    IReadOnlyList<ICpuGameAction> actions,
+    CpuGameState state,
+    CpuProfile profile,
+    ulong stateHash
+  )
+  {
+    (PurchaseAction Action, float Score)[] farms = actions.OfType<PurchaseAction>()
+      .Where(action => action.UnitType == "Farm" && action.IsLegal(state))
+      .Select(action => (Action: action, Score: CpuPlacementHeuristics.GetFarmProtectionScore(state, action.Team, action.X, action.Y)))
+      .OrderByDescending(entry => entry.Score)
+      .ThenBy(entry => entry.Action.Y)
+      .ThenBy(entry => entry.Action.X)
+      .ToArray();
+    if (farms.Length == 0)
+    {
+      return null;
+    }
+    if (profile.TopChoicesForRandomSelection <= 1 || profile.MistakeChance <= 0f)
+    {
+      return farms[0].Action;
+    }
+
+    float bestScore = farms[0].Score;
+    PurchaseAction[] comparable = farms
+      .Where(entry => bestScore - entry.Score <= 2.5f)
+      .Take(Math.Max(1, profile.TopChoicesForRandomSelection))
+      .Select(entry => entry.Action)
+      .ToArray();
+    if (comparable.Length <= 1)
+    {
+      return farms[0].Action;
+    }
+
+    int seed = unchecked(profile.RandomSeed ^ (int)stateHash ^ (int)(stateHash >> 32));
+    Random random = new(seed);
+    return random.NextDouble() < Math.Clamp(profile.MistakeChance + profile.Search.Randomness, 0f, 1f)
+      ? comparable[1 + random.Next(comparable.Length - 1)]
+      : farms[0].Action;
+  }
+
   private float PredictOpponentResponse(
     CpuGameState state,
     NetworkTeam perspective,
@@ -353,7 +398,7 @@ public sealed class CpuPlayer : ICpuPlayer
       return _evaluator.Evaluate(state, perspective, context);
     }
 
-    // Normal mode looks only one opponent action ahead. Hard mode passes three here, so it
+    // Medium mode looks only one opponent action ahead. Hard and Best pass three here, so they
     // models the whole enemy turn with a deliberately narrower beam instead of greedily fixing
     // the first reply and missing a move-then-attack combination.
     int opponentBeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth);

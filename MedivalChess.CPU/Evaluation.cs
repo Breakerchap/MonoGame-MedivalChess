@@ -17,6 +17,7 @@ public sealed class EvaluationWeights
   public float RoyalSafety { get; init; } = 2f;
   public float ObjectiveProgress { get; init; } = 2.5f;
   public float IntentProgress { get; init; } = 0.75f;
+  public float StrategicPosition { get; init; } = 0.9f;
   public float MapControl { get; init; } = 0.4f;
   public float Economy { get; init; } = 0.5f;
   public float Mobility { get; init; } = 0.25f;
@@ -78,6 +79,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new RoyalSafetyEvaluation(_threatMapBuilder),
       new ObjectiveEvaluation(),
       new IntentEvaluation(),
+      new StrategicPositionEvaluation(),
       new MapControlEvaluation(),
       new EconomyEvaluation(),
       new MobilityEvaluation(),
@@ -153,6 +155,7 @@ public sealed class StateEvaluator : IStateEvaluator
       "RoyalSafety" => weights.RoyalSafety * personality.RoyalProtection * personality.Caution * scenario.RoyalSafety,
       "Objective" => weights.ObjectiveProgress * personality.ObjectiveFocus * scenario.ObjectiveProgress,
       "Intent" => weights.IntentProgress * personality.ObjectiveFocus,
+      "Strategy" => weights.StrategicPosition * (0.65f + personality.ObjectiveFocus * 0.35f),
       "MapControl" => weights.MapControl * personality.ObjectiveFocus,
       "Economy" => weights.Economy * personality.EconomyFocus * scenario.Economy,
       "Mobility" => weights.Mobility,
@@ -370,6 +373,108 @@ public sealed class IntentEvaluation : IEvaluationTerm
     state.Pieces.Where(piece => piece.AttachedToId is null && piece.Team != NetworkTeam.Neutral)
       .Sum(piece => piece.Team == team && piece.X == position.x && piece.Y == position.y ? 1f :
         piece.Team != team && piece.X == position.x && piece.Y == position.y ? -1f : 0f);
+}
+
+/// <summary>
+/// Rewards useful staging before a piece can score or attack immediately. This gives the search
+/// a reason to develop an attack, escort an objective unit, or return treasure instead of only
+/// valuing the final action of that plan.
+/// </summary>
+public sealed class StrategicPositionEvaluation : IEvaluationTerm
+{
+  public string Name => "Strategy";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float own = ScoreTeam(state, perspective);
+    float enemyAverage = TeamRules.GetActiveTeams(state.Configuration.PlayerCount)
+      .Where(team => team != perspective)
+      .Select(team => ScoreTeam(state, team))
+      .DefaultIfEmpty(0f)
+      .Average();
+    return own - enemyAverage;
+  }
+
+  private static float ScoreTeam(CpuGameState state, NetworkTeam team)
+  {
+    List<(int x, int y)> targets = GetTargets(state, team);
+    if (targets.Count == 0)
+    {
+      return 0f;
+    }
+
+    float score = 0f;
+    foreach (NetworkPiece piece in state.Pieces.Where(piece => piece.Team == team && piece.AttachedToId is null))
+    {
+      if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || rule.Type == "Farm")
+      {
+        continue;
+      }
+
+      int distance = targets.Min(target => Distance((piece.X, piece.Y), target));
+      int reach = Math.Max(1, rule.MoveRange + Math.Max(1, rule.AttackRange));
+      // Better range and stronger units make forward staging more valuable, but the score is
+      // deliberately smooth so every square moved toward a future target has some value.
+      float readiness = 20f / (1f + distance / (float)reach);
+      float unitImportance = Math.Clamp(MaterialEvaluation.GetUnitValue(piece.Type) / 70f, 0.4f, 2.2f);
+      score += readiness * unitImportance;
+    }
+
+    if (state.Configuration.GameMode == "Plunder" && state.TreasureCarrierId is not null)
+    {
+      NetworkPiece? carrier = state.Pieces.FirstOrDefault(piece => piece.Id == state.TreasureCarrierId);
+      if (carrier?.Team == team)
+      {
+        int returnDistance = state.Board.Cells
+          .Where(square => MatchRules.GetSquareOwner(state.Board, state.Configuration.GameMode, square,
+            state.Configuration.PlayerCount) == team)
+          .Select(square => Distance((carrier.X, carrier.Y), square))
+          .DefaultIfEmpty(100)
+          .Min();
+        score += 90f / (1f + returnDistance);
+      }
+    }
+    return score;
+  }
+
+  private static List<(int x, int y)> GetTargets(CpuGameState state, NetworkTeam team)
+  {
+    HashSet<(int x, int y)> targets = [];
+    switch (state.Configuration.GameMode)
+    {
+      case "Conquest":
+        targets.UnionWith(state.Board.Cells.Where(square => MatchRules.IsConquestSquare(state.Board, square)));
+        break;
+      case "Dominion":
+        targets.UnionWith(MatchRules.GetDominionControlPoints(state.Board));
+        break;
+      case "Plunder" when state.TreasureCarrierId is null && state.TreasurePosition is (int x, int y) treasure:
+        targets.Add(treasure);
+        break;
+    }
+
+    CpuScenarioDefinition scenario = state.Scenario ?? CpuScenarioDefinition.ForMatch(state.Configuration);
+    foreach (ICpuScenarioGoal goal in scenario.VictoryGoals.Concat(scenario.SecondaryGoals))
+    {
+      foreach (CpuIntent intent in goal.GenerateIntents(state, team))
+      {
+        if (intent.TargetPosition is (int x, int y) position) targets.Add(position);
+        if (intent.TargetPieceId is not null && state.Pieces.FirstOrDefault(piece => piece.Id == intent.TargetPieceId) is NetworkPiece target)
+        {
+          targets.Add((target.X, target.Y));
+        }
+      }
+    }
+
+    targets.UnionWith(state.Pieces
+      .Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category == RuleCategory.Royal)
+      .Select(piece => (piece.X, piece.Y)));
+    return targets.ToList();
+  }
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 }
 
 public sealed class MapControlEvaluation : IEvaluationTerm

@@ -174,17 +174,38 @@ public sealed class CpuPlayerTests
   public void DifficultyProfiles_UseIncreasingBoundedSearchQuality()
   {
     CpuProfile easy = CpuProfile.Easy(84);
-    CpuProfile normal = CpuProfile.Normal(84);
+    CpuProfile medium = CpuProfile.Medium(84);
     CpuProfile hard = CpuProfile.Hard(84);
+    CpuProfile best = CpuProfile.Best(84);
 
-    Assert.True(easy.Search.BeamWidth < normal.Search.BeamWidth && normal.Search.BeamWidth < hard.Search.BeamWidth);
-    Assert.True(easy.Search.CandidatesPerNode < normal.Search.CandidatesPerNode &&
-      normal.Search.CandidatesPerNode < hard.Search.CandidatesPerNode);
-    Assert.True(easy.Search.MaxSearchNodes < normal.Search.MaxSearchNodes &&
-      normal.Search.MaxSearchNodes < hard.Search.MaxSearchNodes);
+    Assert.True(easy.Search.BeamWidth < medium.Search.BeamWidth && medium.Search.BeamWidth < hard.Search.BeamWidth &&
+      hard.Search.BeamWidth < best.Search.BeamWidth);
+    Assert.True(easy.Search.CandidatesPerNode < medium.Search.CandidatesPerNode &&
+      medium.Search.CandidatesPerNode < hard.Search.CandidatesPerNode && hard.Search.CandidatesPerNode < best.Search.CandidatesPerNode);
+    Assert.True(easy.Search.MaxSearchNodes < medium.Search.MaxSearchNodes &&
+      medium.Search.MaxSearchNodes < hard.Search.MaxSearchNodes && hard.Search.MaxSearchNodes < best.Search.MaxSearchNodes);
     Assert.Equal(0, easy.Search.OpponentActionsToPredict);
-    Assert.Equal(1, normal.Search.OpponentActionsToPredict);
+    Assert.Equal(1, medium.Search.OpponentActionsToPredict);
     Assert.Equal(MatchRules.ActionsPerTurn, hard.Search.OpponentActionsToPredict);
+    Assert.Equal(0f, best.MistakeChance);
+    Assert.Equal(1, best.TopChoicesForRandomSelection);
+  }
+
+  [Fact]
+  public void StrategicEvaluation_ValuesStagingCloserToAnEnemyRoyal()
+  {
+    CpuGameState distant = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 4, 15),
+      new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -4, 110)
+    );
+    CpuGameState staged = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, -1, 15),
+      new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -4, 110)
+    );
+    EvaluationContext context = new(CpuProfile.Best(17));
+    StrategicPositionEvaluation evaluator = new();
+
+    Assert.True(evaluator.Evaluate(staged, NetworkTeam.Red, context) > evaluator.Evaluate(distant, NetworkTeam.Red, context));
   }
 
   private static CpuGameState CreateState(params NetworkPiece[] pieces)

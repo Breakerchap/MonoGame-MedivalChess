@@ -193,6 +193,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         {
           positions.Add((targetPiece.X, targetPiece.Y));
         }
+        if (intent.Type == CpuIntentType.ProtectRoyal && intent.PieceId is not null &&
+            state.Pieces.FirstOrDefault(piece => piece.Id == intent.PieceId) is NetworkPiece protectedPiece)
+        {
+          // The royal-protection intent identifies the friendly asset in PieceId. Keeping its
+          // square in the candidate set lets defensive setup moves survive early beam pruning.
+          positions.Add((protectedPiece.X, protectedPiece.Y));
+        }
         if (intent.Type == CpuIntentType.Escape && intent.TargetPosition is null)
         {
           positions.UnionWith(state.Board.Cells.Where(position => MatchRules.IsOnEnemyBackEdge(state.Board, team, position)));
