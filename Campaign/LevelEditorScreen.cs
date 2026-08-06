@@ -7,6 +7,7 @@ using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
+using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using MedivalChess.Shared;
 
@@ -27,9 +28,11 @@ internal sealed class LevelEditorScreen
   private static readonly string[] BoardBaseNames = ["Small", "Medium", "Large"];
   private int _unitPaletteIndex;
   private int _objectPaletteIndex;
-  private int _boardBaseIndex;
+  private int _boardBaseIndex = 1;
   private CampaignTerrainType _terrainPaletteType;
   private NetworkTeam _placementTeam = NetworkTeam.Red;
+  // Neutral is the editor-friendly representation for No-Man's-Land.
+  private NetworkTeam _territoryOwner = NetworkTeam.Neutral;
   private Vector2 _camera;
   private float _zoom = 1f;
   private TextField _textField;
@@ -174,13 +177,13 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.BoardBaseApply, "USE DEFAULT BOARD", UiButtonTone.Accent, false, 0.55f);
 
     _ui.Divider(layout.Tools, layout.PaletteTop);
-    UnitRule selectedUnit = UnitRules.All[_unitPaletteIndex % UnitRules.All.Count];
+    PieceDefinition selectedUnit = PieceDefinitions.Encyclopedia[_unitPaletteIndex % PieceDefinitions.Encyclopedia.Length];
     _ui.Text("UNIT PALETTE", new Vector2(layout.Tools.X + 12, layout.PaletteTop + 10), UiTheme.GoldBright, 0.75f);
     _ui.Button(layout.UnitPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.UnitNext, ">", UiButtonTone.Neutral);
-    _ui.PiecePreview(layout.UnitPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), selectedUnit.Type);
-    _ui.CenterTextFitted(selectedUnit.Type.ToUpperInvariant(), layout.UnitName, UiTheme.TextPrimary, 0.7f, 0.5f, 1);
-    _ui.Text($"{selectedUnit.Width}x{selectedUnit.Height}  {selectedUnit.Health} HP", new Vector2(layout.Tools.X + 12, layout.UnitName.Bottom + 3), UiTheme.TextMuted, 0.59f);
+    _ui.PiecePreview(layout.UnitPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), selectedUnit.Type.ToString());
+    _ui.CenterTextFitted(selectedUnit.Type.ToString().ToUpperInvariant(), layout.UnitName, UiTheme.TextPrimary, 0.7f, 0.5f, 1);
+    _ui.Text($"{selectedUnit.Size.x}x{selectedUnit.Size.y}  {selectedUnit.Health} HP", new Vector2(layout.Tools.X + 12, layout.UnitName.Bottom + 3), UiTheme.TextMuted, 0.59f);
     _ui.Button(layout.TeamPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.TeamNext, ">", UiButtonTone.Neutral);
     _ui.CenterText($"FOR {_placementTeam}".ToUpperInvariant(), layout.TeamPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), 0.68f);
@@ -191,16 +194,31 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.ObjectNext, ">", UiButtonTone.Neutral);
     _ui.CenterText(selectedObject.ToString().ToUpperInvariant(), layout.ObjectPreview, UiTheme.TextPrimary, 0.66f);
     _ui.Button(layout.TerrainButton, $"TERRAIN: {_terrainPaletteType}".ToUpperInvariant(), UiButtonTone.Accent, State.ActiveTool == EditorTool.Terrain, 0.62f);
+    _ui.Button(layout.TerritoryPrevious, "<", UiButtonTone.Neutral);
+    _ui.Button(layout.TerritoryNext, ">", UiButtonTone.Neutral);
+    _ui.CenterText(CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner), layout.TerritoryLabel, _territoryOwner == NetworkTeam.Neutral ? UiTheme.NoMansLand : UiTheme.GetTeamColour(_territoryOwner.ToTeamName()), 0.58f);
   }
 
   private void DrawBoard(EditorLayout layout)
   {
     _ui.Panel(layout.Viewport, UiTheme.BoardBackground, UiTheme.PanelBorder);
-    foreach (CampaignCoordinate tile in State.Level.Board.Tiles)
+    Board? board = null;
+    try { board = CampaignRuntimeFactory.CreateBoard(State.Level.Board); }
+    catch (ArgumentException) { }
+    if (board is null) return;
+    CampaignTerritoryMap territories = CampaignTerritoryRules.CreateMap(State.Level.Scenario);
+
+    foreach ((int x, int y) cell in board.Cells)
     {
+      CampaignCoordinate tile = new(cell.x, cell.y);
       Rectangle bounds = GetTileBounds(layout, tile);
       if (!bounds.Intersects(layout.Viewport)) continue;
       Color colour = (tile.X + tile.Y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
+      NetworkTeam? territoryOwner = territories.GetSquareOwner(board, (tile.X, tile.Y), State.Level.Teams.Count);
+      Color territoryColour = territoryOwner.HasValue
+        ? UiTheme.GetTeamColour(territoryOwner.Value.ToTeamName())
+        : UiTheme.NoMansLand;
+      colour = Color.Lerp(colour, territoryColour, 0.24f);
       CampaignTerrainTileDefinition? terrain = State.Level.Terrain.FirstOrDefault(entry => entry.Position == tile);
       if (terrain?.Type == CampaignTerrainType.Forest) colour = Color.Lerp(colour, UiTheme.Forest, 0.72f);
       if (terrain?.Type == CampaignTerrainType.Lake) colour = UiTheme.Lake;
@@ -227,14 +245,14 @@ internal sealed class LevelEditorScreen
 
     foreach (CampaignUnitDefinition unit in State.Level.Units)
     {
-      if (!UnitRules.TryGet(unit.UnitType, out UnitRule rule)) continue;
-      Rectangle origin = GetTileBounds(layout, unit.Position);
-      Rectangle bounds = new(origin.X + 4, origin.Y + 4, Math.Max(4, origin.Width * rule.Width - 8), Math.Max(4, origin.Height * rule.Height - 8));
-      Color teamColour = UiTheme.GetTeamColour(unit.Team.ToTeamName());
+      if (!CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? piece) || piece is null) continue;
+      Rectangle origin = GetTileBounds(layout, new CampaignCoordinate(piece.Position.x, piece.Position.y));
+      Rectangle bounds = new(origin.X + 4, origin.Y + 4, Math.Max(4, origin.Width * piece.Definition.Size.x - 8), Math.Max(4, origin.Height * piece.Definition.Size.y - 8));
+      Color teamColour = UiTheme.GetTeamColour(piece.Team);
       _spriteBatch.Draw(_pixel, bounds, Color.Lerp(teamColour, UiTheme.PanelRaised, 0.22f));
       DrawOutline(bounds, teamColour, 2);
       if (State.Selection.Kind == EditorSelectionKind.Unit && State.Selection.Id == unit.Id) DrawOutline(bounds, UiTheme.SelectionOutline, 3);
-      _ui.CenterTextFitted(unit.UnitType.ToUpperInvariant(), bounds, UiTheme.TextPrimary, 0.57f, 0.42f, 3);
+      _ui.CenterTextFitted(UiText.BuildPieceLabel(piece.Definition), bounds, UiTheme.TextPrimary, 0.57f, 0.42f, 3);
       int line = Math.Max(2, bounds.Width / 8);
       switch (unit.Rotation)
       {
@@ -310,7 +328,7 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.ObjectiveRemoveButton, "REMOVE", UiButtonTone.Danger, false, 0.6f);
     if (selected is not null)
     {
-      _ui.Button(layout.ObjectiveActiveLabel, $"ACTIVE: {selected.Type}  ({selected.RequiredAmount})  ›", UiButtonTone.Neutral, false, 0.52f);
+      _ui.Button(layout.ObjectiveActiveLabel, $"ACTIVE: {selected.Type} ({selected.RequiredAmount}) >", UiButtonTone.Neutral, false, 0.52f);
       _ui.Button(layout.ObjectiveAmountDown, "-", UiButtonTone.Neutral);
       _ui.Button(layout.ObjectiveAmountUp, "+", UiButtonTone.Neutral);
       _ui.Button(layout.ObjectiveTargetButton, "PICK UNIT", UiButtonTone.Accent, _objectiveTargetMode == ObjectiveTargetMode.Unit, 0.57f);
@@ -330,7 +348,7 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.SettingsTeamPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.SettingsTeamNext, ">", UiButtonTone.Neutral);
     _ui.CenterText(_settingsTeam.ToString().ToUpperInvariant(), layout.SettingsTeamLabel, UiTheme.GetTeamColour(_settingsTeam.ToTeamName()), 0.72f);
-    _ui.Button(layout.ControllerButton, team.Controller == CampaignTeamController.Cpu ? "CPU CONTROLLED" : "HUMAN CONTROLLED", UiButtonTone.Neutral, false, 0.66f);
+    _ui.Button(layout.ControllerButton, team.Controller == CampaignTeamController.Cpu ? "CONTROLLER: CPU" : "CONTROLLER: PLAYER", UiButtonTone.Neutral, false, 0.66f);
     _ui.Button(layout.MoneyDownButton, "-", UiButtonTone.Neutral);
     _ui.Button(layout.MoneyUpButton, "+", UiButtonTone.Neutral);
     _ui.CenterText($"STARTING GOLD: {team.StartingMoney}", layout.MoneyLabel, UiTheme.TextMuted, 0.65f);
@@ -347,6 +365,7 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.TeamUnitToggle, available ? "UNIT AVAILABLE" : "UNIT RESTRICTED", available ? UiButtonTone.Primary : UiButtonTone.Danger, false, 0.61f);
     _ui.Button(layout.CpuDifficultyButton, $"CPU DIFFICULTY: {team.CpuProfile.Difficulty}".ToUpperInvariant(), UiButtonTone.Accent, false, 0.56f);
     _ui.Button(layout.CpuPersonalityButton, $"CPU STYLE: {team.CpuProfile.Personality}".ToUpperInvariant(), UiButtonTone.Accent, false, 0.56f);
+    _ui.TextWrapped("Set both teams to PLAYER for a local two-player match. CPU teams use the difficulty and style below during test play.", new Rectangle(layout.Properties.X + 12, layout.CpuPersonalityButton.Bottom + 7, layout.Properties.Width - 24, 44), UiTheme.TextMuted, 0.55f);
   }
 
   private void DrawRestrictionSettings(EditorLayout layout)
@@ -374,7 +393,7 @@ internal sealed class LevelEditorScreen
       if (unit is not null)
       {
         _ui.Text("SELECTED UNIT", new Vector2(layout.Properties.X + 12, layout.SelectionTop + 10), UiTheme.GoldBright, 0.75f);
-        _ui.Button(layout.SelectedRowOne, $"{unit.UnitType}  •  TEAM: {unit.Team}  (CHANGE)", UiButtonTone.Neutral, false, 0.58f);
+        _ui.Button(layout.SelectedRowOne, $"{unit.UnitType} - TEAM: {unit.Team} (CHANGE)", UiButtonTone.Neutral, false, 0.58f);
         _ui.Button(layout.SelectedPrevious, "HEALTH -", UiButtonTone.Neutral, false, 0.65f);
         _ui.Button(layout.SelectedNext, "HEALTH +", UiButtonTone.Neutral, false, 0.65f);
         _ui.Button(layout.RotateButton, "ROTATE", UiButtonTone.Accent, false, 0.7f);
@@ -419,15 +438,15 @@ internal sealed class LevelEditorScreen
   {
     if (layout.SaveButton.Contains(point))
     {
-      string path = Path.Combine(CampaignLevelSerializer.LocalLevelDirectory, CreateSafeFileName(State.Level.Metadata.Name) + CampaignLevelFormat.Extension);
+      string path = Path.Combine(CampaignLevelSerializer.LocalLevelDirectory, LevelFilePicker.CreateSafeLevelFileName(State.Level.Metadata.Name));
       ShowSaveResult(State.Save(path), $"Saved locally: {Path.GetFileName(path)}");
       return true;
     }
     if (layout.ExportButton.Contains(point))
     {
-      string? path = LevelFilePicker.PickExportPath(CreateSafeFileName(State.Level.Metadata.Name) + CampaignLevelFormat.Extension);
-      if (path is null) _status = "Export cancelled or no native file picker is available.";
-      else ShowSaveResult(State.Save(path), $"Exported: {Path.GetFileName(path)}");
+      string? path = LevelFilePicker.PickExportPath(LevelFilePicker.CreateSafeLevelFileName(State.Level.Metadata.Name));
+      if (path is null) _status = "Export cancelled.";
+      else ShowSaveResult(State.Save(path), $"Exported to: {path}");
       return true;
     }
     if (layout.ImportButton.Contains(point))
@@ -472,6 +491,7 @@ internal sealed class LevelEditorScreen
         EditorTool.Tile => "Drag across empty space to paint playable tiles. Right-click erases.",
         EditorTool.Terrain => "Choose Forest or Lake, then drag across the board to paint terrain.",
         EditorTool.Object => "Choose an object, then click or drag to place it.",
+        EditorTool.Territory => "Choose No-Man's-Land or a team area, then paint the playable board.",
         EditorTool.Delete => "Drag across content to erase it. Right-click also erases.",
         _ => "Click a unit, terrain tile, or object to inspect it."
       };
@@ -491,13 +511,15 @@ internal sealed class LevelEditorScreen
       _status = $"Using the shipped {BoardBaseNames[_boardBaseIndex]} board as this level's base.";
       return true;
     }
-    if (layout.UnitPrevious.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex - 1 + UnitRules.All.Count) % UnitRules.All.Count; return true; }
-    if (layout.UnitNext.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex + 1) % UnitRules.All.Count; return true; }
+    if (layout.UnitPrevious.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex - 1 + PieceDefinitions.Encyclopedia.Length) % PieceDefinitions.Encyclopedia.Length; return true; }
+    if (layout.UnitNext.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex + 1) % PieceDefinitions.Encyclopedia.Length; return true; }
     if (layout.TeamPrevious.Contains(point)) { CyclePlacementTeam(-1); return true; }
     if (layout.TeamNext.Contains(point)) { CyclePlacementTeam(1); return true; }
     if (layout.ObjectPrevious.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex - 1 + Enum.GetValues<CampaignBoardObjectType>().Length) % Enum.GetValues<CampaignBoardObjectType>().Length; return true; }
     if (layout.ObjectNext.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex + 1) % Enum.GetValues<CampaignBoardObjectType>().Length; return true; }
     if (layout.TerrainButton.Contains(point)) { _terrainPaletteType = _terrainPaletteType == CampaignTerrainType.Forest ? CampaignTerrainType.Lake : CampaignTerrainType.Forest; return true; }
+    if (layout.TerritoryPrevious.Contains(point)) { CycleTerritoryOwner(-1); return true; }
+    if (layout.TerritoryNext.Contains(point)) { CycleTerritoryOwner(1); return true; }
     return false;
   }
 
@@ -659,8 +681,8 @@ internal sealed class LevelEditorScreen
     if (State.ActiveTool == EditorTool.Delete) { DeleteAt(position); return; }
     if (State.ActiveTool == EditorTool.Unit)
     {
-      UnitRule unit = UnitRules.All[_unitPaletteIndex % UnitRules.All.Count];
-      CampaignUnitDefinition candidate = new() { UnitType = unit.Type, Team = _placementTeam, Position = position };
+      PieceDefinition unit = PieceDefinitions.Encyclopedia[_unitPaletteIndex % PieceDefinitions.Encyclopedia.Length];
+      CampaignUnitDefinition candidate = new() { UnitType = unit.Type.ToString(), Team = _placementTeam, Position = position };
       if (State.TryPlaceUnit(candidate, out string reason))
       {
         _status = $"Placed {unit.Type} for {_placementTeam}.";
@@ -687,6 +709,12 @@ internal sealed class LevelEditorScreen
       State.PaintTerrain(_terrainPaletteType, position);
       return;
     }
+    if (State.ActiveTool == EditorTool.Territory)
+    {
+      State.PaintTerritory(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner, position);
+      _status = $"Painted {CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner)}.";
+      return;
+    }
     if (State.ActiveTool == EditorTool.Object)
     {
       CampaignBoardObjectType type = (CampaignBoardObjectType)(_objectPaletteIndex % Enum.GetValues<CampaignBoardObjectType>().Length);
@@ -703,7 +731,7 @@ internal sealed class LevelEditorScreen
 
   private bool CanPaintContinuously() =>
     _objectiveTargetMode == ObjectiveTargetMode.None &&
-    State.ActiveTool is EditorTool.Tile or EditorTool.Terrain or EditorTool.Object or EditorTool.Delete;
+    State.ActiveTool is EditorTool.Tile or EditorTool.Terrain or EditorTool.Object or EditorTool.Territory or EditorTool.Delete;
 
   private void SelectAt(CampaignCoordinate position)
   {
@@ -775,9 +803,9 @@ internal sealed class LevelEditorScreen
   {
     State.UpdateUnit(unitId, unit =>
     {
-      if (!UnitRules.TryGet(unit.UnitType, out UnitRule rule)) return;
-      int health = unit.Health ?? rule.Health;
-      unit.Health = Math.Clamp(health + delta, 1, rule.Health);
+      if (!CampaignRuntimeFactory.TryGetPieceDefinition(unit.UnitType, out PieceDefinition definition)) return;
+      int health = unit.Health ?? definition.Health;
+      unit.Health = Math.Clamp(health + delta, 1, definition.Health);
     });
   }
 
@@ -803,6 +831,15 @@ internal sealed class LevelEditorScreen
     int current = Array.IndexOf(teams, _placementTeam);
     _placementTeam = teams[(current + direction + teams.Length) % teams.Length];
     _status = $"New units will be placed for {_placementTeam}.";
+  }
+
+  private void CycleTerritoryOwner(int direction)
+  {
+    NetworkTeam[] areas = [NetworkTeam.Neutral, .. State.Level.Teams.Select(team => team.Team)];
+    if (areas.Length == 0) return;
+    int current = Array.IndexOf(areas, _territoryOwner);
+    _territoryOwner = areas[(Math.Max(0, current) + direction + areas.Length) % areas.Length];
+    _status = $"Territory brush: {CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner)}.";
   }
 
   private void CycleSelectedUnitTeam(string unitId)
@@ -957,8 +994,7 @@ internal sealed class LevelEditorScreen
 
   private static bool UnitOccupies(CampaignUnitDefinition unit, CampaignCoordinate position)
   {
-    return UnitRules.TryGet(unit.UnitType, out UnitRule rule) && position.X >= unit.Position.X && position.X < unit.Position.X + rule.Width &&
-      position.Y >= unit.Position.Y && position.Y < unit.Position.Y + rule.Height;
+    return CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? piece) && piece is not null && piece.Occupies((position.X, position.Y));
   }
 
   private void ShowSaveResult(CampaignLevelSaveResult result, string success)
@@ -980,12 +1016,6 @@ internal sealed class LevelEditorScreen
       SynchronisePlacementTeam();
     }
     _status = result.IsSuccess ? success : "Level was not imported. Review validation issues.";
-  }
-
-  private static string CreateSafeFileName(string name)
-  {
-    string safe = string.Concat((name ?? "Untitled").Select(character => Path.GetInvalidFileNameChars().Contains(character) ? '_' : character));
-    return string.IsNullOrWhiteSpace(safe) ? "Untitled" : safe.Trim();
   }
 
   private void DrawOutline(Rectangle bounds, Color colour, int thickness)
@@ -1034,6 +1064,9 @@ internal sealed class LevelEditorScreen
     internal Rectangle ObjectNext { get; }
     internal Rectangle ObjectPreview { get; }
     internal Rectangle TerrainButton { get; }
+    internal Rectangle TerritoryPrevious { get; }
+    internal Rectangle TerritoryLabel { get; }
+    internal Rectangle TerritoryNext { get; }
     internal Rectangle NameField { get; }
     internal Rectangle AuthorField { get; }
     internal Rectangle DescriptionField { get; }
@@ -1109,42 +1142,45 @@ internal sealed class LevelEditorScreen
       [
         (EditorTool.Select, "SELECT"), (EditorTool.Tile, "PAINT TILE"), (EditorTool.Unit, "PLACE UNIT"),
         (EditorTool.Move, "MOVE UNIT"), (EditorTool.Terrain, "TERRAIN"), (EditorTool.Object, "OBJECT"),
-        (EditorTool.Delete, "DELETE")
+        (EditorTool.Territory, "AREAS"), (EditorTool.Delete, "DELETE")
       ];
       ToolButtons = tools.Select((tool, index) => (
         tool.tool,
         tool.label,
         new Rectangle(
-          index == tools.Length - 1 && index % 2 == 0 ? 10 : 10 + index % 2 * 100,
+          10 + index % 2 * 100,
           94 + index / 2 * 34,
-          index == tools.Length - 1 && index % 2 == 0 ? 192 : 92,
+          92,
           28
         )
       )).ToArray();
-      UndoButton = new Rectangle(10, 232, 92, 30);
-      RedoButton = new Rectangle(110, 232, 92, 30);
-      NewButton = new Rectangle(10, 270, 192, 30);
-      BoardSmallerButton = new Rectangle(10, 310, 30, 28);
-      BoardSizeLabel = new Rectangle(44, 310, 124, 28);
-      BoardLargerButton = new Rectangle(172, 310, 30, 28);
-      BoardShapeButton = new Rectangle(10, 344, 192, 28);
-      BoardBasePrevious = new Rectangle(10, 378, 30, 28);
-      BoardBaseLabel = new Rectangle(44, 378, 124, 28);
-      BoardBaseNext = new Rectangle(172, 378, 30, 28);
-      BoardBaseApply = new Rectangle(10, 412, 192, 28);
-      PaletteTop = 448;
-      UnitPrevious = new Rectangle(10, 470, 34, 34);
-      UnitNext = new Rectangle(168, 470, 34, 34);
-      UnitPreview = new Rectangle(50, 470, 112, 34);
-      UnitName = new Rectangle(10, 507, 192, 18);
-      TeamPrevious = new Rectangle(10, 538, 34, 28);
-      TeamNext = new Rectangle(168, 538, 34, 28);
-      TeamPreview = new Rectangle(50, 538, 112, 28);
-      ObjectPaletteTop = 572;
-      ObjectPrevious = new Rectangle(10, 590, 34, 28);
-      ObjectNext = new Rectangle(168, 590, 34, 28);
-      ObjectPreview = new Rectangle(50, 590, 112, 28);
-      TerrainButton = new Rectangle(10, 624, 192, 28);
+      UndoButton = new Rectangle(10, 232, 92, 28);
+      RedoButton = new Rectangle(110, 232, 92, 28);
+      NewButton = new Rectangle(10, 266, 192, 28);
+      BoardSmallerButton = new Rectangle(10, 302, 30, 26);
+      BoardSizeLabel = new Rectangle(44, 302, 124, 26);
+      BoardLargerButton = new Rectangle(172, 302, 30, 26);
+      BoardShapeButton = new Rectangle(10, 334, 192, 26);
+      BoardBasePrevious = new Rectangle(10, 366, 30, 26);
+      BoardBaseLabel = new Rectangle(44, 366, 124, 26);
+      BoardBaseNext = new Rectangle(172, 366, 30, 26);
+      BoardBaseApply = new Rectangle(10, 398, 192, 26);
+      PaletteTop = 432;
+      UnitPrevious = new Rectangle(10, 452, 34, 32);
+      UnitNext = new Rectangle(168, 452, 34, 32);
+      UnitPreview = new Rectangle(50, 452, 112, 32);
+      UnitName = new Rectangle(10, 487, 192, 18);
+      TeamPrevious = new Rectangle(10, 516, 34, 26);
+      TeamNext = new Rectangle(168, 516, 34, 26);
+      TeamPreview = new Rectangle(50, 516, 112, 26);
+      ObjectPaletteTop = 548;
+      ObjectPrevious = new Rectangle(10, 566, 34, 26);
+      ObjectNext = new Rectangle(168, 566, 34, 26);
+      ObjectPreview = new Rectangle(50, 566, 112, 26);
+      TerrainButton = new Rectangle(10, 598, 192, 26);
+      TerritoryPrevious = new Rectangle(10, 630, 34, 26);
+      TerritoryLabel = new Rectangle(50, 630, 112, 26);
+      TerritoryNext = new Rectangle(168, 630, 34, 26);
       int propertyX = Properties.X + 12;
       int fieldWidth = Properties.Width - 24;
       ScenarioTab = new Rectangle(propertyX, 88, (fieldWidth - 8) / 3, 28);

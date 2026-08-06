@@ -2,6 +2,8 @@ namespace MedivalChess.Shared;
 
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text;
+using System.Security;
 
 public sealed class CampaignLevelLoadResult
 {
@@ -58,15 +60,36 @@ public static class CampaignLevelSerializer
 
     try
     {
-      string? directory = Path.GetDirectoryName(Path.GetFullPath(path));
+      string target = Path.GetFullPath(path);
+      string? directory = Path.GetDirectoryName(target);
       if (!string.IsNullOrEmpty(directory))
       {
         Directory.CreateDirectory(directory);
       }
 
-      File.WriteAllText(path, Serialize(level));
+      // Write beside the destination and then replace it. This avoids partially written map
+      // files if Windows Defender, OneDrive, or the game is interrupted during an export.
+      string temporary = Path.Combine(
+        directory ?? Directory.GetCurrentDirectory(),
+        $".{Path.GetFileName(target)}.{Guid.NewGuid():N}.tmp"
+      );
+      try
+      {
+        using (FileStream stream = new(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        using (StreamWriter writer = new(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        {
+          writer.Write(Serialize(level));
+        }
+        File.Move(temporary, target, overwrite: true);
+      }
+      finally
+      {
+        // Move succeeds atomically on the same volume. A failed write leaves only this disposable
+        // temporary file, never a corrupted destination.
+        if (File.Exists(temporary)) File.Delete(temporary);
+      }
     }
-    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or SecurityException or ArgumentException or NotSupportedException)
     {
       problems.Add(CampaignValidationProblem.Error("file.write", $"Could not save level: {exception.Message}"));
     }
@@ -204,10 +227,10 @@ public static class CampaignLevelMigrator
     }
 
     NormaliseCollections(level);
-    if (sourceVersion == 1)
+    if (sourceVersion <= 2)
     {
-      // Version 2 made per-team action limits and restrictions explicit.  V1 used
-      // default match behaviour, so adding the defaults is a lossless migration.
+      // Version 2 made per-team action limits and restrictions explicit. Version 3 added
+      // optional authored territories; old maps deliberately keep the standard game zones.
       foreach (CampaignTeamDefinition team in level.Teams)
       {
         team.ActionsPerTurn = team.ActionsPerTurn <= 0 ? 2 : team.ActionsPerTurn;
@@ -217,7 +240,10 @@ public static class CampaignLevelMigrator
       }
       level.Restrictions ??= new CampaignRestrictionsDefinition();
       level.FormatVersion = CampaignLevelFormat.CurrentVersion;
-      problems.Add(CampaignValidationProblem.Warning("migration.v1", "Migrated level format version 1 to version 2."));
+      problems.Add(CampaignValidationProblem.Warning(
+        $"migration.v{sourceVersion}",
+        $"Migrated level format version {sourceVersion} to version {CampaignLevelFormat.CurrentVersion}."
+      ));
     }
     else
     {
@@ -267,6 +293,13 @@ public static class CampaignLevelMigrator
     level.Teams ??= [];
     level.Formations ??= [];
     level.Scenario ??= new CampaignScenarioDefinition();
+    level.Scenario.Territories ??= new CampaignTerritoriesDefinition();
+    level.Scenario.Territories.NoMansLand ??= [];
+    level.Scenario.Territories.TeamAreas ??= [];
+    foreach (CampaignTeamAreaDefinition area in level.Scenario.Territories.TeamAreas)
+    {
+      area.Tiles ??= [];
+    }
     level.Scenario.VictoryConditions ??= [];
     level.Scenario.DefeatConditions ??= [];
     foreach (CampaignObjectiveDefinition objective in level.Scenario.VictoryConditions.Concat(level.Scenario.DefeatConditions))

@@ -7,6 +7,21 @@ namespace MedivalChess.Tests;
 public sealed class LevelEditorStateTests
 {
   [Fact]
+  public void NewEditorUsesTheNormalMediumBoardAndMatchDefaults()
+  {
+    LevelEditorState editor = LevelEditorState.CreateNew();
+    Board normalBoard = BoardRules.GetBoard("Medium");
+
+    Assert.Equal(normalBoard.Cells.Count, editor.Level.Board.Tiles.Count);
+    Assert.Equal(normalBoard.MinX, editor.Level.Board.OriginX);
+    Assert.Equal(normalBoard.MinY, editor.Level.Board.OriginY);
+    Assert.All(editor.Level.Teams, team => Assert.Equal(MatchRules.ActionsPerTurn, team.ActionsPerTurn));
+    Assert.Equal(Globals.InitialBuysPerTurn, 2);
+    Assert.Equal(Globals.InitialBuyTurnsPerTeam, 3);
+    Assert.True(Globals.FarmsEnabled);
+  }
+
+  [Fact]
   public void UndoAndRedoRestoreMajorEditorOperations()
   {
     LevelEditorState editor = LevelEditorState.CreateNew(6, 6);
@@ -132,5 +147,21 @@ public sealed class LevelEditorStateTests
     Assert.False(editor.TryMoveUnit(first.Id, new CampaignCoordinate(9, 9), out string boundsReason));
     Assert.Contains("does not fit", boundsReason, StringComparison.OrdinalIgnoreCase);
     Assert.Equal(new CampaignCoordinate(1, 1), Assert.Single(editor.Level.Units).Position);
+  }
+
+  [Fact]
+  public void TerritoryBrushStartsWithGameZonesAndCanPaintNoMansLandOrTeamAreas()
+  {
+    LevelEditorState editor = LevelEditorState.CreateNew(6, 6);
+    CampaignCoordinate blueCorner = new(0, 0);
+    CampaignCoordinate redCorner = new(0, 5);
+
+    editor.PaintTerritory(null, blueCorner);
+    editor.PaintTerritory(NetworkTeam.Blue, redCorner);
+
+    Assert.True(editor.Level.Scenario.Territories.UseCustomAreas);
+    Assert.Contains(blueCorner, editor.Level.Scenario.Territories.NoMansLand);
+    Assert.Equal(NetworkTeam.Blue, editor.GetTerritoryOwner(redCorner));
+    Assert.True(editor.Validate().IsValid);
   }
 }

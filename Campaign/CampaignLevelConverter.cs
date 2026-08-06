@@ -15,6 +15,7 @@ internal sealed class CampaignPlayableState
   internal required BattlefieldTerrain Terrain { get; init; }
   internal required IReadOnlyList<Team> Teams { get; init; }
   internal required IReadOnlyList<Piece> Pieces { get; init; }
+  internal required CampaignTerritoryMap Territories { get; init; }
   internal required NetworkTeam FirstTeam { get; init; }
   internal required string GameMode { get; init; }
   internal required IReadOnlySet<(int x, int y)> Roads { get; init; }
@@ -43,7 +44,7 @@ internal static class CampaignLevelConverter
 
     try
     {
-      Board board = level.Board.ToBoard();
+      Board board = CampaignRuntimeFactory.CreateBoard(level.Board);
       BattlefieldTerrain terrain = new(
         level.Terrain.Where(tile => tile.Type == CampaignTerrainType.Forest).Select(tile => (tile.Position.X, tile.Position.Y)),
         level.Terrain.Where(tile => tile.Type == CampaignTerrainType.Lake).Select(tile => (tile.Position.X, tile.Position.Y)),
@@ -61,13 +62,11 @@ internal static class CampaignLevelConverter
       }).ToArray();
       IReadOnlyList<Piece> pieces = level.Units.Select(unit =>
       {
-        PieceDefinition definition = PieceDefinitions.All.First(piece =>
-          string.Equals(piece.Type.ToString(), unit.UnitType, StringComparison.Ordinal));
-        return new Piece(definition, (unit.Position.X, unit.Position.Y), unit.Team.ToTeamName())
+        if (!CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? piece))
         {
-          NetworkId = unit.Id,
-          CurrentHealth = unit.Health ?? definition.Health
-        };
+          throw new InvalidOperationException($"Unknown unit type '{unit.UnitType}'.");
+        }
+        return piece!;
       }).ToArray();
 
       HashSet<(int x, int y)> roads = [];
@@ -108,6 +107,7 @@ internal static class CampaignLevelConverter
           Terrain = terrain,
           Teams = teams,
           Pieces = pieces,
+          Territories = CampaignTerritoryRules.CreateMap(level.Scenario),
           FirstTeam = level.Scenario.FirstTeam,
           GameMode = level.Scenario.GameMode,
           Roads = roads,

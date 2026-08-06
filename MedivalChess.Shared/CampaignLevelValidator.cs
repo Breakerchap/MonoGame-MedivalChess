@@ -48,6 +48,7 @@ public static class CampaignLevelValidator
     ValidateMetadata(level.Metadata, problems);
     HashSet<(int x, int y)> cells = ValidateBoard(level.Board, problems);
     HashSet<NetworkTeam> teams = ValidateTeams(level.Teams, problems);
+    ValidateTerritories(level.Scenario?.Territories, cells, teams, problems);
     HashSet<string> unitIds = ValidateUnits(level.Units, teams, cells, level.Terrain, problems);
     ValidateTerrain(level.Terrain, cells, problems);
     ValidateRivers(level.Rivers, cells, problems);
@@ -186,6 +187,83 @@ public static class CampaignLevelValidator
     }
 
     return teams;
+  }
+
+  private static void ValidateTerritories(
+    CampaignTerritoriesDefinition? territories,
+    IReadOnlySet<(int x, int y)> cells,
+    IReadOnlySet<NetworkTeam> teams,
+    ICollection<CampaignValidationProblem> problems
+  )
+  {
+    if (territories?.UseCustomAreas != true) return;
+
+    Dictionary<(int x, int y), string> assigned = [];
+    foreach (CampaignCoordinate? tile in territories.NoMansLand ?? [])
+    {
+      ValidateTerritoryTile(tile, "No-Man's-Land", cells, assigned, problems);
+    }
+
+    HashSet<NetworkTeam> definedAreas = [];
+    foreach (CampaignTeamAreaDefinition? area in territories.TeamAreas ?? [])
+    {
+      if (area is null)
+      {
+        problems.Add(CampaignValidationProblem.Error("territory.area.null", "Team areas cannot be null."));
+        continue;
+      }
+      if (area.Team == NetworkTeam.Neutral || !teams.Contains(area.Team))
+      {
+        problems.Add(CampaignValidationProblem.Error("territory.area.team", $"{area.Team} is not an active team in this level."));
+      }
+      else if (!definedAreas.Add(area.Team))
+      {
+        problems.Add(CampaignValidationProblem.Error("territory.area.duplicate", $"{area.Team} has more than one territory definition."));
+      }
+      foreach (CampaignCoordinate? tile in area.Tiles ?? [])
+      {
+        ValidateTerritoryTile(tile, $"{area.Team} area", cells, assigned, problems);
+      }
+    }
+
+    foreach (NetworkTeam team in teams)
+    {
+      if (!definedAreas.Contains(team))
+      {
+        problems.Add(CampaignValidationProblem.Error("territory.area.missing", $"Paint an area for {team}."));
+      }
+    }
+    foreach ((int x, int y) cell in cells)
+    {
+      if (!assigned.ContainsKey(cell))
+      {
+        problems.Add(CampaignValidationProblem.Error("territory.coverage", $"Assign playable tile ({cell.x}, {cell.y}) to a team area or No-Man's-Land."));
+      }
+    }
+  }
+
+  private static void ValidateTerritoryTile(
+    CampaignCoordinate? tile,
+    string areaName,
+    IReadOnlySet<(int x, int y)> cells,
+    IDictionary<(int x, int y), string> assigned,
+    ICollection<CampaignValidationProblem> problems
+  )
+  {
+    if (tile is null)
+    {
+      problems.Add(CampaignValidationProblem.Error("territory.tile.null", $"{areaName} contains an empty tile."));
+      return;
+    }
+    (int x, int y) position = (tile.X, tile.Y);
+    if (!cells.Contains(position))
+    {
+      problems.Add(CampaignValidationProblem.Error("territory.tile.bounds", $"{areaName} includes ({position.x}, {position.y}), which is outside the board."));
+    }
+    if (!assigned.TryAdd(position, areaName))
+    {
+      problems.Add(CampaignValidationProblem.Error("territory.overlap", $"Tile ({position.x}, {position.y}) is assigned to both {assigned[position]} and {areaName}."));
+    }
   }
 
   private static HashSet<string> ValidateUnits(

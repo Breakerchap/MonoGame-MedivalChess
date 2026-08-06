@@ -221,6 +221,7 @@ internal sealed class Game1 : Game
   private bool _campaignTestPlay;
   private EditorConfirmAction _editorConfirmAction;
   private CampaignLevelDefinition _campaignTestDefinition;
+  private CampaignTerritoryMap _campaignTerritories;
   private int _campaignCompletedRounds;
 
   internal Game1()
@@ -3858,7 +3859,9 @@ internal sealed class Game1 : Game
 
   private TeamName? GetSquareOwner((int x, int y) position)
   {
-    NetworkTeam? owner = MatchRules.GetSquareOwner(_board, _gameMode.ToString(), position, _playerCount);
+    NetworkTeam? owner = _campaignTestPlay && _campaignTerritories is not null
+      ? _campaignTerritories.GetSquareOwner(_board, position, _playerCount)
+      : MatchRules.GetSquareOwner(_board, _gameMode.ToString(), position, _playerCount);
     return owner?.ToTeamName();
   }
 
@@ -5001,6 +5004,10 @@ internal sealed class Game1 : Game
     for (int index = currentIndex + 1; index < Team.ActiveTeams.Count; index++)
     {
       TeamName nextTeam = Team.ActiveTeams[index];
+      if (pieceSetup.Pieces.Any(piece => piece.Team == nextTeam && piece.Definition.Category == PieceCategory.Royal))
+      {
+        continue;
+      }
       if (_cpuProfiles.ContainsKey(nextTeam))
       {
         PlaceCpuRoyal(nextTeam);
@@ -6104,6 +6111,7 @@ internal sealed class Game1 : Game
     _cpuActionQueue.Clear();
     pieceSetup.ClearPieces();
     _board = state.Board;
+    _campaignTerritories = state.Territories;
     _terrain = state.Terrain;
     _roads.Clear();
     _roads.UnionWith(state.Roads);
@@ -6122,6 +6130,7 @@ internal sealed class Game1 : Game
     selectedPiece = null;
     _movementAnimation = null;
     _initialBuyPhase = null;
+    _royalAwaitingPlacement = null;
     _isPurchaseMode = false;
     _winningTeam = null;
     _conquestScore = 0;
@@ -6137,12 +6146,19 @@ internal sealed class Game1 : Game
       _cpuProfiles[team.Team.ToTeamName()] = CreateCampaignCpuProfile(team.CpuProfile, _terrainSeed + (int)team.Team);
     }
     if (Enum.TryParse(state.GameMode, ignoreCase: false, out GameMode mode)) _gameMode = mode;
+    // Campaign test play now opens exactly like a normal local match. Custom levels can still
+    // include pre-placed units, terrain, and objectives, but every team without a royal chooses
+    // its starting royal first and then completes the standard free-farm / buy opening.
+    _initialBuysPerTurn = Globals.InitialBuysPerTurn;
+    _initialBuyTurnsPerTeam = Globals.InitialBuyTurnsPerTeam;
+    _farmsEnabled = Globals.FarmsEnabled;
     _cameraPosition = Vector2.Zero;
     _zoom = 1f;
     _campaignTestDefinition = CampaignLevelCloner.Clone(snapshot.Level);
     _campaignCompletedRounds = 0;
     _campaignTestPlay = true;
     _screen = Screen.Playing;
+    StartCampaignOpeningSetup();
   }
 
   private static CpuProfile CreateCampaignCpuProfile(CampaignCpuProfileDefinition definition, int seed)
@@ -6185,11 +6201,50 @@ internal sealed class Game1 : Game
     _cpuActionQueue.Clear();
     selectedPiece = null;
     _movementAnimation = null;
+    _royalAwaitingPlacement = null;
     _isPurchaseMode = false;
     _campaignTestDefinition = null;
+    _campaignTerritories = null;
     _campaignCompletedRounds = 0;
     _campaignTestPlay = false;
     _screen = Screen.LevelEditor;
+  }
+
+  /// <summary>Starts the same royal-then-opening-buy flow used by normal local matches.</summary>
+  private void StartCampaignOpeningSetup()
+  {
+    if (Team.ActiveTeams.Count == 0) return;
+    _setupTeam = Team.ActiveTeams[0];
+    StartCampaignRoyalPlacementForCurrentTeam();
+  }
+
+  private void StartCampaignRoyalPlacementForCurrentTeam()
+  {
+    if (pieceSetup.Pieces.Any(piece => piece.Team == _setupTeam && piece.Definition.Category == PieceCategory.Royal))
+    {
+      ContinueRoyalSelection();
+      return;
+    }
+    if (_cpuProfiles.ContainsKey(_setupTeam))
+    {
+      PlaceCpuRoyal(_setupTeam);
+      ContinueRoyalSelection();
+      return;
+    }
+
+    BeginRoyalPlacement(GetCampaignStartingRoyal(_setupTeam));
+  }
+
+  private PieceDefinition GetCampaignStartingRoyal(TeamName team)
+  {
+    string chosenRoyal = _campaignTestDefinition?.Teams
+      .FirstOrDefault(candidate => candidate.Team == team.ToNetworkTeam())?.ChosenRoyal;
+    if (Enum.TryParse(chosenRoyal, ignoreCase: false, out PieceType type))
+    {
+      PieceDefinition configured = PieceDefinitions.Royals.FirstOrDefault(candidate => candidate.Type == type);
+      if (configured is not null && !(_gameMode == GameMode.Escort && configured.Type == PieceType.Palace)) return configured;
+    }
+    return PieceDefinitions.King;
   }
 
   private Rectangle GetCustomLevelPanelBounds() => UiLayout.Centered(
@@ -6256,7 +6311,7 @@ internal sealed class Game1 : Game
       Rectangle bounds = GetCustomLevelButtonBounds(index);
       DrawMenuButton(bounds, string.Empty, summary.IsValid ? UiButtonTone.Neutral : UiButtonTone.Danger);
       _ui.TextFitted(summary.Name, new Vector2(bounds.X + 12, bounds.Y + 7), bounds.Width - 240, UiTheme.TextPrimary, 0.75f);
-      _ui.TextFitted($"{summary.Author}  •  {summary.Difficulty}  •  v{summary.FormatVersion?.ToString() ?? "?"}", new Vector2(bounds.X + 12, bounds.Y + 28), bounds.Width - 240, UiTheme.TextMuted, 0.56f);
+      _ui.TextFitted($"{summary.Author} - {summary.Difficulty} - v{summary.FormatVersion?.ToString() ?? "?"}", new Vector2(bounds.X + 12, bounds.Y + 28), bounds.Width - 240, UiTheme.TextMuted, 0.56f);
       _ui.RightText(summary.IsValid ? "VALID" : "INVALID", new Rectangle(bounds.X, bounds.Y, bounds.Width - 12, bounds.Height), summary.IsValid ? UiTheme.Health : UiTheme.Attack, 0.65f);
     }
     DrawMenuButton(GetCustomLevelsBackButtonBounds(), "BACK TO EDITOR", UiButtonTone.Primary);

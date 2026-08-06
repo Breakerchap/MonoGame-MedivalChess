@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using MedivalChess.GameBoard;
 using MedivalChess.Shared;
 
 namespace MedivalChess.Campaign;
@@ -15,6 +16,7 @@ public enum EditorTool
   Move,
   Terrain,
   Object,
+  Territory,
   Delete
 }
 
@@ -109,7 +111,9 @@ public sealed class LevelEditorState
     SourcePath = sourcePath;
   }
 
-  public static LevelEditorState CreateNew(int width = 16, int height = 12) =>
+  public static LevelEditorState CreateNew() => new(CampaignLevelDefinition.CreateNew());
+
+  public static LevelEditorState CreateNew(int width, int height) =>
     new(CampaignLevelDefinition.CreateNew(width, height));
 
   public CampaignValidationResult Validate() => CampaignLevelValidator.Validate(Level);
@@ -134,6 +138,10 @@ public sealed class LevelEditorState
       level.Board.Shape = CampaignBoardShape.Custom;
       level.Board.Tiles.Add(position);
       RecalculateBoardBounds(level.Board);
+      if (level.Scenario.Territories.UseCustomAreas)
+      {
+        level.Scenario.Territories.NoMansLand.Add(position);
+      }
     });
   }
 
@@ -145,6 +153,7 @@ public sealed class LevelEditorState
       level.Board.Shape = CampaignBoardShape.Custom;
       level.Board.Tiles.RemoveAll(tile => tile.X == position.X && tile.Y == position.Y);
       RecalculateBoardBounds(level.Board);
+      RemoveTerritoryTile(level.Scenario.Territories, position);
     });
   }
 
@@ -155,11 +164,11 @@ public sealed class LevelEditorState
     {
       throw new ArgumentOutOfRangeException(nameof(width), "Board dimensions must be within the supported range.");
     }
-    Change("Resize board", level => level.Board = CampaignBoardDefinition.CreateRectangle(
-      width,
-      height,
-      level.Board.OriginX,
-      level.Board.OriginY));
+    Change("Resize board", level =>
+    {
+      level.Board = CampaignBoardDefinition.CreateRectangle(width, height, level.Board.OriginX, level.Board.OriginY);
+      ResetCustomTerritoriesToGameDefaults(level);
+    });
   }
 
   public void SetBoardShape(CampaignBoardShape shape)
@@ -186,6 +195,7 @@ public sealed class LevelEditorState
         Height = board.BoardArray.GetLength(0),
         Tiles = board.Cells.Select(cell => new CampaignCoordinate(cell.x, cell.y)).ToList()
       };
+      ResetCustomTerritoriesToGameDefaults(level);
     });
   }
 
@@ -219,7 +229,7 @@ public sealed class LevelEditorState
   public bool CanPlaceUnit(CampaignUnitDefinition unit, out string reason, string? ignoredUnitId = null)
   {
     ArgumentNullException.ThrowIfNull(unit);
-    if (!UnitRules.TryGet(unit.UnitType, out UnitRule rule))
+    if (!CampaignRuntimeFactory.TryGetPieceDefinition(unit.UnitType, out PieceDefinition definition))
     {
       reason = $"Unknown unit type: {unit.UnitType}.";
       return false;
@@ -235,20 +245,34 @@ public sealed class LevelEditorState
       return false;
     }
 
-    HashSet<CampaignCoordinate> boardCells = Level.Board.Tiles.ToHashSet();
+    Board board;
+    try
+    {
+      board = CampaignRuntimeFactory.CreateBoard(Level.Board);
+    }
+    catch (ArgumentException)
+    {
+      reason = "Add at least one playable tile before placing units.";
+      return false;
+    }
+
     HashSet<CampaignCoordinate> lakes = Level.Terrain
       .Where(terrain => terrain.Type == CampaignTerrainType.Lake)
       .Select(terrain => terrain.Position)
       .ToHashSet();
-    for (int y = 0; y < rule.Height; y++)
-    for (int x = 0; x < rule.Width; x++)
+    if (!BoardRules.FootprintFitsBoard(board, unit.Position.X, unit.Position.Y, definition.Size.x, definition.Size.y))
     {
-      CampaignCoordinate square = new(unit.Position.X + x, unit.Position.Y + y);
-      if (!boardCells.Contains(square))
-      {
-        reason = $"{unit.UnitType} does not fit on the board at ({square.X}, {square.Y}).";
-        return false;
-      }
+      reason = $"{unit.UnitType} does not fit on the board at ({unit.Position.X}, {unit.Position.Y}).";
+      return false;
+    }
+    if (!CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? candidate) || candidate is null)
+    {
+      reason = $"Unknown unit type: {unit.UnitType}.";
+      return false;
+    }
+    foreach ((int x, int y) occupiedSquare in candidate.OccupiedSquares())
+    {
+      CampaignCoordinate square = new(occupiedSquare.x, occupiedSquare.y);
       if (unit.UnitType != "Elephant" && lakes.Contains(square))
       {
         reason = $"{unit.UnitType} cannot start on a lake.";
@@ -258,11 +282,9 @@ public sealed class LevelEditorState
 
     foreach (CampaignUnitDefinition other in Level.Units.Where(other => other.Id != ignoredUnitId))
     {
-      if (!UnitRules.TryGet(other.UnitType, out UnitRule otherRule)) continue;
-      if (unit.UnitType == "Farm" || other.UnitType == "Farm") continue;
-      if (UnitRules.FootprintsOverlap(
-        unit.Position.X, unit.Position.Y, rule.Width, rule.Height,
-        other.Position.X, other.Position.Y, otherRule.Width, otherRule.Height))
+      if (!CampaignRuntimeFactory.TryCreatePiece(other, out Piece? otherPiece) || otherPiece is null) continue;
+      if (candidate.Definition.Type == PieceType.Farm || otherPiece.Definition.Type == PieceType.Farm) continue;
+      if (candidate.OccupiedSquares().Any(otherPiece.Occupies))
       {
         reason = $"That space is occupied by {other.UnitType}.";
         return false;
@@ -366,6 +388,59 @@ public sealed class LevelEditorState
     if (!Level.Terrain.Any(terrain => terrain.Position == position)) return;
     Change("Delete terrain", level => level.Terrain.RemoveAll(terrain => terrain.Position == position));
     if (Selection.Kind == EditorSelectionKind.Terrain && Selection.Position == position) Selection = EditorSelection.None;
+  }
+
+  /// <summary>Paints an explicit team area or No-Man's-Land. The first stroke copies the game's
+  /// current automatic zones, so every playable tile remains assigned while editing starts.</summary>
+  public void PaintTerritory(NetworkTeam? team, CampaignCoordinate position)
+  {
+    if (!Level.Board.Tiles.Contains(position)) return;
+    if (team == NetworkTeam.Neutral) team = null;
+    if (team is NetworkTeam activeTeam && !Level.Teams.Any(candidate => candidate.Team == activeTeam)) return;
+
+    Change("Paint territory", level =>
+    {
+      if (!level.Scenario.Territories.UseCustomAreas)
+      {
+        level.Scenario.Territories = CampaignTerritoryRules.CreateDefaultAreas(
+          CampaignRuntimeFactory.CreateBoard(level.Board),
+          level.Scenario.GameMode,
+          level.Teams.Count
+        );
+      }
+
+      RemoveTerritoryTile(level.Scenario.Territories, position);
+      if (team is NetworkTeam owner)
+      {
+        CampaignTeamAreaDefinition area = level.Scenario.Territories.TeamAreas
+          .FirstOrDefault(candidate => candidate.Team == owner) ?? new CampaignTeamAreaDefinition { Team = owner };
+        if (!level.Scenario.Territories.TeamAreas.Contains(area)) level.Scenario.Territories.TeamAreas.Add(area);
+        area.Tiles.Add(position);
+      }
+      else
+      {
+        level.Scenario.Territories.NoMansLand.Add(position);
+      }
+    });
+  }
+
+  public void UseAutomaticTerritories()
+  {
+    if (!Level.Scenario.Territories.UseCustomAreas) return;
+    Change("Use automatic territories", level => level.Scenario.Territories = new CampaignTerritoriesDefinition());
+  }
+
+  public NetworkTeam? GetTerritoryOwner(CampaignCoordinate position)
+  {
+    try
+    {
+      Board board = CampaignRuntimeFactory.CreateBoard(Level.Board);
+      return CampaignTerritoryRules.CreateMap(Level.Scenario).GetSquareOwner(board, (position.X, position.Y), Level.Teams.Count);
+    }
+    catch (ArgumentException)
+    {
+      return null;
+    }
   }
 
   public void UpdateUnit(string unitId, Action<CampaignUnitDefinition> update)
@@ -532,6 +607,25 @@ public sealed class LevelEditorState
     History.Record(Level, description);
     change(Level);
     HasUnsavedChanges = true;
+  }
+
+  private static void RemoveTerritoryTile(CampaignTerritoriesDefinition territories, CampaignCoordinate position)
+  {
+    territories.NoMansLand.RemoveAll(tile => tile == position);
+    foreach (CampaignTeamAreaDefinition area in territories.TeamAreas)
+    {
+      area.Tiles.RemoveAll(tile => tile == position);
+    }
+  }
+
+  private static void ResetCustomTerritoriesToGameDefaults(CampaignLevelDefinition level)
+  {
+    if (!level.Scenario.Territories.UseCustomAreas) return;
+    level.Scenario.Territories = CampaignTerritoryRules.CreateDefaultAreas(
+      CampaignRuntimeFactory.CreateBoard(level.Board),
+      level.Scenario.GameMode,
+      level.Teams.Count
+    );
   }
 
   private static void RecalculateBoardBounds(CampaignBoardDefinition board)

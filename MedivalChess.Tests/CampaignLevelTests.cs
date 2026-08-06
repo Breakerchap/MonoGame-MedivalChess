@@ -1,3 +1,4 @@
+using MedivalChess.Campaign;
 using MedivalChess.Shared;
 using Xunit;
 
@@ -81,7 +82,7 @@ public sealed class CampaignLevelTests
   {
     CampaignLevelDefinition level = CreateValidLevel();
     string versionOne = CampaignLevelSerializer.Serialize(level)
-      .Replace("\"formatVersion\": 2", "\"formatVersion\": 1", StringComparison.Ordinal);
+      .Replace($"\"formatVersion\": {CampaignLevelFormat.CurrentVersion}", "\"formatVersion\": 1", StringComparison.Ordinal);
 
     CampaignLevelLoadResult result = CampaignLevelSerializer.Deserialize(versionOne);
 
@@ -222,6 +223,68 @@ public sealed class CampaignLevelTests
     {
       if (File.Exists(path)) File.Delete(path);
     }
+  }
+
+  [Fact]
+  public void SavingAnExistingLevelReplacesItWithoutLeavingAPartialFile()
+  {
+    string path = Path.Combine(Path.GetTempPath(), $"campaign-overwrite-{Guid.NewGuid():N}{CampaignLevelFormat.Extension}");
+    try
+    {
+      CampaignLevelDefinition first = CreateValidLevel();
+      CampaignLevelDefinition second = CreateValidLevel();
+      second.Metadata.Name = "Replaced Export";
+
+      Assert.True(CampaignLevelSerializer.Save(path, first).IsSuccess);
+      Assert.True(CampaignLevelSerializer.Save(path, second).IsSuccess);
+      CampaignLevelLoadResult loaded = CampaignLevelSerializer.Load(path);
+
+      Assert.True(loaded.IsSuccess, FormatProblems(loaded.Problems));
+      Assert.Equal("Replaced Export", loaded.Level!.Metadata.Name);
+      Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.*.tmp"));
+    }
+    finally
+    {
+      if (File.Exists(path)) File.Delete(path);
+    }
+  }
+
+  [Fact]
+  public void ExportNamesAreSafeForWindowsReservedAndInvalidFileNames()
+  {
+    Assert.Equal("_CON.mclvl", LevelFilePicker.CreateSafeLevelFileName("CON"));
+    Assert.Equal("Untitled.mclvl", LevelFilePicker.CreateSafeLevelFileName("..."));
+  }
+
+  [Fact]
+  public void CustomTerritoriesRoundTripAndReplaceTheAutomaticZoneRules()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.Board = CampaignBoardDefinition.CreateRectangle(12, 12);
+    Board board = level.Board.ToBoard();
+    level.Scenario.Territories = CampaignTerritoryRules.CreateDefaultAreas(board, level.Scenario.GameMode, playerCount: 2);
+    CampaignCoordinate movedToNoMansLand = new(0, 0);
+    level.Scenario.Territories.TeamAreas.Single(area => area.Team == NetworkTeam.Blue).Tiles.Remove(movedToNoMansLand);
+    level.Scenario.Territories.NoMansLand.Add(movedToNoMansLand);
+
+    CampaignLevelLoadResult result = CampaignLevelSerializer.Deserialize(CampaignLevelSerializer.Serialize(level));
+
+    Assert.True(result.IsSuccess, FormatProblems(result.Problems));
+    Assert.True(result.Level!.Scenario.Territories.UseCustomAreas);
+    Assert.Null(CampaignTerritoryRules.GetSquareOwner(board, result.Level.Scenario, (0, 0), 2));
+    Assert.Equal(NetworkTeam.Red, CampaignTerritoryRules.GetSquareOwner(board, result.Level.Scenario, (0, 11), 2));
+  }
+
+  [Fact]
+  public void CustomTerritoriesMustAssignEveryPlayableTileExactlyOnce()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.Scenario.Territories.UseCustomAreas = true;
+
+    CampaignValidationResult result = CampaignLevelValidator.Validate(level);
+
+    Assert.Contains(result.Problems, problem => problem.Code == "territory.area.missing");
+    Assert.Contains(result.Problems, problem => problem.Code == "territory.coverage");
   }
 
   private static CampaignLevelDefinition CreateValidLevel()

@@ -17,13 +17,30 @@ public sealed class CampaignLevelDefinition
   public List<CampaignReinforcementDefinition> Reinforcements { get; set; } = [];
   public List<CampaignScriptedEventDefinition> ScriptedEvents { get; set; } = [];
 
-  public static CampaignLevelDefinition CreateNew(int width = 16, int height = 12)
+  /// <summary>Creates a level on the same medium battlefield used by a normal match.</summary>
+  public static CampaignLevelDefinition CreateNew() => CreateNew(BoardRules.GetBoard("Medium"));
+
+  /// <summary>Creates an explicit rectangular test/custom board when dimensions are requested.</summary>
+  public static CampaignLevelDefinition CreateNew(int width, int height) =>
+    CreateNew(CampaignBoardDefinition.CreateRectangle(width, height));
+
+  private static CampaignLevelDefinition CreateNew(Board board) => CreateNew(new CampaignBoardDefinition
+  {
+    Shape = CampaignBoardShape.Custom,
+    OriginX = board.MinX,
+    OriginY = board.MinY,
+    Width = board.BoardArray.GetLength(1),
+    Height = board.BoardArray.GetLength(0),
+    Tiles = board.Cells.Select(cell => new CampaignCoordinate(cell.x, cell.y)).ToList()
+  });
+
+  private static CampaignLevelDefinition CreateNew(CampaignBoardDefinition board)
   {
     string[] purchasable = UnitRules.Purchasable.Select(rule => rule.Type).ToArray();
     return new CampaignLevelDefinition
     {
       Metadata = new CampaignLevelMetadata { Name = "Untitled Campaign Level" },
-      Board = CampaignBoardDefinition.CreateRectangle(width, height),
+      Board = board,
       Teams =
       [
         new CampaignTeamDefinition
@@ -31,6 +48,7 @@ public sealed class CampaignLevelDefinition
           Team = NetworkTeam.Red,
           Controller = CampaignTeamController.Human,
           StartingMoney = Globals.StartingCash,
+          ActionsPerTurn = MatchRules.ActionsPerTurn,
           AvailableUnitTypes = [.. purchasable]
         },
         new CampaignTeamDefinition
@@ -38,6 +56,7 @@ public sealed class CampaignLevelDefinition
           Team = NetworkTeam.Blue,
           Controller = CampaignTeamController.Cpu,
           StartingMoney = Globals.StartingCash,
+          ActionsPerTurn = MatchRules.ActionsPerTurn,
           AvailableUnitTypes = [.. purchasable]
         }
       ],
@@ -56,7 +75,7 @@ public sealed class CampaignLevelDefinition
 public static class CampaignLevelFormat
 {
   public const int OldestSupportedVersion = 1;
-  public const int CurrentVersion = 2;
+  public const int CurrentVersion = 3;
   public const string Extension = ".mclvl";
   public const int MaximumFileBytes = 5 * 1024 * 1024;
   public const int MaximumBoardTiles = 4_096;
@@ -188,7 +207,7 @@ public sealed class CampaignTeamDefinition
   public NetworkTeam Team { get; set; }
   public CampaignTeamController Controller { get; set; }
   public int StartingMoney { get; set; } = Globals.StartingCash;
-  public int ActionsPerTurn { get; set; } = 2;
+  public int ActionsPerTurn { get; set; } = MatchRules.ActionsPerTurn;
   public bool PurchasesEnabled { get; set; } = true;
   public string? ChosenRoyal { get; set; }
   public List<string> AvailableUnitTypes { get; set; } = [];
@@ -245,10 +264,32 @@ public sealed class CampaignScenarioDefinition
 {
   public string GameMode { get; set; } = "Regicide";
   public NetworkTeam FirstTeam { get; set; } = NetworkTeam.Red;
+  /// <summary>
+  /// Optional authored ownership map. When disabled, the normal match territory rules are used.
+  /// Enabling it lets a level author paint every team's deployment area and No-Man's-Land.
+  /// </summary>
+  public CampaignTerritoriesDefinition Territories { get; set; } = new();
   /// <summary>Null means no turn limit.</summary>
   public int? TurnLimit { get; set; }
   public List<CampaignObjectiveDefinition> VictoryConditions { get; set; } = [];
   public List<CampaignObjectiveDefinition> DefeatConditions { get; set; } = [];
+}
+
+/// <summary>
+/// A complete, explicit territory map for a campaign board. A tile belongs to exactly one team
+/// area or to No-Man's-Land when <see cref="UseCustomAreas"/> is enabled.
+/// </summary>
+public sealed class CampaignTerritoriesDefinition
+{
+  public bool UseCustomAreas { get; set; }
+  public List<CampaignCoordinate> NoMansLand { get; set; } = [];
+  public List<CampaignTeamAreaDefinition> TeamAreas { get; set; } = [];
+}
+
+public sealed class CampaignTeamAreaDefinition
+{
+  public NetworkTeam Team { get; set; }
+  public List<CampaignCoordinate> Tiles { get; set; } = [];
 }
 
 public sealed class CampaignRestrictionsDefinition
