@@ -1,9 +1,13 @@
 ### Piece Shapes
-- `Straight`: Any directly adjacent square
-- `Diagonal`: Any diagonally aajacent square
-- `Any`: Staight && Diagonal
-- `Forward`: In the direction of the opposing player
-- `Absolute`: Pick one; can't mix and match
+
+- `Straight`: One directly adjacent, orthogonal square.
+- `Line`: One or more squares in an orthogonal straight line.
+- `Diagonal`: One directly adjacent diagonal square.
+- `Any`: Straight and diagonal squares.
+- `Forward`: In the direction of the opposing player.
+- `Absolute`: Pick one; can't mix and match.
+
+Attack ranges are inclusive. Define a unit's range as `(minimum, maximum)`: `(1, 3)` allows one to three squares, and `(2, 4)` allows two to four.
 
 ## Host the match server on Render
 

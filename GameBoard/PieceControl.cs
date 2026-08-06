@@ -11,7 +11,7 @@ internal static class Actions
   {
     return piece.Definition.Movement.shape switch
     {
-      Shape.Straight => ShapeFuncs.StraightShape(1),
+      Shape.Straight or Shape.Line => ShapeFuncs.StraightShape(),
       Shape.Any =>
       [
         (1, 0), (-1, 0), (0, 1), (0, -1),
@@ -83,6 +83,7 @@ internal static class Actions
   {
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
+    Shape.Line => RuleShape.Line,
     Shape.Forward => RuleShape.Forward,
     Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
@@ -98,7 +99,11 @@ internal static class Actions
     switch (action.shape)
     {
       case Shape.Straight:
-        squares = ShapeFuncs.StraightShape(action.range);
+        squares = ShapeFuncs.StraightShape();
+        break;
+
+      case Shape.Line:
+        squares = ShapeFuncs.LineShape(action.range);
         break;
 
       case Shape.Any:
@@ -118,7 +123,7 @@ internal static class Actions
         break;
 
       case Shape.PierceStraight:
-        squares = ShapeFuncs.StraightShape(action.range);
+        squares = ShapeFuncs.LineShape(action.range);
         break;
 
       case Shape.MoveOnEnemy:
@@ -182,7 +187,12 @@ internal static class ShapeFuncs
     return validSquares;
   }
 
-  internal static List<(int x, int y)> StraightShape(int range)
+  internal static List<(int x, int y)> StraightShape()
+  {
+    return [(1, 0), (-1, 0), (0, 1), (0, -1)];
+  }
+
+  internal static List<(int x, int y)> LineShape(int range)
   {
     List<(int x, int y)> validSquares = new();
 

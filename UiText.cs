@@ -1,5 +1,6 @@
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 
 namespace MedivalChess;
 
@@ -41,7 +42,7 @@ internal static class UiText
 
   internal static string BuildAttackDetails(PieceDefinition definition)
   {
-    return $"ATTACK  {definition.Attack} damage | {FormatAction(definition.AttackShape)}";
+    return $"ATTACK  {definition.Attack} damage | {FormatAction(definition.AttackRange, definition.AttackPattern)}";
   }
 
   internal static string GetTeamDisplayName(TeamName teamName)
@@ -61,11 +62,20 @@ internal static class UiText
     return $"{action.range} {GetShapeLabel(action.shape)}";
   }
 
+  internal static string FormatAction(AttackRange range, Shape shape)
+  {
+    string distance = range.Minimum == range.Maximum
+      ? range.Maximum.ToString()
+      : $"{range.Minimum}-{range.Maximum}";
+    return $"{distance} {GetShapeLabel(shape)}";
+  }
+
   internal static string GetShapeLabel(Shape shape)
   {
     return shape switch
     {
-      Shape.Straight => "Line",
+      Shape.Straight => "Straight",
+      Shape.Line => "Line",
       Shape.Forward => "Forward",
       Shape.AbsoluteStraightOrDiagonal => "Line/Diag",
       Shape.ForwardOrForwardDiagonal => "Fwd/Diag",

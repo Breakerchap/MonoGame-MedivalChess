@@ -1,5 +1,6 @@
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
+using MedivalChess.Shared;
 using Xunit;
 
 namespace MedivalChess.Tests;
@@ -68,7 +69,7 @@ public class UiTextTests
   public void ActionDescriptions_UseShortLabelsThatFitTheSidebar()
   {
     Assert.Equal("2 Line", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
-    Assert.Equal("1 Line", UiText.FormatAction(PieceDefinitions.Peasant.AttackShape));
+    Assert.Equal("1 Straight", UiText.FormatAction(PieceDefinitions.Peasant.AttackRange, PieceDefinitions.Peasant.AttackPattern));
   }
 
   [Fact]

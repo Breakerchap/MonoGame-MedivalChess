@@ -73,8 +73,8 @@ public sealed class SharedUnitRulesTests
     Assert.True(UnitRules.CanMove(cannon, 0, 0, 2, 0));
     Assert.False(UnitRules.CanMove(cannon, 0, 0, 3, 0));
     Assert.Equal((2, 2), (elephant.Width, elephant.Height));
-    Assert.True(UnitRules.CanMove(elephant, 0, 0, 4, 0));
-    Assert.False(UnitRules.CanMove(elephant, 0, 0, 5, 0));
+    Assert.True(UnitRules.CanMove(elephant, 0, 0, 3, 0));
+    Assert.False(UnitRules.CanMove(elephant, 0, 0, 4, 0));
     Assert.True(UnitRules.FootprintsOverlap(0, 0, 2, 2, 1, 1, 1, 1));
     Assert.False(UnitRules.FootprintsOverlap(0, 0, 2, 2, 2, 0, 1, 1));
   }
@@ -100,7 +100,8 @@ public sealed class SharedUnitRulesTests
 
     Assert.Equal(RuleShape.Any, catapult.AttackPattern);
     Assert.Equal("Attacks over terrain and enemies.", UnitRules.GetAbilityDescription("Catapult"));
-    Assert.Equal((2, 4), (bombard.MinimumAttackRange, bombard.AttackRange));
+    Assert.Equal((2, 3), (bombard.MinimumAttackRange, bombard.AttackRange));
+    Assert.Equal(new AttackRange(2, 3), bombard.AllowedAttackRange);
     Assert.Contains("barricade", UnitRules.GetAbilityDescription("Engineer"));
     Assert.Contains("Ignores terrain", UnitRules.GetAbilityDescription("Elephant"));
     Assert.True(AbilityRules.IsEngineerDemolition("Demolish"));

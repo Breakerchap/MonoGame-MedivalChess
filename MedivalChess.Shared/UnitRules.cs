@@ -9,6 +9,7 @@ public enum RuleShape
 {
   Any,
   Straight,
+  Line,
   Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
@@ -41,36 +42,30 @@ public sealed record UnitRule(
   int Cost,
   int MinimumAttackRange = 1,
   string AbilityDescription = ""
-);
+)
+{
+  public AttackRange AllowedAttackRange => new(MinimumAttackRange, AttackRange);
+}
 
 public static class UnitRules
 {
-  private static readonly UnitRule[] Rules =
-  [
-    new("Soldier", RuleCategory.Melee, 3, RuleShape.Straight, 10, 15, 1, 1, 1, RuleShape.Straight, 20),
-    new("Defender", RuleCategory.Melee, 2, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 15),
-    new("Archer", RuleCategory.Ranged, 3, RuleShape.Straight, 10, 10, 1, 1, 3, RuleShape.Any, 30, 2),
-    new("Peasant", RuleCategory.Melee, 1, RuleShape.Any, 5, 5, 1, 1, 1, RuleShape.Straight, 10),
-    new("Knight", RuleCategory.Melee, 4, RuleShape.Any, 20, 30, 1, 1, 1, RuleShape.Any, 50),
-    new("Crossbowman", RuleCategory.Ranged, 2, RuleShape.Any, 20, 15, 1, 1, 3, RuleShape.Any, 50, 1),
-    new("Chariot", RuleCategory.Melee, 5, RuleShape.Straight, 15, 25, 1, 1, 2, RuleShape.Straight, 40, 2),
-    new("Cannon", RuleCategory.Mechanical, 2, RuleShape.Straight, 30, 15, 1, 2, 4, RuleShape.Straight, 50, 2),
-    new("Spy", RuleCategory.Intelligence, 5, RuleShape.Any, 0, 15, 1, 1, 3, RuleShape.Straight, 35, 1, "Marks an enemy; it takes double damage until attacked."),
-    new("Catapult", RuleCategory.Mechanical, 1, RuleShape.Any, 20, 20, 1, 2, 5, RuleShape.Any, 55, 3, "Attacks over terrain and enemies."),
-    new("Bombard", RuleCategory.Ranged, 2, RuleShape.Straight, 15, 20, 1, 1, 4, RuleShape.Straight, 55, 2, "The target and every adjacent unit take 10 damage, including friendly units. Large units take damage only once."),
-    new("Ox", RuleCategory.Transport, 4, RuleShape.Any, 5, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Carries one friendly unit. Its movement becomes 3 Any while carrying a Mechanical unit."),
-    new("Engineer", RuleCategory.Intelligence, 3, RuleShape.Any, 0, 20, 1, 1, 1, RuleShape.Any, 25, 1, "Builds up to two roads, 20-health barricades, or mines each turn. It may also demolish an adjacent Engineer structure without triggering mines."),
-    new("Ballista", RuleCategory.Mechanical, 1, RuleShape.Straight, 25, 20, 1, 2, 5, RuleShape.Straight, 55, 2, "Its attack pierces enemies in a straight line."),
-    new("Elephant", RuleCategory.Melee, 4, RuleShape.Straight, 15, 60, 2, 2, 0, RuleShape.None, 55, 0, "May move through enemies, damaging each crossed unit. Ignores terrain."),
-    new("Guard", RuleCategory.Melee, 3, RuleShape.Straight, 10, 25, 1, 1, 1, RuleShape.Straight, 35, 1, "Attaches to a friendly non-royal unit and takes damage for it."),
-    new("Mercenary", RuleCategory.Melee, 3, RuleShape.Any, 25, 20, 1, 1, 2, RuleShape.Any, 10, 1, "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill."),
-    new("Farm", RuleCategory.Structure, 0, RuleShape.None, 0, 30, 3, 3, 0, RuleShape.None, 60, 0, "Earns the configured gold amount at the start of each owner turn (default 5). Units may move and attack over it."),
-    new("King", RuleCategory.Royal, 1, RuleShape.Any, 15, 110, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies take 5 less damage, to a minimum of 5."),
-    new("Princess", RuleCategory.Royal, 1, RuleShape.Any, 10, 80, 1, 1, 4, RuleShape.Any, 0, 1, "May attack over friendly units."),
-    new("Palace", RuleCategory.Royal, 0, RuleShape.None, 0, 150, 3, 2, 0, RuleShape.None, 0, 0, "Earns 5 gold at the start of each owner turn."),
-    new("Baron", RuleCategory.Royal, 2, RuleShape.Straight, 10, 100, 1, 1, 1, RuleShape.Any, 0, 1, "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack."),
-    new("Emissary", RuleCategory.Royal, 4, RuleShape.Any, 5, 80, 1, 1, 1, RuleShape.Any, 0, 1, "Moves directly adjacent friendly 1x1 allies with it.")
-  ];
+  private static readonly UnitRule[] Rules = PieceDefinitions.Encyclopedia
+    .Select(definition => new UnitRule(
+      definition.Type.ToString(),
+      (RuleCategory)definition.Category,
+      definition.Movement.range,
+      ToRuleShape(definition.Movement.shape),
+      definition.Attack,
+      definition.Health,
+      definition.Size.x,
+      definition.Size.y,
+      definition.AttackRange.Maximum,
+      ToRuleShape(definition.AttackPattern),
+      definition.Cost,
+      definition.AttackRange.Minimum,
+      definition.AbilityDescription
+    ))
+    .ToArray();
 
   private static readonly Dictionary<string, UnitRule> ByType = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
 
@@ -89,6 +84,18 @@ public static class UnitRules
     ? rule.AbilityDescription
     : string.Empty;
 
+  private static RuleShape ToRuleShape(Shape shape) => shape switch
+  {
+    Shape.Any => RuleShape.Any,
+    Shape.Straight => RuleShape.Straight,
+    Shape.Line => RuleShape.Line,
+    Shape.Forward => RuleShape.Forward,
+    Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
+    Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
+    Shape.PierceStraight => RuleShape.PierceStraight,
+    _ => RuleShape.None
+  };
+
   public static bool FootprintsOverlap(
     int firstX, int firstY, int firstWidth, int firstHeight,
     int secondX, int secondY, int secondWidth, int secondHeight
@@ -105,7 +112,8 @@ public static class UnitRules
     int maximumY = rule.MoveRange;
     return rule.MovePattern switch
     {
-      RuleShape.Straight => (dx == 0 || dy == 0) && dx <= maximumX && dy <= maximumY,
+      RuleShape.Straight => dx + dy == 1,
+      RuleShape.Line => (dx == 0 || dy == 0) && dx <= maximumX && dy <= maximumY,
       RuleShape.Any => dx <= maximumX && dy <= maximumY,
       RuleShape.None => false,
       _ => dx <= maximumX && dy <= maximumY
@@ -155,7 +163,8 @@ public static class UnitRules
     return pattern switch
     {
       RuleShape.Any => true,
-      RuleShape.Straight or RuleShape.PierceStraight => dx == 0 || dy == 0,
+      RuleShape.Straight => distance == 1 && (dx == 0 || dy == 0),
+      RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
       _ => false

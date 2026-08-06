@@ -53,6 +53,7 @@ public static class MovementRules
   public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
   {
     RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
+    RuleShape.Line => [(1, 0), (-1, 0), (0, 1), (0, -1)],
     RuleShape.Any => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
     RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),

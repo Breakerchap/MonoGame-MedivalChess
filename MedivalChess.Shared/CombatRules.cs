@@ -51,7 +51,7 @@ public static class LineOfSightRules
       foreach ((int x, int y) square in SquaresBetween(origin, target))
       {
         if (isBarricade(square) || (ranged && isForest(square)) ||
-            (attacker.AttackPattern == RuleShape.Straight && blocksDirectPath(square)))
+            (attacker.AttackPattern == RuleShape.Line && blocksDirectPath(square)))
         {
           clear = false;
           break;

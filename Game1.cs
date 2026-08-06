@@ -3757,7 +3757,7 @@ internal sealed class Game1 : Game
 
   private bool HasClearDirectAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
-    if (attacker.Definition.AttackShape.shape != Shape.Straight)
+    if (attacker.Definition.AttackPattern != Shape.Line)
     {
       return true;
     }
