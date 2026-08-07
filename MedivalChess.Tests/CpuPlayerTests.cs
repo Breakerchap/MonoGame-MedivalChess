@@ -189,7 +189,24 @@ public sealed class CpuPlayerTests
     Assert.Equal(1, medium.Search.OpponentActionsToPredict);
     Assert.Equal(MatchRules.ActionsPerTurn, hard.Search.OpponentActionsToPredict);
     Assert.Equal(0f, best.MistakeChance);
+    Assert.Equal(0f, best.StrategyVariationChance);
+    Assert.True(easy.StrategyVariationChance > hard.StrategyVariationChance);
+    Assert.True(best.Search.TacticalExtensionDepth > hard.Search.TacticalExtensionDepth);
     Assert.Equal(1, best.TopChoicesForRandomSelection);
+  }
+
+  [Fact]
+  public void BestProfile_IsDeterministicEvenWhenOtherProfilesCanVaryBetweenMatches()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+    );
+
+    CpuTurnPlan first = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Best(101), CancellationToken.None);
+    CpuTurnPlan second = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Best(987), CancellationToken.None);
+
+    Assert.Equal(first.Actions.Select(action => action.Describe()), second.Actions.Select(action => action.Describe()));
   }
 
   [Fact]

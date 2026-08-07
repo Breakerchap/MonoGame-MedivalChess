@@ -230,7 +230,7 @@ public sealed class EliminateEnemiesGoal : ICpuScenarioGoal
 
   public float EvaluateProgress(CpuGameState state, NetworkTeam team) => -state.Pieces
     .Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral)
-    .Sum(piece => MaterialEvaluation.GetUnitValue(piece.Type));
+    .Sum(piece => MaterialEvaluation.GetUnitValue(piece.Type, state));
 
   public IEnumerable<CpuIntent> GenerateIntents(CpuGameState state, NetworkTeam team) => state.Pieces
     .Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral)

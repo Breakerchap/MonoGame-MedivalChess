@@ -7,6 +7,8 @@ public sealed class CpuSearchSettings
   public int CandidatesPerNode { get; init; } = 16;
   public int OpponentBeamWidth { get; init; } = 6;
   public int OpponentActionsToPredict { get; init; } = 1;
+  /// <summary>Extra attack-only plies after the ordinary turn horizon to resolve forcing exchanges.</summary>
+  public int TacticalExtensionDepth { get; init; }
   /// <summary>
   /// Deterministic cap on simulated actions. This complements the wall-clock guard so a fixed
   /// seed produces the same completed search work when the machine is otherwise busy.
@@ -59,6 +61,11 @@ public sealed class CpuProfile
   public EvaluationWeights Weights { get; init; } = new();
   public CpuPersonality Personality { get; init; } = CpuPersonality.Balanced;
   public int RandomSeed { get; init; } = 1;
+  /// <summary>
+  /// Chance to select a different plan only when it is already inside the near-best score window.
+  /// This is strategic variety, not an intentional mistake.
+  /// </summary>
+  public float StrategyVariationChance { get; init; }
   public float MistakeChance { get; init; }
   public int TopChoicesForRandomSelection { get; init; } = 1;
 
@@ -69,7 +76,8 @@ public sealed class CpuProfile
     RandomSeed = seed,
     // Easy is a shallow, understandable opponent rather than a random one. It only varies
     // between close plans and never samples from the full legal-action list.
-    MistakeChance = 0.12f,
+    StrategyVariationChance = 0.7f,
+    MistakeChance = 0.08f,
     TopChoicesForRandomSelection = 2,
     Weights = new EvaluationWeights
     {
@@ -83,6 +91,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 6,
       OpponentBeamWidth = 0,
       OpponentActionsToPredict = 0,
+      TacticalExtensionDepth = 0,
       MaxSearchNodes = 42,
       MaximumPurchasePlacementCandidates = 18,
       MaxSearchMilliseconds = 60,
@@ -97,7 +106,8 @@ public sealed class CpuProfile
     Difficulty = CpuDifficultyLevel.Medium,
     RandomSeed = seed,
     // Small seeded variety keeps repeated games from looking scripted without choosing a weak plan.
-    MistakeChance = 0.14f,
+    StrategyVariationChance = 0.6f,
+    MistakeChance = 0.08f,
     TopChoicesForRandomSelection = 3,
     Weights = new EvaluationWeights
     {
@@ -116,6 +126,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 9,
       OpponentBeamWidth = 2,
       OpponentActionsToPredict = 1,
+      TacticalExtensionDepth = 1,
       MaxSearchNodes = 180,
       MaximumPurchasePlacementCandidates = 12,
       MaxSearchMilliseconds = 3_000,
@@ -133,7 +144,8 @@ public sealed class CpuProfile
     RandomSeed = seed,
     // Hard remains very strong, but a small seeded choice among essentially equal plans keeps
     // repeated matches from becoming a memorised script.
-    MistakeChance = 0.03f,
+    StrategyVariationChance = 0.4f,
+    MistakeChance = 0.02f,
     TopChoicesForRandomSelection = 2,
     Weights = new EvaluationWeights
     {
@@ -149,6 +161,7 @@ public sealed class CpuProfile
       CandidatesPerNode = 24,
       OpponentBeamWidth = 8,
       OpponentActionsToPredict = 3,
+      TacticalExtensionDepth = 2,
       MaxSearchNodes = 2_400,
       MaximumPurchasePlacementCandidates = 60,
       MaxSearchMilliseconds = 650,
@@ -166,6 +179,7 @@ public sealed class CpuProfile
     Name = "Best CPU",
     Difficulty = CpuDifficultyLevel.Best,
     RandomSeed = seed,
+    StrategyVariationChance = 0f,
     MistakeChance = 0f,
     TopChoicesForRandomSelection = 1,
     Weights = new EvaluationWeights
@@ -181,7 +195,8 @@ public sealed class CpuProfile
       BeamWidth = 36,
       CandidatesPerNode = 48,
       OpponentBeamWidth = 16,
-      OpponentActionsToPredict = 3,
+      OpponentActionsToPredict = 5,
+      TacticalExtensionDepth = 3,
       MaxSearchNodes = 20_000,
       MaximumPurchasePlacementCandidates = 96,
       MaxSearchMilliseconds = 5_000,
@@ -210,6 +225,7 @@ public sealed class CpuProfile
       Weights = baseline.Weights,
       Personality = personality,
       RandomSeed = baseline.RandomSeed,
+      StrategyVariationChance = baseline.StrategyVariationChance,
       MistakeChance = baseline.MistakeChance,
       TopChoicesForRandomSelection = baseline.TopChoicesForRandomSelection
     };

@@ -134,7 +134,7 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
-  public void ThreatenedRoyal_CandidateRankingBringsAUnitBackToDefendIt()
+  public void ThreatenedRoyal_CandidateRankingMovesTowardTheInvaderInsteadOfClusteringAtTheRoyal()
   {
     CpuGameState state = CreateState(
       [
@@ -155,9 +155,123 @@ public sealed class CpuAdvancedTests
       state, NetworkTeam.Red, moves, new CpuSearchSettings { CandidatesPerNode = 1 }));
 
     MoveAction move = Assert.IsType<MoveAction>(candidate.Action);
-    int oldRoyalDistance = Math.Abs(2 - 0) + Math.Abs(2 - 8);
-    int newRoyalDistance = Math.Abs(move.DestinationX - 0) + Math.Abs(move.DestinationY - 8);
-    Assert.True(newRoyalDistance < oldRoyalDistance, candidate.Reason);
+    int oldInvaderDistance = Math.Abs(2 - 0) + Math.Abs(2 - 1);
+    int newInvaderDistance = Math.Abs(move.DestinationX - 0) + Math.Abs(move.DestinationY - 1);
+    Assert.True(newInvaderDistance < oldInvaderDistance, candidate.Reason);
+  }
+
+  [Fact]
+  public void MaterialEvaluation_DoesNotValueAnExpensiveUnitMoreThanAnyOtherNormalUnit()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-peasant", "Peasant", NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("blue-elephant", "Elephant", NetworkTeam.Blue, 4, 4, 60)
+      ],
+      redMoney: 0
+    );
+
+    float material = new MaterialEvaluation().Evaluate(state, NetworkTeam.Red, new EvaluationContext(CpuProfile.Easy()));
+
+    Assert.Equal(0f, material);
+  }
+
+  [Fact]
+  public void TacticalTargetRewardsPrioritiseFarmsAndRoyals()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
+        new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5),
+        new NetworkPiece("blue-farm", "Farm", NetworkTeam.Blue, 3, -3, 30),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+      ],
+      redMoney: 0
+    );
+    NetworkPiece peasant = state.Pieces.Single(piece => piece.Id == "blue-peasant");
+    NetworkPiece farm = state.Pieces.Single(piece => piece.Id == "blue-farm");
+    NetworkPiece king = state.Pieces.Single(piece => piece.Id == "blue-king");
+
+    Assert.True(
+      CombatTargetScoring.GetKillReward(state, NetworkTeam.Red, farm) >
+      CombatTargetScoring.GetKillReward(state, NetworkTeam.Red, peasant)
+    );
+    Assert.True(
+      CombatTargetScoring.GetRangeSetupReward(state, NetworkTeam.Red, king) >
+      CombatTargetScoring.GetRangeSetupReward(state, NetworkTeam.Red, peasant)
+    );
+  }
+
+  [Fact]
+  public void NonRegicideModes_DoNotGiveRoyalKillsOrSafetyARegicideWeight()
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Small", "Light", "Light", "Conquest", 1234, 0, 0f, 0f, 2, 1, 15, FarmsEnabled: false);
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 5, 110),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -5, 110),
+        new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 1, -4, 5)
+      ],
+      configuration,
+      scenario: CpuScenarioDefinition.ForMatch(configuration),
+      redMoney: 0
+    );
+
+    NetworkPiece king = state.Pieces.Single(piece => piece.Id == "blue-king");
+    NetworkPiece peasant = state.Pieces.Single(piece => piece.Id == "blue-peasant");
+    EvaluationBreakdown evaluation = new StateEvaluator().EvaluateWithBreakdown(
+      state, NetworkTeam.Red, new EvaluationContext(CpuProfile.Best(14)));
+
+    Assert.False(CpuObjectiveRules.ShouldPursueEnemyRoyal(state));
+    Assert.True(CombatTargetScoring.GetKillReward(state, NetworkTeam.Red, king) <
+      CombatTargetScoring.GetKillReward(state, NetworkTeam.Red, peasant));
+    Assert.Equal(0f, evaluation.Terms["RoyalSafety"]);
+  }
+
+  [Fact]
+  public void CandidateSelection_RetainsAttackMoveAndPurchaseOptionsInANarrowBeam()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+    );
+    IReadOnlyList<ScoredAction> candidates = new CpuActionCandidateSelector().SelectCandidates(
+      state,
+      NetworkTeam.Red,
+      new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red),
+      new CpuSearchSettings { CandidatesPerNode = 3 });
+
+    Assert.Contains(candidates, candidate => candidate.Action is AttackAction);
+    Assert.Contains(candidates, candidate => candidate.Action is MoveAction);
+    Assert.Contains(candidates, candidate => candidate.Action is PurchaseAction);
+  }
+
+  [Fact]
+  public void CandidateRankingPrefersMovingIntoAttackRangeOfTheEnemyRoyal()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -2, 5)
+      ],
+      scenario: CpuScenarioDefinition.ForMatch(CreateConfiguration()),
+      redMoney: 0
+    );
+    IReadOnlyList<ICpuGameAction> moves = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<MoveAction>()
+      .Where(move => move.PieceId == "red-soldier")
+      .Cast<ICpuGameAction>()
+      .ToArray();
+
+    MoveAction selected = Assert.IsType<MoveAction>(Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red, moves, new CpuSearchSettings { CandidatesPerNode = 1 })).Action);
+    CpuGameState moved = selected.Apply(state);
+    NetworkPiece soldier = moved.Pieces.Single(piece => piece.Id == "red-soldier");
+    NetworkPiece enemyRoyal = moved.Pieces.Single(piece => piece.Id == "blue-king");
+
+    Assert.True(CpuGameRules.CanDirectlyAttack(moved, soldier, enemyRoyal), selected.Describe());
   }
 
   [Fact]

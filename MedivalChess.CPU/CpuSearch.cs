@@ -33,6 +33,7 @@ public sealed class CpuDecisionReport
   public int NodesGenerated { get; init; }
   public int NodesEvaluated { get; init; }
   public int DuplicateStatesRemoved { get; init; }
+  public int EvaluationCacheHits { get; init; }
   public bool TimedOut { get; init; }
   public bool NodeBudgetReached { get; init; }
   public bool Cancelled { get; init; }
@@ -91,13 +92,15 @@ public sealed class CpuPlayer : ICpuPlayer
     int nodesGenerated = 0;
     int nodesEvaluated = 0;
     int duplicatesRemoved = 0;
+    int evaluationCacheHits = 0;
     bool timedOut = false;
     bool nodeBudgetReached = false;
     bool cancelled = cancellationToken.IsCancellationRequested;
     ICpuGameAction? fallbackAction = null;
     int rootLegalActionCount = 0;
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache = [];
-    EvaluationBreakdown initialBreakdown = _evaluator.EvaluateWithBreakdown(state, team, context);
+    Dictionary<ulong, EvaluationBreakdown> evaluatedStates = [];
+    EvaluationBreakdown initialBreakdown = EvaluateCached(state, team, context, evaluatedStates, ref evaluationCacheHits);
     List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
     // Snapshot preparation has no branching and is done exactly once. Start the bounded timer
     // after it so first-use JIT work cannot make an otherwise identical seed choose a shallower
@@ -105,7 +108,8 @@ public sealed class CpuPlayer : ICpuPlayer
     stopwatch.Start();
     int maximumActions = GetMaximumActionsToPlan(state, team);
 
-    for (int depth = 0; depth < maximumActions && !cancelled && !timedOut && !nodeBudgetReached; depth++)
+    int totalDepth = maximumActions + Math.Max(0, settings.TacticalExtensionDepth);
+    for (int depth = 0; depth < totalDepth && !cancelled && !timedOut && !nodeBudgetReached; depth++)
     {
       List<SearchNode> expanded = [];
       Dictionary<ulong, float> bestScoreByState = [];
@@ -134,6 +138,13 @@ public sealed class CpuPlayer : ICpuPlayer
         }
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
           node.State, team, legal, settings, profile.Personality);
+        if (depth >= maximumActions)
+        {
+          // Quiescence extension: once the ordinary horizon is reached, only continue forcing
+          // exchanges. This prevents the search from stopping halfway through an obvious attack
+          // sequence without ballooning into another full quiet-move layer.
+          candidates = candidates.Where(candidate => IsForcingAction(candidate.Action)).ToArray();
+        }
         foreach (ScoredAction candidate in candidates)
         {
           // Candidate selection is strategic and may be replaced in tests or future profiles;
@@ -160,7 +171,7 @@ public sealed class CpuPlayer : ICpuPlayer
 
           CpuGameState result = candidate.Action.Apply(node.State);
           nodesGenerated++;
-          EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, team, context);
+          EvaluationBreakdown breakdown = EvaluateCached(result, team, context, evaluatedStates, ref evaluationCacheHits);
           nodesEvaluated++;
           // Preserve tactical urgency across the turn. Pure material evaluation otherwise
           // overvalues buying before taking an immediately available kill.
@@ -205,7 +216,8 @@ public sealed class CpuPlayer : ICpuPlayer
       if (settings.OpponentActionsToPredict > 0 && node.State.Winner is null && node.State.CurrentTurn != team)
       {
         float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken,
-          searchActionCache, ref nodesGenerated, ref nodesEvaluated, ref timedOut, ref nodeBudgetReached, ref cancelled);
+          searchActionCache, evaluatedStates, ref evaluationCacheHits, ref nodesGenerated, ref nodesEvaluated,
+          ref timedOut, ref nodeBudgetReached, ref cancelled);
         opponentPenalty = Math.Max(0f, node.Score - afterOpponent);
         adjustedScore = afterOpponent;
       }
@@ -246,6 +258,7 @@ public sealed class CpuPlayer : ICpuPlayer
       NodesGenerated = nodesGenerated,
       NodesEvaluated = nodesEvaluated,
       DuplicateStatesRemoved = duplicatesRemoved,
+      EvaluationCacheHits = evaluationCacheHits,
       TimedOut = timedOut,
       NodeBudgetReached = nodeBudgetReached,
       Cancelled = cancelled,
@@ -384,7 +397,8 @@ public sealed class CpuPlayer : ICpuPlayer
     {
       return null;
     }
-    if (profile.TopChoicesForRandomSelection <= 1 || profile.MistakeChance <= 0f)
+    if (profile.TopChoicesForRandomSelection <= 1 ||
+        (profile.MistakeChance <= 0f && profile.StrategyVariationChance <= 0f))
     {
       return farms[0].Action;
     }
@@ -402,7 +416,7 @@ public sealed class CpuPlayer : ICpuPlayer
 
     int seed = unchecked(profile.RandomSeed ^ (int)stateHash ^ (int)(stateHash >> 32));
     Random random = new(seed);
-    return random.NextDouble() < Math.Clamp(profile.MistakeChance + profile.Search.Randomness, 0f, 1f)
+    return random.NextDouble() < Math.Clamp(profile.MistakeChance + profile.StrategyVariationChance + profile.Search.Randomness, 0f, 1f)
       ? comparable[1 + random.Next(comparable.Length - 1)]
       : farms[0].Action;
   }
@@ -415,6 +429,8 @@ public sealed class CpuPlayer : ICpuPlayer
     Stopwatch stopwatch,
     CancellationToken cancellationToken,
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
+    Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
+    ref int evaluationCacheHits,
     ref int nodesGenerated,
     ref int nodesEvaluated,
     ref bool timedOut,
@@ -428,11 +444,11 @@ public sealed class CpuPlayer : ICpuPlayer
       : profile.Search.OpponentActionsToPredict;
     if (actionsToPredict <= 0)
     {
-      return _evaluator.Evaluate(state, perspective, context);
+      return EvaluateCached(state, perspective, context, evaluatedStates, ref evaluationCacheHits).Total;
     }
 
-    // Medium mode looks only one opponent action ahead. Hard and Best pass three here, so they
-    // models the whole enemy turn with a deliberately narrower beam instead of greedily fixing
+    // Medium mode looks only one opponent action ahead. Hard looks three and Best five, so they
+    // model a longer enemy turn with a deliberately narrower beam instead of greedily fixing
     // the first reply and missing a move-then-attack combination.
     int opponentBeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth);
     int placementLimit = GetPurchasePlacementLimit(profile.Search, 12);
@@ -443,7 +459,7 @@ public sealed class CpuPlayer : ICpuPlayer
       MaximumPurchasePlacementCandidates = profile.Search.MaximumPurchasePlacementCandidates,
       MaxSearchMilliseconds = profile.Search.MaxSearchMilliseconds
     };
-    EvaluationBreakdown initialBreakdown = _evaluator.EvaluateWithBreakdown(state, perspective, context);
+    EvaluationBreakdown initialBreakdown = EvaluateCached(state, perspective, context, evaluatedStates, ref evaluationCacheHits);
     List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
 
     for (int depth = 0; depth < actionsToPredict; depth++)
@@ -471,7 +487,7 @@ public sealed class CpuPlayer : ICpuPlayer
           searchActionCache
         );
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
-          node.State, opponent, legal, opponentSettings, CpuPersonality.Balanced);
+          node.State, opponent, legal, opponentSettings, CpuPersonality.Aggressive);
         foreach (ScoredAction candidate in candidates)
         {
           if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
@@ -489,7 +505,7 @@ public sealed class CpuPlayer : ICpuPlayer
 
           CpuGameState result = candidate.Action.Apply(node.State);
           nodesGenerated++;
-          EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, perspective, context);
+          EvaluationBreakdown breakdown = EvaluateCached(result, perspective, context, evaluatedStates, ref evaluationCacheHits);
           nodesEvaluated++;
           // The opponent minimises the CPU perspective. Collapse equivalent continuations at
           // each depth so a transposition cannot consume the narrow reply beam twice.
@@ -565,7 +581,8 @@ public sealed class CpuPlayer : ICpuPlayer
     ulong stateHash
   )
   {
-    if (ranked.Count == 1 || profile.TopChoicesForRandomSelection <= 1 || profile.MistakeChance <= 0f)
+    if (ranked.Count == 1 || profile.TopChoicesForRandomSelection <= 1 ||
+        (profile.MistakeChance <= 0f && profile.StrategyVariationChance <= 0f))
     {
       return ranked[0];
     }
@@ -584,12 +601,37 @@ public sealed class CpuPlayer : ICpuPlayer
     // to vary naturally. Only plans already close to the best score are eligible.
     int seed = unchecked(profile.RandomSeed ^ (int)stateHash ^ (int)(stateHash >> 32));
     Random random = new(seed);
-    if (random.NextDouble() >= Math.Clamp(profile.MistakeChance + profile.Search.Randomness, 0f, 1f))
+    if (random.NextDouble() >= Math.Clamp(profile.MistakeChance + profile.StrategyVariationChance + profile.Search.Randomness, 0f, 1f))
     {
       return ranked[0];
     }
     return comparable[1 + random.Next(comparable.Count - 1)];
   }
+
+  private EvaluationBreakdown EvaluateCached(
+    CpuGameState state,
+    NetworkTeam perspective,
+    EvaluationContext context,
+    Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
+    ref int cacheHits
+  )
+  {
+    ulong hash = _hasher.ComputeSearchHash(state);
+    if (evaluatedStates.TryGetValue(hash, out EvaluationBreakdown? cached))
+    {
+      cacheHits++;
+      return cached;
+    }
+
+    EvaluationBreakdown evaluation = _evaluator.EvaluateWithBreakdown(state, perspective, context);
+    evaluatedStates[hash] = evaluation;
+    return evaluation;
+  }
+
+  private static bool IsForcingAction(ICpuGameAction action) => action is AttackAction or UseAbilityAction
+  {
+    Ability: "PickUpTreasure"
+  };
 
   private static string DescribeActions(IEnumerable<ICpuGameAction> actions) => string.Join(" | ", actions.Select(action => action.Describe()));
 

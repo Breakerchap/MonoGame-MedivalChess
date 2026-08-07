@@ -133,6 +133,9 @@ internal sealed class Game1 : Game
   private const int purchasePanelWidth = 380;
   private const int purchasePanelHeight = 510;
   private int _terrainSeed;
+  // Separate from terrain so lower CPU difficulties can vary their close-plan strategy between
+  // matches even when a developer reuses a terrain seed.
+  private int _cpuMatchVariationSeed = Random.Shared.Next();
   private Vector2 _cameraPosition = Vector2.Zero;
   private float _zoom = 1f;
   private MouseState _previousMouseState;
@@ -4991,7 +4994,8 @@ internal sealed class Game1 : Game
     _cpuProfiles.Clear();
     foreach (TeamName team in Team.ActiveTeams.Skip(1))
     {
-      _cpuProfiles[team] = CpuProfile.ForDifficulty(_selectedCpuDifficulty, _terrainSeed + (int)team, _selectedCpuPersonality);
+      int seed = HashCode.Combine(_terrainSeed, _cpuMatchVariationSeed, (int)team);
+      _cpuProfiles[team] = CpuProfile.ForDifficulty(_selectedCpuDifficulty, seed, _selectedCpuPersonality);
     }
   }
 
@@ -5115,6 +5119,7 @@ internal sealed class Game1 : Game
   private void BeginMatchSetup(bool onlineHost = false, bool cpuOpponent = false)
   {
     CancelCpuPlanning();
+    _cpuMatchVariationSeed = Random.Shared.Next();
     _screen = Screen.Setup;
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
@@ -5870,14 +5875,17 @@ internal sealed class Game1 : Game
       royal.Size.x,
       royal.Size.y,
       _playerCount,
-      profile
+      profile,
+      _gameMode.ToString()
     );
 
     float bestScore = candidates.Max(Score);
     List<(int x, int y)> bestCandidates = candidates
       .Where(candidate => Score(candidate) >= bestScore - 0.001f)
       .ToList();
-    return bestCandidates[random.Next(bestCandidates.Count)];
+    return profile.Difficulty == CpuDifficultyLevel.Best
+      ? bestCandidates.OrderBy(candidate => candidate.y).ThenBy(candidate => candidate.x).First()
+      : bestCandidates[random.Next(bestCandidates.Count)];
   }
 
   private PieceDefinition ChooseCpuRoyal(
@@ -5889,12 +5897,14 @@ internal sealed class Game1 : Game
     // In Regicide, Best should select a genuinely resilient win-condition rather than roll a
     // weak 80-health royal. Palace is static but has the most health and generates income; Hard
     // uses the King for its adjacent-unit protection while retaining some tactical mobility.
+    if (profile.Difficulty == CpuDifficultyLevel.Best)
+    {
+      return _gameMode == GameMode.Regicide
+        ? eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.Palace) ?? eligibleRoyals[0]
+        : eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.King) ?? eligibleRoyals[0];
+    }
     if (_gameMode == GameMode.Regicide)
     {
-      if (profile.Difficulty == CpuDifficultyLevel.Best)
-      {
-        return eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.Palace) ?? eligibleRoyals[0];
-      }
       if (profile.Difficulty == CpuDifficultyLevel.Hard)
       {
         return eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.King) ?? eligibleRoyals[0];
@@ -6110,6 +6120,7 @@ internal sealed class Game1 : Game
 
   private void StartCampaignTestPlay()
   {
+    _cpuMatchVariationSeed = Random.Shared.Next();
     CampaignLevelLoadResult snapshot = _levelEditor.State.CreateTestPlaySnapshot();
     if (!snapshot.IsSuccess || snapshot.Level is null)
     {
@@ -6159,7 +6170,8 @@ internal sealed class Game1 : Game
     }
     foreach (CampaignTeamDefinition team in snapshot.Level.Teams.Where(team => team.Controller == CampaignTeamController.Cpu))
     {
-      _cpuProfiles[team.Team.ToTeamName()] = CreateCampaignCpuProfile(team.CpuProfile, _terrainSeed + (int)team.Team);
+      _cpuProfiles[team.Team.ToTeamName()] = CreateCampaignCpuProfile(team.CpuProfile,
+        HashCode.Combine(_terrainSeed, _cpuMatchVariationSeed, (int)team.Team));
     }
     if (Enum.TryParse(state.GameMode, ignoreCase: false, out GameMode mode)) _gameMode = mode;
     // Campaign test play now opens exactly like a normal local match. Custom levels can still
@@ -6205,6 +6217,7 @@ internal sealed class Game1 : Game
       Weights = baseline.Weights,
       Personality = personality,
       RandomSeed = baseline.RandomSeed,
+      StrategyVariationChance = baseline.StrategyVariationChance,
       MistakeChance = baseline.MistakeChance,
       TopChoicesForRandomSelection = baseline.TopChoicesForRandomSelection
     };

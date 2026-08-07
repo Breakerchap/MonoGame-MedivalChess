@@ -16,7 +16,8 @@ public static class CpuRoyalPlacementHeuristics
     int width,
     int height,
     int playerCount,
-    CpuProfile profile
+    CpuProfile profile,
+    string gameMode = "Regicide"
   )
   {
     ArgumentNullException.ThrowIfNull(board);
@@ -35,8 +36,15 @@ public static class CpuRoyalPlacementHeuristics
       (square.x, square.y - 1), (square.x, square.y + 1)
     }.Count(neighbour => board.ContainsCell(neighbour) && terrain.HasRiverBetween(square, neighbour)));
 
-    // Even an aggressive personality must protect its royal. The difficulty changes how tightly
-    // the CPU follows this policy, but every profile values a rear setup over a forward one.
+    // Royal depth matters only when royal survival matters to the mode. In Conquest and Dominion
+    // there is deliberately no rear-placement bias; Escort and Plunder retain reduced caution.
+    float objectiveImportance = gameMode switch
+    {
+      "Regicide" => 1f,
+      "Escort" => 0.45f,
+      "Plunder" => 0.25f,
+      _ => 0f
+    };
     float protectionBias = Math.Max(0.65f,
       profile.Personality.RoyalProtection * profile.Personality.Caution - profile.Personality.Aggression * 0.15f);
     float depthWeight = profile.Difficulty switch
@@ -47,10 +55,10 @@ public static class CpuRoyalPlacementHeuristics
       _ => 190f
     };
 
-    return rearDepth * depthWeight * protectionBias +
+    return objectiveImportance * (rearDepth * depthWeight * protectionBias +
       forestCover * 18f * protectionBias +
       nearbyForests * 4f * profile.Personality.Caution -
-      riverEdges * 6f * profile.Personality.Caution;
+      riverEdges * 6f * profile.Personality.Caution);
   }
 
   /// <summary>Returns how many friendly-territory steps sit between a footprint and the front.</summary>
