@@ -106,7 +106,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Soldier = new(
     PieceType.Soldier, PieceCategory.Melee, (3, Shape.Straight), 10, 15, (1, 1), (1, 1), Shape.Straight, 20);
   public static readonly PieceDefinition Defender = new(
-    PieceType.Defender, PieceCategory.Melee, (2, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 15);
+    PieceType.Defender, PieceCategory.Melee, (2, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 20);
   public static readonly PieceDefinition Archer = new(
     PieceType.Archer, PieceCategory.Ranged, (3, Shape.Straight), 10, 10, (1, 1), (2, 3), Shape.Any, 30);
   public static readonly PieceDefinition Spearman = new(
@@ -118,7 +118,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Crossbowman = new(
     PieceType.Crossbowman, PieceCategory.Ranged, (2, Shape.Any), 20, 15, (1, 1), (1, 3), Shape.Any, 50);
   public static readonly PieceDefinition Cavalier = new(
-    PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 50,
+    PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 55,
     "Movement refreshes after attacking.");
   public static readonly PieceDefinition Chariot = new(
     PieceType.Chariot, PieceCategory.Melee, (5, Shape.Line), 15, 25, (1, 1), (1, 3), Shape.Line, 40);
