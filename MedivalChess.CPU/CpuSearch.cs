@@ -306,6 +306,18 @@ public sealed class CpuPlayer : ICpuPlayer
       return attacks;
     }
 
+    if (profile.Difficulty is CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best)
+    {
+      ScoredAction[] nearbyNeutralHires = candidates.Where(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" } purchase &&
+        IsFullHealthNeutralMercenaryAt(state, purchase.X, purchase.Y) &&
+        candidates.Any(other => other.Action is PurchaseAction regular && regular.UnitType != "Mercenary" &&
+          Distance((purchase.X, purchase.Y), (regular.X, regular.Y)) <= 4)).ToArray();
+      if (nearbyNeutralHires.Length > 0)
+      {
+        return nearbyNeutralHires;
+      }
+    }
+
     if (mediumOrStronger &&
         state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
         cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
@@ -338,6 +350,13 @@ public sealed class CpuPlayer : ICpuPlayer
 
     return candidates;
   }
+
+  private static bool IsFullHealthNeutralMercenaryAt(CpuGameState state, int x, int y) => state.Pieces.Any(piece =>
+    piece.Type == "Mercenary" && piece.Team == NetworkTeam.Neutral && piece.X == x && piece.Y == y &&
+    UnitRules.TryGet(piece.Type, out UnitRule rule) && piece.Health >= rule.Health);
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 
   /// <summary>
   /// Final defence before a worker result leaves CPU code. It is intentionally small (at most one

@@ -227,6 +227,14 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         protection > 0f ? "Places a farm in protected terrain" : "Places an income-producing farm");
     }
 
+    NetworkPiece? neutralMercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&
+      piece.Team == NetworkTeam.Neutral && piece.X == action.X && piece.Y == action.Y);
+    if (action.UnitType == "Mercenary" && neutralMercenary is not null &&
+        UnitRules.TryGet("Mercenary", out UnitRule mercenaryRule) && neutralMercenary.Health >= mercenaryRule.Health)
+    {
+      return new ScoredAction(action, 95f, "Hires a full-health neutral Mercenary for 15 gold");
+    }
+
     float score = affordability;
     bool spendingReserve = false;
     if (UnitRules.TryGet(action.UnitType, out UnitRule purchasedRule) && purchasedRule.Attack > 0)

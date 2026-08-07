@@ -210,18 +210,12 @@ public static partial class CpuGameRules
   private static void ApplyPurchase(CpuMutableGameState state, PurchaseAction action)
   {
     NetworkPiece? mercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&
-      piece.Team != action.Team && piece.X == action.X && piece.Y == action.Y);
+      piece.Team == NetworkTeam.Neutral && piece.X == action.X && piece.Y == action.Y);
     if (mercenary is not null)
     {
       int index = FindPieceIndex(state.Pieces, mercenary.Id);
-      int cost = mercenary.Team == NetworkTeam.Neutral
-        ? Math.Max(1, mercenary.LastBid)
-        : Math.Max(mercenary.LastBid, GetUnitPrice(state.Source.Configuration, UnitRules.GetRequired("Mercenary"))) + 10;
+      int cost = PieceDefinitions.NeutralMercenaryHireCost;
       SpendMoney(state, action.Team, cost);
-      if (mercenary.Team != NetworkTeam.Neutral)
-      {
-        AddMoney(state, mercenary.Team, cost);
-      }
       state.Pieces[index] = mercenary with
       {
         Team = action.Team,

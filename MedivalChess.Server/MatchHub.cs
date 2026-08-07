@@ -764,29 +764,24 @@ public sealed class MatchStore
       }
 
       int mercenaryIndex = foundMatch.Pieces.FindIndex(piece =>
-        piece.Type == "Mercenary" && piece.Team != player.Team && piece.X == request.X && piece.Y == request.Y);
+        piece.Type == "Mercenary" && piece.X == request.X && piece.Y == request.Y);
       if (mercenaryIndex >= 0)
       {
         NetworkPiece mercenary = foundMatch.Pieces[mercenaryIndex];
-        bool isNeutralMercenary = mercenary.Team == NetworkTeam.Neutral;
-        if (!isNeutralMercenary && !NetworkBoardRules.CanPlaceForTeam(foundMatch.Configuration, player.Team, mercenary.X, mercenary.Y, 1, 1))
+        if (mercenary.Team != NetworkTeam.Neutral)
         {
-          return new(false, "A Mercenary can only be bought off while it is in your territory.", foundMatch.State());
+          return new(false, "Only neutral Mercenaries can be hired.", foundMatch.State());
         }
-        long bid = isNeutralMercenary
-          ? Math.Max(1, mercenary.LastBid)
-          : (long)Math.Max(mercenary.LastBid, GetUnitCost(foundMatch, "Mercenary")) + 10;
-        PlayerSlot? previousOwner = foundMatch.Players.FirstOrDefault(candidate => candidate.Team == mercenary.Team);
-        if (bid > int.MaxValue || player.Money < bid || (!isNeutralMercenary && previousOwner is null))
+        int hireCost = PieceDefinitions.NeutralMercenaryHireCost;
+        if (player.Money < hireCost)
         {
-          return new(false, "You cannot afford to outbid that Mercenary.", foundMatch.State());
+          return new(false, "You cannot afford to hire that Mercenary.", foundMatch.State());
         }
-        player.Money = ClampCurrency((long)player.Money - bid);
-        if (previousOwner is not null) previousOwner.Money = ClampCurrency((long)previousOwner.Money + bid);
+        player.Money = ClampCurrency((long)player.Money - hireCost);
         foundMatch.Pieces[mercenaryIndex] = mercenary with
         {
           Team = player.Team,
-          LastBid = (int)bid,
+          LastBid = hireCost,
           HasMovedThisTurn = true,
           HasAttackedThisTurn = true,
           CannotContributeToConquestThisTurn = true

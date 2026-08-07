@@ -103,6 +103,9 @@ public sealed class PieceDefinition
 /// </summary>
 public static class PieceDefinitions
 {
+  /// <summary>Fixed cost to hire a neutral Mercenary; rival buyouts still use the bid ladder.</summary>
+  public const int NeutralMercenaryHireCost = 15;
+
   public static readonly PieceDefinition Soldier = new(
     PieceType.Soldier, PieceCategory.Melee, (3, Shape.Straight), 10, 15, (1, 1), (1, 1), Shape.Straight, 20);
   public static readonly PieceDefinition Defender = new(

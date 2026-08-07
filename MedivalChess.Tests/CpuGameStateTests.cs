@@ -400,6 +400,52 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void CpuCanHireAFullHealthNeutralMercenaryForTheFixedHireCostButNotBuyOutARival()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) position = board.Cells.First(square =>
+      BoardRules.CanPlaceMercenary(board, configuration.GameMode, configuration.PlayerCount, square.x, square.y));
+    CpuGameState neutralState = new(
+      configuration,
+      [new NetworkPiece("neutral-mercenary", "Mercenary", NetworkTeam.Neutral, position.x, position.y, 20)],
+      [new CpuTeamState(NetworkTeam.Red, PieceDefinitions.NeutralMercenaryHireCost, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    PurchaseAction hire = new(NetworkTeam.Red, "Mercenary", position.x, position.y);
+
+    Assert.True(hire.IsLegal(neutralState));
+    CpuGameState hired = hire.Apply(neutralState);
+    Assert.Equal(0, hired.Teams[NetworkTeam.Red].Money);
+    Assert.Contains(hired.Pieces, piece => piece.Id == "neutral-mercenary" && piece.Team == NetworkTeam.Red &&
+      piece.LastBid == PieceDefinitions.NeutralMercenaryHireCost);
+
+    CpuGameState rivalState = new(
+      configuration,
+      [new NetworkPiece("blue-mercenary", "Mercenary", NetworkTeam.Blue, position.x, position.y, 20)],
+      [new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    Assert.False(hire.IsLegal(rivalState));
+  }
+
+  [Fact]
+  public void CpuCanFireItsMercenaryThroughTheSharedAbilityAction()
+  {
+    CpuGameState state = CreateState(new NetworkPiece("red-mercenary", "Mercenary", NetworkTeam.Red, 0, 0, 20));
+    UseAbilityAction fire = new(NetworkTeam.Red, "red-mercenary", "Fire", null, 0, 0);
+
+    Assert.True(fire.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(fire));
+    CpuGameState fired = fire.Apply(state);
+    Assert.Contains(fired.Pieces, piece => piece.Id == "red-mercenary" && piece.Team == NetworkTeam.Neutral);
+  }
+
+  [Fact]
   public void AttackGeneration_TargetsTheReachableSquareOfALargePiece()
   {
     NetworkPiece soldier = new("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15);

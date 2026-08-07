@@ -477,8 +477,10 @@ internal sealed class Game1 : Game
       wasLeftClick && HandleEngineerAbilityClick(mouse.Position);
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
+    bool clickedMercenaryPanel =
+      wasLeftClick && HandleMercenaryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && (wasLeftClick || wasRightClick))
+    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -714,35 +716,27 @@ internal sealed class Game1 : Game
         return;
       }
 
-      bool isNeutralMercenary = targetPiece.Team == TeamName.Neutral;
-      if (!isNeutralMercenary && !IsInTeamTerritory(targetPosition, Team.CurrentTurn))
+      if (targetPiece.Team != TeamName.Neutral)
       {
-        Console.WriteLine("A Mercenary can only be bought off while it is in your territory.");
+        Console.WriteLine("Only neutral Mercenaries can be hired.");
         return;
       }
 
-      long buyoutCost = isNeutralMercenary
-        ? Math.Max(1, targetPiece.LastBid)
-        : targetPiece.NextMercenaryBid;
+      long buyoutCost = PieceDefinitions.NeutralMercenaryHireCost;
       if (buyoutCost > int.MaxValue || buyingTeam.Money < buyoutCost)
       {
-        Console.WriteLine("You cannot afford to outbid that Mercenary.");
+        Console.WriteLine("You cannot afford to hire that Mercenary.");
         return;
       }
 
       buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - buyoutCost);
-      if (!isNeutralMercenary)
-      {
-        Team previousOwner = _teams.Find(team => team.TeamName == targetPiece.Team);
-        previousOwner.Money = ClampCurrency((long)previousOwner.Money + buyoutCost);
-      }
       targetPiece.Team = Team.CurrentTurn;
       targetPiece.LastBid = (int)buyoutCost;
       targetPiece.HasMovedThisTurn = true;
       targetPiece.HasAttackedThisTurn = true;
       targetPiece.CannotContributeToConquestThisTurn = true;
 
-      Console.WriteLine($"{Team.CurrentTurn} bought the Mercenary for {buyoutCost} gold.");
+      Console.WriteLine($"{Team.CurrentTurn} hired the neutral Mercenary for {buyoutCost} gold.");
       CompletePurchase();
       return;
     }
@@ -1441,78 +1435,78 @@ internal sealed class Game1 : Game
     switch (action)
     {
       case MoveAction move:
-      {
-        Piece piece = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == move.PieceId);
-        if (piece is null || !TryGetMovementPathAt(piece, (move.DestinationX, move.DestinationY), out List<(int x, int y)> path))
         {
-          return false;
+          Piece piece = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == move.PieceId);
+          if (piece is null || !TryGetMovementPathAt(piece, (move.DestinationX, move.DestinationY), out List<(int x, int y)> path))
+          {
+            return false;
+          }
+          if (piece.AttachedTo is not null && piece.AttachmentKind == AttachmentKind.Carried)
+          {
+            pieceSetup.Detach(piece);
+          }
+          BeginMovementAnimation(piece, path);
+          return true;
         }
-        if (piece.AttachedTo is not null && piece.AttachmentKind == AttachmentKind.Carried)
-        {
-          pieceSetup.Detach(piece);
-        }
-        BeginMovementAnimation(piece, path);
-        return true;
-      }
       case AttackAction attack:
         return ExecuteCpuAttack(attack);
       case PurchaseAction purchase:
-      {
-        PieceDefinition definition = GetPurchasablePieces().FirstOrDefault(piece => piece.Type.ToString() == purchase.UnitType);
-        if (definition is null)
         {
-          return false;
-        }
+          PieceDefinition definition = GetPurchasablePieces().FirstOrDefault(piece => piece.Type.ToString() == purchase.UnitType);
+          if (definition is null)
+          {
+            return false;
+          }
 
-        Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
-        int moneyBefore = buyingTeam.Money;
-        int pieceCountBefore = pieceSetup.Pieces.Count;
-        Piece targetBefore = pieceSetup.GetPieceAt((purchase.X, purchase.Y));
-        TeamName? targetTeamBefore = targetBefore?.Team;
-        int actionPointsBefore = buyingTeam.ActionPoints;
-        int purchasesBefore = _initialBuyPhase?.PurchasesThisTurn ?? -1;
-        TryPurchaseAndPlace(definition, (purchase.X, purchase.Y));
-        return buyingTeam.Money != moneyBefore ||
-          pieceSetup.Pieces.Count != pieceCountBefore ||
-          targetBefore?.Team != targetTeamBefore ||
-          buyingTeam.ActionPoints != actionPointsBefore ||
-          (_initialBuyPhase?.PurchasesThisTurn ?? -1) != purchasesBefore;
-      }
+          Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+          int moneyBefore = buyingTeam.Money;
+          int pieceCountBefore = pieceSetup.Pieces.Count;
+          Piece targetBefore = pieceSetup.GetPieceAt((purchase.X, purchase.Y));
+          TeamName? targetTeamBefore = targetBefore?.Team;
+          int actionPointsBefore = buyingTeam.ActionPoints;
+          int purchasesBefore = _initialBuyPhase?.PurchasesThisTurn ?? -1;
+          TryPurchaseAndPlace(definition, (purchase.X, purchase.Y));
+          return buyingTeam.Money != moneyBefore ||
+            pieceSetup.Pieces.Count != pieceCountBefore ||
+            targetBefore?.Team != targetTeamBefore ||
+            buyingTeam.ActionPoints != actionPointsBefore ||
+            (_initialBuyPhase?.PurchasesThisTurn ?? -1) != purchasesBefore;
+        }
       case UseAbilityAction ability:
-      {
-        Piece actor = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.ActorId);
-        if (actor is null)
         {
-          return false;
+          Piece actor = pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.ActorId);
+          if (actor is null)
+          {
+            return false;
+          }
+          _selectedEngineerAbility = ability.Ability switch
+          {
+            "Barrier" => EngineerAbility.Barrier,
+            "Mine" => EngineerAbility.Mine,
+            "Demolish" => EngineerAbility.Demolish,
+            _ => EngineerAbility.Road
+          };
+          Piece target = ability.TargetPieceId is null
+            ? null
+            : pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.TargetPieceId);
+          return TryUseSpecialAbility(actor, (ability.TargetX, ability.TargetY), target, Keyboard.GetState());
         }
-        _selectedEngineerAbility = ability.Ability switch
-        {
-          "Barrier" => EngineerAbility.Barrier,
-          "Mine" => EngineerAbility.Mine,
-          "Demolish" => EngineerAbility.Demolish,
-          _ => EngineerAbility.Road
-        };
-        Piece target = ability.TargetPieceId is null
-          ? null
-          : pieceSetup.Pieces.FirstOrDefault(candidate => candidate.NetworkId == ability.TargetPieceId);
-        return TryUseSpecialAbility(actor, (ability.TargetX, ability.TargetY), target, Keyboard.GetState());
-      }
       case EndTurnAction:
-      {
-        TeamName before = Team.CurrentTurn;
-        TrySkipCurrentTurn();
-        return Team.CurrentTurn != before;
-      }
-      case StopInitialBuyingAction:
-      {
-        if (_initialBuyPhase is null || !_initialBuyPhase.CanStopCurrentBuyer)
         {
-          return false;
+          TeamName before = Team.CurrentTurn;
+          TrySkipCurrentTurn();
+          return Team.CurrentTurn != before;
         }
-        _initialBuyPhase.StopCurrentBuyer();
-        UpdateInitialBuyPhaseState();
-        return true;
-      }
+      case StopInitialBuyingAction:
+        {
+          if (_initialBuyPhase is null || !_initialBuyPhase.CanStopCurrentBuyer)
+          {
+            return false;
+          }
+          _initialBuyPhase.StopCurrentBuyer();
+          UpdateInitialBuyPhaseState();
+          return true;
+        }
       default:
         return false;
     }
@@ -2470,22 +2464,19 @@ internal sealed class Game1 : Game
 
     Team buyingTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
     Piece targetPiece = pieceSetup.GetPieceAt(targetPosition);
-    bool isMercenaryBuyout =
+    bool isNeutralMercenaryHire =
       _initialBuyPhase == null &&
       targetPiece?.Definition.Type == PieceType.Mercenary &&
-      targetPiece.Team != Team.CurrentTurn &&
-      (targetPiece.Team == TeamName.Neutral || IsInTeamTerritory(targetPosition, Team.CurrentTurn));
+      targetPiece.Team == TeamName.Neutral;
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     bool hasEnoughGold = isOpeningFarmPlacement
       ? true
-      : isMercenaryBuyout
-      ? buyingTeam.Money >= (targetPiece.Team == TeamName.Neutral
-        ? Math.Max(1, targetPiece.LastBid)
-        : targetPiece.NextMercenaryBid)
+      : isNeutralMercenaryHire
+      ? buyingTeam.Money >= PieceDefinitions.NeutralMercenaryHireCost
       : buyingTeam.Money >= GetUnitPrice(definition);
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
-      (isMercenaryBuyout ||
+      (isNeutralMercenaryHire ||
        (definition.Type == PieceType.Mercenary
          ? CanPlaceMercenary(targetPosition)
          : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
@@ -3114,7 +3105,8 @@ internal sealed class Game1 : Game
       defeatedRoyal.Definition,
       FindRoyalSpawn(defeatedRoyal.Team, defeatedRoyal.Definition),
       defeatedRoyal.Team
-    ) { CurrentHealth = GetRoyalStartingHealth(defeatedRoyal.Definition) };
+    )
+    { CurrentHealth = GetRoyalStartingHealth(defeatedRoyal.Definition) };
     pieceSetup.AddPiece(respawnedRoyal);
     Console.WriteLine($"{defeatedRoyal.Team}'s royal has respawned at the back line.");
   }
@@ -4048,6 +4040,28 @@ internal sealed class Game1 : Game
     return true;
   }
 
+  private bool HandleMercenaryPanelClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Mercenary ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetMercenaryFireButtonBounds().Contains(mousePosition) && CanFireSelectedMercenary())
+    {
+      bool fired = _onlineClient is null
+        ? TryUseSpecialAbility(selectedPiece, selectedPiece.Position, selectedPiece, Keyboard.GetState())
+        : TrySendOnlineSpecialAbility(selectedPiece, selectedPiece.Position, selectedPiece);
+      if (fired)
+      {
+        selectedPiece = null;
+      }
+    }
+
+    return true;
+  }
+
   private void CycleEngineerAbility(int direction)
   {
     EngineerAbility[] abilities = [EngineerAbility.Road, EngineerAbility.Barrier, EngineerAbility.Mine, EngineerAbility.Demolish];
@@ -4323,12 +4337,12 @@ internal sealed class Game1 : Game
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
         ? "Mercenaries are unavailable during the initial buy phase."
-        : "Place anywhere in No-Man's-Land, or hire a neutral Mercenary / outbid a rival in your territory."
+        : "Place anywhere in No-Man's-Land, or hire a neutral Mercenary for 15 gold."
       : _initialBuyPhase?.IsFarmPlacementPhase == true
         ? "Place two free farms on your side before normal buying."
         : _initialBuyPhase != null
         ? $"{_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn} bought. Select a square on your side."
-        : "Buy, then select a square. Click a neutral Mercenary to hire it, or a rival Mercenary in your territory to buy it off.";
+        : "Buy, then select a square. Click a neutral Mercenary to hire it for 15 gold.";
     int unitInfoY = statGrid.Bottom + UiTheme.SpaceSm;
     const float abilityScale = 0.58f;
     const float hintScale = 0.58f;
@@ -5605,36 +5619,36 @@ internal sealed class Game1 : Game
           }
           else
           {
-          GameMode? selectedMode = Enum.GetValues<GameMode>()
-            .Where(mode => GetModeOptionBounds((int)mode).Contains(mousePosition))
-            .Select(mode => (GameMode?)mode)
-            .FirstOrDefault();
-          if (selectedMode is GameMode mode)
-          {
-            _gameMode = mode;
-          }
-          else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
-          {
-            _gameMode = (GameMode)(((int)_gameMode - 1 + Enum.GetValues<GameMode>().Length) % Enum.GetValues<GameMode>().Length);
-          }
-          else if (GetSetupNextButtonBounds().Contains(mousePosition))
-          {
-            _gameMode = (GameMode)(((int)_gameMode + 1) % Enum.GetValues<GameMode>().Length);
-          }
-          else if (GetPlayerCountDecreaseButtonBounds().Contains(mousePosition))
-          {
-            SetPlayerCount(_playerCount - 1);
-            if (_cpuOpponentSetup) ConfigureCpuOpponents();
-          }
-          else if (GetPlayerCountIncreaseButtonBounds().Contains(mousePosition))
-          {
-            SetPlayerCount(_playerCount + 1);
-            if (_cpuOpponentSetup) ConfigureCpuOpponents();
-          }
-          else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
-          {
-            _setupStage = SetupStage.Battlefield;
-          }
+            GameMode? selectedMode = Enum.GetValues<GameMode>()
+              .Where(mode => GetModeOptionBounds((int)mode).Contains(mousePosition))
+              .Select(mode => (GameMode?)mode)
+              .FirstOrDefault();
+            if (selectedMode is GameMode mode)
+            {
+              _gameMode = mode;
+            }
+            else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
+            {
+              _gameMode = (GameMode)(((int)_gameMode - 1 + Enum.GetValues<GameMode>().Length) % Enum.GetValues<GameMode>().Length);
+            }
+            else if (GetSetupNextButtonBounds().Contains(mousePosition))
+            {
+              _gameMode = (GameMode)(((int)_gameMode + 1) % Enum.GetValues<GameMode>().Length);
+            }
+            else if (GetPlayerCountDecreaseButtonBounds().Contains(mousePosition))
+            {
+              SetPlayerCount(_playerCount - 1);
+              if (_cpuOpponentSetup) ConfigureCpuOpponents();
+            }
+            else if (GetPlayerCountIncreaseButtonBounds().Contains(mousePosition))
+            {
+              SetPlayerCount(_playerCount + 1);
+              if (_cpuOpponentSetup) ConfigureCpuOpponents();
+            }
+            else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
+            {
+              _setupStage = SetupStage.Battlefield;
+            }
           }
         }
         else if (_setupStage == SetupStage.Battlefield)
@@ -7228,6 +7242,12 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Bottom - height, content.Width, height);
   }
 
+  private Rectangle GetMercenaryFireButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
+  }
+
   private Rectangle GetEngineerAbilityBounds()
   {
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
@@ -7548,6 +7568,7 @@ internal sealed class Game1 : Game
       PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
+      PieceType.Mercenary => GetMercenaryFireButtonBounds().Y - UiTheme.SpaceSm,
       _ => content.Bottom - UiTheme.SpaceSm
     };
     string abilityText = $"ABILITY: {GetUnitAbilityText(selectedPiece.Definition)}";
@@ -7573,6 +7594,12 @@ internal sealed class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.Guard)
     {
       DrawGuardControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.Mercenary)
+    {
+      DrawMercenaryFireControl();
     }
 
   }
@@ -7630,6 +7657,19 @@ internal sealed class Game1 : Game
       0.64f
     );
   }
+
+  private void DrawMercenaryFireControl()
+  {
+    bool canFire = CanFireSelectedMercenary();
+    DrawMenuButton(
+      GetMercenaryFireButtonBounds(),
+      canFire ? "FIRE" : "FIRE UNAVAILABLE",
+      canFire ? UiButtonTone.Danger : UiButtonTone.Neutral
+    );
+  }
+
+  private bool CanFireSelectedMercenary() => selectedPiece?.Definition.Type == PieceType.Mercenary &&
+    selectedPiece.Team == Team.CurrentTurn && !selectedPiece.HasAttackedThisTurn && IsOnlineLocalTurn();
 
   private void DrawEngineerAbilityControls()
   {

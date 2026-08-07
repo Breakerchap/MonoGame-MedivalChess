@@ -187,16 +187,12 @@ public static partial class CpuGameRules
     if (occupyingMercenary is not null)
     {
       if (state.InitialBuy is not null || action.UnitType != "Mercenary" ||
-          (occupyingMercenary.Team != NetworkTeam.Neutral &&
-           !BoardRules.IsInTeamTerritory(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y)))
+          occupyingMercenary.Team != NetworkTeam.Neutral)
       {
         return false;
       }
 
-      int cost = occupyingMercenary.Team == NetworkTeam.Neutral
-        ? Math.Max(1, occupyingMercenary.LastBid)
-        : Math.Max(occupyingMercenary.LastBid, GetUnitPrice(state.Configuration, rule)) + 10;
-      return buyer.Money >= cost;
+      return buyer.Money >= PieceDefinitions.NeutralMercenaryHireCost;
     }
 
     bool initialBuy = state.InitialBuy is not null;
@@ -225,8 +221,8 @@ public static partial class CpuGameRules
       ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
       : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
     // Ordinary units may share a Farm footprint, but the live Mercenary rule is stricter: a
-    // newly hired Mercenary must occupy a completely empty No-Man's-Land square. Keep buyouts
-    // above as the only intentional occupied-square exception.
+    // newly hired Mercenary must occupy a completely empty No-Man's-Land square. Hiring a
+    // neutral Mercenary above is the only intentional occupied-square exception.
     bool mercenarySquareIsEmpty = rule.Type != "Mercenary" || !state.Pieces.Any(piece =>
       UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
       UnitRules.FootprintsOverlap(action.X, action.Y, rule.Width, rule.Height,

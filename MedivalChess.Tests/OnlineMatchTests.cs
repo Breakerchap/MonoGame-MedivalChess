@@ -389,6 +389,8 @@ public sealed class OnlineMatchTests
     Assert.True(hiredMercenary.HasMovedThisTurn);
     Assert.True(hiredMercenary.HasAttackedThisTurn);
     Assert.True(hiredMercenary.CannotContributeToConquestThisTurn);
+    Assert.Equal(configuration.StartingCash - PieceDefinitions.NeutralMercenaryHireCost,
+      hired.State.Teams.Single(team => team.Team == NetworkTeam.Blue).Money);
   }
 
   [Fact]
