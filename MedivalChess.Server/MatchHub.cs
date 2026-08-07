@@ -1111,6 +1111,8 @@ public sealed class MatchStore
       .ToHashSet(StringComparer.Ordinal);
     if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
       (rule.Type == "Farm" || other.Type != "Farm") &&
+      // An elephant may end its move on an enemy it tramples, but never on an ally.
+      !(rule.Type == "Elephant" && other.Team != piece.Team) &&
       NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
 
     return true;

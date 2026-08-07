@@ -485,6 +485,7 @@ internal sealed class Game1 : Game
       int boardY = (int)MathF.Floor(mouseWorldBefore.Y / cellSize) + _board.MinY;
       var targetPosition = (x: boardX, y: boardY);
       Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
+      Piece friendlyPieceAtTarget = GetUnattachedPieceAt(targetPosition, Team.CurrentTurn);
 
       if (_royalAwaitingPlacement is not null)
       {
@@ -502,32 +503,31 @@ internal sealed class Game1 : Game
       }
       else if (selectedPiece == null)
       {
-        if (pieceAtTarget?.Team == Team.CurrentTurn && pieceAtTarget.AttachedTo == null && IsOnlineLocalTurn())
+        if (friendlyPieceAtTarget is not null && IsOnlineLocalTurn())
         {
-          SelectPiece(pieceAtTarget);
+          SelectPiece(friendlyPieceAtTarget);
         }
       }
-      else if (pieceAtTarget == selectedPiece && selectedPiece.Occupies(targetPosition))
+      else if (selectedPiece.Occupies(targetPosition))
       {
         selectedPiece = null;
       }
       else if (
         wasLeftClick &&
-        pieceAtTarget != null &&
-        pieceAtTarget != selectedPiece &&
-        pieceAtTarget.Team == Team.CurrentTurn &&
-        pieceAtTarget.AttachedTo == null &&
+        friendlyPieceAtTarget != null &&
+        friendlyPieceAtTarget != selectedPiece &&
         !TryGetMovementPathAt(selectedPiece, targetPosition, out _)
       )
       {
-        SelectPiece(pieceAtTarget);
+        SelectPiece(friendlyPieceAtTarget);
       }
       else
       {
+        Piece hostilePieceAtTarget = GetUnattachedHostilePieceAt(targetPosition, selectedPiece.Team);
         bool usedSpecialAbility = wasRightClick &&
           (_onlineClient is null
-            ? TryUseSpecialAbility(selectedPiece, targetPosition, pieceAtTarget, keyboard)
-            : TrySendOnlineSpecialAbility(selectedPiece, targetPosition, pieceAtTarget));
+            ? TryUseSpecialAbility(selectedPiece, targetPosition, hostilePieceAtTarget ?? pieceAtTarget, keyboard)
+            : TrySendOnlineSpecialAbility(selectedPiece, targetPosition, hostilePieceAtTarget ?? pieceAtTarget));
 
         if (usedSpecialAbility)
         {
@@ -573,16 +573,16 @@ internal sealed class Game1 : Game
           if (_onlineClient != null)
           {
             bool canSendOnlineAttack =
-              (pieceAtTarget is not null && pieceAtTarget.Team != selectedPiece.Team ||
+              (hostilePieceAtTarget is not null ||
                _barricades.ContainsKey(targetPosition)) &&
               !selectedPiece.HasAttackedThisTurn &&
               selectedPiece.Definition.Attack > 0 &&
               Actions.CanAttackSquare(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
-              if (pieceAtTarget is not null)
+              if (hostilePieceAtTarget is not null)
               {
-                _ = SendOnlineAttackAsync(selectedPiece, pieceAtTarget);
+                _ = SendOnlineAttackAsync(selectedPiece, hostilePieceAtTarget);
               }
               else
               {
@@ -609,7 +609,7 @@ internal sealed class Game1 : Game
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
               selectedPiece.Definition.Attack > 0 &&
-              ((pieceAtTarget != null && pieceAtTarget.Team != selectedPiece.Team) ||
+              (hostilePieceAtTarget is not null ||
                _barricades.ContainsKey(targetPosition));
 
             if (isValidAttack)
@@ -620,7 +620,7 @@ internal sealed class Game1 : Game
               }
               else if (selectedPiece.Definition.Type == PieceType.Bombard)
               {
-                PerformBombardAttack(selectedPiece, pieceAtTarget);
+                PerformBombardAttack(selectedPiece, hostilePieceAtTarget);
               }
               else if (_barricades.ContainsKey(targetPosition))
               {
@@ -628,7 +628,7 @@ internal sealed class Game1 : Game
               }
               else
               {
-                ResolveDamage(selectedPiece, pieceAtTarget);
+                ResolveDamage(selectedPiece, hostilePieceAtTarget);
               }
 
               selectedPiece.HasAttackedThisTurn = true;
@@ -2619,17 +2619,26 @@ internal sealed class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
   {
-    bool canLand = piece.Definition.Type == PieceType.Elephant
-      ? IsFootprintOnBoard(piece.Definition, destination) &&
-        pieceSetup.IsFootprintClear(piece.Definition, destination, piece) &&
-        !OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)
-      : CanPlacePiece(piece.Definition, destination, null, piece);
-    if (!canLand)
+    if (piece.Definition.Type != PieceType.Elephant)
+    {
+      return CanPlacePiece(piece.Definition, destination, null, piece);
+    }
+
+    if (!IsFootprintOnBoard(piece.Definition, destination) ||
+        OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey))
     {
       return false;
     }
 
-    return true;
+    // Elephants trample enemies rather than stopping beside them.  They may finish on a
+    // hostile footprint, but friendly units still block them like every other mover.
+    return !pieceSetup.Pieces.Any(other =>
+      other != piece &&
+      other.AttachedTo != piece &&
+      other.AttachedTo is null &&
+      other.Definition.Type != PieceType.Farm &&
+      other.Team == piece.Team &&
+      FootprintsOverlap(piece.Definition, destination, other.Definition, other.Position));
   }
 
   private bool CanTravelThroughPosition(
@@ -2880,6 +2889,63 @@ internal sealed class Game1 : Game
     }
 
     return highlightedSquares;
+  }
+
+  private Piece GetUnattachedPieceAt((int x, int y) position, TeamName team) =>
+    pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team == team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
+    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team == team && piece.AttachedTo is null && piece.Occupies(position));
+
+  private Piece GetUnattachedHostilePieceAt((int x, int y) position, TeamName team) =>
+    pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team != team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
+    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team != team && piece.AttachedTo is null && piece.Occupies(position));
+
+  private bool HasAvailableAttack(Piece piece)
+  {
+    foreach ((int x, int y) targetPosition in GetValidAttackHighlightSquares(piece))
+    {
+      if (piece.Definition.Type is PieceType.Elephant or PieceType.Engineer ||
+          _barricades.ContainsKey(targetPosition) ||
+          CanPickUpTreasure(piece, targetPosition) ||
+          GetUnattachedHostilePieceAt(targetPosition, piece.Team) is not null)
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private void DrawAvailableUnitHighlights(int cellSize)
+  {
+    if (_screen != Screen.Playing || _initialBuyPhase is not null || _royalAwaitingPlacement is not null ||
+        _movementAnimation is not null || !IsOnlineLocalTurn())
+    {
+      return;
+    }
+
+    foreach (Piece piece in pieceSetup.Pieces.Where(piece =>
+      piece.Team == Team.CurrentTurn && piece.AttachedTo is null))
+    {
+      Rectangle bounds = GetPieceWorldBounds(piece, cellSize);
+      bool canMove = !piece.HasMovedThisTurn && GetMovementPaths(piece).Count > 0;
+      bool canAttack = HasAvailableAttack(piece);
+
+      if (canMove && piece != selectedPiece)
+      {
+        DrawWorldOutline(bounds, UiTheme.Move, 0.123f);
+      }
+
+      if (canAttack)
+      {
+        Rectangle attackBounds = bounds;
+        attackBounds.Inflate(-5, -5);
+        DrawWorldOutline(attackBounds, UiTheme.Attack, 0.124f);
+      }
+    }
   }
 
   private void SelectPiece(Piece piece, bool allowAttachedPiece = false)
@@ -7887,6 +7953,8 @@ internal sealed class Game1 : Game
       DrawWorldRectangle(badge, UiTheme.GetTeamColour(attachment.Team), 0.125f);
       DrawWorldOutline(badge, outline, 0.126f);
     }
+
+    DrawAvailableUnitHighlights(cellSize);
 
     _spriteBatch.End();
 

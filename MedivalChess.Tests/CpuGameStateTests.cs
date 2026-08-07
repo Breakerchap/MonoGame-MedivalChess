@@ -46,6 +46,39 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void Elephant_CanFinishItsMoveOnAnEnemyItTramples()
+  {
+    Board board = new([
+      (0, 0), (1, 0), (2, 0), (3, 0), (4, 0),
+      (0, 1), (1, 1), (2, 1), (3, 1), (4, 1)
+    ]);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("red-elephant", "Elephant", NetworkTeam.Red, 0, 0, 60),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 2, 0, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: board
+    );
+    MoveAction move = new(NetworkTeam.Red, "red-elephant", 1, 0);
+
+    Assert.True(move.IsLegal(state));
+
+    CpuGameState moved = move.Apply(state);
+    NetworkPiece elephant = moved.Pieces.Single(piece => piece.Id == "red-elephant");
+    NetworkPiece soldier = moved.Pieces.Single(piece => piece.Id == "blue-soldier");
+    Assert.Equal((1, 0), (elephant.X, elephant.Y));
+    Assert.Equal(15, soldier.Health);
+    Assert.True(UnitRules.FootprintsOverlap(elephant.X, elephant.Y, 2, 2, soldier.X, soldier.Y, 1, 1));
+  }
+
+  [Fact]
   public void CampaignCpuSnapshotUsesTheSuppliedCustomBoardGeometry()
   {
     Board campaignBoard = new(new[] { (0, 0) });

@@ -38,7 +38,16 @@ public static partial class CpuGameRules
   }
 
   private static bool CanLand(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule, (int x, int y) destination) =>
-    CanPlace(state, pieces, rule, destination.x, destination.y, piece.Id, piece.Type == "Elephant");
+    CanPlace(
+      state,
+      pieces,
+      rule,
+      destination.x,
+      destination.y,
+      piece.Id,
+      piece.Type == "Elephant",
+      piece.Type == "Elephant" ? piece.Team : null
+    );
 
   private static bool CanPlace(
     CpuGameState state,
@@ -47,7 +56,8 @@ public static partial class CpuGameRules
     int x,
     int y,
     string? ignoredPieceId = null,
-    bool elephantCanIgnoreLakes = false
+    bool elephantCanIgnoreLakes = false,
+    NetworkTeam? teamWhoseEnemiesMayBeOverlapped = null
   )
   {
     if (!BoardRules.FootprintFitsBoard(state.Board, x, y, rule.Width, rule.Height))
@@ -65,7 +75,9 @@ public static partial class CpuGameRules
     HashSet<string> ignored = pieces.Where(piece => piece.Id == ignoredPieceId || piece.AttachedToId == ignoredPieceId)
       .Select(piece => piece.Id)
       .ToHashSet(StringComparer.Ordinal);
-    return !pieces.Any(piece => !ignored.Contains(piece.Id) && (rule.Type == "Farm" || piece.Type != "Farm") &&
+    return !pieces.Any(piece => !ignored.Contains(piece.Id) &&
+      (rule.Type == "Farm" || piece.Type != "Farm") &&
+      !(teamWhoseEnemiesMayBeOverlapped is NetworkTeam team && piece.Team != team) &&
       UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
       UnitRules.FootprintsOverlap(piece.X, piece.Y, otherRule.Width, otherRule.Height, x, y, rule.Width, rule.Height));
   }
