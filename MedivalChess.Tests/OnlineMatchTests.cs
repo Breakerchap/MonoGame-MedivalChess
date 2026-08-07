@@ -224,6 +224,38 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void PalaceRoyalMaySkipWithoutUsingAnAction()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("Palace")).Accepted);
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("King"));
+    Assert.True(ready.Accepted);
+
+    string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
+    string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
+    Assert.True(matches.StopInitialBuying(redConnection).Accepted);
+    ActionResult openingComplete = matches.StopInitialBuying(blueConnection);
+    Assert.True(openingComplete.Accepted);
+
+    NetworkTeam palaceTeam = host.Team;
+    string palaceConnection = "host";
+    if (openingComplete.State!.CurrentTurn != palaceTeam)
+    {
+      string otherConnection = palaceTeam == NetworkTeam.Red ? blueConnection : redConnection;
+      NetworkPiece king = openingComplete.State.Pieces.Single(piece => piece.Team != palaceTeam && piece.Type == "King");
+      Assert.True(matches.TryMove(otherConnection, new MoveRequest(king.Id, king.X + 1, king.Y)).Accepted);
+      Assert.True(matches.TrySkipTurn(otherConnection).Accepted);
+    }
+
+    ActionResult skipped = matches.TrySkipTurn(palaceConnection);
+
+    Assert.True(skipped.Accepted);
+    Assert.NotEqual(palaceTeam, skipped.State!.CurrentTurn);
+  }
+
+  [Fact]
   public void ServerThrottlesRepeatedRoomCodeAttempts()
   {
     MatchStore matches = new();

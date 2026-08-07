@@ -25,7 +25,8 @@ public static partial class CpuGameRules
       PurchaseAction purchase => IsLegalPurchase(state, purchase),
       UseAbilityAction ability => IsLegalAbility(state, ability),
       EndTurnAction => state.InitialBuy is null && state.Teams.TryGetValue(action.Team, out CpuTeamState? team) &&
-        team.ActionsRemaining is > 0 && team.ActionsRemaining < team.ActionLimit,
+        team.ActionsRemaining is > 0 &&
+        (team.ActionsRemaining < team.ActionLimit || team.ChosenRoyal == "Palace"),
       StopInitialBuyingAction => IsLegalStopInitialBuying(state, action.Team),
       _ => false
     };

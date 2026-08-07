@@ -586,7 +586,11 @@ public sealed class MatchStore
     {
       PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
       if (!foundMatch.MatchReady || foundMatch.InitialBuy is { IsComplete: false } ||
-          player is null || player.Team != foundMatch.CurrentTurn || player.ActionsRemaining >= ActionsPerTurn)
+          player is null || player.Team != foundMatch.CurrentTurn)
+      {
+        return new(false, "Use at least one action before ending the turn.", foundMatch.State());
+      }
+      if (player.ActionsRemaining >= ActionsPerTurn && player.ChosenRoyal != "Palace")
       {
         return new(false, "Use at least one action before ending the turn.", foundMatch.State());
       }

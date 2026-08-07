@@ -105,6 +105,31 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void PalaceRoyalMayEndTurnBeforeUsingAnAction()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("red-palace", "Palace", NetworkTeam.Red, 0, 12, 150),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -12, 110)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, "Palace"),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, "King")
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    EndTurnAction endTurn = new(NetworkTeam.Red);
+
+    Assert.True(endTurn.IsLegal(state));
+    CpuGameState afterEnd = endTurn.Apply(state);
+
+    Assert.Equal(NetworkTeam.Blue, afterEnd.CurrentTurn);
+    Assert.Equal(MatchRules.ActionsPerTurn, afterEnd.ActionsRemaining);
+  }
+
+  [Fact]
   public void InitialBuyPurchase_UsesTheOpeningBuyerAndAdvancesToTheNextTeam()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();

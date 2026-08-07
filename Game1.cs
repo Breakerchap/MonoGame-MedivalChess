@@ -655,7 +655,11 @@ internal sealed class Game1 : Game
 
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
-    PieceDefinition definition = GetPurchasablePieces()[_selectedPurchaseIndex];
+    TryPurchaseAndPlace(GetPurchasablePieces()[_selectedPurchaseIndex], targetPosition);
+  }
+
+  private void TryPurchaseAndPlace(PieceDefinition definition, (int x, int y) targetPosition)
+  {
     if (!IsCampaignPurchaseAllowed(Team.CurrentTurn, definition.Type))
     {
       Console.WriteLine($"{definition.Type} is not available for {Team.CurrentTurn} in this campaign level.");
@@ -919,7 +923,7 @@ internal sealed class Game1 : Game
     }
 
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
-    if (currentTeam.ActionPoints >= currentTeam.ActionLimit)
+    if (!CanSkipCurrentTurn(currentTeam))
     {
       return;
     }
@@ -934,6 +938,9 @@ internal sealed class Game1 : Game
       _ = SendOnlineSkipTurnAsync();
     }
   }
+
+  private static bool CanSkipCurrentTurn(Team team) =>
+    team.ActionPoints < team.ActionLimit || team.ChosenRoyal == PieceType.Palace;
 
   private bool HandleDebugTeamSwitchClick(Point mousePosition)
   {
@@ -1440,8 +1447,8 @@ internal sealed class Game1 : Game
         return ExecuteCpuAttack(attack);
       case PurchaseAction purchase:
       {
-        int index = GetPurchasablePieces().ToList().FindIndex(piece => piece.Type.ToString() == purchase.UnitType);
-        if (index < 0)
+        PieceDefinition definition = GetPurchasablePieces().FirstOrDefault(piece => piece.Type.ToString() == purchase.UnitType);
+        if (definition is null)
         {
           return false;
         }
@@ -1453,8 +1460,7 @@ internal sealed class Game1 : Game
         TeamName? targetTeamBefore = targetBefore?.Team;
         int actionPointsBefore = buyingTeam.ActionPoints;
         int purchasesBefore = _initialBuyPhase?.PurchasesThisTurn ?? -1;
-        _selectedPurchaseIndex = index;
-        TryPurchaseAndPlace((purchase.X, purchase.Y));
+        TryPurchaseAndPlace(definition, (purchase.X, purchase.Y));
         return buyingTeam.Money != moneyBefore ||
           pieceSetup.Pieces.Count != pieceCountBefore ||
           targetBefore?.Team != targetTeamBefore ||
@@ -4993,7 +4999,7 @@ internal sealed class Game1 : Game
       .Where(royal => _gameMode != GameMode.Escort || royal.Type != PieceType.Palace)
       .ToArray();
     Random random = new(profile.RandomSeed ^ _terrainSeed ^ ((int)teamName * 7919));
-    PieceDefinition royal = eligibleRoyals[random.Next(eligibleRoyals.Length)];
+    PieceDefinition royal = ChooseCpuRoyal(eligibleRoyals, profile, random);
     (int x, int y) position = ChooseCpuRoyalPlacement(teamName, royal, profile, random);
     PlaceRoyal(teamName, royal, position);
   }
@@ -5853,39 +5859,46 @@ internal sealed class Game1 : Game
       throw new InvalidOperationException("Could not find an empty royal spawn square.");
     }
 
-    int centreX = _board.MinX + _board.BoardArray.GetLength(1) / 2;
-    int centreY = _board.MinY + _board.BoardArray.GetLength(0) / 2;
-    float Score((int x, int y) position)
-    {
-      IEnumerable<(int x, int y)> footprint =
-        from offsetY in Enumerable.Range(0, royal.Size.y)
-        from offsetX in Enumerable.Range(0, royal.Size.x)
-        select (position.x + offsetX, position.y + offsetY);
-      int forestCover = footprint.Count(_terrain.IsForest);
-      int nearbyForests = Enumerable.Range(-1, royal.Size.x + 2)
-        .SelectMany(offsetX => Enumerable.Range(-1, royal.Size.y + 2)
-          .Select(offsetY => (position.x + offsetX, position.y + offsetY)))
-        .Count(_terrain.IsForest);
-      int riverEdges = footprint.Sum(square => new[]
-      {
-        (square.x - 1, square.y), (square.x + 1, square.y),
-        (square.x, square.y - 1), (square.x, square.y + 1)
-      }.Count(neighbour => _board.ContainsCell(neighbour) && _terrain.HasRiverBetween(square, neighbour)));
-      int centreDistance = Math.Abs(position.x - centreX) + Math.Abs(position.y - centreY);
-
-      // Cover and nearby river crossings affect safety, while personality determines
-      // whether the CPU favours a protected back position or a forward one.
-      return forestCover * 5f * profile.Personality.RoyalProtection +
-        nearbyForests * profile.Personality.Caution -
-        riverEdges * 3f * profile.Personality.Caution +
-        centreDistance * (profile.Personality.Caution + profile.Personality.RoyalProtection - profile.Personality.Aggression);
-    }
+    float Score((int x, int y) position) => CpuRoyalPlacementHeuristics.Score(
+      _board,
+      _terrain,
+      teamName.ToNetworkTeam(),
+      position,
+      royal.Size.x,
+      royal.Size.y,
+      _playerCount,
+      profile
+    );
 
     float bestScore = candidates.Max(Score);
     List<(int x, int y)> bestCandidates = candidates
       .Where(candidate => Score(candidate) >= bestScore - 0.001f)
       .ToList();
     return bestCandidates[random.Next(bestCandidates.Count)];
+  }
+
+  private PieceDefinition ChooseCpuRoyal(
+    IReadOnlyList<PieceDefinition> eligibleRoyals,
+    CpuProfile profile,
+    Random random
+  )
+  {
+    // In Regicide, Best should select a genuinely resilient win-condition rather than roll a
+    // weak 80-health royal. Palace is static but has the most health and generates income; Hard
+    // uses the King for its adjacent-unit protection while retaining some tactical mobility.
+    if (_gameMode == GameMode.Regicide)
+    {
+      if (profile.Difficulty == CpuDifficultyLevel.Best)
+      {
+        return eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.Palace) ?? eligibleRoyals[0];
+      }
+      if (profile.Difficulty == CpuDifficultyLevel.Hard)
+      {
+        return eligibleRoyals.FirstOrDefault(royal => royal.Type == PieceType.King) ?? eligibleRoyals[0];
+      }
+    }
+
+    return eligibleRoyals[random.Next(eligibleRoyals.Count)];
   }
 
   private int GetRoyalStartingHealth(PieceDefinition royal) =>
@@ -7260,7 +7273,7 @@ internal sealed class Game1 : Game
       }
     }
 
-    bool canSkipTurn = IsOnlineLocalTurn() && currentTeam.ActionPoints < currentTeam.ActionLimit;
+    bool canSkipTurn = IsOnlineLocalTurn() && CanSkipCurrentTurn(currentTeam);
     DrawMenuButton(
       GetSkipTurnButtonBounds(),
       canSkipTurn ? "END TURN" : "END TURN",

@@ -138,11 +138,6 @@ public sealed class CpuPlayer : ICpuPlayer
           node.State, team, legal, settings, profile.Personality);
         foreach (ScoredAction candidate in candidates)
         {
-          if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
-          {
-            break;
-          }
-
           // Candidate selection is strategic and may be replaced in tests or future profiles;
           // never trust it as a legality authority. This also protects cached plans if a rule
           // changes while a background worker is still finishing its snapshot.
@@ -152,11 +147,17 @@ public sealed class CpuPlayer : ICpuPlayer
           }
 
           // Keep the strongest legal root candidate as a safe fallback. Generation can
-          // occasionally use most of a very small budget, but a live CPU turn must neither stall
-          // nor discard an immediately lethal action merely because deeper search timed out.
+          // occasionally use most of a very small budget. Capture it before the post-ranking
+          // time check so a live CPU turn cannot stall simply because candidate scoring consumed
+          // the final millisecond of a tiny budget.
           if (node.Actions.Count == 0 && fallbackAction is null)
           {
             fallbackAction = candidate.Action;
+          }
+
+          if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
+          {
+            break;
           }
 
           CpuGameState result = candidate.Action.Apply(node.State);

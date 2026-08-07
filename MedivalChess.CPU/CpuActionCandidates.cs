@@ -34,12 +34,14 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     // a royal/objective scan and farm-territory scan for every legal movement or purchase.
     IReadOnlyDictionary<string, NetworkPiece> piecesById = state.Pieces.ToDictionary(piece => piece.Id, StringComparer.Ordinal);
     (int x, int y)[] goals = GetGoalPositions(state, team).ToArray();
+    RoyalDefenceContext defence = GetRoyalDefenceContext(state, team);
     int? farmForwardProjection = legalActions.Any(action => action is PurchaseAction { UnitType: "Farm" })
       ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
       : null;
 
     return legalActions
-      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection, personality ?? CpuPersonality.Balanced))
+      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection, defence,
+        personality ?? CpuPersonality.Balanced))
       .OrderByDescending(candidate => candidate.Score)
       .ThenBy(candidate => candidate.Action.Kind)
       .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
@@ -54,12 +56,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
     IReadOnlyList<(int x, int y)> goals,
     int? farmForwardProjection,
+    RoyalDefenceContext defence,
     CpuPersonality personality
   ) => action switch
   {
     AttackAction attack => ScoreAttack(attack, piecesById),
-    MoveAction move => ScoreMove(state, team, move, piecesById, goals),
-    PurchaseAction purchase => ScorePurchase(state, purchase, farmForwardProjection),
+    MoveAction move => ScoreMove(state, team, move, piecesById, goals, defence),
+    PurchaseAction purchase => ScorePurchase(state, purchase, farmForwardProjection, defence),
     UseAbilityAction ability => ScoreAbility(state, ability, personality),
     EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
     StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
@@ -97,7 +100,8 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     NetworkTeam team,
     MoveAction action,
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
-    IReadOnlyList<(int x, int y)> goals
+    IReadOnlyList<(int x, int y)> goals,
+    RoyalDefenceContext defence
   )
   {
     if (!piecesById.TryGetValue(action.PieceId, out NetworkPiece? piece))
@@ -123,10 +127,65 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     {
       score += 25f;
     }
+
+    UnitRule pieceRule = UnitRules.GetRequired(piece.Type);
+    if (pieceRule.Category == RuleCategory.Royal)
+    {
+      (int x, int y) forward = TeamRules.GetForwardDirection(team);
+      int forwardMovement = (action.DestinationX - piece.X) * forward.x + (action.DestinationY - piece.Y) * forward.y;
+      // Escort is the explicit exception: that mode is won by taking the royal to the enemy
+      // edge, so normal Regicide caution must not suppress the mission objective.
+      if (state.Configuration.GameMode != "Escort" && forwardMovement > 0)
+      {
+        // A royal should never stroll towards the centre just because an enemy royal is there.
+        // Search can still override this only through a decisive immediate win.
+        score -= forwardMovement * 280f;
+      }
+      else if (state.Configuration.GameMode != "Escort" && forwardMovement < 0)
+      {
+        score += -forwardMovement * 75f;
+      }
+
+      if (defence.HasPressure)
+      {
+        int oldThreatDistance = defence.Invaders.Select(invader => Distance((piece.X, piece.Y), (invader.X, invader.Y)))
+          .DefaultIfEmpty(0).Min();
+        int newThreatDistance = defence.Invaders.Select(invader => Distance((action.DestinationX, action.DestinationY), (invader.X, invader.Y)))
+          .DefaultIfEmpty(oldThreatDistance).Min();
+        score += (newThreatDistance - oldThreatDistance) * 85f;
+      }
+      return new ScoredAction(action, score, forwardMovement > 0
+        ? "Avoids exposing the royal by moving it forward"
+        : "Retreats or shelters the royal");
+    }
+
+    if (defence.HasPressure)
+    {
+      int oldRoyalDistance = defence.Royals.Select(royal => Distance((piece.X, piece.Y), (royal.X, royal.Y)))
+        .DefaultIfEmpty(0).Min();
+      int newRoyalDistance = defence.Royals.Select(royal => Distance((action.DestinationX, action.DestinationY), (royal.X, royal.Y)))
+        .DefaultIfEmpty(oldRoyalDistance).Min();
+      score += (oldRoyalDistance - newRoyalDistance) * 32f;
+      if (newRoyalDistance <= 3)
+      {
+        score += 45f;
+      }
+      if (CanThreatenAnyInvader(pieceRule, team, action.DestinationX, action.DestinationY, defence.Invaders))
+      {
+        score += 70f;
+      }
+      return new ScoredAction(action, score, "Moves a defender into the endangered royal's perimeter");
+    }
+
     return new ScoredAction(action, score, score > 0 ? "Moves toward an objective" : "Repositions a unit");
   }
 
-  private static ScoredAction ScorePurchase(CpuGameState state, PurchaseAction action, int? farmForwardProjection)
+  private static ScoredAction ScorePurchase(
+    CpuGameState state,
+    PurchaseAction action,
+    int? farmForwardProjection,
+    RoyalDefenceContext defence
+  )
   {
     float value = MaterialEvaluation.GetUnitValue(action.UnitType);
     float affordability = state.Teams[action.Team].Money > 0 ? 2f : 0f;
@@ -137,7 +196,108 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       return new ScoredAction(action, value * 0.12f + affordability + protection,
         protection > 0f ? "Places a farm in protected terrain" : "Places an income-producing farm");
     }
-    return new ScoredAction(action, value * 0.12f + affordability, "Adds an affordable unit");
+
+    float score = value * 0.04f + affordability;
+    int ownedCount = state.Pieces.Count(piece => piece.Team == action.Team && piece.AttachedToId is null &&
+      piece.Type == action.UnitType);
+    string reason = "Adds an affordable unit";
+    switch (action.UnitType)
+    {
+      case "Peasant":
+        // One cheap blocker can be useful. Repeated 5-health purchases consume turns and leave
+        // the royal undefended, so strongly favour a proper fighting unit after the second.
+        score -= Math.Max(0, ownedCount - 1) * 28f;
+        if (ownedCount >= 2) reason = "Avoids stockpiling low-impact peasants";
+        break;
+      case "Ballista":
+        score -= ownedCount * 60f;
+        if (!HasImmediateBattlefieldRole(state, action, 7))
+        {
+          score -= 35f;
+          reason = "Defers an unsupported Ballista";
+        }
+        else
+        {
+          reason = "Adds a Ballista with a reachable firing role";
+        }
+        break;
+      case "Mercenary":
+        // Mercenaries are excellent tactical hires but their payroll means an unattended stack
+        // is a liability. Only the first nearby hire is attractive by default.
+        score -= ownedCount * 45f;
+        if (!HasImmediateBattlefieldRole(state, action, 6))
+        {
+          score -= 30f;
+          reason = "Defers a Mercenary with no nearby target";
+        }
+        else
+        {
+          reason = "Hires a nearby Mercenary for an immediate fight";
+        }
+        break;
+    }
+
+    if (defence.HasPressure)
+    {
+      int royalDistance = defence.Royals.Select(royal => Distance((action.X, action.Y), (royal.X, royal.Y)))
+        .DefaultIfEmpty(10).Min();
+      bool defensiveUnit = action.UnitType is "Defender" or "Soldier" or "Knight" or "Guard" or "Archer" or "Crossbowman";
+      if (defensiveUnit && royalDistance <= 4)
+      {
+        score += 55f - royalDistance * 8f;
+        reason = "Places a defender near the threatened royal";
+      }
+      else if (!defensiveUnit)
+      {
+        score -= 16f;
+      }
+    }
+    return new ScoredAction(action, score, reason);
+  }
+
+  private static RoyalDefenceContext GetRoyalDefenceContext(CpuGameState state, NetworkTeam team)
+  {
+    NetworkPiece[] royals = state.Pieces
+      .Where(piece => piece.Team == team && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        rule.Category == RuleCategory.Royal)
+      .ToArray();
+    if (royals.Length == 0)
+    {
+      return new RoyalDefenceContext([], []);
+    }
+
+    NetworkPiece[] invaders = state.Pieces
+      .Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0)
+      .Where(piece =>
+      {
+        UnitRule rule = UnitRules.GetRequired(piece.Type);
+        int reachNextTurn = rule.MoveRange + Math.Max(1, rule.AttackRange) + 3;
+        return royals.Any(royal => Distance((piece.X, piece.Y), (royal.X, royal.Y)) <= reachNextTurn);
+      })
+      .ToArray();
+    return new RoyalDefenceContext(royals, invaders);
+  }
+
+  private static bool CanThreatenAnyInvader(
+    UnitRule rule,
+    NetworkTeam team,
+    int x,
+    int y,
+    IEnumerable<NetworkPiece> invaders
+  ) => invaders.Any(invader => UnitRules.TryGet(invader.Type, out UnitRule targetRule) &&
+    UnitRules.CanAttack(rule, x, y, team, targetRule, invader.X, invader.Y));
+
+  private static bool HasImmediateBattlefieldRole(CpuGameState state, PurchaseAction action, int maximumDistance) => state.Pieces
+    .Where(piece => piece.Team != action.Team && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null)
+    .Any(piece => Distance((action.X, action.Y), (piece.X, piece.Y)) <= maximumDistance);
+
+  private sealed record RoyalDefenceContext(
+    IReadOnlyList<NetworkPiece> Royals,
+    IReadOnlyList<NetworkPiece> Invaders
+  )
+  {
+    public bool HasPressure => Invaders.Count > 0;
   }
 
   private static ScoredAction ScoreAbility(CpuGameState state, UseAbilityAction action, CpuPersonality personality)

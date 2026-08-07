@@ -307,10 +307,58 @@ public sealed class RoyalSafetyEvaluation : IEvaluationTerm
         .Select(team => context.Cache.GetThreatMap(state, team, _threatMapBuilder).GetThreat(royal.Id))
         .Where(threat => threat is not null)
         .Sum(threat => threat!.TotalExpectedDamage * 5f + (threat.IsLethal ? 120f : 0f));
-      float score = health - danger;
+      int rearDepth = state.Configuration.GameMode == "Escort"
+        ? 0
+        : CpuRoyalPlacementHeuristics.GetRearTerritoryDepth(
+          state.Board,
+          royal.Team,
+          (royal.X, royal.Y),
+          royalRule.Width,
+          royalRule.Height,
+          state.Configuration.PlayerCount
+        );
+      float nearbyDefence = state.Pieces
+        .Where(piece => piece.Id != royal.Id && piece.Team == royal.Team && piece.AttachedToId is null)
+        .Where(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0)
+        .Where(piece => DistanceToFootprint(piece, royal, royalRule) <= 3)
+        .Sum(piece =>
+        {
+          UnitRule rule = UnitRules.GetRequired(piece.Type);
+          return Math.Min(26f, 5f + rule.Attack * 0.55f + rule.AttackRange * 1.5f);
+        });
+      float approachingDanger = state.Pieces
+        .Where(piece => piece.Team != royal.Team && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null)
+        .Where(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0)
+        .Sum(piece => ScoreApproachingDanger(piece, royal, royalRule));
+
+      // Immediate checks are not sufficient: a fast attacker one move away is already a royal
+      // emergency. Depth and a small defensive screen both count, so a strong CPU retreats and
+      // sends available units home before an opponent can assemble a free attack lane.
+      float score = health + rearDepth * 22f + nearbyDefence - danger - approachingDanger;
       safety += royal.Team == perspective ? score : -score;
     }
     return safety;
+  }
+
+  private static float ScoreApproachingDanger(NetworkPiece attacker, NetworkPiece royal, UnitRule royalRule)
+  {
+    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    int distance = DistanceToFootprint(attacker, royal, royalRule);
+    int nextTurnReach = attackerRule.MoveRange + Math.Max(1, attackerRule.AttackRange);
+    if (distance > nextTurnReach + 4)
+    {
+      return 0f;
+    }
+
+    float urgency = Math.Max(0f, nextTurnReach + 5 - distance);
+    return urgency * (2f + attackerRule.Attack * 0.75f + attackerRule.AttackRange * 1.5f);
+  }
+
+  private static int DistanceToFootprint(NetworkPiece piece, NetworkPiece royal, UnitRule royalRule)
+  {
+    int closestX = Math.Clamp(piece.X, royal.X, royal.X + royalRule.Width - 1);
+    int closestY = Math.Clamp(piece.Y, royal.Y, royal.Y + royalRule.Height - 1);
+    return Math.Abs(piece.X - closestX) + Math.Abs(piece.Y - closestY);
   }
 }
 

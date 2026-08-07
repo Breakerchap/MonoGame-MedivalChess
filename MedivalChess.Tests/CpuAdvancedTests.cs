@@ -114,6 +114,84 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void BestRoyalPlacement_PrefersTheDeepestLegalHomeTerritory()
+  {
+    Board board = BoardRules.GetBoard("Small");
+    CpuProfile profile = CpuProfile.Best(21);
+    (int x, int y)[] candidates = MatchRules.GetRoyalSpawnCandidates(board, NetworkTeam.Blue, 1, 1, 2).ToArray();
+
+    (int x, int y) best = candidates
+      .OrderByDescending(position => CpuRoyalPlacementHeuristics.Score(
+        board, new BattlefieldTerrain(), NetworkTeam.Blue, position, 1, 1, 2, profile))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x)
+      .First();
+
+    int deepest = candidates.Max(position => CpuRoyalPlacementHeuristics.GetRearTerritoryDepth(
+      board, NetworkTeam.Blue, position, 1, 1, 2));
+    Assert.Equal(deepest, CpuRoyalPlacementHeuristics.GetRearTerritoryDepth(
+      board, NetworkTeam.Blue, best, 1, 1, 2));
+  }
+
+  [Fact]
+  public void ThreatenedRoyal_CandidateRankingBringsAUnitBackToDefendIt()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 2, 2, 15),
+        new NetworkPiece("blue-mercenary", "Mercenary", NetworkTeam.Blue, 0, 1, 20),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+      ],
+      redMoney: 0
+    );
+    IReadOnlyList<ICpuGameAction> moves = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<MoveAction>()
+      .Where(action => action.PieceId == "red-soldier")
+      .Cast<ICpuGameAction>()
+      .ToArray();
+
+    ScoredAction candidate = Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red, moves, new CpuSearchSettings { CandidatesPerNode = 1 }));
+
+    MoveAction move = Assert.IsType<MoveAction>(candidate.Action);
+    int oldRoyalDistance = Math.Abs(2 - 0) + Math.Abs(2 - 8);
+    int newRoyalDistance = Math.Abs(move.DestinationX - 0) + Math.Abs(move.DestinationY - 8);
+    Assert.True(newRoyalDistance < oldRoyalDistance, candidate.Reason);
+  }
+
+  [Fact]
+  public void PurchaseRanking_AvoidsRepeatedPeasantsBallistasAndMercenaries()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
+        new NetworkPiece("red-peasant-one", "Peasant", NetworkTeam.Red, -2, 6, 5),
+        new NetworkPiece("red-peasant-two", "Peasant", NetworkTeam.Red, -1, 6, 5),
+        new NetworkPiece("red-ballista", "Ballista", NetworkTeam.Red, 2, 6, 20),
+        new NetworkPiece("red-mercenary", "Mercenary", NetworkTeam.Red, 0, 4, 20),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+      ]
+    );
+    IReadOnlyDictionary<string, PurchaseAction> options = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<PurchaseAction>()
+      .Where(action => action.UnitType is "Peasant" or "Ballista" or "Mercenary" or "Soldier")
+      .GroupBy(action => action.UnitType)
+      .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+    IReadOnlyList<ScoredAction> ranked = new CpuActionCandidateSelector().SelectCandidates(
+      state,
+      NetworkTeam.Red,
+      [options["Peasant"], options["Ballista"], options["Mercenary"], options["Soldier"]],
+      new CpuSearchSettings { CandidatesPerNode = 4 });
+
+    Assert.Equal("Soldier", Assert.IsType<PurchaseAction>(ranked[0].Action).UnitType);
+    Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Peasant" }).Score);
+    Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Ballista" }).Score);
+    Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" }).Score);
+  }
+
+  [Fact]
   public void OpeningFarmCpu_RemainsFastAndFindsTheSecondFarmAfterOccupiedTopSquares()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);

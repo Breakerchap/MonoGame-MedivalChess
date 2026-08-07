@@ -71,6 +71,12 @@ public sealed class CpuProfile
     // between close plans and never samples from the full legal-action list.
     MistakeChance = 0.12f,
     TopChoicesForRandomSelection = 2,
+    Weights = new EvaluationWeights
+    {
+      RoyalSafety = 1.25f,
+      AssetSafety = 0.5f,
+      Formation = 0.1f
+    },
     Search = new CpuSearchSettings
     {
       BeamWidth = 3,
@@ -93,6 +99,14 @@ public sealed class CpuProfile
     // Small seeded variety keeps repeated games from looking scripted without choosing a weak plan.
     MistakeChance = 0.14f,
     TopChoicesForRandomSelection = 3,
+    Weights = new EvaluationWeights
+    {
+      RoyalSafety = 4f,
+      AssetSafety = 2f,
+      Formation = 0.55f,
+      StrategicPosition = 1.1f,
+      Economy = 0.75f
+    },
     Search = new CpuSearchSettings
     {
       // The local CPU runs on a worker, but it still has a visible hard ceiling. The deterministic
@@ -121,6 +135,14 @@ public sealed class CpuProfile
     // repeated matches from becoming a memorised script.
     MistakeChance = 0.03f,
     TopChoicesForRandomSelection = 2,
+    Weights = new EvaluationWeights
+    {
+      RoyalSafety = 7.5f,
+      AssetSafety = 4f,
+      Formation = 0.9f,
+      StrategicPosition = 1.15f,
+      Economy = 0.9f
+    },
     Search = new CpuSearchSettings
     {
       BeamWidth = 18,
@@ -146,6 +168,14 @@ public sealed class CpuProfile
     RandomSeed = seed,
     MistakeChance = 0f,
     TopChoicesForRandomSelection = 1,
+    Weights = new EvaluationWeights
+    {
+      RoyalSafety = 12f,
+      AssetSafety = 7f,
+      Formation = 1.2f,
+      StrategicPosition = 1.2f,
+      Economy = 1f
+    },
     Search = new CpuSearchSettings
     {
       BeamWidth = 36,
