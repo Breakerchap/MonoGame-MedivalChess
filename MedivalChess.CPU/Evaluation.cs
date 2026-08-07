@@ -54,6 +54,8 @@ public sealed class EvaluationWeights
   public float Formation { get; init; } = 0.2f;
   public float AssetSafety { get; init; } = 0.9f;
   public float AbilityUsage { get; init; } = 0.45f;
+  /// <summary>Soft counter, combo, and anti-combo guidance from Combos.md.</summary>
+  public float Matchups { get; init; } = 0.7f;
   public float ActionEfficiency { get; init; } = 0.4f;
   public float RepetitionPenalty { get; init; } = 0.8f;
 }
@@ -110,6 +112,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new ObjectiveEvaluation(),
       new IntentEvaluation(),
       new StrategicPositionEvaluation(),
+      new MatchupEvaluation(),
       new MapControlEvaluation(),
       new EconomyEvaluation(),
       new MobilityEvaluation(),
@@ -187,6 +190,7 @@ public sealed class StateEvaluator : IStateEvaluator
       "Objective" => weights.ObjectiveProgress * personality.ObjectiveFocus * scenario.ObjectiveProgress,
       "Intent" => weights.IntentProgress * personality.ObjectiveFocus,
       "Strategy" => weights.StrategicPosition * (0.65f + personality.ObjectiveFocus * 0.35f),
+      "Matchups" => weights.Matchups * personality.FormationPreference,
       "MapControl" => weights.MapControl * personality.ObjectiveFocus,
       "Economy" => weights.Economy * personality.EconomyFocus * scenario.Economy,
       "Mobility" => weights.Mobility,

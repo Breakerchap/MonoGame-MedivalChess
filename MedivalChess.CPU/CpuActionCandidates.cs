@@ -62,14 +62,25 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     CpuPersonality personality
   ) => action switch
   {
-    AttackAction attack => ScoreAttack(state, attack, piecesById),
-    MoveAction move => ScoreMove(state, team, move, piecesById, goals),
-    PurchaseAction purchase => ScorePurchase(state, purchase, farmForwardProjection),
-    UseAbilityAction ability => ScoreAbility(state, ability, personality),
+    AttackAction attack => AddStrategyScore(ScoreAttack(state, attack, piecesById), state, attack),
+    MoveAction move => AddStrategyScore(ScoreMove(state, team, move, piecesById, goals), state, move),
+    PurchaseAction purchase => AddStrategyScore(ScorePurchase(state, purchase, farmForwardProjection), state, purchase),
+    UseAbilityAction ability => AddStrategyScore(ScoreAbility(state, ability, personality), state, ability),
     EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
     StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
     _ => new ScoredAction(action, 0f, "Legal action")
   };
+
+  private static ScoredAction AddStrategyScore(ScoredAction candidate, CpuGameState state, ICpuGameAction action)
+  {
+    float adjustment = CpuStrategicHeuristics.ScoreAction(state, action);
+    if (Math.Abs(adjustment) < 0.01f)
+    {
+      return candidate;
+    }
+    string direction = adjustment > 0f ? "supports matchup plan" : "avoids anti-combo";
+    return candidate with { Score = candidate.Score + adjustment, Reason = $"{candidate.Reason}; {direction}" };
+  }
 
   private ScoredAction ScoreAttack(
     CpuGameState state,

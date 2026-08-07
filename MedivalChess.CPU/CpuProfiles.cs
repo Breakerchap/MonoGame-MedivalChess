@@ -83,7 +83,8 @@ public sealed class CpuProfile
     {
       RoyalSafety = 1.25f,
       AssetSafety = 0.5f,
-      Formation = 0.1f
+      Formation = 0.1f,
+      Matchups = 0.25f
     },
     Search = new CpuSearchSettings
     {
@@ -114,6 +115,7 @@ public sealed class CpuProfile
       RoyalSafety = 4f,
       AssetSafety = 2f,
       Formation = 0.55f,
+      Matchups = 0.7f,
       StrategicPosition = 1.1f,
       Economy = 0.75f
     },
@@ -152,6 +154,7 @@ public sealed class CpuProfile
       RoyalSafety = 7.5f,
       AssetSafety = 4f,
       Formation = 0.9f,
+      Matchups = 0.9f,
       StrategicPosition = 1.15f,
       Economy = 0.9f
     },
@@ -187,6 +190,7 @@ public sealed class CpuProfile
       RoyalSafety = 12f,
       AssetSafety = 7f,
       Formation = 1.2f,
+      Matchups = 1.1f,
       StrategicPosition = 1.2f,
       Economy = 1f
     },
