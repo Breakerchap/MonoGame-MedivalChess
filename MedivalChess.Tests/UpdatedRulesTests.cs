@@ -115,7 +115,7 @@ public class UpdatedRulesTests
   }
 
   [Fact]
-  public void UpdatedEconomy_UsesThreeActionTurnsAndRoundsRewardsToFive()
+  public void UpdatedEconomy_UsesUnlimitedActionsAndRoundsRewardsToFive()
   {
     Team attacker = new(TeamName.Red, null, 0);
     Team defeated = new(TeamName.Blue, null, 0);
@@ -131,12 +131,13 @@ public class UpdatedRulesTests
 
     Assert.Equal(200, Globals.StartingCash);
     Assert.Equal(3, Team.ActionsPerTurn);
+    Assert.False(Globals.ActionLimitsEnabled);
 
     attacker.ActionPoints = 3;
     Assert.False(attacker.SpendAction());
-    Assert.Equal(2, attacker.ActionPoints);
+    Assert.Equal(3, attacker.ActionPoints);
     Assert.False(attacker.SpendAction());
-    Assert.True(attacker.SpendAction());
+    Assert.False(attacker.SpendAction());
     Assert.Equal(3, attacker.ActionPoints);
   }
 

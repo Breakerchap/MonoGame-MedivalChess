@@ -705,5 +705,7 @@ public sealed class ActionEfficiencyEvaluation : IEvaluationTerm
   public string Name => "ActionEfficiency";
 
   public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context) =>
-    state.CurrentTurn == perspective ? MatchRules.ActionsPerTurn - state.ActionsRemaining : 0f;
+    Globals.ActionLimitsEnabled && state.CurrentTurn == perspective
+      ? MatchRules.ActionsPerTurn - state.ActionsRemaining
+      : 0f;
 }

@@ -208,7 +208,9 @@ public sealed class OnlineMatchTests
     Assert.Equal(NetworkTeam.Red, openingComplete.State!.CurrentTurn);
 
     ActionResult noActionSkip = matches.TrySkipTurn(redConnection);
-    Assert.False(noActionSkip.Accepted);
+    Assert.True(noActionSkip.Accepted);
+    Assert.Equal(NetworkTeam.Blue, noActionSkip.State!.CurrentTurn);
+    Assert.True(matches.TrySkipTurn(blueConnection).Accepted);
     NetworkPiece redKing = ready.State!.Pieces.Single(piece => piece.Team == NetworkTeam.Red);
 
     ActionResult wrongOwner = matches.TryMove(blueConnection, new MoveRequest(redKing.Id, redKing.X + 1, redKing.Y));
@@ -239,7 +241,7 @@ public sealed class OnlineMatchTests
     ActionResult openingComplete = matches.StopInitialBuying(blueConnection);
     Assert.True(openingComplete.Accepted);
 
-    NetworkTeam palaceTeam = host.Team;
+    NetworkTeam palaceTeam = host.Team!.Value;
     string palaceConnection = "host";
     if (openingComplete.State!.CurrentTurn != palaceTeam)
     {
@@ -313,7 +315,7 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
-  public void NormalTurnPurchaseCostsMoneyAndOneAction()
+  public void NormalTurnPurchaseCostsMoneyWithoutConsumingAnActionPoint()
   {
     MatchStore matches = new();
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with { StartingCash = 100 }));
@@ -331,7 +333,7 @@ public sealed class OnlineMatchTests
     Assert.True(purchase.Accepted);
     NetworkTeamState redTeam = purchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red);
     Assert.Equal(80, redTeam.Money);
-    Assert.Equal(2, redTeam.ActionsRemaining);
+    Assert.Equal(MatchRules.ActionsPerTurn, redTeam.ActionsRemaining);
     Assert.Contains(purchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
   }
 
@@ -477,7 +479,7 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
-  public void KnightMoveSpendsOneActionLikeEveryOtherUnit()
+  public void KnightMoveDoesNotConsumeAnActionPoint()
   {
     MatchStore matches = new();
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
@@ -500,7 +502,7 @@ public sealed class OnlineMatchTests
     NetworkPiece knight = redPurchase.State!.Pieces.Single(piece => piece.Type == "Knight" && piece.Team == NetworkTeam.Red);
     ActionResult move = matches.TryMove(redConnection, new MoveRequest(knight.Id, 0, 7));
     Assert.True(move.Accepted);
-    Assert.Equal(2, move.State!.Teams.Single(team => team.Team == NetworkTeam.Red).ActionsRemaining);
+    Assert.Equal(MatchRules.ActionsPerTurn, move.State!.Teams.Single(team => team.Team == NetworkTeam.Red).ActionsRemaining);
 
     ActionResult skipped = matches.TrySkipTurn(redConnection);
     Assert.True(skipped.Accepted);

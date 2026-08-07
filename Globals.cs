@@ -3,6 +3,9 @@ namespace MedivalChess.Shared;
 /// <summary>Default economy settings for a new pre-game setup.</summary>
 public static class Globals
 {
+  // Source-only rules switch.  When false, turns end only when a player chooses End Turn;
+  // unit-level once-per-turn restrictions still apply.
+  public static bool ActionLimitsEnabled { get; set; } = false;
   public const int StartingCash = 200;
   public const float KillerDeathRefundMultiplier = 0.0f;
   public const float DefeatedTeamDeathRefundMultiplier = 0.0f;

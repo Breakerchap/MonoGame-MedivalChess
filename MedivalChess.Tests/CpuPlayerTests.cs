@@ -71,7 +71,8 @@ public sealed class CpuPlayerTests
       Assert.True(action.IsLegal(simulated), action.Describe());
       simulated = action.Apply(simulated);
     }
-    Assert.InRange(plan.Actions.Count, 1, MatchRules.ActionsPerTurn);
+    Assert.NotEmpty(plan.Actions);
+    Assert.IsType<EndTurnAction>(plan.Actions[^1]);
   }
 
   [Fact]
@@ -148,7 +149,7 @@ public sealed class CpuPlayerTests
 
     Assert.True(selector.Calls > 0);
     Assert.Equal(0, plan.Report.NodesGenerated);
-    Assert.Empty(plan.Actions);
+    Assert.IsType<EndTurnAction>(Assert.Single(plan.Actions));
   }
 
   [Fact]
@@ -166,8 +167,8 @@ public sealed class CpuPlayerTests
       terrain: state.Terrain
     );
 
-    Assert.Empty(new CpuActionGenerator().GenerateLegalActions(noMoney, NetworkTeam.Red));
-    Assert.Empty(new CpuPlayer().ChooseTurn(noMoney, NetworkTeam.Red, CpuProfile.Easy(83), CancellationToken.None).Actions);
+    Assert.IsType<EndTurnAction>(Assert.Single(new CpuActionGenerator().GenerateLegalActions(noMoney, NetworkTeam.Red)));
+    Assert.IsType<EndTurnAction>(Assert.Single(new CpuPlayer().ChooseTurn(noMoney, NetworkTeam.Red, CpuProfile.Easy(83), CancellationToken.None).Actions));
   }
 
   [Fact]

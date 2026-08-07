@@ -260,6 +260,12 @@ public static partial class CpuGameRules
 
   private static void ApplyEndTurn(CpuMutableGameState state, NetworkTeam team)
   {
+    if (!Globals.ActionLimitsEnabled)
+    {
+      CompleteTurn(state, team);
+      return;
+    }
+
     CpuTeamState current = state.Teams[team];
     state.Teams[team] = current with { ActionsRemaining = 1 };
     SpendAction(state, team);

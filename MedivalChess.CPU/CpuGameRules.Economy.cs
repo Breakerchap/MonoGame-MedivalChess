@@ -109,7 +109,7 @@ public static partial class CpuGameRules
         state.CurrentTurn = TeamRules.GetFirstTeam(state.Source.Configuration.PlayerCount);
         foreach (NetworkTeam activeTeam in teams)
         {
-          state.Teams[activeTeam] = state.Teams[activeTeam] with { ActionsRemaining = MatchRules.ActionsPerTurn };
+          state.Teams[activeTeam] = state.Teams[activeTeam] with { ActionsRemaining = state.Teams[activeTeam].ActionLimit };
           ResetTurnActions(state, activeTeam);
         }
       }

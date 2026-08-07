@@ -103,9 +103,7 @@ public sealed class CpuPlayer : ICpuPlayer
     // after it so first-use JIT work cannot make an otherwise identical seed choose a shallower
     // plan than subsequent turns.
     stopwatch.Start();
-    int maximumActions = state.InitialBuy is null
-      ? Math.Clamp(state.ActionsRemaining, 0, MatchRules.ActionsPerTurn)
-      : 1;
+    int maximumActions = GetMaximumActionsToPlan(state, team);
 
     for (int depth = 0; depth < maximumActions && !cancelled && !timedOut && !nodeBudgetReached; depth++)
     {
@@ -257,6 +255,29 @@ public sealed class CpuPlayer : ICpuPlayer
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
   }
 
+  private static int GetMaximumActionsToPlan(CpuGameState state, NetworkTeam team)
+  {
+    if (state.InitialBuy is not null)
+    {
+      return 1;
+    }
+
+    if (Globals.ActionLimitsEnabled)
+    {
+      return Math.Clamp(state.ActionsRemaining, 0, MatchRules.ActionsPerTurn);
+    }
+
+    // There is no action-point ceiling in this mode. Pieces can still only move and attack once
+    // per turn, while spending remains naturally limited by the available gold. The search's
+    // normal node and time budgets remain the safety bounds for large battles.
+    int pieceActions = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null) * 2;
+    int lowestPurchaseCost = UnitRules.Purchasable.Min(rule => Math.Max(1, rule.Cost));
+    int affordablePurchases = state.Teams.TryGetValue(team, out CpuTeamState? stateTeam)
+      ? Math.Min(24, Math.Max(0, stateTeam.Money) / lowestPurchaseCost)
+      : 0;
+    return Math.Max(1, Math.Min(64, pieceActions + affordablePurchases + 1));
+  }
+
   /// <summary>
   /// Final defence before a worker result leaves CPU code. It is intentionally small (at most one
   /// turn) and ensures a stale or externally supplied candidate cannot be handed to presentation.
@@ -278,6 +299,15 @@ public sealed class CpuPlayer : ICpuPlayer
       verified.Add(action);
       current = action.Apply(current);
     }
+    if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
+    {
+      EndTurnAction endTurn = new(team);
+      if (endTurn.IsLegal(current))
+      {
+        verified.Add(endTurn);
+      }
+    }
+
     return verified;
   }
 
@@ -393,7 +423,9 @@ public sealed class CpuPlayer : ICpuPlayer
   )
   {
     NetworkTeam opponent = state.CurrentTurn;
-    int actionsToPredict = Math.Min(profile.Search.OpponentActionsToPredict, state.ActionsRemaining);
+    int actionsToPredict = Globals.ActionLimitsEnabled
+      ? Math.Min(profile.Search.OpponentActionsToPredict, state.ActionsRemaining)
+      : profile.Search.OpponentActionsToPredict;
     if (actionsToPredict <= 0)
     {
       return _evaluator.Evaluate(state, perspective, context);

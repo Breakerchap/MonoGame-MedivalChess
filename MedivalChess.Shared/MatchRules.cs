@@ -3,7 +3,7 @@ namespace MedivalChess.Shared;
 /// <summary>Match-wide constants and board-zone calculations used by local and online games.</summary>
 public static class MatchRules
 {
-  public const int ActionsPerTurn = 999;
+  public const int ActionsPerTurn = 3;
   public const int DefaultNoMansLandHalfHeight = 3;
   public const int ConquestNoMansLandExtraHalfHeight = 1;
   public const int PlunderNoMansLandExtraHalfHeight = 2;

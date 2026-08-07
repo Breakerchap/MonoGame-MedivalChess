@@ -25,8 +25,8 @@ public static partial class CpuGameRules
       PurchaseAction purchase => IsLegalPurchase(state, purchase),
       UseAbilityAction ability => IsLegalAbility(state, ability),
       EndTurnAction => state.InitialBuy is null && state.Teams.TryGetValue(action.Team, out CpuTeamState? team) &&
-        team.ActionsRemaining is > 0 &&
-        (team.ActionsRemaining < team.ActionLimit || team.ChosenRoyal == "Palace"),
+        (!Globals.ActionLimitsEnabled || (team.ActionsRemaining is > 0 &&
+          (team.ActionsRemaining < team.ActionLimit || team.ChosenRoyal == "Palace"))),
       StopInitialBuyingAction => IsLegalStopInitialBuying(state, action.Team),
       _ => false
     };
@@ -606,6 +606,11 @@ public static partial class CpuGameRules
 
   private static void SpendAction(CpuMutableGameState state, NetworkTeam team)
   {
+    if (!Globals.ActionLimitsEnabled)
+    {
+      return;
+    }
+
     CpuTeamState current = state.Teams[team];
     state.Teams[team] = current with { ActionsRemaining = current.ActionsRemaining - 1 };
     if (state.Teams[team].ActionsRemaining > 0)
@@ -613,6 +618,11 @@ public static partial class CpuGameRules
       return;
     }
 
+    CompleteTurn(state, team);
+  }
+
+  private static void CompleteTurn(CpuMutableGameState state, NetworkTeam team)
+  {
     ApplyEndOfTurnObjectives(state, team);
     if (state.Winner is not null)
     {

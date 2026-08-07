@@ -21,7 +21,7 @@ public sealed class CpuGameStateTests
     Assert.Contains(original.Pieces, piece => piece.Id == "blue-peasant" && piece.Health == 5);
     Assert.DoesNotContain(simulated.Pieces, piece => piece.Id == "blue-peasant");
     Assert.Equal(3, original.ActionsRemaining);
-    Assert.Equal(2, simulated.ActionsRemaining);
+    Assert.Equal(3, simulated.ActionsRemaining);
   }
 
   [Fact]
@@ -42,7 +42,7 @@ public sealed class CpuGameStateTests
     Assert.Equal((0, 0), (clonePiece.X, clonePiece.Y));
     Assert.Equal((0, -1), (movedPiece.X, movedPiece.Y));
     Assert.Equal(MatchRules.ActionsPerTurn, original.ActionsRemaining);
-    Assert.Equal(MatchRules.ActionsPerTurn - 1, simulated.ActionsRemaining);
+    Assert.Equal(MatchRules.ActionsPerTurn, simulated.ActionsRemaining);
   }
 
   [Fact]
@@ -86,17 +86,17 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
-  public void EndTurn_AppliesTheExistingThreeActionTurnAccounting()
+  public void EndTurn_IsAvailableImmediatelyWhenActionLimitsAreDisabled()
   {
     CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
     MoveAction move = new(NetworkTeam.Red, "red-soldier", 0, 1);
 
-    Assert.True(move.IsLegal(state));
-    CpuGameState afterMove = move.Apply(state);
     EndTurnAction endTurn = new(NetworkTeam.Red);
 
-    Assert.Equal(2, afterMove.ActionsRemaining);
-    Assert.True(endTurn.IsLegal(afterMove));
+    Assert.True(move.IsLegal(state));
+    CpuGameState afterMove = move.Apply(state);
+    Assert.Equal(MatchRules.ActionsPerTurn, afterMove.ActionsRemaining);
+    Assert.True(endTurn.IsLegal(state));
     CpuGameState afterEnd = endTurn.Apply(afterMove);
 
     Assert.Equal(NetworkTeam.Blue, afterEnd.CurrentTurn);

@@ -590,7 +590,7 @@ public sealed class MatchStore
       {
         return new(false, "Use at least one action before ending the turn.", foundMatch.State());
       }
-      if (player.ActionsRemaining >= ActionsPerTurn && player.ChosenRoyal != "Palace")
+      if (Globals.ActionLimitsEnabled && player.ActionsRemaining >= ActionsPerTurn && player.ChosenRoyal != "Palace")
       {
         return new(false, "Use at least one action before ending the turn.", foundMatch.State());
       }
@@ -598,8 +598,15 @@ public sealed class MatchStore
       {
         return new(false, "This match has already ended.", foundMatch.State());
       }
-      player.ActionsRemaining = 1;
-      SpendAction(foundMatch, player);
+      if (Globals.ActionLimitsEnabled)
+      {
+        player.ActionsRemaining = 1;
+        SpendAction(foundMatch, player);
+      }
+      else
+      {
+        CompleteTurn(foundMatch, player);
+      }
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -1709,12 +1716,22 @@ public sealed class MatchStore
 
   private static void SpendAction(Match match, PlayerSlot player)
   {
+    if (!Globals.ActionLimitsEnabled)
+    {
+      return;
+    }
+
     player.ActionsRemaining--;
     if (player.ActionsRemaining > 0)
     {
       return;
     }
 
+    CompleteTurn(match, player);
+  }
+
+  private static void CompleteTurn(Match match, PlayerSlot player)
+  {
     if (match.Configuration.GameMode == "Conquest" && match.Configuration.PlayerCount == 2)
     {
       Board board = NetworkBoardRules.GetBoard(match.Configuration);

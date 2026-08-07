@@ -930,8 +930,11 @@ internal sealed class Game1 : Game
 
     if (_onlineClient is null)
     {
-      currentTeam.ActionPoints = 1;
-      CompleteAction();
+      if (Globals.ActionLimitsEnabled)
+      {
+        currentTeam.ActionPoints = 1;
+      }
+      CompleteAction(endTurn: true);
     }
     else
     {
@@ -940,7 +943,7 @@ internal sealed class Game1 : Game
   }
 
   private static bool CanSkipCurrentTurn(Team team) =>
-    team.ActionPoints < team.ActionLimit || team.ChosenRoyal == PieceType.Palace;
+    !Globals.ActionLimitsEnabled || team.ActionPoints < team.ActionLimit || team.ChosenRoyal == PieceType.Palace;
 
   private bool HandleDebugTeamSwitchClick(Point mousePosition)
   {
@@ -953,7 +956,7 @@ internal sealed class Game1 : Game
     return true;
   }
 
-  private void CompleteAction()
+  private void CompleteAction(bool endTurn = false)
   {
     Team currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
 
@@ -962,7 +965,7 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (currentTeam.SpendAction())
+    if (endTurn || currentTeam.SpendAction())
     {
       if (ApplyEndOfTurnObjectives(Team.CurrentTurn))
       {
@@ -7233,24 +7236,31 @@ internal sealed class Game1 : Game
 
     _ui.Text($"{UiText.GetTeamDisplayName(Team.CurrentTurn)} TURN", new Vector2(content.X, content.Y), turnColour);
     _ui.Divider(content, content.Y + 30);
-    _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
-
-    for (int index = 0; index < currentTeam.ActionLimit; index++)
+    if (!Globals.ActionLimitsEnabled)
     {
-      Rectangle actionPoint = new(content.X + index * 34, content.Y + 66, 26, 12);
-      _spriteBatch.Draw(
-        _pixel,
-        actionPoint,
-        index < currentTeam.ActionPoints ? turnColour : UiTheme.PanelBorderSubtle
+      _ui.Text("UNLIMITED ACTIONS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
+    }
+    else
+    {
+      _ui.Text("ACTION POINTS", new Vector2(content.X, content.Y + 43), UiTheme.TextMuted, 0.74f);
+
+      for (int index = 0; index < currentTeam.ActionLimit; index++)
+      {
+        Rectangle actionPoint = new(content.X + index * 34, content.Y + 66, 26, 12);
+        _spriteBatch.Draw(
+          _pixel,
+          actionPoint,
+          index < currentTeam.ActionPoints ? turnColour : UiTheme.PanelBorderSubtle
+        );
+      }
+
+      _ui.Text(
+        $"{currentTeam.ActionPoints}/{currentTeam.ActionLimit} REMAINING",
+        new Vector2(content.X + 116, content.Y + 61),
+        UiTheme.TextPrimary,
+        0.76f
       );
     }
-
-    _ui.Text(
-      $"{currentTeam.ActionPoints}/{currentTeam.ActionLimit} REMAINING",
-      new Vector2(content.X + 116, content.Y + 61),
-      UiTheme.TextPrimary,
-      0.76f
-    );
 
     int moneyY = content.Y + 94;
     foreach (Team team in _teams)

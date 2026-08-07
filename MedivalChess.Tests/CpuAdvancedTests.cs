@@ -964,8 +964,8 @@ public sealed class CpuAdvancedTests
     IReadOnlyList<ICpuGameAction> legal = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red);
     CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Easy(4), CancellationToken.None);
 
-    Assert.Empty(legal);
-    Assert.Empty(plan.Actions);
+    Assert.IsType<EndTurnAction>(Assert.Single(legal));
+    Assert.IsType<EndTurnAction>(Assert.Single(plan.Actions));
   }
 
   [Fact]

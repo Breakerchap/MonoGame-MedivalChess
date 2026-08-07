@@ -78,6 +78,11 @@ internal sealed class Team
 
   internal bool SpendAction()
   {
+    if (!Globals.ActionLimitsEnabled)
+    {
+      return false;
+    }
+
     ActionPoints--;
 
     if (ActionPoints > 0)
