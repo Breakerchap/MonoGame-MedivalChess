@@ -1,9 +1,9 @@
 ### Piece Shapes
 
-- `Straight`: One directly adjacent, orthogonal square.
-- `Line`: One or more squares in an orthogonal straight line.
+- `Straight`: Any square within the range measured by taxicab (Manhattan) distance.
+- `Line`: One or more squares in a single orthogonal straight line; it cannot turn.
 - `Diagonal`: One directly adjacent diagonal square.
-- `Any`: Straight and diagonal squares.
+- `Any`: Any square within the range measured by chessboard distance.
 - `Forward`: In the direction of the opposing player.
 - `Absolute`: Pick one; can't mix and match.
 

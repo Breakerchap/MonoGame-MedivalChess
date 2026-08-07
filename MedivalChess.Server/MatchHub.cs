@@ -712,9 +712,14 @@ public sealed class MatchStore
       if (!isOpeningFarmPlacement) player.Money = ClampCurrency((long)player.Money - unit.Cost);
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
       buyPhase.RecordPurchase();
-      foundMatch.CurrentTurn = buyPhase.IsComplete
-        ? TeamRules.GetFirstTeam(foundMatch.Configuration.PlayerCount)
-        : buyPhase.CurrentTeam;
+      if (buyPhase.IsComplete)
+      {
+        StartFirstTurn(foundMatch);
+      }
+      else
+      {
+        foundMatch.CurrentTurn = buyPhase.CurrentTeam;
+      }
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -835,9 +840,14 @@ public sealed class MatchStore
       }
 
       buyPhase.StopCurrentBuyer();
-      foundMatch.CurrentTurn = buyPhase.IsComplete
-        ? TeamRules.GetFirstTeam(foundMatch.Configuration.PlayerCount)
-        : buyPhase.CurrentTeam;
+      if (buyPhase.IsComplete)
+      {
+        StartFirstTurn(foundMatch);
+      }
+      else
+      {
+        foundMatch.CurrentTurn = buyPhase.CurrentTeam;
+      }
       foundMatch.Version++;
       foundMatch.Touch();
       return new(true, null, foundMatch.State());
@@ -1855,6 +1865,17 @@ public sealed class MatchStore
     {
       player.Money = ClampCurrency((long)player.Money - upkeep);
     }
+  }
+
+  private static void StartFirstTurn(Match match)
+  {
+    match.CurrentTurn = TeamRules.GetFirstTeam(match.Configuration.PlayerCount);
+    foreach (PlayerSlot player in match.Players)
+    {
+      player.ActionsRemaining = ActionsPerTurn;
+    }
+    ApplyTurnEconomy(match, match.CurrentTurn);
+    ResetTurnActions(match, match.CurrentTurn);
   }
 
   private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);

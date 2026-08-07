@@ -871,6 +871,7 @@ internal sealed class Game1 : Game
       {
         ResetPieceTurnActions(team);
       }
+      ApplyTurnEconomy(Team.CurrentTurn);
 
       Console.WriteLine("Initial buy phase complete. The match has started.");
       return;

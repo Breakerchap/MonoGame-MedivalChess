@@ -108,15 +108,15 @@ public static class UnitRules
     int dy = Math.Abs(toY - fromY);
     if (dx == 0 && dy == 0) return false;
 
-    int maximumX = rule.MoveRange;
-    int maximumY = rule.MoveRange;
+    int chessboardDistance = Math.Max(dx, dy);
+    int taxicabDistance = dx + dy;
     return rule.MovePattern switch
     {
-      RuleShape.Straight => dx + dy == 1,
-      RuleShape.Line => (dx == 0 || dy == 0) && dx <= maximumX && dy <= maximumY,
-      RuleShape.Any => dx <= maximumX && dy <= maximumY,
+      RuleShape.Straight => taxicabDistance <= rule.MoveRange,
+      RuleShape.Line => (dx == 0 || dy == 0) && chessboardDistance <= rule.MoveRange,
+      RuleShape.Any => chessboardDistance <= rule.MoveRange,
       RuleShape.None => false,
-      _ => dx <= maximumX && dy <= maximumY
+      _ => chessboardDistance <= rule.MoveRange
     };
   }
 
@@ -157,13 +157,15 @@ public static class UnitRules
     int dy
   )
   {
-    int distance = Math.Max(Math.Abs(dx), Math.Abs(dy));
+    int chessboardDistance = Math.Max(Math.Abs(dx), Math.Abs(dy));
+    int taxicabDistance = Math.Abs(dx) + Math.Abs(dy);
+    int distance = pattern == RuleShape.Straight ? taxicabDistance : chessboardDistance;
     if (distance < minimumRange || distance > range) return false;
 
     return pattern switch
     {
       RuleShape.Any => true,
-      RuleShape.Straight => distance == 1 && (dx == 0 || dy == 0),
+      RuleShape.Straight => true,
       RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),

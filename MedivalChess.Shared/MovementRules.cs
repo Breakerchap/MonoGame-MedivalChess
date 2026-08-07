@@ -13,6 +13,11 @@ public static class MovementRules
     Func<(int x, int y), (int x, int y), bool> crossesRiver
   )
   {
+    if (unit.MovePattern == RuleShape.Line)
+    {
+      return FindLinePaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver);
+    }
+
     Dictionary<(int x, int y), int> bestCosts = new() { [origin] = 0 };
     Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
     Queue<MovementState> frontier = new();
@@ -44,6 +49,46 @@ public static class MovementRules
           if (canLand(next)) paths[next] = nextPath;
           frontier.Enqueue(new MovementState(next, nextCost, nextPath));
         }
+      }
+    }
+
+    return paths;
+  }
+
+  private static Dictionary<(int x, int y), List<(int x, int y)>> FindLinePaths(
+    UnitRule unit,
+    (int x, int y) origin,
+    NetworkTeam team,
+    Func<(int x, int y), bool> canLand,
+    Func<(int x, int y), (int x, int y), bool> canTravelThrough,
+    Func<(int x, int y), int> landingCost,
+    Func<(int x, int y), (int x, int y), bool> crossesRiver
+  )
+  {
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
+
+    foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
+    {
+      int cost = 0;
+      (int x, int y) previous = origin;
+      List<(int x, int y)> path = [];
+
+      for (int distance = 1; distance <= unit.MoveRange; distance++)
+      {
+        var next = (
+          x: origin.x + direction.x * distance,
+          y: origin.y + direction.y * distance
+        );
+        if (!canTravelThrough(previous, next)) break;
+
+        cost = crossesRiver(previous, next)
+          ? unit.MoveRange
+          : cost + landingCost(next);
+        if (cost > unit.MoveRange) break;
+
+        path.Add(next);
+        if (canLand(next)) paths[next] = [.. path];
+        previous = next;
       }
     }
 

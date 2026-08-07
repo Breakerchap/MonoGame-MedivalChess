@@ -112,6 +112,7 @@ public static partial class CpuGameRules
           state.Teams[activeTeam] = state.Teams[activeTeam] with { ActionsRemaining = state.Teams[activeTeam].ActionLimit };
           ResetTurnActions(state, activeTeam);
         }
+        ApplyTurnEconomy(state, state.CurrentTurn);
       }
       return;
     }

@@ -11,7 +11,7 @@ internal static class Actions
   {
     return piece.Definition.Movement.shape switch
     {
-      Shape.Straight or Shape.Line => ShapeFuncs.StraightShape(),
+      Shape.Straight or Shape.Line => ShapeFuncs.OrthogonalStepDirections(),
       Shape.Any =>
       [
         (1, 0), (-1, 0), (0, 1), (0, -1),
@@ -99,7 +99,7 @@ internal static class Actions
     switch (action.shape)
     {
       case Shape.Straight:
-        squares = ShapeFuncs.StraightShape();
+        squares = ShapeFuncs.StraightShape(action.range);
         break;
 
       case Shape.Line:
@@ -140,7 +140,7 @@ internal static class Actions
 
     if (!isMoving && piece.Definition.MinimumAttackRange > 0)
     {
-      squares.RemoveAll(square => ShapeFuncs.Distance(square) < piece.Definition.MinimumAttackRange);
+      squares.RemoveAll(square => ShapeFuncs.Distance(action.shape, square) < piece.Definition.MinimumAttackRange);
     }
 
     return squares;
@@ -187,9 +187,26 @@ internal static class ShapeFuncs
     return validSquares;
   }
 
-  internal static List<(int x, int y)> StraightShape()
+  internal static List<(int x, int y)> OrthogonalStepDirections()
   {
     return [(1, 0), (-1, 0), (0, 1), (0, -1)];
+  }
+
+  internal static List<(int x, int y)> StraightShape(int range)
+  {
+    List<(int x, int y)> validSquares = new();
+    for (int x = -range; x <= range; x++)
+    {
+      for (int y = -range; y <= range; y++)
+      {
+        if (Math.Abs(x) + Math.Abs(y) <= range)
+        {
+          validSquares.Add((x, y));
+        }
+      }
+    }
+
+    return validSquares;
   }
 
   internal static List<(int x, int y)> LineShape(int range)
@@ -233,9 +250,11 @@ internal static class ShapeFuncs
     return validSquares;
   }
 
-  internal static int Distance((int x, int y) offset)
+  internal static int Distance(Shape shape, (int x, int y) offset)
   {
-    return Math.Max(Math.Abs(offset.x), Math.Abs(offset.y));
+    return shape == Shape.Straight
+      ? Math.Abs(offset.x) + Math.Abs(offset.y)
+      : Math.Max(Math.Abs(offset.x), Math.Abs(offset.y));
   }
 
   internal static List<(int x, int y)> AbsoluteStraightOrDiagonalShape(int range)
