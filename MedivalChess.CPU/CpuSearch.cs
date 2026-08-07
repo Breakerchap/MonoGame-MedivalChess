@@ -138,6 +138,7 @@ public sealed class CpuPlayer : ICpuPlayer
         }
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
           node.State, team, legal, settings, profile.Personality);
+        candidates = ApplyAttackAndReservePriorities(node.State, team, profile, candidates);
         if (depth >= maximumActions)
         {
           // Quiescence extension: once the ordinary horizon is reached, only continue forcing
@@ -289,6 +290,47 @@ public sealed class CpuPlayer : ICpuPlayer
       ? Math.Min(24, Math.Max(0, stateTeam.Money) / lowestPurchaseCost)
       : 0;
     return Math.Max(1, Math.Min(64, pieceActions + affordablePurchases + 1));
+  }
+
+  private static IReadOnlyList<ScoredAction> ApplyAttackAndReservePriorities(
+    CpuGameState state,
+    NetworkTeam team,
+    CpuProfile profile,
+    IReadOnlyList<ScoredAction> candidates
+  )
+  {
+    bool mediumOrStronger = profile.Difficulty is CpuDifficultyLevel.Medium or CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best;
+    ScoredAction[] attacks = candidates.Where(candidate => candidate.Action is AttackAction { TargetPieceId: not null }).ToArray();
+    if (attacks.Length > 0 && mediumOrStronger)
+    {
+      return attacks;
+    }
+
+    if (mediumOrStronger && !Globals.ActionLimitsEnabled)
+    {
+      // With unlimited team actions, every unit still has its own once-per-turn move. Keep
+      // cycling through those moves instead of allowing a quiet End Turn while useful pieces
+      // are idle. The next search layer rechecks attacks after each move.
+      ScoredAction[] moves = candidates.Where(candidate => candidate.Action is MoveAction).ToArray();
+      if (moves.Length > 0)
+      {
+        return moves;
+      }
+    }
+
+    if (mediumOrStronger &&
+        state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
+        cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
+    {
+      ScoredAction[] combatPurchases = candidates.Where(candidate => candidate.Action is PurchaseAction purchase &&
+        UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0).ToArray();
+      if (combatPurchases.Length > 0)
+      {
+        return combatPurchases;
+      }
+    }
+
+    return candidates;
   }
 
   /// <summary>

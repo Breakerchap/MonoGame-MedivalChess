@@ -150,7 +150,7 @@ public static class PieceDefinitions
     PieceType.Guard, PieceCategory.Melee, (3, Shape.Straight), 10, 25, (1, 1), (1, 1), Shape.Straight, 35,
     "Attaches to a friendly non-royal unit and takes damage for it.");
   public static readonly PieceDefinition Mercenary = new(
-    PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 25, 20, (1, 1), (1, 2), Shape.Any, 20,
+    PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 20, 20, (1, 1), (1, 2), Shape.Straight, 25,
     "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill.");
   public static readonly PieceDefinition Farm = new(
     PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 60,

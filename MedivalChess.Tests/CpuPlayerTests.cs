@@ -52,6 +52,106 @@ public sealed class CpuPlayerTests
     Assert.Equal("blue-damaged-soldier", firstAttack.TargetPieceId);
   }
 
+  [Theory]
+  [InlineData(CpuDifficultyLevel.Medium)]
+  [InlineData(CpuDifficultyLevel.Hard)]
+  [InlineData(CpuDifficultyLevel.Best)]
+  public void MediumAndStrongerCpu_AttackAnAvailableEnemyBeforeTakingQuietActions(CpuDifficultyLevel difficulty)
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-knight", "Knight", NetworkTeam.Blue, 0, -1, 30)
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(
+      state, NetworkTeam.Red, CpuProfile.ForDifficulty(difficulty, 17), CancellationToken.None);
+
+    AttackAction attack = Assert.IsType<AttackAction>(plan.Actions.First());
+    Assert.Equal("blue-knight", attack.TargetPieceId);
+  }
+
+  [Theory]
+  [InlineData(CpuDifficultyLevel.Medium)]
+  [InlineData(CpuDifficultyLevel.Hard)]
+  [InlineData(CpuDifficultyLevel.Best)]
+  public void MediumAndStrongerCpu_DeployCombatUnitsWhenItHasLargeUnusedReserves(CpuDifficultyLevel difficulty)
+  {
+    CpuGameState baseState = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 5, 15),
+      new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+    );
+    CpuGameState state = new(
+      baseState.Configuration,
+      baseState.Pieces,
+      [
+        new CpuTeamState(NetworkTeam.Red, 80, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: baseState.Terrain
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(
+      state, NetworkTeam.Red, CpuProfile.ForDifficulty(difficulty, 23), CancellationToken.None);
+
+    PurchaseAction purchase = Assert.IsType<PurchaseAction>(plan.Actions.First());
+    Assert.True(UnitRules.GetRequired(purchase.UnitType).Attack > 0);
+  }
+
+  [Theory]
+  [InlineData(CpuDifficultyLevel.Medium)]
+  [InlineData(CpuDifficultyLevel.Hard)]
+  [InlineData(CpuDifficultyLevel.Best)]
+  public void MediumAndStrongerCpu_UsesEveryAvailableAttackBeforeEndingAnUnlimitedTurn(CpuDifficultyLevel difficulty)
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-right", "Soldier", NetworkTeam.Red, 2, 0, 15),
+      new NetworkPiece("blue-left", "Knight", NetworkTeam.Blue, 0, -1, 30),
+      new NetworkPiece("blue-right", "Knight", NetworkTeam.Blue, 2, -1, 30)
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(
+      state, NetworkTeam.Red, CpuProfile.ForDifficulty(difficulty, 29), CancellationToken.None);
+
+    Assert.Equal(
+      ["red-left", "red-right"],
+      plan.Actions.OfType<AttackAction>().Select(attack => attack.AttackerId).Distinct().Order().ToArray()
+    );
+  }
+
+  [Theory]
+  [InlineData(CpuDifficultyLevel.Medium)]
+  [InlineData(CpuDifficultyLevel.Hard)]
+  [InlineData(CpuDifficultyLevel.Best)]
+  public void MediumAndStrongerCpu_MovesAvailablePiecesBeforeEndingAnUnlimitedTurn(CpuDifficultyLevel difficulty)
+  {
+    CpuGameState baseState = CreateState(
+      new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, 0, 5, 15),
+      new NetworkPiece("red-right", "Defender", NetworkTeam.Red, 2, 5, 25),
+      new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
+    );
+    CpuGameState state = new(
+      baseState.Configuration,
+      baseState.Pieces,
+      [
+        new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: baseState.Terrain
+    );
+
+    CpuTurnPlan plan = new CpuPlayer().ChooseTurn(
+      state, NetworkTeam.Red, CpuProfile.ForDifficulty(difficulty, 31), CancellationToken.None);
+
+    Assert.Equal(
+      ["red-left", "red-right"],
+      plan.Actions.OfType<MoveAction>().Select(move => move.PieceId).Distinct().Order().ToArray()
+    );
+    Assert.IsType<EndTurnAction>(plan.Actions[^1]);
+  }
+
   [Fact]
   public void Cpu_ReturnsOnlyActionsThatRemainLegalAsItsPlanIsApplied()
   {

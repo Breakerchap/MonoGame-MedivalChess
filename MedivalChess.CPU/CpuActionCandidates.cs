@@ -18,6 +18,8 @@ public interface IActionCandidateSelector
 /// <summary>Ranks legal actions before beam search without changing their legality.</summary>
 public sealed class CpuActionCandidateSelector : IActionCandidateSelector
 {
+  internal const int CombatPurchaseReserveThreshold = 80;
+
   private readonly ICpuThreatMapBuilder _threatMapBuilder = new CpuThreatMapBuilder();
 
   public IReadOnlyList<ScoredAction> SelectCandidates(
@@ -215,6 +217,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     }
 
     float score = affordability;
+    bool spendingReserve = false;
     if (UnitRules.TryGet(action.UnitType, out UnitRule purchasedRule) && purchasedRule.Attack > 0)
     {
       NetworkPiece[] enemies = state.Pieces.Where(piece => piece.Team != action.Team && piece.Team != NetworkTeam.Neutral &&
@@ -225,6 +228,17 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       if (enemies.Any(piece => piece.Type == "Farm" && Distance((action.X, action.Y), (piece.X, piece.Y)) <= 8))
       {
         score += 8f;
+      }
+
+      int availableGold = state.Teams[action.Team].Money;
+      spendingReserve = availableGold >= CombatPurchaseReserveThreshold;
+      if (spendingReserve)
+      {
+        // A large unused balance cannot contest the board. Give combat purchases enough
+        // priority to beat quiet repositioning while still retaining the unit-specific checks
+        // below (for example, avoiding duplicate Ballistas and Mercenaries).
+        score += 40f + Math.Min(40f, (availableGold - CombatPurchaseReserveThreshold) * 0.5f) +
+          Math.Min(10f, purchasedRule.Attack * 0.25f);
       }
     }
     int ownedCount = state.Pieces.Count(piece => piece.Team == action.Team && piece.AttachedToId is null &&
@@ -266,6 +280,10 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         break;
     }
 
+    if (spendingReserve)
+    {
+      reason = "Deploys a combat unit instead of hoarding gold";
+    }
     return new ScoredAction(action, score, reason);
   }
 

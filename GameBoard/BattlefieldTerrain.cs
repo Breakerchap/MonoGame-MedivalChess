@@ -35,7 +35,7 @@ public sealed class TerrainGenerationSettings
   public int ForestEdgeClearance { get; init; } = 1;
   public int ForestInteriorWeightExponent { get; init; } = 2;
   // Units standing in a forest take this much less damage (minimum damage remains 1).
-  public int ForestDamageReduction { get; init; } = 3;
+  public int ForestDamageReduction { get; init; } = 0; //! Don't change
 
   // Lakes
   public int LakeSourceEdgeClearance { get; init; } = 2;
