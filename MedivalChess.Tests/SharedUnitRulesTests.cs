@@ -108,7 +108,7 @@ public sealed class SharedUnitRulesTests
     UnitRule bombard = UnitRules.GetRequired("Bombard");
 
     Assert.Equal(RuleShape.Any, catapult.AttackPattern);
-    Assert.Equal("Attacks over terrain and enemies.", UnitRules.GetAbilityDescription("Catapult"));
+    Assert.Equal("Attacks over terrain and pieces.", UnitRules.GetAbilityDescription("Catapult"));
     Assert.Equal((2, 3), (bombard.MinimumAttackRange, bombard.AttackRange));
     Assert.Equal(new AttackRange(2, 3), bombard.AllowedAttackRange);
     Assert.Contains("barricade", UnitRules.GetAbilityDescription("Engineer"));

@@ -46,6 +46,44 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void CavalierAttack_RefreshesMovementForTheRestOfItsTurn()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-cavalier", "Cavalier", NetworkTeam.Red, 0, 0, 20, HasMovedThisTurn: true),
+      new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "red-cavalier", "blue-peasant", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState afterAttack = attack.Apply(state);
+    NetworkPiece cavalier = afterAttack.Pieces.Single(piece => piece.Id == "red-cavalier");
+
+    Assert.True(cavalier.HasAttackedThisTurn);
+    Assert.False(cavalier.HasMovedThisTurn);
+    Assert.True(new MoveAction(NetworkTeam.Red, cavalier.Id, 0, 1).IsLegal(afterAttack));
+  }
+
+  [Fact]
+  public void AttackingAnOx_AlsoDamagesItsCarriedUnit()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-ox", "Ox", NetworkTeam.Blue, 0, -1, 25),
+      new NetworkPiece(
+        "blue-cargo", "Knight", NetworkTeam.Blue, 0, -1, 30,
+        AttachedToId: "blue-ox", AttachmentKind: NetworkAttachmentKind.Carried
+      )
+    );
+    AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-ox", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState afterAttack = attack.Apply(state);
+
+    Assert.Equal(15, afterAttack.Pieces.Single(piece => piece.Id == "blue-ox").Health);
+    Assert.Equal(20, afterAttack.Pieces.Single(piece => piece.Id == "blue-cargo").Health);
+  }
+
+  [Fact]
   public void Elephant_CanFinishItsMoveOnAnEnemyItTramples()
   {
     Board board = new([

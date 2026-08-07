@@ -40,7 +40,7 @@ public enum Shape
 
 public enum PieceType
 {
-  Soldier, Defender, Archer, Scout, Spearman,
+  Soldier, Defender, Archer, Spearman,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, Bombard, Ox, Engineer, Ballista,
   Elephant, Guard, Mercenary, Farm,
@@ -109,8 +109,6 @@ public static class PieceDefinitions
     PieceType.Defender, PieceCategory.Melee, (2, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 15);
   public static readonly PieceDefinition Archer = new(
     PieceType.Archer, PieceCategory.Ranged, (3, Shape.Straight), 10, 10, (1, 1), (2, 3), Shape.Any, 30);
-  public static readonly PieceDefinition Scout = new(
-    PieceType.Scout, PieceCategory.Intelligence, (4, Shape.Any), 5, 10, (1, 1), (1, 1), Shape.Straight, 20);
   public static readonly PieceDefinition Spearman = new(
     PieceType.Spearman, PieceCategory.Melee, (2, Shape.Any), 15, 15, (1, 1), (1, 1), Shape.ForwardOrForwardDiagonal, 25);
   public static readonly PieceDefinition Peasant = new(
@@ -120,9 +118,10 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Crossbowman = new(
     PieceType.Crossbowman, PieceCategory.Ranged, (2, Shape.Any), 20, 15, (1, 1), (1, 3), Shape.Any, 50);
   public static readonly PieceDefinition Cavalier = new(
-    PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 50);
+    PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 50,
+    "Movement refreshes after attacking.");
   public static readonly PieceDefinition Chariot = new(
-    PieceType.Chariot, PieceCategory.Melee, (6, Shape.Line), 15, 25, (1, 1), (1, 3), Shape.Line, 40);
+    PieceType.Chariot, PieceCategory.Melee, (5, Shape.Line), 15, 25, (1, 1), (1, 3), Shape.Line, 40);
   public static readonly PieceDefinition Cannon = new(
     PieceType.Cannon, PieceCategory.Mechanical, (2, Shape.Straight), 30, 15, (1, 2), (2, 3), Shape.Line, 50);
   public static readonly PieceDefinition Spy = new(
@@ -130,18 +129,18 @@ public static class PieceDefinitions
     "Marks an enemy; it takes double damage until attacked.");
   public static readonly PieceDefinition Catapult = new(
     PieceType.Catapult, PieceCategory.Mechanical, (1, Shape.Any), 20, 20, (1, 2), (3, 5), Shape.Any, 55,
-    "Attacks over terrain and enemies.");
+    "Attacks over terrain and pieces.");
   public static readonly PieceDefinition Bombard = new(
-    PieceType.Bombard, PieceCategory.Ranged, (2, Shape.Straight), 15, 20, (1, 1), (2, 3), Shape.Straight, 55,
-    "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units. Large units take damage only once.");
+    PieceType.Bombard, PieceCategory.Ranged, (2, Shape.Straight), 15, 15, (1, 1), (2, 3), Shape.Straight, 55,
+    "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units.");
   public static readonly PieceDefinition Ox = new(
     PieceType.Ox, PieceCategory.Transport, (4, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Carries one friendly unit. Its movement becomes 3 Any while carrying a Mechanical unit.");
+    "Carries one friendly unit. While carrying, if attacked, both units take damage. Its movement becomes 3 Any while carrying a Mechanical unit.");
   public static readonly PieceDefinition Engineer = new(
     PieceType.Engineer, PieceCategory.Intelligence, (3, Shape.Any), 0, 20, (1, 1), (1, 1), Shape.Any, 25,
-    "Builds up to two roads, 20-health barricades, or mines each turn. It may also demolish an adjacent Engineer structure without triggering mines.");
+    "Builds up to two: roads, 20-health barricades, or mines each turn. It may also demolish Engineer structures within range. Doesn't trigger mines.");
   public static readonly PieceDefinition Ballista = new(
-    PieceType.Ballista, PieceCategory.Mechanical, (1, Shape.Straight), 25, 20, (1, 2), (2, 5), Shape.Line, 55,
+    PieceType.Ballista, PieceCategory.Mechanical, (1, Shape.Straight), 20, 20, (1, 2), (2, 5), Shape.Line, 55,
     "Its attack pierces enemies in a straight line.");
   public static readonly PieceDefinition Elephant = new(
     PieceType.Elephant, PieceCategory.Melee, (3, Shape.Straight), 10, 60, (2, 2), (0, 0), Shape.None, 60,
@@ -150,11 +149,11 @@ public static class PieceDefinitions
     PieceType.Guard, PieceCategory.Melee, (3, Shape.Straight), 10, 25, (1, 1), (1, 1), Shape.Straight, 35,
     "Attaches to a friendly non-royal unit and takes damage for it.");
   public static readonly PieceDefinition Mercenary = new(
-    PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 20, 20, (1, 1), (1, 2), Shape.Straight, 25,
+    PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 15, 20, (1, 1), (1, 2), Shape.Straight, 25,
     "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill.");
   public static readonly PieceDefinition Farm = new(
     PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 60,
-    "Earns the configured gold amount at the start of each owner turn (default 5). Units may move and attack over it.");
+    "Earns 5 gold at the start of each owner turn. Units may move and attack over it.");
   public static readonly PieceDefinition King = new(
     PieceType.King, PieceCategory.Royal, (1, Shape.Any), 15, 110, (1, 1), (1, 1), Shape.Any, 0,
     "Adjacent allies take 5 less damage, to a minimum of 5.");
@@ -174,7 +173,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] All =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Chariot, Cannon, Spy,
+    Crossbowman, Cavalier, Chariot, Cannon, Spy,
     Catapult, Bombard, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
@@ -182,17 +181,17 @@ public static class PieceDefinitions
 
   public static readonly PieceDefinition[] Encyclopedia =
   [
-    Soldier, Defender, Archer, Peasant,
-    Knight, Crossbowman, Chariot, Cannon, Spy,
-    Catapult, Bombard, Ox, Engineer,
-    Ballista, Elephant, Guard, Mercenary, Farm,
-    King, Princess, Palace, Baron, Emissary
+    Soldier, Defender, Archer, Peasant, Knight,
+    Crossbowman, Cavalier, Chariot, Cannon, Spy,
+    Catapult, Bombard, Ox, Engineer, Ballista,
+    Elephant, Guard, Mercenary, Farm, King, Princess,
+    Palace, Baron, Emissary
   ];
 
   public static readonly PieceDefinition[] Purchasable =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Chariot, Cannon, Spy,
+    Crossbowman, Cavalier, Chariot, Cannon, Spy,
     Catapult, Bombard, Ox, Engineer, Ballista,
     Elephant, Guard, Mercenary, Farm
   ];

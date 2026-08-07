@@ -197,7 +197,9 @@ public sealed class CpuProfile
       OpponentBeamWidth = 16,
       OpponentActionsToPredict = 5,
       TacticalExtensionDepth = 3,
-      MaxSearchNodes = 20_000,
+      // Keep the deterministic node cap below the wall-clock safeguard now that the broader
+      // movement definitions produce more legal branches per position.
+      MaxSearchNodes = 8_000,
       MaximumPurchasePlacementCandidates = 96,
       MaxSearchMilliseconds = 5_000,
       Randomness = 0f

@@ -31,8 +31,8 @@ public class UiTextTests
   [Fact]
   public void Encyclopedia_IncludesEveryDisplayablePieceType()
   {
-    Assert.Equal(23, PieceDefinitions.Encyclopedia.Length);
-    Assert.DoesNotContain(PieceDefinitions.Encyclopedia, piece => piece.Type is PieceType.Scout or PieceType.Spearman or PieceType.Cavalier);
+    Assert.Equal(24, PieceDefinitions.Encyclopedia.Length);
+    Assert.DoesNotContain(PieceDefinitions.Encyclopedia, piece => piece.Type == PieceType.Spearman);
     Assert.Equal(
       PieceDefinitions.Encyclopedia.Length,
       PieceDefinitions.Encyclopedia.Select(definition => definition.Type).Distinct().Count()
@@ -46,7 +46,7 @@ public class UiTextTests
     [
       (PieceDefinitions.Soldier, "So"), (PieceDefinitions.Defender, "Df"),
       (PieceDefinitions.Archer, "Ar"), (PieceDefinitions.Peasant, "Pe"),
-      (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"), (PieceDefinitions.Chariot, "Ch"),
+      (PieceDefinitions.Knight, "Kn"), (PieceDefinitions.Crossbowman, "Cb"), (PieceDefinitions.Cavalier, "Cv"), (PieceDefinitions.Chariot, "Ch"),
       (PieceDefinitions.Cannon, "Cn"), (PieceDefinitions.Spy, "Sy"),
       (PieceDefinitions.Catapult, "Ct"), (PieceDefinitions.Bombard, "Bd"),
       (PieceDefinitions.Ox, "Ox"), (PieceDefinitions.Engineer, "En"),
@@ -68,7 +68,7 @@ public class UiTextTests
   [Fact]
   public void ActionDescriptions_UseShortLabelsThatFitTheSidebar()
   {
-    Assert.Equal("2 Line", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
+    Assert.Equal("2 Straight", UiText.FormatAction(PieceDefinitions.Cannon.Movement));
     Assert.Equal("1 Straight", UiText.FormatAction(PieceDefinitions.Peasant.AttackRange, PieceDefinitions.Peasant.AttackPattern));
   }
 

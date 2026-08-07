@@ -70,7 +70,13 @@ public static partial class CpuGameRules
   private static void ApplyAttack(CpuMutableGameState state, AttackAction action)
   {
     int attackerIndex = FindPieceIndex(state.Pieces, action.AttackerId);
-    NetworkPiece attacker = state.Pieces[attackerIndex] with { HasAttackedThisTurn = true };
+    NetworkPiece attacker = state.Pieces[attackerIndex] with
+    {
+      HasAttackedThisTurn = true,
+      HasMovedThisTurn = AbilityRules.RefreshesMovementAfterAttacking(state.Pieces[attackerIndex].Type)
+        ? false
+        : state.Pieces[attackerIndex].HasMovedThisTurn
+    };
     state.Pieces[attackerIndex] = attacker;
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
     if (target is null)

@@ -329,7 +329,7 @@ public static partial class CpuGameRules
       return;
     }
 
-    foreach (NetworkPiece affected in state.Pieces.Where(piece => piece.Id != attacker.Id && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+    foreach (NetworkPiece affected in state.Pieces.Where(piece => piece.Id != attacker.Id && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
       OccupiedSquares(rule, (piece.X, piece.Y)).Any(square =>
         OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
           Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1))).ToArray())
@@ -348,23 +348,15 @@ public static partial class CpuGameRules
 
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
+      ? state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Carried)
+      : null;
     int unmitigated = damageOverride ?? GetAttackDamage(state, attacker, target);
-    int damage = CombatRules.CalculateDamage(
-      unmitigated,
-      false,
-      false,
-      HasAdjacentUnit(state, damaged, damaged.Team, "King"),
-      IsInForest(state, damaged),
-      state.Source.Terrain.ForestDamageReduction
-    );
-    int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
-    if (damaged.Health > damage)
+    ApplyDamageToPiece(state, attacker, attackerTeam, damaged, unmitigated);
+    if (cargo is not null && cargo.Id != damaged.Id && FindPiece(state.Pieces, cargo.Id) is not null)
     {
-      state.Pieces[damagedIndex] = damaged with { Health = damaged.Health - damage };
-    }
-    else
-    {
-      HandlePieceDestroyed(state, damaged, attackerTeam);
+      ApplyDamageToPiece(state, attacker, attackerTeam, cargo, unmitigated);
     }
 
     for (int index = 0; index < state.Pieces.Count; index++)
@@ -373,6 +365,37 @@ public static partial class CpuGameRules
       {
         state.Pieces[index] = state.Pieces[index] with { MarkedTargetId = null };
       }
+    }
+  }
+
+  private static void ApplyDamageToPiece(
+    CpuMutableGameState state,
+    NetworkPiece attacker,
+    NetworkTeam attackerTeam,
+    NetworkPiece damaged,
+    int unmitigatedDamage
+  )
+  {
+    int damage = CombatRules.CalculateDamage(
+      unmitigatedDamage,
+      false,
+      false,
+      HasAdjacentUnit(state, damaged, damaged.Team, "King"),
+      IsInForest(state, damaged),
+      state.Source.Terrain.ForestDamageReduction
+    );
+    int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
+    if (damagedIndex < 0)
+    {
+      return;
+    }
+    if (damaged.Health > damage)
+    {
+      state.Pieces[damagedIndex] = damaged with { Health = damaged.Health - damage };
+    }
+    else
+    {
+      HandlePieceDestroyed(state, damaged, attackerTeam);
     }
   }
 

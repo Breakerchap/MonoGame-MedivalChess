@@ -40,7 +40,7 @@ public class PieceFootprintTests
     Assert.True(Actions.IsValidMovementDestination(catapult, (6, 5)));
     Assert.False(Actions.IsValidMovementDestination(catapult, (7, 5)));
 
-    Assert.True(Actions.CanAttackSquare(cannon, (5, 10)));
-    Assert.False(Actions.CanAttackSquare(cannon, (5, 12)));
+    Assert.True(Actions.CanAttackSquare(cannon, (5, 9)));
+    Assert.False(Actions.CanAttackSquare(cannon, (5, 10)));
   }
 }

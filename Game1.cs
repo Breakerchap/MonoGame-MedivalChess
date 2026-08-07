@@ -632,6 +632,10 @@ internal sealed class Game1 : Game
               }
 
               selectedPiece.HasAttackedThisTurn = true;
+              if (AbilityRules.RefreshesMovementAfterAttacking(selectedPiece.Definition.Type.ToString()))
+              {
+                selectedPiece.HasMovedThisTurn = false;
+              }
 
               Console.WriteLine(
                 $"Attacked at ({boardX}, {boardY})."
@@ -1547,6 +1551,10 @@ internal sealed class Game1 : Game
     }
 
     attacker.HasAttackedThisTurn = true;
+    if (AbilityRules.RefreshesMovementAfterAttacking(attacker.Definition.Type.ToString()))
+    {
+      attacker.HasMovedThisTurn = false;
+    }
     if (_screen == Screen.Playing)
     {
       CompleteAction();
@@ -3000,27 +3008,35 @@ internal sealed class Game1 : Game
   {
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
     Piece damagedPiece = guard ?? target;
-    int damage = damageOverride ?? GetAttackDamage(attacker, target);
+    Piece cargo = AbilityRules.SharesDamageWithCargo(target.Definition.Type.ToString())
+      ? pieceSetup.GetAttachedPiece(target, AttachmentKind.Carried)
+      : null;
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
 
-    damage = CombatRules.CalculateDamage(
-      damage,
+    ApplyDamageToPiece(attacker, damagedPiece, unmitigatedDamage);
+    if (cargo is not null && cargo != damagedPiece && pieceSetup.Pieces.Contains(cargo))
+    {
+      ApplyDamageToPiece(attacker, cargo, unmitigatedDamage);
+    }
+
+    foreach (Piece spy in pieceSetup.Pieces.Where(spy => spy.MarkedTarget == target))
+    {
+      spy.MarkedTarget = null;
+    }
+  }
+
+  private void ApplyDamageToPiece(Piece attacker, Piece damagedPiece, int unmitigatedDamage)
+  {
+    int damage = CombatRules.CalculateDamage(
+      unmitigatedDamage,
       false,
       false,
       HasAdjacentPieceOfType(damagedPiece, PieceType.King, damagedPiece.Team),
       IsPieceInForest(damagedPiece),
       _terrain.ForestDamageReduction
     );
-
     damagedPiece.CurrentHealth -= damage;
-    foreach (Piece spy in pieceSetup.Pieces)
-    {
-      if (spy.MarkedTarget == target)
-      {
-        spy.MarkedTarget = null;
-      }
-    }
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
-
     HandlePieceDestroyed(damagedPiece, attacker.Team);
   }
 
@@ -3742,7 +3758,7 @@ internal sealed class Game1 : Game
   private void PerformBombardAttack(Piece attacker, Piece target)
   {
     HashSet<Piece> affectedPieces = pieceSetup.Pieces
-      .Where(piece => piece != attacker && piece.OccupiedSquares().Any(square =>
+      .Where(piece => piece != attacker && piece.AttachedTo is null && piece.OccupiedSquares().Any(square =>
         target.OccupiedSquares().Any(targetSquare =>
           Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1)))
       .ToHashSet();

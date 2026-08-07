@@ -5,6 +5,14 @@ public static class AbilityRules
 {
   public static bool IsTerrainImmune(UnitRule unit) => unit.Type == "Elephant";
 
+  /// <summary>Whether an attack restores the unit's opportunity to move this turn.</summary>
+  public static bool RefreshesMovementAfterAttacking(string unitType) =>
+    string.Equals(unitType, nameof(PieceType.Cavalier), StringComparison.Ordinal);
+
+  /// <summary>Whether damage dealt to this unit is also dealt to its carried unit.</summary>
+  public static bool SharesDamageWithCargo(string unitType) =>
+    string.Equals(unitType, nameof(PieceType.Ox), StringComparison.Ordinal);
+
   public static bool CanGuardAttach(UnitRule guard, UnitRule target, bool guardIsAttached, bool targetAlreadyHasGuard)
   {
     return guard.Type == "Guard" && target.Category != RuleCategory.Royal &&

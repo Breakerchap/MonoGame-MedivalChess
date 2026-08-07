@@ -13,7 +13,6 @@ internal static class UiText
       PieceType.Soldier => "So",
       PieceType.Defender => "Df",
       PieceType.Archer => "Ar",
-      PieceType.Scout => "Sc",
       PieceType.Spearman => "Sp",
       PieceType.Peasant => "Pe",
       PieceType.Knight => "Kn",

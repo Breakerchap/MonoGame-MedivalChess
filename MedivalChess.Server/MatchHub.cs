@@ -480,7 +480,13 @@ public sealed class MatchStore
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
 
-      foundMatch.Pieces[attackerIndex] = attacker with { HasAttackedThisTurn = true };
+      foundMatch.Pieces[attackerIndex] = attacker with
+      {
+        HasAttackedThisTurn = true,
+        HasMovedThisTurn = AbilityRules.RefreshesMovementAfterAttacking(attacker.Type)
+          ? false
+          : attacker.HasMovedThisTurn
+      };
       if (target is null)
       {
         DamageBarricade(foundMatch, attacker, targetPosition);
@@ -1242,24 +1248,15 @@ public sealed class MatchStore
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard);
     NetworkPiece damagedPiece = guard ?? target;
+    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
+      ? match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Carried)
+      : null;
     int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
-    int damage = CombatRules.CalculateDamage(
-      unmitigatedDamage,
-      false,
-      false,
-      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "King"),
-      IsInForest(match, damagedPiece),
-      match.Terrain.ForestDamageReduction
-    );
-    int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
-    if (damagedIndex < 0) return;
-    if (damagedPiece.Health > damage)
+    ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
+    if (cargo is not null && cargo.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == cargo.Id))
     {
-      match.Pieces[damagedIndex] = damagedPiece with { Health = damagedPiece.Health - damage };
-    }
-    else
-    {
-      HandlePieceDestroyed(match, damagedPiece, attackingPlayer);
+      ApplyDamageToPiece(match, attacker, attackingPlayer, cargo, unmitigatedDamage);
     }
 
     for (int pieceIndex = 0; pieceIndex < match.Pieces.Count; pieceIndex++)
@@ -1269,6 +1266,37 @@ public sealed class MatchStore
       {
         match.Pieces[pieceIndex] = piece with { MarkedTargetId = null };
       }
+    }
+  }
+
+  private static void ApplyDamageToPiece(
+    Match match,
+    NetworkPiece attacker,
+    PlayerSlot attackingPlayer,
+    NetworkPiece damagedPiece,
+    int unmitigatedDamage
+  )
+  {
+    int damage = CombatRules.CalculateDamage(
+      unmitigatedDamage,
+      false,
+      false,
+      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "King"),
+      IsInForest(match, damagedPiece),
+      match.Terrain.ForestDamageReduction
+    );
+    int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
+    if (damagedIndex < 0)
+    {
+      return;
+    }
+    if (damagedPiece.Health > damage)
+    {
+      match.Pieces[damagedIndex] = damagedPiece with { Health = damagedPiece.Health - damage };
+    }
+    else
+    {
+      HandlePieceDestroyed(match, damagedPiece, attackingPlayer);
     }
   }
 
@@ -1282,7 +1310,7 @@ public sealed class MatchStore
     if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return;
     IReadOnlyList<NetworkPiece> affected = match.Pieces.Where(piece =>
     {
-      if (!UnitRules.TryGet(piece.Type, out UnitRule pieceRule)) return false;
+      if (piece.AttachedToId is not null || !UnitRules.TryGet(piece.Type, out UnitRule pieceRule)) return false;
       return OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(square =>
         OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
           Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1));

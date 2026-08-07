@@ -396,7 +396,7 @@ public sealed class OnlineMatchTests
   {
     NetworkMatchConfiguration configuration = DefaultConfiguration with
     {
-      StartingCash = 10,
+      StartingCash = 25,
       ForestDensity = "Light",
       WaterwayDensity = "Light"
     };

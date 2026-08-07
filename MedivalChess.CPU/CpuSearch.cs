@@ -265,7 +265,7 @@ public sealed class CpuPlayer : ICpuPlayer
       Cancelled = cancelled,
       TopChoices = choices
     };
-    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, chosen.Node.Actions);
+    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, profile, chosen.Node.Actions);
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
   }
 
@@ -306,6 +306,24 @@ public sealed class CpuPlayer : ICpuPlayer
       return attacks;
     }
 
+    if (mediumOrStronger &&
+        state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
+        cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
+    {
+      ScoredAction[] immediateWins = candidates.Where(candidate => candidate.Action is MoveAction &&
+        candidate.Action.Apply(state).IsFinished).ToArray();
+      if (immediateWins.Length > 0)
+      {
+        return immediateWins;
+      }
+      ScoredAction[] combatPurchases = candidates.Where(candidate => candidate.Action is PurchaseAction purchase &&
+        UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0).ToArray();
+      if (combatPurchases.Length > 0)
+      {
+        return combatPurchases;
+      }
+    }
+
     if (mediumOrStronger && !Globals.ActionLimitsEnabled)
     {
       // With unlimited team actions, every unit still has its own once-per-turn move. Keep
@@ -318,18 +336,6 @@ public sealed class CpuPlayer : ICpuPlayer
       }
     }
 
-    if (mediumOrStronger &&
-        state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
-        cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
-    {
-      ScoredAction[] combatPurchases = candidates.Where(candidate => candidate.Action is PurchaseAction purchase &&
-        UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0).ToArray();
-      if (combatPurchases.Length > 0)
-      {
-        return combatPurchases;
-      }
-    }
-
     return candidates;
   }
 
@@ -337,22 +343,52 @@ public sealed class CpuPlayer : ICpuPlayer
   /// Final defence before a worker result leaves CPU code. It is intentionally small (at most one
   /// turn) and ensures a stale or externally supplied candidate cannot be handed to presentation.
   /// </summary>
-  private static IReadOnlyList<ICpuGameAction> VerifyActionSequence(
+  private IReadOnlyList<ICpuGameAction> VerifyActionSequence(
     CpuGameState state,
     NetworkTeam team,
+    CpuProfile profile,
     IReadOnlyList<ICpuGameAction> actions
   )
   {
     List<ICpuGameAction> verified = [];
     CpuGameState current = state;
+    bool preserveAvailableAttacks = profile.Difficulty is CpuDifficultyLevel.Medium or CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best;
     foreach (ICpuGameAction action in actions)
     {
+      // A narrow beam can settle on a quiet continuation after an earlier attack. In an
+      // unlimited-action match, preserve the medium-and-stronger policy of resolving every
+      // available direct attack before allowing that quiet continuation.
+      while (preserveAvailableAttacks && action is not AttackAction &&
+             current.CurrentTurn == team && !current.IsFinished)
+      {
+        AttackAction? availableAttack = _actionGenerator.GenerateSearchActions(current, team, 1)
+          .OfType<AttackAction>()
+          .FirstOrDefault(candidate => candidate.TargetPieceId is not null);
+        if (availableAttack is null)
+        {
+          break;
+        }
+        verified.Add(availableAttack);
+        current = availableAttack.Apply(current);
+      }
       if (current.IsFinished || current.CurrentTurn != team || !action.IsLegal(current))
       {
         break;
       }
       verified.Add(action);
       current = action.Apply(current);
+    }
+    while (preserveAvailableAttacks && current.CurrentTurn == team && !current.IsFinished)
+    {
+      AttackAction? availableAttack = _actionGenerator.GenerateSearchActions(current, team, 1)
+        .OfType<AttackAction>()
+        .FirstOrDefault(candidate => candidate.TargetPieceId is not null);
+      if (availableAttack is null)
+      {
+        break;
+      }
+      verified.Add(availableAttack);
+      current = availableAttack.Apply(current);
     }
     if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
     {

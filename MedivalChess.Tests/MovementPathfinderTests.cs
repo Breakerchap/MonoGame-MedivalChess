@@ -118,7 +118,7 @@ public class MovementPathfinderTests
 
     Assert.Equal(Shape.None, elephant.Definition.AttackShape.shape);
     Assert.False(Actions.CanAttackSquare(elephant, (2, 0)));
-    Assert.Equal([(0, 1), (0, 2), (0, 3), (0, 4)], paths[(0, 4)]);
+    Assert.Equal([(0, 1), (0, 2), (0, 3)], paths[(0, 3)]);
   }
 
   [Fact]
@@ -134,8 +134,8 @@ public class MovementPathfinderTests
       (_, _) => false
     );
 
-    Assert.True(paths.ContainsKey((0, 4)));
-    Assert.False(paths.ContainsKey((0, 5)));
+    Assert.True(paths.ContainsKey((0, 3)));
+    Assert.False(paths.ContainsKey((0, 4)));
   }
 
   [Fact]
