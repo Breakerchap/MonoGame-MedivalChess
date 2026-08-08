@@ -7187,8 +7187,7 @@ internal sealed class Game1 : Game
     return type switch
     {
       PieceType.Crossbowman => "CROSSBOWMAN",
-      PieceType.Spearman => "SPEAR-MAN",
-      PieceType.Knight => "KNIGHT (SWORD)",
+      PieceType.Knight => "KNIGHT",
       _ => type.ToString().ToUpperInvariant()
     };
   }

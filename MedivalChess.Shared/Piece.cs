@@ -40,7 +40,7 @@ public enum Shape
 
 public enum PieceType
 {
-  Soldier, Defender, Archer, Spearman,
+  Soldier, Defender, Archer,
   Peasant, Knight, Crossbowman, Cavalier, Chariot,
   Cannon, Spy, Catapult, Bombard, Ox, Engineer, Ballista,
   Elephant, Guard, Mercenary, Farm,
@@ -111,9 +111,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Defender = new(
     PieceType.Defender, PieceCategory.Melee, (2, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 20);
   public static readonly PieceDefinition Archer = new(
-    PieceType.Archer, PieceCategory.Ranged, (3, Shape.Straight), 10, 10, (1, 1), (2, 3), Shape.Any, 30);
-  public static readonly PieceDefinition Spearman = new(
-    PieceType.Spearman, PieceCategory.Melee, (2, Shape.Any), 15, 15, (1, 1), (1, 1), Shape.ForwardOrForwardDiagonal, 25);
+    PieceType.Archer, PieceCategory.Ranged, (3, Shape.Straight), 10, 10, (1, 1), (2, 3), Shape.Any, 25);
   public static readonly PieceDefinition Peasant = new(
     PieceType.Peasant, PieceCategory.Melee, (1, Shape.Any), 5, 5, (1, 1), (1, 1), Shape.Straight, 10);
   public static readonly PieceDefinition Knight = new(
@@ -138,7 +136,7 @@ public static class PieceDefinitions
     "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units.");
   public static readonly PieceDefinition Ox = new(
     PieceType.Ox, PieceCategory.Transport, (4, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Carries one friendly unit. While carrying, if attacked, both units take damage. Its movement becomes 3 Any while carrying a Mechanical unit.");
+    "Attaches to one friendly unit and increases that unit's Movement by 2. While attatched, if attacked, both units take damage.");
   public static readonly PieceDefinition Engineer = new(
     PieceType.Engineer, PieceCategory.Intelligence, (3, Shape.Any), 0, 20, (1, 1), (1, 1), Shape.Any, 25,
     "Builds up to two: roads, 20-health barricades, or mines each turn. It may also demolish Engineer structures within range. Doesn't trigger mines.");
@@ -146,7 +144,7 @@ public static class PieceDefinitions
     PieceType.Ballista, PieceCategory.Mechanical, (1, Shape.Straight), 20, 20, (1, 2), (2, 5), Shape.Line, 55,
     "Its attack pierces enemies in a straight line.");
   public static readonly PieceDefinition Elephant = new(
-    PieceType.Elephant, PieceCategory.Melee, (3, Shape.Straight), 10, 60, (2, 2), (0, 0), Shape.None, 60,
+    PieceType.Elephant, PieceCategory.Melee, (3, Shape.Straight), 10, 60, (2, 2), (0, 0), Shape.None, 50,
     "May move through enemies, damaging each crossed unit. Ignores terrain.");
   public static readonly PieceDefinition Guard = new(
     PieceType.Guard, PieceCategory.Melee, (3, Shape.Straight), 10, 25, (1, 1), (1, 1), Shape.Straight, 35,
@@ -155,16 +153,16 @@ public static class PieceDefinitions
     PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 15, 20, (1, 1), (1, 2), Shape.Straight, 25,
     "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill.");
   public static readonly PieceDefinition Farm = new(
-    PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 60,
+    PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 40,
     "Earns 5 gold at the start of each owner turn. Units may move and attack over it.");
   public static readonly PieceDefinition King = new(
     PieceType.King, PieceCategory.Royal, (1, Shape.Any), 15, 110, (1, 1), (1, 1), Shape.Any, 0,
     "Adjacent allies take 5 less damage, to a minimum of 5.");
   public static readonly PieceDefinition Princess = new(
-    PieceType.Princess, PieceCategory.Royal, (1, Shape.Any), 10, 80, (1, 1), (1, 4), Shape.Any, 0,
+    PieceType.Princess, PieceCategory.Royal, (1, Shape.Any), 15, 80, (1, 1), (1, 4), Shape.Any, 0,
     "May attack over friendly units.");
   public static readonly PieceDefinition Palace = new(
-    PieceType.Palace, PieceCategory.Royal, (0, Shape.None), 0, 150, (3, 2), (0, 0), Shape.None, 0,
+    PieceType.Palace, PieceCategory.Royal, (0, Shape.None), 0, 130, (3, 2), (0, 0), Shape.None, 0,
     "Earns 5 gold at the start of each owner turn.");
   public static readonly PieceDefinition Baron = new(
     PieceType.Baron, PieceCategory.Royal, (2, Shape.Straight), 10, 100, (1, 1), (1, 1), Shape.Any, 0,
