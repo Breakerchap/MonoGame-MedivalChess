@@ -8,9 +8,16 @@ public static class TerrainRules
     int seed,
     string forestDensity,
     string waterwayDensity,
-    int playerCount = 2
+    int playerCount = 2,
+    string terrainSource = "Procedural",
+    string boardSize = "Medium"
   )
   {
+    if (terrainSource == "None")
+    {
+      return new BattlefieldTerrain();
+    }
+
     TerrainGenerationSettings settings = new()
     {
       MinimumForestGroups = forestDensity switch { "Light" => 2, "Heavy" => 6, _ => 4 },
@@ -19,6 +26,13 @@ public static class TerrainRules
       MaximumForestClusterSize = forestDensity switch { "Light" => 4, "Heavy" => 8, _ => 6 },
       RiverCount = waterwayDensity switch { "Light" => 1, "Heavy" => 3, _ => 2 }
     };
+
+    if (terrainSource == "Preset" &&
+        BattlefieldTerrain.TryCreateRandomPreset(board, seed, boardSize, out BattlefieldTerrain preset))
+    {
+      return preset;
+    }
+
     return BattlefieldTerrain.CreateRandom(board, seed, settings, playerCount);
   }
 }

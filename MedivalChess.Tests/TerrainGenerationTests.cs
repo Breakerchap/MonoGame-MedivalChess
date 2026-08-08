@@ -7,6 +7,45 @@ namespace MedivalChess.Tests;
 public sealed class TerrainGenerationTests
 {
   [Fact]
+  public void MediumPresetTerrainLoadsAnAuthoredMapDeterministically()
+  {
+    Board board = new("board_medium.json");
+
+    BattlefieldTerrain first = TerrainRules.Create(board, 8675309, "Heavy", "Heavy", terrainSource: "Preset", boardSize: "Medium");
+    BattlefieldTerrain second = TerrainRules.Create(board, 8675309, "Light", "Light", terrainSource: "Preset", boardSize: "Medium");
+
+    Assert.NotEmpty(first.Forests);
+    Assert.NotEmpty(first.Lakes);
+    Assert.NotEmpty(first.Rivers);
+    Assert.Equal(first.Forests.Order(), second.Forests.Order());
+    Assert.Equal(first.Lakes.Order(), second.Lakes.Order());
+    Assert.Equal(first.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second),
+      second.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second));
+    Assert.All(first.Forests.Concat(first.Lakes), position => Assert.True(board.ContainsCell(position)));
+  }
+
+  [Fact]
+  public void PresetSourceFallsBackToProceduralForBoardsWithoutPresetFiles()
+  {
+    BattlefieldTerrain terrain = TerrainRules.Create(
+      new Board("board_small.json"), 42, "Standard", "Standard", terrainSource: "Preset", boardSize: "Small");
+
+    Assert.NotEmpty(terrain.Forests);
+    Assert.NotEmpty(terrain.Lakes);
+  }
+
+  [Fact]
+  public void NoneTerrainSourceProducesAnOpenBattlefield()
+  {
+    BattlefieldTerrain terrain = TerrainRules.Create(
+      new Board("board_medium.json"), 42, "Heavy", "Heavy", terrainSource: "None", boardSize: "Medium");
+
+    Assert.Empty(terrain.Forests);
+    Assert.Empty(terrain.Lakes);
+    Assert.Empty(terrain.Rivers);
+  }
+
+  [Fact]
   public void TerrainRespectsTheConfiguredRoyalSpawnClearance()
   {
     const int clearance = 5;

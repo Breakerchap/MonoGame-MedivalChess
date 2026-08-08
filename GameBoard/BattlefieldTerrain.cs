@@ -2,7 +2,10 @@ namespace MedivalChess.Shared;
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
 
 public readonly record struct TileEdge((int x, int y) First, (int x, int y) Second)
 {
@@ -64,6 +67,18 @@ public sealed class TerrainGenerationSettings
 
 public sealed class BattlefieldTerrain
 {
+  private static readonly Regex PresetSectionPattern = new(
+    @"(?ims)^\s*(?<name>forest|lake|river)\s*:\s*\[(?<contents>.*?)\]",
+    RegexOptions.Compiled
+  );
+  private static readonly Regex PositionPattern = new(
+    @"\(\s*(?<x>-?\d+)\s*,\s*(?<y>-?\d+)\s*\)",
+    RegexOptions.Compiled
+  );
+  private static readonly Regex RiverPattern = new(
+    @"\(\s*(?<firstX>-?\d+)\s*,\s*(?<firstY>-?\d+)\s*\)\s*-\s*\(\s*(?<secondX>-?\d+)\s*,\s*(?<secondY>-?\d+)\s*\)",
+    RegexOptions.Compiled
+  );
   private readonly record struct RiverSegment(
     TileEdge Edge,
     (int x, int y) Start,
@@ -100,6 +115,53 @@ public sealed class BattlefieldTerrain
   public bool HasRiverBetween((int x, int y) first, (int x, int y) second)
   {
     return _rivers.Contains(TileEdge.Between(first, second));
+  }
+
+  /// <summary>
+  /// Loads one deterministically selected terrain preset for a board size. Presets are embedded in the
+  /// shared assembly so desktop clients, the server, and headless CPU simulations use the same terrain.
+  /// Returns <c>false</c> when that board size has no compatible presets yet.
+  /// </summary>
+  public static bool TryCreateRandomPreset(
+    Board board,
+    int seed,
+    string boardSize,
+    out BattlefieldTerrain terrain
+  )
+  {
+    ArgumentNullException.ThrowIfNull(board);
+    terrain = new BattlefieldTerrain();
+    string size = string.IsNullOrWhiteSpace(boardSize) ? "Medium" : boardSize;
+    Assembly assembly = typeof(BattlefieldTerrain).Assembly;
+    string resourcePrefix = $"{typeof(BattlefieldTerrain).Namespace}.GameBoard.BoardTerrains.{size}.";
+    string[] resources = assembly.GetManifestResourceNames()
+      .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal) &&
+        name.EndsWith(".mctrn", StringComparison.OrdinalIgnoreCase))
+      .OrderBy(name => name, StringComparer.Ordinal)
+      .ToArray();
+    if (resources.Length == 0)
+    {
+      return false;
+    }
+
+    int firstResourceIndex = new Random(seed).Next(resources.Length);
+    for (int offset = 0; offset < resources.Length; offset++)
+    {
+      string resource = resources[(firstResourceIndex + offset) % resources.Length];
+      using Stream? stream = assembly.GetManifestResourceStream(resource);
+      if (stream is null)
+      {
+        continue;
+      }
+      using StreamReader reader = new(stream);
+      if (TryParsePreset(board, reader.ReadToEnd(), out terrain))
+      {
+        return true;
+      }
+    }
+
+    terrain = new BattlefieldTerrain();
+    return false;
   }
 
   public static BattlefieldTerrain CreateRandom(
@@ -206,6 +268,57 @@ public sealed class BattlefieldTerrain
 
     forests.ExceptWith(lakes);
     return new BattlefieldTerrain(forests, lakes, rivers, settings.ForestDamageReduction);
+  }
+
+  private static bool TryParsePreset(Board board, string content, out BattlefieldTerrain terrain)
+  {
+    terrain = new BattlefieldTerrain();
+    Dictionary<string, string> sections = PresetSectionPattern.Matches(content)
+      .Cast<Match>()
+      .ToDictionary(
+        match => match.Groups["name"].Value,
+        match => match.Groups["contents"].Value,
+        StringComparer.OrdinalIgnoreCase
+      );
+    if (!sections.TryGetValue("forest", out string? forestSection) ||
+        !sections.TryGetValue("lake", out string? lakeSection) ||
+        !sections.TryGetValue("river", out string? riverSection))
+    {
+      return false;
+    }
+
+    HashSet<(int x, int y)> forests = ParsePositions(forestSection);
+    HashSet<(int x, int y)> lakes = ParsePositions(lakeSection);
+    HashSet<TileEdge> rivers = RiverPattern.Matches(riverSection)
+      .Cast<Match>()
+      .Select(match => TileEdge.Between(
+        (int.Parse(match.Groups["firstX"].Value), int.Parse(match.Groups["firstY"].Value)),
+        (int.Parse(match.Groups["secondX"].Value), int.Parse(match.Groups["secondY"].Value))
+      ))
+      .ToHashSet();
+
+    if (forests.Any(position => !board.ContainsCell(position)) ||
+        lakes.Any(position => !board.ContainsCell(position)) ||
+        rivers.Any(edge => !board.ContainsCell(edge.First) || !board.ContainsCell(edge.Second) ||
+          ManhattanDistance(edge.First, edge.Second) != 1))
+    {
+      return false;
+    }
+
+    forests.ExceptWith(lakes);
+    terrain = new BattlefieldTerrain(forests, lakes, rivers);
+    return true;
+  }
+
+  private static HashSet<(int x, int y)> ParsePositions(string section)
+  {
+    return PositionPattern.Matches(section)
+      .Cast<Match>()
+      .Select(match => (
+        int.Parse(match.Groups["x"].Value),
+        int.Parse(match.Groups["y"].Value)
+      ))
+      .ToHashSet();
   }
 
   private static Dictionary<(int x, int y), int> GetEdgeDistances(Board board)

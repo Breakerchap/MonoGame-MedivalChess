@@ -93,6 +93,13 @@ internal sealed class Game1 : Game
     Heavy
   }
 
+  private enum TerrainSource
+  {
+    Preset,
+    Procedural,
+    None
+  }
+
   private enum EngineerAbility
   {
     Road,
@@ -179,6 +186,7 @@ internal sealed class Game1 : Game
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
+  private TerrainSource _terrainSource = TerrainSource.Preset;
   private int _startingCash = Globals.StartingCash;
   private float _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
@@ -290,7 +298,7 @@ internal sealed class Game1 : Game
   {
     _board = new Board();
     _terrainSeed = Random.Shared.Next();
-    _terrain = BattlefieldTerrain.CreateRandom(_board, _terrainSeed);
+    _terrain = TerrainRules.Create(_board, _terrainSeed, _forestDensity.ToString(), _waterwayDensity.ToString(), _playerCount, _terrainSource.ToString(), _selectedBoardSize.ToString());
 
     pieceSetup.AddPieces();
     ConfigureTeamsForPlayerCount();
@@ -2455,6 +2463,7 @@ internal sealed class Game1 : Game
     if (!Enum.TryParse(configuration.BoardSize, out BoardSize boardSize) ||
         !Enum.TryParse(configuration.ForestDensity, out TerrainDensity forestDensity) ||
         !Enum.TryParse(configuration.WaterwayDensity, out TerrainDensity waterwayDensity) ||
+        !Enum.TryParse(configuration.TerrainSource, out TerrainSource terrainSource) ||
         !Enum.TryParse(configuration.GameMode, out GameMode gameMode))
     {
       _onlineError = "The room sent unsupported match settings.";
@@ -2465,6 +2474,7 @@ internal sealed class Game1 : Game
     _selectedBoardSize = boardSize;
     _forestDensity = forestDensity;
     _waterwayDensity = waterwayDensity;
+    _terrainSource = terrainSource;
     _gameMode = gameMode;
     _startingCash = configuration.StartingCash;
     _killerRefundMultiplier = configuration.KillerRefundMultiplier;
@@ -5640,7 +5650,15 @@ internal sealed class Game1 : Game
   {
     _terrainSeed = terrainSeed;
     _board = new Board(GetBoardFileName(boardSize));
-    _terrain = TerrainRules.Create(_board, terrainSeed, forestDensity.ToString(), waterwayDensity.ToString(), _playerCount);
+    _terrain = TerrainRules.Create(
+      _board,
+      terrainSeed,
+      forestDensity.ToString(),
+      waterwayDensity.ToString(),
+      _playerCount,
+      _terrainSource.ToString(),
+      boardSize.ToString()
+    );
     _roads.Clear();
     _barricades.Clear();
     _mines.Clear();
@@ -5759,6 +5777,7 @@ internal sealed class Game1 : Game
     pieceSetup.ClearPieces();
     _playerCount = 2;
     ConfigureTeamsForPlayerCount();
+    _terrainSource = TerrainSource.Preset;
     ConfigureBattlefield(BoardSize.Medium, TerrainDensity.Standard, TerrainDensity.Standard, Random.Shared.Next());
     selectedPiece = null;
     _movementAnimation = null;
@@ -5820,6 +5839,7 @@ internal sealed class Game1 : Game
     _selectedBoardSize = BoardSize.Medium;
     _forestDensity = TerrainDensity.Standard;
     _waterwayDensity = TerrainDensity.Standard;
+    _terrainSource = TerrainSource.Preset;
     _startingCash = Globals.StartingCash;
     _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
@@ -5906,7 +5926,8 @@ internal sealed class Game1 : Game
       _chessTimerEnabled,
       _chessTimerMinutes,
       _chessTimerSeconds,
-      _chessTimerIncrementSeconds
+      _chessTimerIncrementSeconds,
+      _terrainSource.ToString()
     );
   }
 
@@ -6294,17 +6315,25 @@ internal sealed class Game1 : Game
           }
           else if (GetBattlefieldDecreaseButtonBounds(1).Contains(mousePosition))
           {
-            _forestDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_forestDensity - 1);
+            _terrainSource = (TerrainSource)Math.Max((int)TerrainSource.Preset, (int)_terrainSource - 1);
           }
           else if (GetBattlefieldIncreaseButtonBounds(1).Contains(mousePosition))
           {
-            _forestDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_forestDensity + 1);
+            _terrainSource = (TerrainSource)Math.Min((int)TerrainSource.None, (int)_terrainSource + 1);
           }
           else if (GetBattlefieldDecreaseButtonBounds(2).Contains(mousePosition))
           {
-            _waterwayDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_waterwayDensity - 1);
+            _forestDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_forestDensity - 1);
           }
           else if (GetBattlefieldIncreaseButtonBounds(2).Contains(mousePosition))
+          {
+            _forestDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_forestDensity + 1);
+          }
+          else if (GetBattlefieldDecreaseButtonBounds(3).Contains(mousePosition))
+          {
+            _waterwayDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_waterwayDensity - 1);
+          }
+          else if (GetBattlefieldIncreaseButtonBounds(3).Contains(mousePosition))
           {
             _waterwayDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_waterwayDensity + 1);
           }
@@ -7518,16 +7547,24 @@ internal sealed class Game1 : Game
     _ui.Divider(content, content.Y + 56);
     DrawSetupProgress(content);
 
-    string[] labels = ["Board size", "Forest density", "Waterways"];
+    string[] labels = ["Board size", "Terrain source", "Forest density", "Waterways"];
     string[] details =
     [
       "Small is compact; Large gives armies more room to manoeuvre.",
+      _terrainSource switch
+      {
+        TerrainSource.Preset when _selectedBoardSize == BoardSize.Medium => "Randomly selects one authored Medium terrain preset.",
+        TerrainSource.Preset => "Uses procedural terrain until presets are added for this board size.",
+        TerrainSource.Procedural => "Generates a new terrain layout from the density settings.",
+        _ => "Clears forests, lakes, and waterways for an open battlefield."
+      },
       "More forests slow movement and block direct ranged fire.",
       "Waterways create choke points; bridges are the only crossings."
     ];
     string[] values =
     [
       _selectedBoardSize.ToString(),
+      _terrainSource.ToString(),
       _forestDensity.ToString(),
       _waterwayDensity.ToString()
     ];
@@ -7545,7 +7582,14 @@ internal sealed class Game1 : Game
       _ui.TextFitted(details[index], new Vector2(row.X, row.Bottom + 5), content.Width, UiTheme.TextMuted, 0.6f);
     }
 
-    _ui.TextFitted("Light waterways use 1 river; Standard uses 2; Heavy uses 3.", new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), content.Width, UiTheme.TextMuted, 0.68f);
+    string terrainHint = _terrainSource == TerrainSource.Procedural
+      ? "Light waterways use 1 river; Standard uses 2; Heavy uses 3."
+      : _terrainSource == TerrainSource.Preset && _selectedBoardSize == BoardSize.Medium
+        ? "Preset maps ignore the density settings."
+        : _terrainSource == TerrainSource.None
+          ? "No terrain ignores the density settings."
+          : "Preset maps will use these density settings until that board size has presets.";
+    _ui.TextFitted(terrainHint, new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), content.Width, UiTheme.TextMuted, 0.68f);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
   }
 

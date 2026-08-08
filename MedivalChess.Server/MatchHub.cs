@@ -1013,6 +1013,7 @@ public sealed class MatchStore
         !new[] { "Small", "Medium", "Large" }.Contains(configuration.BoardSize) ||
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.ForestDensity) ||
         !new[] { "Light", "Standard", "Heavy" }.Contains(configuration.WaterwayDensity) ||
+        !new[] { "Preset", "Procedural", "None" }.Contains(configuration.TerrainSource) ||
         !new[] { "Regicide", "Conquest", "Escort", "Dominion", "Plunder" }.Contains(configuration.GameMode) ||
         !TeamRules.IsValidPlayerCount(configuration.PlayerCount) ||
         configuration.StartingCash < 0 ||
@@ -2017,7 +2018,7 @@ public sealed class MatchStore
     internal List<NetworkPiece> Pieces { get; } = [];
     internal BattlefieldTerrain Terrain { get; } = TerrainRules.Create(
       NetworkBoardRules.GetBoard(configuration), configuration.TerrainSeed, configuration.ForestDensity, configuration.WaterwayDensity,
-      configuration.PlayerCount
+      configuration.PlayerCount, configuration.TerrainSource, configuration.BoardSize
     );
     internal Dictionary<(int x, int y), NetworkTeam> Roads { get; } = [];
     internal Dictionary<(int x, int y), int> Barricades { get; } = [];

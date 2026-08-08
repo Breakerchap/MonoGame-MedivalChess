@@ -73,7 +73,9 @@ public sealed class CpuGameState
       configuration.TerrainSeed,
       configuration.ForestDensity,
       configuration.WaterwayDensity,
-      configuration.PlayerCount
+      configuration.PlayerCount,
+      configuration.TerrainSource,
+      configuration.BoardSize
     );
     _pieces = pieces?.ToArray() ?? throw new ArgumentNullException(nameof(pieces));
     _teams = (teams ?? throw new ArgumentNullException(nameof(teams))).ToDictionary(team => team.Team);

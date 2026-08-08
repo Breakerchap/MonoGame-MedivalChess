@@ -83,7 +83,10 @@ public sealed record NetworkMatchConfiguration(
   bool ChessTimerEnabled = false,
   int ChessTimerMinutes = 10,
   int ChessTimerSeconds = 0,
-  int ChessTimerIncrementSeconds = 0
+  int ChessTimerIncrementSeconds = 0,
+  // Preset uses an authored terrain file when that board size has one; otherwise it
+  // deterministically falls back to Procedural.
+  string TerrainSource = "Preset"
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on
