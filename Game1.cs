@@ -132,6 +132,11 @@ internal sealed class Game1 : Game
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
   private const int purchasePanelHeight = 510;
+  private const int purchaseUnitListHeaderHeight = 28;
+  private const int purchaseUnitListPadding = 8;
+  private const int purchaseUnitListGap = 4;
+  private const int purchaseUnitListMinimumRowHeight = 18;
+  private const int purchaseUnitListMaximumRowHeight = 32;
   private int _terrainSeed;
   // Separate from terrain so lower CPU difficulties can vary their close-plan strategy between
   // matches even when a developer reuses a terrain seed.
@@ -141,6 +146,7 @@ internal sealed class Game1 : Game
   private MouseState _previousMouseState;
   private KeyboardState _previousKeyboardState;
   private bool _isPurchaseMode;
+  private bool _isPurchaseUnitListExpanded;
   private int _selectedPurchaseIndex;
   private EngineerAbility _selectedEngineerAbility;
   private Screen _screen = Screen.Title;
@@ -827,6 +833,25 @@ internal sealed class Game1 : Game
   {
     int purchaseCount = GetPurchasablePieces().Count;
     _selectedPurchaseIndex = purchaseCount == 0 ? 0 : _selectedPurchaseIndex % purchaseCount;
+  }
+
+  private bool TrySelectPurchaseIndex(int index)
+  {
+    IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
+    if (index < 0 || index >= purchasablePieces.Count)
+    {
+      return false;
+    }
+
+    PieceDefinition definition = purchasablePieces[index];
+    if ((_initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type != PieceType.Farm) ||
+        (_initialBuyPhase != null && definition.Type == PieceType.Mercenary))
+    {
+      return false;
+    }
+
+    _selectedPurchaseIndex = index;
+    return true;
   }
 
   private void EnsureInitialBuySelection()
@@ -2443,7 +2468,7 @@ internal sealed class Game1 : Game
     }
 
     MouseState mouse = Mouse.GetState();
-    if (GetPurchasePanelBounds().Contains(mouse.Position))
+    if (IsPointerOverPurchaseMenu(mouse.Position))
     {
       return false;
     }
@@ -3976,14 +4001,99 @@ internal sealed class Game1 : Game
     return new Rectangle(panel.X + 98, panel.Bottom - 68, panel.Width - 196, UiTheme.ButtonHeight);
   }
 
+  private Rectangle GetPurchaseUnitListToggleBounds()
+  {
+    Rectangle panel = GetPurchasePanelBounds();
+    return new Rectangle(panel.X, panel.Bottom + UiTheme.SpaceSm, panel.Width, purchaseUnitListHeaderHeight);
+  }
+
+  private Rectangle GetPurchaseUnitListBounds(out int columnCount, out int rowHeight)
+  {
+    Rectangle toggle = GetPurchaseUnitListToggleBounds();
+    int unitCount = GetPurchasablePieces().Count;
+    if (unitCount == 0)
+    {
+      columnCount = 1;
+      rowHeight = purchaseUnitListMinimumRowHeight;
+      return toggle;
+    }
+
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    int availableHeight = Math.Max(1, viewport.Bottom - toggle.Y - UiTheme.SpaceLg);
+    columnCount = 4;
+    for (int columns = 2; columns <= 4; columns++)
+    {
+      int rowCount = (unitCount + columns - 1) / columns;
+      int minimumHeight = purchaseUnitListHeaderHeight + purchaseUnitListPadding * 2 +
+        rowCount * purchaseUnitListMinimumRowHeight + (rowCount - 1) * purchaseUnitListGap;
+      if (minimumHeight <= availableHeight)
+      {
+        columnCount = columns;
+        break;
+      }
+    }
+
+    int rows = (unitCount + columnCount - 1) / columnCount;
+    int availableRowHeight = (availableHeight - purchaseUnitListHeaderHeight - purchaseUnitListPadding * 2 -
+      (rows - 1) * purchaseUnitListGap) / rows;
+    rowHeight = Math.Clamp(availableRowHeight, purchaseUnitListMinimumRowHeight, purchaseUnitListMaximumRowHeight);
+    int height = purchaseUnitListHeaderHeight + purchaseUnitListPadding * 2 +
+      rows * rowHeight + (rows - 1) * purchaseUnitListGap;
+    return new Rectangle(toggle.X, toggle.Y, toggle.Width, height);
+  }
+
+  private Rectangle GetPurchaseUnitListItemBounds(int index)
+  {
+    Rectangle list = GetPurchaseUnitListBounds(out int columnCount, out int rowHeight);
+    int itemWidth = (list.Width - purchaseUnitListPadding * 2 - (columnCount - 1) * purchaseUnitListGap) / columnCount;
+    int row = index / columnCount;
+    int column = index % columnCount;
+    return new Rectangle(
+      list.X + purchaseUnitListPadding + column * (itemWidth + purchaseUnitListGap),
+      list.Y + purchaseUnitListHeaderHeight + purchaseUnitListPadding + row * (rowHeight + purchaseUnitListGap),
+      itemWidth,
+      rowHeight
+    );
+  }
+
+  private bool IsPointerOverPurchaseMenu(Point position)
+  {
+    if (GetPurchasePanelBounds().Contains(position) || GetPurchaseUnitListToggleBounds().Contains(position))
+    {
+      return true;
+    }
+
+    return _isPurchaseUnitListExpanded && GetPurchaseUnitListBounds(out _, out _).Contains(position);
+  }
+
   private bool HandlePurchasePanelClick(Point mousePosition)
   {
-    if (!GetPurchasePanelBounds().Contains(mousePosition))
+    Rectangle panel = GetPurchasePanelBounds();
+    Rectangle unitListToggle = GetPurchaseUnitListToggleBounds();
+    bool clickedExpandedUnitList = _isPurchaseUnitListExpanded &&
+      GetPurchaseUnitListBounds(out _, out _).Contains(mousePosition);
+    if (!panel.Contains(mousePosition) && !unitListToggle.Contains(mousePosition) && !clickedExpandedUnitList)
     {
       return false;
     }
 
-    if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
+    if (unitListToggle.Contains(mousePosition))
+    {
+      _isPurchaseUnitListExpanded = !_isPurchaseUnitListExpanded;
+    }
+    else if (clickedExpandedUnitList)
+    {
+      IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
+      for (int index = 0; index < purchasablePieces.Count; index++)
+      {
+        if (GetPurchaseUnitListItemBounds(index).Contains(mousePosition))
+        {
+          TrySelectPurchaseIndex(index);
+          break;
+        }
+      }
+    }
+    else if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
     {
       CyclePurchaseSelection(-1);
     }
@@ -4371,6 +4481,40 @@ internal sealed class Game1 : Game
       _initialBuyPhase != null ? UiButtonTone.Accent : _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
       _isPurchaseMode
     );
+    DrawPurchaseUnitList();
+  }
+
+  private void DrawPurchaseUnitList()
+  {
+    IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
+    Rectangle toggle = GetPurchaseUnitListToggleBounds();
+    string toggleLabel = $"UNITS {_selectedPurchaseIndex + 1}/{purchasablePieces.Count}  {(_isPurchaseUnitListExpanded ? "HIDE" : "SHOW")}";
+    if (!_isPurchaseUnitListExpanded)
+    {
+      DrawMenuButton(toggle, toggleLabel, UiButtonTone.Neutral, false, 0.72f);
+      return;
+    }
+
+    Rectangle list = GetPurchaseUnitListBounds(out int columnCount, out _);
+    DrawPanel(list, UiTheme.PanelRaised, UiTheme.Gold);
+    DrawMenuButton(toggle, toggleLabel, UiButtonTone.Accent, true, 0.72f);
+
+    bool farmPlacementOnly = _initialBuyPhase?.IsFarmPlacementPhase == true;
+    bool initialBuyActive = _initialBuyPhase != null;
+    float labelScale = columnCount <= 2 ? 0.68f : 0.56f;
+    for (int index = 0; index < purchasablePieces.Count; index++)
+    {
+      PieceDefinition unit = purchasablePieces[index];
+      bool unavailable = (farmPlacementOnly && unit.Type != PieceType.Farm) ||
+        (initialBuyActive && unit.Type == PieceType.Mercenary);
+      DrawMenuButton(
+        GetPurchaseUnitListItemBounds(index),
+        GetPieceDisplayName(unit.Type),
+        unavailable ? UiButtonTone.Danger : UiButtonTone.Neutral,
+        index == _selectedPurchaseIndex,
+        labelScale
+      );
+    }
   }
 
   private void DrawCenteredString(string text, Rectangle bounds, Color colour)
