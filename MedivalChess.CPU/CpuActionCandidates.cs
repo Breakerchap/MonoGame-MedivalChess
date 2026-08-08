@@ -224,7 +224,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       float protection = CpuPlacementHeuristics.GetFarmProtectionScore(
         state, action.Team, action.X, action.Y, farmForwardProjection ?? 0);
       return new ScoredAction(action, affordability + protection,
-        protection > 0f ? "Places a farm in protected terrain" : "Places an income-producing farm");
+        protection > 0f ? "Places a farm in protected rear terrain" : "Places an income-producing farm");
     }
 
     NetworkPiece? neutralMercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&

@@ -362,6 +362,11 @@ internal sealed class Game1 : Game
       return;
     }
 
+    // CPU planning runs on a background worker, but this Update method still owns the camera.
+    // Process it before the CPU-turn early return so the player can look around while Hard/Best
+    // searches use their full time budgets.
+    Vector2 mouseWorldBefore = UpdateCamera(keyboard, mouse, deltaTime);
+
     if (_movementAnimation != null)
     {
       UpdateMovementAnimation(deltaTime);
@@ -381,61 +386,6 @@ internal sealed class Game1 : Game
     }
 
     UpdateCpuPreplanning();
-
-    float cameraSpeed = 500f;
-    float zoomSpeed = 1f;
-
-    Vector2 cameraInput = Vector2.Zero;
-    if (keyboard.IsKeyDown(_moveLeftKey))
-      cameraInput.X -= 1f;
-
-    if (keyboard.IsKeyDown(_moveRightKey))
-      cameraInput.X += 1f;
-
-    if (keyboard.IsKeyDown(_moveUpKey))
-      cameraInput.Y -= 1f;
-
-    if (keyboard.IsKeyDown(_moveDownKey))
-      cameraInput.Y += 1f;
-
-    if (cameraInput != Vector2.Zero)
-    {
-      Vector2 worldCameraInput = Vector2.Transform(
-        cameraInput,
-        Matrix.Invert(GetBoardRotationTransform())
-      );
-      _cameraPosition += worldCameraInput * cameraSpeed * deltaTime / _zoom;
-    }
-
-    Matrix cameraTransform = CreateCameraTransform();
-
-    Vector2 mouseScreen = mouse.Position.ToVector2();
-
-    // Find which world position is currently under the mouse
-    Vector2 mouseWorldBefore = Vector2.Transform(
-      mouseScreen,
-      Matrix.Invert(cameraTransform)
-    );
-
-    // Change zoom
-    if (keyboard.IsKeyDown(_zoomInKey))
-      _zoom += zoomSpeed * deltaTime * _zoom;
-
-    if (keyboard.IsKeyDown(_zoomOutKey))
-      _zoom -= zoomSpeed * deltaTime * _zoom;
-
-    _zoom = MathHelper.Clamp(_zoom, 0.2f, 5f);
-
-    cameraTransform = CreateCameraTransform();
-
-    // Find where the mouse points after zooming
-    Vector2 mouseWorldAfter = Vector2.Transform(
-      mouseScreen,
-      Matrix.Invert(cameraTransform)
-    );
-
-    // Move camera so the same world point stays under the mouse
-    _cameraPosition += mouseWorldBefore - mouseWorldAfter;
 
     bool wasPurchaseModeToggle =
       keyboard.IsKeyDown(_buyKey) &&
@@ -666,6 +616,33 @@ internal sealed class Game1 : Game
     _previousKeyboardState = keyboard;
 
     base.Update(gameTime);
+  }
+
+  private Vector2 UpdateCamera(KeyboardState keyboard, MouseState mouse, float deltaTime)
+  {
+    const float cameraSpeed = 500f;
+    const float zoomSpeed = 1f;
+    Vector2 cameraInput = Vector2.Zero;
+    if (keyboard.IsKeyDown(_moveLeftKey)) cameraInput.X -= 1f;
+    if (keyboard.IsKeyDown(_moveRightKey)) cameraInput.X += 1f;
+    if (keyboard.IsKeyDown(_moveUpKey)) cameraInput.Y -= 1f;
+    if (keyboard.IsKeyDown(_moveDownKey)) cameraInput.Y += 1f;
+
+    if (cameraInput != Vector2.Zero)
+    {
+      Vector2 worldCameraInput = Vector2.Transform(cameraInput, Matrix.Invert(GetBoardRotationTransform()));
+      _cameraPosition += worldCameraInput * cameraSpeed * deltaTime / _zoom;
+    }
+
+    Vector2 mouseScreen = mouse.Position.ToVector2();
+    Vector2 mouseWorldBefore = Vector2.Transform(mouseScreen, Matrix.Invert(CreateCameraTransform()));
+    if (keyboard.IsKeyDown(_zoomInKey)) _zoom += zoomSpeed * deltaTime * _zoom;
+    if (keyboard.IsKeyDown(_zoomOutKey)) _zoom -= zoomSpeed * deltaTime * _zoom;
+    _zoom = MathHelper.Clamp(_zoom, 0.2f, 5f);
+
+    Vector2 mouseWorldAfter = Vector2.Transform(mouseScreen, Matrix.Invert(CreateCameraTransform()));
+    _cameraPosition += mouseWorldBefore - mouseWorldAfter;
+    return mouseWorldBefore;
   }
 
   private void TryPurchaseAndPlace((int x, int y) targetPosition)

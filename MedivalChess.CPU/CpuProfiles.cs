@@ -19,6 +19,11 @@ public sealed class CpuSearchSettings
   /// <summary>Only near-equal plans inside this score window are eligible for seeded variety.</summary>
   public float TopChoiceScoreWindow { get; init; } = 24f;
   public int MaxSearchMilliseconds { get; init; } = 250;
+  /// <summary>
+  /// Maximum worker threads used to evaluate independent search branches. Set to zero to use a
+  /// conservative machine-dependent limit; one keeps the search single-threaded.
+  /// </summary>
+  public int MaxParallelism { get; init; } = 1;
   public float Randomness { get; init; } = 0.05f;
 }
 
@@ -165,9 +170,12 @@ public sealed class CpuProfile
       OpponentBeamWidth = 8,
       OpponentActionsToPredict = 3,
       TacticalExtensionDepth = 2,
-      MaxSearchNodes = 2_400,
       MaximumPurchasePlacementCandidates = 60,
-      MaxSearchMilliseconds = 650,
+      // Hard uses spare cores for independent beam branches. The node budget is larger than the
+      // single-threaded profile because those branches are evaluated concurrently.
+      MaxSearchNodes = 6_000,
+      MaxSearchMilliseconds = 1_500,
+      MaxParallelism = 0,
       TopChoiceScoreWindow = 12f,
       Randomness = 0.02f
     }
@@ -203,9 +211,10 @@ public sealed class CpuProfile
       TacticalExtensionDepth = 3,
       // Keep the deterministic node cap below the wall-clock safeguard now that the broader
       // movement definitions produce more legal branches per position.
-      MaxSearchNodes = 8_000,
+      MaxSearchNodes = 20_000,
       MaximumPurchasePlacementCandidates = 96,
       MaxSearchMilliseconds = 5_000,
+      MaxParallelism = 0,
       Randomness = 0f
     }
   };

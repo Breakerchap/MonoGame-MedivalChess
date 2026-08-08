@@ -21,6 +21,15 @@ public sealed record SearchNode(
   EvaluationBreakdown Breakdown
 );
 
+/// <summary>One independently simulated branch, kept in candidate order for deterministic merging.</summary>
+internal sealed record PendingSearchExpansion(SearchNode Node, ScoredAction Candidate);
+
+internal sealed record EvaluatedSearchExpansion(
+  PendingSearchExpansion Pending,
+  CpuGameState Result,
+  EvaluationBreakdown Breakdown
+);
+
 public sealed class CpuDecisionReport
 {
   public string ProfileName { get; init; } = string.Empty;
@@ -57,6 +66,7 @@ public sealed class CpuPlayer : ICpuPlayer
   private readonly StateEvaluator _evaluator;
   private readonly GameStateHasher _hasher;
   private readonly ICpuIntentGenerator _intentGenerator;
+  private readonly bool _canParallelizeEvaluation;
 
   public CpuPlayer(
     CpuActionGenerator? actionGenerator = null,
@@ -71,6 +81,9 @@ public sealed class CpuPlayer : ICpuPlayer
     _evaluator = evaluator ?? new StateEvaluator();
     _hasher = hasher ?? new GameStateHasher();
     _intentGenerator = intentGenerator ?? new CpuIntentGenerator();
+    // Evaluation extensions are allowed to maintain their own mutable diagnostic state. Only the
+    // built-in evaluator is promised to be safely callable by several branch workers at once.
+    _canParallelizeEvaluation = evaluator is null;
   }
 
   public CpuTurnPlan ChooseTurn(CpuGameState state, NetworkTeam team, CpuProfile profile, CancellationToken cancellationToken)
@@ -113,9 +126,10 @@ public sealed class CpuPlayer : ICpuPlayer
     {
       List<SearchNode> expanded = [];
       Dictionary<ulong, float> bestScoreByState = [];
+      List<PendingSearchExpansion> pending = [];
       foreach (SearchNode node in beam)
       {
-        if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
+        if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
         {
           break;
         }
@@ -165,33 +179,40 @@ public sealed class CpuPlayer : ICpuPlayer
             fallbackAction = candidate.Action;
           }
 
-          if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
+          if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
           {
             break;
           }
-
-          CpuGameState result = candidate.Action.Apply(node.State);
-          nodesGenerated++;
-          EvaluationBreakdown breakdown = EvaluateCached(result, team, context, evaluatedStates, ref evaluationCacheHits);
-          nodesEvaluated++;
-          // Preserve tactical urgency across the turn. Pure material evaluation otherwise
-          // overvalues buying before taking an immediately available kill.
-          float accumulatedActionPriority = node.Score - node.Breakdown.Total;
-          // A completed match or campaign objective is decisive. Do not let accumulated
-          // convenience bonuses make a purchase-before-win line outrank the move that ends
-          // the mission immediately.
-          float score = result.IsFinished
-            ? breakdown.Total
-            : breakdown.Total + accumulatedActionPriority + candidate.Score;
-          ulong hash = _hasher.ComputeSearchHash(result);
-          if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
-          {
-            duplicatesRemoved++;
-            continue;
-          }
-          bestScoreByState[hash] = score;
-          expanded.Add(new SearchNode(result, [.. node.Actions, candidate.Action], score, breakdown));
+          pending.Add(new PendingSearchExpansion(node, candidate));
         }
+      }
+
+      int parallelism = GetParallelism(settings);
+      IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
+        pending, team, profile, intents, context, evaluatedStates, parallelism, ref evaluationCacheHits);
+      foreach (EvaluatedSearchExpansion branch in evaluated)
+      {
+        nodesGenerated++;
+        nodesEvaluated++;
+        SearchNode node = branch.Pending.Node;
+        ScoredAction candidate = branch.Pending.Candidate;
+        // Preserve tactical urgency across the turn. Pure material evaluation otherwise
+        // overvalues buying before taking an immediately available kill.
+        float accumulatedActionPriority = node.Score - node.Breakdown.Total;
+        // A completed match or campaign objective is decisive. Do not let accumulated
+        // convenience bonuses make a purchase-before-win line outrank the move that ends
+        // the mission immediately.
+        float score = branch.Result.IsFinished
+          ? branch.Breakdown.Total
+          : branch.Breakdown.Total + accumulatedActionPriority + candidate.Score;
+        ulong hash = _hasher.ComputeSearchHash(branch.Result);
+        if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
+        {
+          duplicatesRemoved++;
+          continue;
+        }
+        bestScoreByState[hash] = score;
+        expanded.Add(new SearchNode(branch.Result, [.. node.Actions, candidate.Action], score, branch.Breakdown));
       }
 
       if (expanded.Count == 0)
@@ -655,6 +676,66 @@ public sealed class CpuPlayer : ICpuPlayer
       Math.Max(1, settings.MaximumPurchasePlacementCandidates),
       Math.Max(minimumUsefulCandidates, settings.CandidatesPerNode * 3)
     ));
+
+  private int GetParallelism(CpuSearchSettings settings)
+  {
+    if (!_canParallelizeEvaluation || settings.MaxParallelism == 1)
+    {
+      return 1;
+    }
+
+    if (settings.MaxParallelism > 1)
+    {
+      return settings.MaxParallelism;
+    }
+
+    // Leave one logical processor for the game/UI and cap worker pressure on high-core PCs.
+    // Two-core machines remain single-threaded because dedicating half the machine to a turn
+    // search is more disruptive than the small speed-up is worth.
+    return Environment.ProcessorCount <= 2 ? 1 : Math.Min(6, Environment.ProcessorCount - 1);
+  }
+
+  private IReadOnlyList<EvaluatedSearchExpansion> EvaluatePendingBranches(
+    IReadOnlyList<PendingSearchExpansion> pending,
+    NetworkTeam team,
+    CpuProfile profile,
+    IReadOnlyList<CpuIntent> intents,
+    EvaluationContext sequentialContext,
+    Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
+    int parallelism,
+    ref int cacheHits
+  )
+  {
+    if (pending.Count == 0)
+    {
+      return [];
+    }
+
+    if (parallelism <= 1 || pending.Count == 1)
+    {
+      List<EvaluatedSearchExpansion> sequential = new(pending.Count);
+      foreach (PendingSearchExpansion branch in pending)
+      {
+        CpuGameState result = branch.Candidate.Action.Apply(branch.Node.State);
+        EvaluationBreakdown breakdown = EvaluateCached(result, team, sequentialContext, evaluatedStates, ref cacheHits);
+        sequential.Add(new EvaluatedSearchExpansion(branch, result, breakdown));
+      }
+      return sequential;
+    }
+
+    EvaluatedSearchExpansion[] parallel = new EvaluatedSearchExpansion[pending.Count];
+    using ThreadLocal<EvaluationContext> workerContexts = new(() => new EvaluationContext(profile, intents, new CpuEvaluationCache()));
+    Parallel.For(0, pending.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
+    {
+      PendingSearchExpansion branch = pending[index];
+      CpuGameState result = branch.Candidate.Action.Apply(branch.Node.State);
+      // Each worker owns its cache. The main cache uses Dictionary and intentionally stays on
+      // the coordinator thread; this avoids locks in its hottest lookup path.
+      EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, team, workerContexts.Value!);
+      parallel[index] = new EvaluatedSearchExpansion(branch, result, breakdown);
+    });
+    return parallel;
+  }
 
   private static bool ShouldStop(
     Stopwatch stopwatch,
