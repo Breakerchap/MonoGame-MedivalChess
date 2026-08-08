@@ -18,7 +18,7 @@
 /processor:FontDescriptionProcessor
 /processorParam:PremultiplyAlpha=True
 /processorParam:TextureFormat=Compressed
-/processorParam:FontName=Arial
+/processorParam:FontName=Roboto-Regular.ttf
 /processorParam:Size=18
 /processorParam:Spacing=0
 /processorParam:UseKerning=True

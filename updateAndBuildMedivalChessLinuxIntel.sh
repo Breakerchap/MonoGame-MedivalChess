@@ -8,7 +8,7 @@ SOLUTION="CrownAndSiege.sln"
 PROJECT="MedivalChess.csproj"
 
 echo "========================================"
-echo "      Crown and Siege Launcher"
+echo "      Crown and Siege Launcher          "
 echo "========================================"
 echo
 
