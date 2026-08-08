@@ -325,6 +325,12 @@ public sealed class MatchStore
       {
         return new(false, "It is not your turn.", foundMatch.State());
       }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
+      }
 
       int index = foundMatch.Pieces.FindIndex(piece => piece.Id == request.PieceId);
       if (index < 0 || foundMatch.Pieces[index].Team != player.Team)
@@ -431,6 +437,12 @@ public sealed class MatchStore
       {
         return new(false, "It is not your turn.", foundMatch.State());
       }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
+      }
 
       int attackerIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.AttackerId);
       if (attackerIndex < 0)
@@ -461,6 +473,11 @@ public sealed class MatchStore
           (target.Team == attacker.Team || target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
       {
         return new(false, "That attack is not available.", foundMatch.State());
+      }
+
+      if (target is { Type: "Farm" } && IsFarmCoveredByUnit(foundMatch, target))
+      {
+        return new(false, "Defeat the unit on that farm before attacking the farm itself.", foundMatch.State());
       }
 
       if (target is null && !CanUseActionSquare(attacker, targetPosition.x, targetPosition.y))
@@ -540,6 +557,12 @@ public sealed class MatchStore
       {
         return new(false, "This match has already ended.", foundMatch.State());
       }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
+      }
 
       int actorIndex = foundMatch.Pieces.FindIndex(piece => piece.Id == request.ActorId);
       int targetIndex = string.IsNullOrWhiteSpace(request.TargetId)
@@ -604,6 +627,12 @@ public sealed class MatchStore
       {
         return new(false, "This match has already ended.", foundMatch.State());
       }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
+      }
       if (Globals.ActionLimitsEnabled)
       {
         player.ActionsRemaining = 1;
@@ -652,8 +681,16 @@ public sealed class MatchStore
       }
 
       (int width, int height, int health) = GetRoyalStats(foundMatch.Configuration, request.RoyalType);
-      (int x, int y) spawn = NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, width, height);
-      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), request.RoyalType, player.Team, spawn.x, spawn.y, health));
+      (int x, int y) position = request.X is int requestedX && request.Y is int requestedY
+        ? (requestedX, requestedY)
+        // Keep the hub compatible with older clients while the current client always provides a placement.
+        : NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, width, height);
+      if (!CanPlaceRoyal(foundMatch, player.Team, position.x, position.y, width, height))
+      {
+        return new(false, "Place your royal on an empty, traversable square in your territory.", foundMatch.State());
+      }
+
+      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), request.RoyalType, player.Team, position.x, position.y, health));
       player.ChosenRoyal = request.RoyalType;
       if (foundMatch.MatchReady)
       {
@@ -664,6 +701,7 @@ public sealed class MatchStore
           foundMatch.Configuration.FarmsEnabled
         );
         foundMatch.CurrentTurn = foundMatch.InitialBuy.CurrentTeam;
+        foundMatch.ResetClockTimestamp();
       }
       foundMatch.Version++;
       foundMatch.Touch();
@@ -696,6 +734,12 @@ public sealed class MatchStore
       if (player.Team != buyPhase.CurrentTeam)
       {
         return new(false, "It is not your initial buy turn.", foundMatch.State());
+      }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
       }
 
       if (!TryGetPurchasableUnit(foundMatch, request.PieceType, out UnitPurchaseInfo unit))
@@ -761,6 +805,12 @@ public sealed class MatchStore
       if (player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "It is not your turn.", foundMatch.State());
+      }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
       }
 
       int mercenaryIndex = foundMatch.Pieces.FindIndex(piece =>
@@ -833,6 +883,12 @@ public sealed class MatchStore
       if (player is null || buyPhase is null || buyPhase.IsComplete || player.Team != buyPhase.CurrentTeam)
       {
         return new(false, "It is not your initial buy turn.", foundMatch.State());
+      }
+      if (!foundMatch.AdvanceClock())
+      {
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(false, "Your clock has expired.", foundMatch.State());
       }
 
       if (buyPhase.IsFarmPlacementPhase)
@@ -967,6 +1023,10 @@ public sealed class MatchStore
         configuration.PlunderWinScore < 1 ||
         configuration.PlunderDeliveryScore < 1 ||
         configuration.PlunderRoyalKillPenalty < 0 ||
+        (configuration.ChessTimerEnabled &&
+          (configuration.ChessTimerMinutes < 0 || configuration.ChessTimerSeconds is < 0 or > 59 ||
+           configuration.ChessTimerIncrementSeconds < 0 ||
+           (configuration.ChessTimerMinutes == 0 && configuration.ChessTimerSeconds == 0))) ||
         configuration.UnitMaintenancePercent is < 0 or > 100 ||
         configuration.InterestPercent is < -100 or > 200 ||
         configuration.EscortRoyalHealthPercent is < 1 or > 100 ||
@@ -1074,6 +1134,27 @@ public sealed class MatchStore
       FootprintsOverlap(piece, x, y, unit.Width, unit.Height));
   }
 
+  private static bool CanPlaceRoyal(Match match, NetworkTeam team, int x, int y, int width, int height)
+  {
+    if (!NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, width, height)) return false;
+    for (int offsetY = 0; offsetY < height; offsetY++)
+      for (int offsetX = 0; offsetX < width; offsetX++)
+      {
+        var square = (x: x + offsetX, y: y + offsetY);
+        if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square)) return false;
+      }
+
+    return !match.Pieces.Any(piece => FootprintsOverlap(piece, x, y, width, height));
+  }
+
+  private static bool IsFarmCoveredByUnit(Match match, NetworkPiece farm)
+  {
+    if (!UnitRules.TryGet(farm.Type, out UnitRule farmRule)) return false;
+    return match.Pieces.Any(piece => piece.Id != farm.Id && piece.AttachedToId is null && piece.Type != "Farm" &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(farm.X, farm.Y, farmRule.Width, farmRule.Height, piece.X, piece.Y, rule.Width, rule.Height));
+  }
+
   private static bool TryGetLegalMovementPath(
     Match match,
     NetworkPiece piece,
@@ -1092,7 +1173,7 @@ public sealed class MatchStore
       piece.Team,
       destination => CanLandAt(match, piece, rule, destination),
       (from, to) => CanTravelThrough(match, piece, rule, from, to),
-      destination => GetMovementCost(match, rule, destination),
+      destination => GetMovementCost(match, piece, rule, destination),
       (from, to) => CrossesRiver(match, rule, from, to)
     );
     return paths.TryGetValue((destinationX, destinationY), out path!);
@@ -1125,9 +1206,9 @@ public sealed class MatchStore
     {
       NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
         other.AttachmentKind == NetworkAttachmentKind.Carried);
-      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) && cargoRule.Category == RuleCategory.Mechanical)
+      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule))
       {
-        rule = rule with { MoveRange = 3, MovePattern = RuleShape.Any };
+        rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
       }
     }
 
@@ -1159,15 +1240,16 @@ public sealed class MatchStore
     return true;
   }
 
-  private static int GetMovementCost(Match match, UnitRule rule, (int x, int y) destination)
+  private static int GetMovementCost(Match match, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
   {
     if (rule.Type == "Elephant") return 1;
     int cost = 0;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      cost = Math.Max(cost, match.Terrain.IsForest(square) && !match.Roads.Contains(square)
+      bool usesOwnedRoad = match.Roads.TryGetValue(square, out NetworkTeam roadOwner) && roadOwner == piece.Team;
+      cost = Math.Max(cost, match.Terrain.IsForest(square) && !usesOwnedRoad
         ? 2
-        : match.Roads.Contains(square) && !match.Terrain.IsForest(square) ? 0 : 1);
+        : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1);
     }
     return cost;
   }
@@ -1593,7 +1675,7 @@ public sealed class MatchStore
 
     if (string.Equals(ability, "Road", StringComparison.OrdinalIgnoreCase))
     {
-      match.Roads.Add((targetX, targetY));
+      match.Roads[(targetX, targetY)] = engineer.Team;
     }
     else if (string.Equals(ability, "Barrier", StringComparison.OrdinalIgnoreCase))
     {
@@ -1616,7 +1698,7 @@ public sealed class MatchStore
   {
     var position = (x, y);
     return NetworkBoardRules.Contains(match.Configuration, x, y) &&
-      !match.Terrain.IsLake(position) && !match.Roads.Contains(position) &&
+      !match.Terrain.IsLake(position) && !match.Roads.ContainsKey(position) &&
       !match.Barricades.ContainsKey(position) &&
       !match.Mines.ContainsKey(position) &&
       !match.Pieces.Any(piece => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
@@ -1813,6 +1895,7 @@ public sealed class MatchStore
       }
     }
 
+    match.CompleteTimedTurn(player.Team);
     player.ActionsRemaining = ActionsPerTurn;
     match.CurrentTurn = TeamRules.GetNextTeam(match.CurrentTurn, match.Configuration.PlayerCount);
     ApplyTurnEconomy(match, match.CurrentTurn);
@@ -1901,6 +1984,7 @@ public sealed class MatchStore
     }
     ApplyTurnEconomy(match, match.CurrentTurn);
     ResetTurnActions(match, match.CurrentTurn);
+    match.ResetClockTimestamp();
   }
 
   private static int ClampCurrency(long amount) => (int)Math.Clamp(amount, int.MinValue, int.MaxValue);
@@ -1935,7 +2019,7 @@ public sealed class MatchStore
       NetworkBoardRules.GetBoard(configuration), configuration.TerrainSeed, configuration.ForestDensity, configuration.WaterwayDensity,
       configuration.PlayerCount
     );
-    internal HashSet<(int x, int y)> Roads { get; } = [];
+    internal Dictionary<(int x, int y), NetworkTeam> Roads { get; } = [];
     internal Dictionary<(int x, int y), int> Barricades { get; } = [];
     internal Dictionary<(int x, int y), NetworkTeam> Mines { get; } = [];
     internal HashSet<TileEdge> RiverBridges { get; } = [];
@@ -1953,6 +2037,9 @@ public sealed class MatchStore
     internal OpeningBuyPhase? InitialBuy { get; set; }
     internal NetworkTeam CurrentTurn { get; set; } = TeamRules.GetFirstTeam(configuration.PlayerCount);
     internal long Version { get; set; }
+    internal Dictionary<NetworkTeam, long> ClockMilliseconds { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
+      .ToDictionary(team => team, _ => Math.Max(0L, ((long)configuration.ChessTimerMinutes * 60L + configuration.ChessTimerSeconds) * 1000L));
+    internal DateTimeOffset ClockUpdatedAt { get; private set; } = DateTimeOffset.UtcNow;
     internal DateTimeOffset CreatedAt { get; } = DateTimeOffset.UtcNow;
     internal DateTimeOffset LastActivity { get; private set; } = DateTimeOffset.UtcNow;
     private readonly HashSet<string> _debugControllers = new(StringComparer.Ordinal);
@@ -1985,6 +2072,37 @@ public sealed class MatchStore
 
     internal PlayerSlot? FindPlayerByToken(string token) => Players.FirstOrDefault(player => player.ReconnectToken == token);
     internal void Touch() => LastActivity = DateTimeOffset.UtcNow;
+    internal void ResetClockTimestamp() => ClockUpdatedAt = DateTimeOffset.UtcNow;
+    internal bool AdvanceClock()
+    {
+      if (!Configuration.ChessTimerEnabled || Winner is not null) return true;
+      DateTimeOffset now = DateTimeOffset.UtcNow;
+      long elapsed = Math.Max(0L, (long)(now - ClockUpdatedAt).TotalMilliseconds);
+      ClockUpdatedAt = now;
+      if (!ClockMilliseconds.TryGetValue(CurrentTurn, out long remaining) || remaining > elapsed)
+      {
+        ClockMilliseconds[CurrentTurn] = Math.Max(0L, remaining - elapsed);
+        return true;
+      }
+
+      ClockMilliseconds[CurrentTurn] = 0;
+      Winner = TeamRules.GetNextTeam(CurrentTurn, Configuration.PlayerCount);
+      return false;
+    }
+
+    internal void CompleteTimedTurn(NetworkTeam team)
+    {
+      if (!Configuration.ChessTimerEnabled) return;
+      ClockMilliseconds[team] = Math.Max(0L, ClockMilliseconds.GetValueOrDefault(team)) +
+        (long)Configuration.ChessTimerIncrementSeconds * 1000L;
+      ClockUpdatedAt = DateTimeOffset.UtcNow;
+    }
+
+    private NetworkClockState? ClockState() => !Configuration.ChessTimerEnabled ? null : new(
+      ClockMilliseconds.Select(pair => new NetworkClockTeamState(pair.Key, pair.Value)).ToArray(),
+      CurrentTurn,
+      ClockUpdatedAt.ToUnixTimeMilliseconds()
+    );
     internal NetworkGameState State() => new(
       Code,
       CurrentTurn,
@@ -1996,7 +2114,7 @@ public sealed class MatchStore
       MatchReady,
       InitialBuy?.ToNetworkState(),
       [
-        .. Roads.Select(position => new NetworkImprovement("Road", position.x, position.y)),
+        .. Roads.Select(pair => new NetworkImprovement("Road", pair.Key.x, pair.Key.y, 0, pair.Value)),
         .. Barricades.Select(pair => new NetworkImprovement("Barrier", pair.Key.x, pair.Key.y, pair.Value)),
         .. Mines.Select(pair => new NetworkImprovement("Mine", pair.Key.x, pair.Key.y, 0, pair.Value))
       ],
@@ -2006,7 +2124,8 @@ public sealed class MatchStore
       ModeScores.Select(pair => new NetworkModeTeamState(pair.Key, pair.Value)).ToArray(),
       Configuration.GameMode == "Plunder"
         ? new NetworkTreasureState(TreasurePosition?.x, TreasurePosition?.y, TreasureCarrierId)
-        : null
+        : null,
+      ClockState()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
   }

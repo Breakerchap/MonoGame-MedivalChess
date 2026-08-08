@@ -305,12 +305,12 @@ public static partial class CpuGameRules
     (int x, int y) position = (action.TargetX, action.TargetY);
     if (demolition)
     {
-      return state.Roads.Contains(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position) ||
+      return state.Roads.ContainsKey(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position) ||
         state.RiverBridges.Contains(TileEdge.Between((actor.X, actor.Y), position));
     }
 
     return BoardRules.Contains(state.Board, action.TargetX, action.TargetY) &&
-      !state.Terrain.IsLake(position) && !state.Roads.Contains(position) &&
+      !state.Terrain.IsLake(position) && !state.Roads.ContainsKey(position) &&
       !state.Barricades.ContainsKey(position) && !state.Mines.ContainsKey(position) &&
       !PieceOccupies(state.Pieces, position);
   }

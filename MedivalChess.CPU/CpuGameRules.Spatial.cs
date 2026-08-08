@@ -19,7 +19,7 @@ public static partial class CpuGameRules
       piece.Team,
       destination => CanLand(source, pieces, piece, rule, destination),
       (from, destination) => CanTravelThrough(source, pieces, piece, rule, from, destination),
-      destination => GetMovementCost(source, rule, destination),
+      destination => GetMovementCost(source, piece, rule, destination),
       (from, destination) => CrossesRiver(source, rule, from, destination)
     );
   }
@@ -29,9 +29,9 @@ public static partial class CpuGameRules
     if (rule.Type == "Ox")
     {
       NetworkPiece? cargo = pieces.FirstOrDefault(other => other.AttachedToId == piece.Id && other.AttachmentKind == NetworkAttachmentKind.Carried);
-      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) && cargoRule.Category == RuleCategory.Mechanical)
+      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule))
       {
-        rule = rule with { MoveRange = 3, MovePattern = RuleShape.Any };
+        rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
       }
     }
     return state.TreasureCarrierId == piece.Id ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) } : rule;
@@ -111,7 +111,7 @@ public static partial class CpuGameRules
     return true;
   }
 
-  private static int GetMovementCost(CpuGameState state, UnitRule rule, (int x, int y) destination)
+  private static int GetMovementCost(CpuGameState state, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
   {
     if (rule.Type == "Elephant")
     {
@@ -120,9 +120,11 @@ public static partial class CpuGameRules
     int cost = 0;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      cost = Math.Max(cost, state.Terrain.IsForest(square) && !state.Roads.Contains(square)
+      bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
+        (roadOwner == piece.Team || roadOwner == NetworkTeam.Neutral);
+      cost = Math.Max(cost, state.Terrain.IsForest(square) && !usesOwnedRoad
         ? 2
-        : state.Roads.Contains(square) && !state.Terrain.IsForest(square) ? 0 : 1);
+        : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1);
     }
     return cost;
   }

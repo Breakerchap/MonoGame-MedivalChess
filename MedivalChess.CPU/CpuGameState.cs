@@ -9,7 +9,7 @@ public sealed class CpuGameState
   private readonly Dictionary<NetworkTeam, CpuTeamState> _teams;
   private readonly Dictionary<NetworkTeam, int> _conquestScores;
   private readonly Dictionary<NetworkTeam, int> _modeScores;
-  private readonly HashSet<(int x, int y)> _roads;
+  private readonly Dictionary<(int x, int y), NetworkTeam> _roads;
   private readonly Dictionary<(int x, int y), int> _barricades;
   private readonly Dictionary<(int x, int y), NetworkTeam> _mines;
   private readonly HashSet<TileEdge> _riverBridges;
@@ -29,7 +29,7 @@ public sealed class CpuGameState
   public IReadOnlyDictionary<NetworkTeam, int> ModeScores => _modeScores;
   public (int x, int y)? TreasurePosition { get; }
   public string? TreasureCarrierId { get; }
-  public IReadOnlySet<(int x, int y)> Roads => _roads;
+  public IReadOnlyDictionary<(int x, int y), NetworkTeam> Roads => _roads;
   public IReadOnlyDictionary<(int x, int y), int> Barricades => _barricades;
   public IReadOnlyDictionary<(int x, int y), NetworkTeam> Mines => _mines;
   public IReadOnlySet<TileEdge> RiverBridges => _riverBridges;
@@ -57,7 +57,7 @@ public sealed class CpuGameState
     IEnumerable<KeyValuePair<NetworkTeam, int>>? modeScores = null,
     (int x, int y)? treasurePosition = null,
     string? treasureCarrierId = null,
-    IEnumerable<(int x, int y)>? roads = null,
+    IEnumerable<KeyValuePair<(int x, int y), NetworkTeam>>? roads = null,
     IEnumerable<KeyValuePair<(int x, int y), int>>? barricades = null,
     IEnumerable<KeyValuePair<(int x, int y), NetworkTeam>>? mines = null,
     IEnumerable<TileEdge>? riverBridges = null,
@@ -79,7 +79,7 @@ public sealed class CpuGameState
     _teams = (teams ?? throw new ArgumentNullException(nameof(teams))).ToDictionary(team => team.Team);
     _conquestScores = conquestScores?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _modeScores = modeScores?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
-    _roads = roads is null ? [] : [.. roads];
+    _roads = roads?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _barricades = barricades?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _mines = mines?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _riverBridges = riverBridges is null ? [] : [.. riverBridges];
@@ -105,13 +105,13 @@ public sealed class CpuGameState
     ArgumentNullException.ThrowIfNull(state);
     Dictionary<(int x, int y), int> barricades = [];
     Dictionary<(int x, int y), NetworkTeam> mines = [];
-    HashSet<(int x, int y)> roads = [];
+    Dictionary<(int x, int y), NetworkTeam> roads = [];
     HashSet<TileEdge> bridges = [];
     foreach (NetworkImprovement improvement in state.Improvements ?? [])
     {
       switch (improvement.Type)
       {
-        case "Road": roads.Add((improvement.X, improvement.Y)); break;
+        case "Road": roads[(improvement.X, improvement.Y)] = improvement.Owner ?? NetworkTeam.Neutral; break;
         case "Barrier": barricades[(improvement.X, improvement.Y)] = improvement.Health; break;
         case "Mine" when improvement.Owner is NetworkTeam owner: mines[(improvement.X, improvement.Y)] = owner; break;
         case "Bridge": bridges.Add(TileEdge.Between((improvement.X, improvement.Y), (improvement.X + 1, improvement.Y))); break;
@@ -220,7 +220,7 @@ internal sealed class CpuMutableGameState
     Teams = source.Teams.ToDictionary(pair => pair.Key, pair => pair.Value);
     ConquestScores = source.ConquestScores.ToDictionary(pair => pair.Key, pair => pair.Value);
     ModeScores = source.ModeScores.ToDictionary(pair => pair.Key, pair => pair.Value);
-    Roads = [.. source.Roads];
+    Roads = source.Roads.ToDictionary(pair => pair.Key, pair => pair.Value);
     Barricades = source.Barricades.ToDictionary(pair => pair.Key, pair => pair.Value);
     Mines = source.Mines.ToDictionary(pair => pair.Key, pair => pair.Value);
     RiverBridges = [.. source.RiverBridges];
@@ -239,7 +239,7 @@ internal sealed class CpuMutableGameState
   internal Dictionary<NetworkTeam, CpuTeamState> Teams { get; }
   internal Dictionary<NetworkTeam, int> ConquestScores { get; }
   internal Dictionary<NetworkTeam, int> ModeScores { get; }
-  internal HashSet<(int x, int y)> Roads { get; }
+  internal Dictionary<(int x, int y), NetworkTeam> Roads { get; }
   internal Dictionary<(int x, int y), int> Barricades { get; }
   internal Dictionary<(int x, int y), NetworkTeam> Mines { get; }
   internal HashSet<TileEdge> RiverBridges { get; }

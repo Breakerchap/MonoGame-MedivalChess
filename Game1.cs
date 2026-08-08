@@ -42,7 +42,8 @@ internal sealed class Game1 : Game
     MoveRight,
     ZoomIn,
     ZoomOut,
-    Buy
+    Buy,
+    EndTurn
   }
 
   private enum EditorConfirmAction
@@ -100,6 +101,25 @@ internal sealed class Game1 : Game
     Demolish
   }
 
+  private enum FpsCap
+  {
+    Thirty = 30,
+    Sixty = 60,
+    OneTwenty = 120,
+    OneFifty = 150,
+    OneEighty = 180,
+    TwoForty = 240,
+    Unlimited = 0
+  }
+
+  private enum PlanningPath
+  {
+    Any,
+    Straight
+  }
+
+  private sealed record PlanningMark((int x, int y) Start, (int x, int y)? End, PlanningPath Path);
+
   private sealed class MovementAnimation
   {
     internal const float SecondsPerStep = 0.11f;
@@ -123,7 +143,9 @@ internal sealed class Game1 : Game
   private List<Team> _teams = [];
   private Piece selectedPiece;
   private MovementAnimation _movementAnimation;
-  private readonly HashSet<(int x, int y)> _roads = [];
+  // Roads are owned improvements: only their owner receives the movement benefit.
+  // Neutral roads are reserved for campaign-authored map features and are usable by everyone.
+  private readonly Dictionary<(int x, int y), TeamName> _roads = [];
   private readonly Dictionary<(int x, int y), int> _barricades = [];
   private readonly Dictionary<(int x, int y), TeamName> _mines = [];
   private readonly HashSet<(int x, int y)> _restoredLakeTiles = [];
@@ -171,6 +193,8 @@ internal sealed class Game1 : Game
   private int _interestPercent = Globals.InterestPercent;
   private int _economyInputIndex = -1;
   private string _economyInputText = string.Empty;
+  private int _timerInputIndex = -1;
+  private string _timerInputText = string.Empty;
   private int _playerCount = 2;
   private InitialBuyPhase _initialBuyPhase;
   private TeamName? _winningTeam;
@@ -181,6 +205,12 @@ internal sealed class Game1 : Game
   private int _plunderWinScore = Globals.DefaultPlunderWinScore;
   private int _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
   private int _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
+  private bool _chessTimerEnabled;
+  private int _chessTimerMinutes = 10;
+  private int _chessTimerSeconds;
+  private int _chessTimerIncrementSeconds;
+  private readonly Dictionary<TeamName, double> _localClockSeconds = [];
+  private NetworkClockState _onlineClock;
   // Negative pressure moves toward Orange; positive pressure moves toward Purple.
   private int _conquestScore;
   // Mirrors the simulation turn counter so speculative CPU plans can be matched to live state.
@@ -200,6 +230,14 @@ internal sealed class Game1 : Game
   private Keys _zoomInKey = Keys.E;
   private Keys _zoomOutKey = Keys.Q;
   private Keys _buyKey = Keys.B;
+  private Keys _endTurnKey = Keys.Space;
+  private bool _zoomTowardsMouse;
+  private FpsCap _fpsCap = FpsCap.Sixty;
+  private int _resolutionIndex = 1;
+  private readonly List<PlanningMark> _planningMarks = [];
+  private (int x, int y)? _planningStart;
+  private PlanningPath _planningPath;
+  private bool _planningGestureActive;
   private OnlineMatchClient _onlineClient;
   private readonly Dictionary<TeamName, CpuProfile> _cpuProfiles = [];
   private readonly Queue<ICpuGameAction> _cpuActionQueue = [];
@@ -242,6 +280,8 @@ internal sealed class Game1 : Game
 
     _graphics.PreferredBackBufferWidth = 1920;
     _graphics.PreferredBackBufferHeight = 1080;
+    _graphics.SynchronizeWithVerticalRetrace = false;
+    ApplyFpsCap();
 
     Window.AllowUserResizing = true;
   }
@@ -294,10 +334,17 @@ internal sealed class Game1 : Game
     bool wasRightClick =
       mouse.RightButton == ButtonState.Pressed &&
       _previousMouseState.RightButton == ButtonState.Released;
+    bool wasRightRelease =
+      mouse.RightButton == ButtonState.Released &&
+      _previousMouseState.RightButton == ButtonState.Pressed;
     bool wasEscapePressed =
       keyboard.IsKeyDown(Keys.Escape) &&
       !_previousKeyboardState.IsKeyDown(Keys.Escape);
     _onlineClient?.DrainStates(ApplyOnlineState, error => _onlineError = error);
+    if (_screen == Screen.Playing && _onlineClient is null)
+    {
+      UpdateLocalChessClock(deltaTime);
+    }
 
     if (_screen == Screen.LevelEditor)
     {
@@ -366,6 +413,7 @@ internal sealed class Game1 : Game
     // Process it before the CPU-turn early return so the player can look around while Hard/Best
     // searches use their full time budgets.
     Vector2 mouseWorldBefore = UpdateCamera(keyboard, mouse, deltaTime);
+    bool planningInput = UpdatePlanningGesture(keyboard, mouse, mouseWorldBefore, wasRightClick, wasRightRelease);
 
     if (_movementAnimation != null)
     {
@@ -397,8 +445,8 @@ internal sealed class Game1 : Game
       keyboard.IsKeyDown(Keys.Down) &&
       !_previousKeyboardState.IsKeyDown(Keys.Down);
     bool wasSkipTurnPressed =
-      keyboard.IsKeyDown(Keys.Space) &&
-      !_previousKeyboardState.IsKeyDown(Keys.Space);
+      keyboard.IsKeyDown(_endTurnKey) &&
+      !_previousKeyboardState.IsKeyDown(_endTurnKey);
 
     if (wasSkipTurnPressed)
     {
@@ -436,7 +484,7 @@ internal sealed class Game1 : Game
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(mouse.Position);
 
-    if (!clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -444,6 +492,7 @@ internal sealed class Game1 : Game
       var targetPosition = (x: boardX, y: boardY);
       Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
       Piece friendlyPieceAtTarget = GetUnattachedPieceAt(targetPosition, Team.CurrentTurn);
+      Piece inspectablePieceAtTarget = GetUnattachedPieceAt(targetPosition);
 
       if (_royalAwaitingPlacement is not null)
       {
@@ -461,9 +510,20 @@ internal sealed class Game1 : Game
       }
       else if (selectedPiece == null)
       {
-        if (friendlyPieceAtTarget is not null && IsOnlineLocalTurn())
+        if (inspectablePieceAtTarget is not null)
         {
-          SelectPiece(friendlyPieceAtTarget);
+          SelectPiece(inspectablePieceAtTarget);
+        }
+      }
+      else if (selectedPiece.Team != Team.CurrentTurn || !IsOnlineLocalTurn())
+      {
+        if (inspectablePieceAtTarget is not null && inspectablePieceAtTarget != selectedPiece)
+        {
+          SelectPiece(inspectablePieceAtTarget);
+        }
+        else
+        {
+          selectedPiece = null;
         }
       }
       else if (selectedPiece.Occupies(targetPosition))
@@ -535,7 +595,9 @@ internal sealed class Game1 : Game
                _barricades.ContainsKey(targetPosition)) &&
               !selectedPiece.HasAttackedThisTurn &&
               selectedPiece.Definition.Attack > 0 &&
-              Actions.CanAttackSquare(selectedPiece, targetPosition);
+              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              HasClearAttackPath(selectedPiece, targetPosition) &&
+              !(hostilePieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(hostilePieceAtTarget));
             if (canSendOnlineAttack)
             {
               if (hostilePieceAtTarget is not null)
@@ -568,7 +630,8 @@ internal sealed class Game1 : Game
               HasClearAttackPath(selectedPiece, targetPosition) &&
               selectedPiece.Definition.Attack > 0 &&
               (hostilePieceAtTarget is not null ||
-               _barricades.ContainsKey(targetPosition));
+               _barricades.ContainsKey(targetPosition)) &&
+              !(hostilePieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(hostilePieceAtTarget));
 
             if (isValidAttack)
             {
@@ -640,10 +703,171 @@ internal sealed class Game1 : Game
     if (keyboard.IsKeyDown(_zoomOutKey)) _zoom -= zoomSpeed * deltaTime * _zoom;
     _zoom = MathHelper.Clamp(_zoom, 0.2f, 5f);
 
-    Vector2 mouseWorldAfter = Vector2.Transform(mouseScreen, Matrix.Invert(CreateCameraTransform()));
-    _cameraPosition += mouseWorldBefore - mouseWorldAfter;
+    if (_zoomTowardsMouse)
+    {
+      Vector2 mouseWorldAfter = Vector2.Transform(mouseScreen, Matrix.Invert(CreateCameraTransform()));
+      _cameraPosition += mouseWorldBefore - mouseWorldAfter;
+    }
     return mouseWorldBefore;
   }
+
+  private void ApplyFpsCap()
+  {
+    int framesPerSecond = (int)_fpsCap;
+    IsFixedTimeStep = framesPerSecond > 0;
+    if (framesPerSecond > 0)
+    {
+      TargetElapsedTime = TimeSpan.FromSeconds(1d / framesPerSecond);
+    }
+  }
+
+  private void CycleFpsCap()
+  {
+    FpsCap[] caps = Enum.GetValues<FpsCap>();
+    int index = Array.IndexOf(caps, _fpsCap);
+    _fpsCap = caps[(Math.Max(0, index) + 1) % caps.Length];
+    ApplyFpsCap();
+  }
+
+  private void CycleResolution()
+  {
+    (int width, int height)[] resolutions = [(1280, 720), (1920, 1080), (2560, 1440), (3840, 2160)];
+    _resolutionIndex = (_resolutionIndex + 1) % resolutions.Length;
+    (int width, int height) resolution = resolutions[_resolutionIndex];
+    _graphics.PreferredBackBufferWidth = resolution.width;
+    _graphics.PreferredBackBufferHeight = resolution.height;
+    _graphics.ApplyChanges();
+  }
+
+  private string GetFpsCapLabel() => _fpsCap == FpsCap.Unlimited ? "UNLIMITED" : $"{(int)_fpsCap} FPS";
+
+  private string GetResolutionLabel()
+  {
+    return _resolutionIndex switch
+    {
+      0 => "720P",
+      1 => "FHD (1080P)",
+      2 => "QHD (1440P)",
+      _ => "4K (2160P)"
+    };
+  }
+
+  private void StartLocalChessClock()
+  {
+    _localClockSeconds.Clear();
+    if (!_chessTimerEnabled) return;
+    double startingSeconds = _chessTimerMinutes * 60d + _chessTimerSeconds;
+    foreach (TeamName team in Team.ActiveTeams)
+    {
+      _localClockSeconds[team] = startingSeconds;
+    }
+  }
+
+  private void UpdateLocalChessClock(float deltaTime)
+  {
+    if (!_chessTimerEnabled || _winningTeam is not null || !_localClockSeconds.TryGetValue(Team.CurrentTurn, out double remaining))
+    {
+      return;
+    }
+
+    remaining = Math.Max(0d, remaining - deltaTime);
+    _localClockSeconds[Team.CurrentTurn] = remaining;
+    if (remaining > 0d) return;
+    _winningTeam = Team.ActiveTeams.First(team => team != Team.CurrentTurn);
+    selectedPiece = null;
+    _screen = Screen.GameOver;
+  }
+
+  private void ApplyOnlineClockState(NetworkClockState clock) => _onlineClock = clock;
+
+  private double GetClockSeconds(TeamName team)
+  {
+    if (_onlineClient is null)
+    {
+      return _localClockSeconds.GetValueOrDefault(team);
+    }
+    if (_onlineClock is null) return 0d;
+    NetworkClockTeamState clockTeam = _onlineClock.Teams.FirstOrDefault(entry => entry.Team == team.ToNetworkTeam());
+    if (clockTeam is null) return 0d;
+    long remaining = clockTeam.RemainingMilliseconds;
+    if (_onlineClock.ActiveTeam == clockTeam.Team)
+    {
+      remaining -= Math.Max(0L, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - _onlineClock.UpdatedAtUnixMilliseconds);
+    }
+    return Math.Max(0d, remaining / 1000d);
+  }
+
+  private string FormatClock(TeamName team)
+  {
+    int totalSeconds = Math.Max(0, (int)Math.Ceiling(GetClockSeconds(team)));
+    return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
+  }
+
+  private bool UpdatePlanningGesture(
+    KeyboardState keyboard,
+    MouseState mouse,
+    Vector2 mouseWorld,
+    bool wasRightClick,
+    bool wasRightRelease
+  )
+  {
+    bool altHeld = keyboard.IsKeyDown(Keys.LeftAlt) || keyboard.IsKeyDown(Keys.RightAlt);
+    bool shiftHeld = keyboard.IsKeyDown(Keys.LeftShift) || keyboard.IsKeyDown(Keys.RightShift);
+    if (wasRightClick && altHeld && shiftHeld)
+    {
+      ClearPlanningMarks();
+      return true;
+    }
+    if (wasRightClick && (altHeld || shiftHeld) && TryGetBoardPosition(mouseWorld, out (int x, int y) plannedStart))
+    {
+      _planningStart = plannedStart;
+      _planningPath = shiftHeld ? PlanningPath.Straight : PlanningPath.Any;
+      _planningGestureActive = true;
+      return true;
+    }
+
+    if (!_planningGestureActive)
+    {
+      return false;
+    }
+
+    if (wasRightRelease)
+    {
+      if (_planningStart is (int x, int y) start && TryGetBoardPosition(mouseWorld, out (int x, int y) end))
+      {
+        (int x, int y)? arrowEnd = start == end ? null : end;
+        PlanningMark mark = new(start, arrowEnd, _planningPath);
+        int existing = _planningMarks.FindIndex(candidate => candidate == mark);
+        if (existing >= 0) _planningMarks.RemoveAt(existing);
+        else _planningMarks.Add(mark);
+      }
+      _planningStart = null;
+      _planningGestureActive = false;
+    }
+
+    return true;
+  }
+
+  private void ClearPlanningMarks()
+  {
+    _planningMarks.Clear();
+    _planningStart = null;
+    _planningGestureActive = false;
+  }
+
+  private bool TryGetBoardPosition(Vector2 worldPosition, out (int x, int y) position)
+  {
+    position = (
+      (int)MathF.Floor(worldPosition.X / 64f) + _board.MinX,
+      (int)MathF.Floor(worldPosition.Y / 64f) + _board.MinY
+    );
+    return IsBoardCell(position.x - _board.MinX, position.y - _board.MinY);
+  }
+
+  private Vector2 GetBoardSquareCenter((int x, int y) position, int cellSize) => new(
+    (position.x - _board.MinX) * cellSize + cellSize * 0.5f,
+    (position.y - _board.MinY) * cellSize + cellSize * 0.5f
+  );
 
   private void TryPurchaseAndPlace((int x, int y) targetPosition)
   {
@@ -775,6 +999,7 @@ internal sealed class Game1 : Game
       CyclePurchaseSelection(1);
     }
     Team.ResetTurn();
+    StartLocalChessClock();
     Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
     _isPurchaseMode = true;
     selectedPiece = null;
@@ -977,6 +1202,10 @@ internal sealed class Game1 : Game
       }
 
       bool completedRound = Team.CurrentTurn == Team.ActiveTeams[^1];
+      if (_onlineClient is null && _chessTimerEnabled)
+      {
+        _localClockSeconds[Team.CurrentTurn] = _localClockSeconds.GetValueOrDefault(Team.CurrentTurn) + _chessTimerIncrementSeconds;
+      }
       Team.AdvanceTurn();
       if (completedRound) _campaignCompletedRounds++;
       _cpuTurnNumber++;
@@ -1323,7 +1552,7 @@ internal sealed class Game1 : Game
       _initialBuyPhase.IsFarmPlacementPhase
     );
     List<NetworkImprovement> improvements = [];
-    improvements.AddRange(_roads.Select(position => new NetworkImprovement("Road", position.x, position.y)));
+    improvements.AddRange(_roads.Select(entry => new NetworkImprovement("Road", entry.Key.x, entry.Key.y, Owner: entry.Value.ToNetworkTeam())));
     improvements.AddRange(_barricades.Select(entry => new NetworkImprovement("Barrier", entry.Key.x, entry.Key.y, entry.Value)));
     improvements.AddRange(_mines.Select(entry => new NetworkImprovement("Mine", entry.Key.x, entry.Key.y, Owner: entry.Value.ToNetworkTeam())));
 
@@ -1358,7 +1587,7 @@ internal sealed class Game1 : Game
       modeScores: _modeScores.Select(entry => KeyValuePair.Create(entry.Key.ToNetworkTeam(), entry.Value)),
       treasurePosition: _treasurePosition,
       treasureCarrierId: _treasureCarrierId,
-      roads: _roads,
+      roads: _roads.Select(entry => KeyValuePair.Create(entry.Key, entry.Value.ToNetworkTeam())),
       barricades: _barricades,
       mines: _mines.Select(entry => KeyValuePair.Create(entry.Key, entry.Value.ToNetworkTeam())),
       riverBridges: _riverBridges,
@@ -1560,7 +1789,7 @@ internal sealed class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
-    foreach (Piece piece in pieceSetup.Pieces)
+    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
     {
       if (piece.Team == teamName)
       {
@@ -1825,6 +2054,8 @@ internal sealed class Game1 : Game
       return;
     }
 
+    ClearPlanningMarks();
+
     if (!TryGetOnlineServerUrl(out string serverUrl))
     {
       _onlineError = "Enter a valid http:// or https:// server URL.";
@@ -1873,6 +2104,8 @@ internal sealed class Game1 : Game
       Console.WriteLine("Already connected to an online room.");
       return;
     }
+
+    ClearPlanningMarks();
 
     string joinCode = requestedJoinCode ?? _onlineJoinCode;
     if (string.IsNullOrWhiteSpace(joinCode))
@@ -2029,7 +2262,7 @@ internal sealed class Game1 : Game
     }
   }
 
-  private async System.Threading.Tasks.Task SendOnlineRoyalChoiceAsync()
+  private async System.Threading.Tasks.Task SendOnlineRoyalChoiceAsync((int x, int y) position)
   {
     if (_onlineClient == null || _onlineRoyalChoicePending)
     {
@@ -2040,7 +2273,7 @@ internal sealed class Game1 : Game
     try
     {
       PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
-      ActionResult result = await _onlineClient.ChooseRoyalAsync(royal.Type.ToString());
+      ActionResult result = await _onlineClient.ChooseRoyalAsync(royal.Type.ToString(), position.x, position.y);
       if (!result.Accepted)
       {
         _onlineRoyalChoicePending = false;
@@ -2132,6 +2365,7 @@ internal sealed class Game1 : Game
       .Where(piece => !string.IsNullOrWhiteSpace(piece.NetworkId))
       .ToDictionary(piece => piece.NetworkId, piece => piece.Position);
     ApplyOnlineConfiguration(state.Configuration);
+    ApplyOnlineClockState(state.Clock);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlineImprovements(state.Improvements);
     ApplyOnlinePieces(state.Pieces);
@@ -2171,6 +2405,7 @@ internal sealed class Game1 : Game
       bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
         teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
       _onlineRoyalChoicePending = hasChosenRoyal;
+      _setupTeam = localTeam?.ToTeamName() ?? TeamName.Red;
       _onlineStatus = hasChosenRoyal
         ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
         : $"ONLINE ROYAL SETUP  ROOM: {state.JoinCode}";
@@ -2192,6 +2427,7 @@ internal sealed class Game1 : Game
       Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
       selectedPiece = null;
       _isPurchaseMode = true;
+      EnsureInitialBuySelection();
       _onlineStatus = $"ONLINE INITIAL PURCHASE  ROOM: {state.JoinCode}";
       _onlineRoyalChoicePending = false;
       _screen = Screen.Playing;
@@ -2248,6 +2484,10 @@ internal sealed class Game1 : Game
     _plunderWinScore = configuration.PlunderWinScore;
     _plunderDeliveryScore = configuration.PlunderDeliveryScore;
     _plunderRoyalKillPenalty = configuration.PlunderRoyalKillPenalty;
+    _chessTimerEnabled = configuration.ChessTimerEnabled;
+    _chessTimerMinutes = configuration.ChessTimerMinutes;
+    _chessTimerSeconds = configuration.ChessTimerSeconds;
+    _chessTimerIncrementSeconds = configuration.ChessTimerIncrementSeconds;
     _playerCount = configuration.PlayerCount;
     ConfigureTeamsForPlayerCount();
     EnsurePurchaseSelectionIsValid();
@@ -2338,7 +2578,7 @@ internal sealed class Game1 : Game
     _mines.Clear();
     foreach (NetworkImprovement improvement in improvements ?? [])
     {
-      if (improvement.Type == "Road") _roads.Add((improvement.X, improvement.Y));
+      if (improvement.Type == "Road") _roads[(improvement.X, improvement.Y)] = (improvement.Owner ?? NetworkTeam.Neutral).ToTeamName();
       else if (improvement.Type == "Barrier") _barricades[(improvement.X, improvement.Y)] = improvement.Health;
       else if (improvement.Type == "Mine" && improvement.Owner is NetworkTeam owner)
       {
@@ -2506,8 +2746,8 @@ internal sealed class Game1 : Game
     Color fill = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)46 : (byte)30);
     Color border = new(outline.R, outline.G, outline.B, canPurchaseAtTarget ? (byte)190 : (byte)145);
 
-    DrawWorldRectangle(footprint, fill, 0.104f);
-    DrawWorldOutline(footprint, border, 0.105f);
+    DrawWorldRectangle(footprint, fill, 0.134f);
+    DrawWorldOutline(footprint, border, 0.135f);
   }
 
   private void DrawRoyalPlacementPreview(int cellSize)
@@ -2549,8 +2789,8 @@ internal sealed class Game1 : Game
     Color fill = new(outline.R, outline.G, outline.B, canPlace ? (byte)46 : (byte)30);
     Color border = new(outline.R, outline.G, outline.B, canPlace ? (byte)190 : (byte)145);
 
-    DrawWorldRectangle(footprint, fill, 0.104f);
-    DrawWorldOutline(footprint, border, 0.105f);
+    DrawWorldRectangle(footprint, fill, 0.134f);
+    DrawWorldOutline(footprint, border, 0.135f);
   }
 
   private bool IsTraversableTerrainSquare((int x, int y) position)
@@ -2579,9 +2819,11 @@ internal sealed class Game1 : Game
     Piece cargo = piece.Definition.Type == PieceType.Ox
       ? pieceSetup.GetAttachedPiece(piece, AttachmentKind.Carried)
       : null;
-    rule = cargo?.Definition.Category == PieceCategory.Mechanical
-      ? rule with { MoveRange = 3, MovePattern = RuleShape.Any }
-      : rule;
+    if (cargo is not null)
+    {
+      UnitRule cargoRule = UnitRules.GetRequired(cargo.Definition.Type.ToString());
+      rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
+    }
     return IsTreasureCarrier(piece)
       ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) }
       : rule;
@@ -2692,11 +2934,12 @@ internal sealed class Game1 : Game
     int cost = 0;
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
-      if (_terrain.IsForest(occupiedSquare) && !_roads.Contains(occupiedSquare))
+      bool usesOwnedRoad = UsesRoad(piece.Team, occupiedSquare);
+      if (_terrain.IsForest(occupiedSquare) && !usesOwnedRoad)
       {
         cost = Math.Max(cost, 2);
       }
-      else if (_roads.Contains(occupiedSquare) && !_terrain.IsForest(occupiedSquare))
+      else if (usesOwnedRoad && !_terrain.IsForest(occupiedSquare))
       {
         // A road built along open ground costs no movement points.
         cost = Math.Max(cost, 0);
@@ -2709,6 +2952,10 @@ internal sealed class Game1 : Game
 
     return cost;
   }
+
+  private bool UsesRoad(TeamName team, (int x, int y) position) =>
+    _roads.TryGetValue(position, out TeamName owner) &&
+    (owner == team || owner == TeamName.Neutral);
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
@@ -2876,8 +3123,9 @@ internal sealed class Game1 : Game
         }
 
         var targetPosition = (x: x + _board.MinX, y: y + _board.MinY);
-        Piece pieceAtTarget = pieceSetup.GetPieceAt(targetPosition);
-        if (pieceAtTarget?.Team == piece.Team)
+        Piece pieceAtTarget = GetUnattachedPieceAt(targetPosition);
+        if (pieceAtTarget?.Team == piece.Team ||
+            (pieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(pieceAtTarget)))
         {
           continue;
         }
@@ -2898,11 +3146,22 @@ internal sealed class Game1 : Game
     ?? pieceSetup.Pieces.FirstOrDefault(piece =>
       piece.Team == team && piece.AttachedTo is null && piece.Occupies(position));
 
+  private Piece GetUnattachedPieceAt((int x, int y) position) =>
+    pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
+    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.AttachedTo is null && piece.Occupies(position));
+
   private Piece GetUnattachedHostilePieceAt((int x, int y) position, TeamName team) =>
     pieceSetup.Pieces.FirstOrDefault(piece =>
       piece.Team != team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
     ?? pieceSetup.Pieces.FirstOrDefault(piece =>
       piece.Team != team && piece.AttachedTo is null && piece.Occupies(position));
+
+  private bool IsFarmCoveredByUnit(Piece farm) =>
+    farm?.Definition.Type == PieceType.Farm && pieceSetup.Pieces.Any(piece =>
+      piece != farm && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm &&
+      FootprintsOverlap(farm.Definition, farm.Position, piece.Definition, piece.Position));
 
   private bool HasAvailableAttack(Piece piece)
   {
@@ -3326,7 +3585,7 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    _roads.Add(targetPosition);
+    _roads[targetPosition] = engineer.Team;
     Console.WriteLine(_terrain.IsForest(targetPosition)
       ? "Engineer built a road through the forest."
       : "Engineer built a road across open ground.");
@@ -3376,7 +3635,7 @@ internal sealed class Game1 : Game
 
   private bool IsEngineeringImprovementAt((int x, int y) position)
   {
-    return _roads.Contains(position) ||
+    return _roads.ContainsKey(position) ||
       _barricades.ContainsKey(position) ||
       _mines.ContainsKey(position) ||
       _restoredLakeTiles.Contains(position);
@@ -4190,11 +4449,112 @@ internal sealed class Game1 : Game
     DrawWorldRectangle(new Rectangle(bounds.Right - thickness, bounds.Y, thickness, bounds.Height), colour, layerDepth);
   }
 
+  private void DrawWorldLine(Vector2 start, Vector2 end, Color colour, float layerDepth, float thickness = 3f)
+  {
+    Vector2 delta = end - start;
+    float length = delta.Length();
+    if (length < 0.5f) return;
+    _spriteBatch.Draw(
+      _pixel,
+      start,
+      null,
+      colour,
+      MathF.Atan2(delta.Y, delta.X),
+      Vector2.Zero,
+      new Vector2(length, thickness),
+      SpriteEffects.None,
+      layerDepth
+    );
+  }
+
+  private void DrawSpyMarkIndicators(int cellSize)
+  {
+    foreach (Piece spy in pieceSetup.Pieces.Where(piece => piece.Definition.Type == PieceType.Spy && piece.MarkedTarget is not null))
+    {
+      Piece target = spy.MarkedTarget;
+      if (!pieceSetup.Pieces.Contains(target) || spy.AttachedTo is not null) continue;
+      Rectangle spyBounds = GetPieceWorldBounds(spy, cellSize);
+      Rectangle targetBounds = GetPieceWorldBounds(target, cellSize);
+      DrawWorldLine(
+        new Vector2(spyBounds.Center.X, spyBounds.Center.Y),
+        new Vector2(targetBounds.Center.X, targetBounds.Center.Y),
+        UiTheme.GoldBright,
+        0.13f,
+        2f
+      );
+      targetBounds.Inflate(-3, -3);
+      DrawWorldOutline(targetBounds, UiTheme.GoldBright, 0.131f);
+      Rectangle marker = new(targetBounds.Right - 14, targetBounds.Y + 3, 11, 11);
+      DrawWorldRectangle(marker, UiTheme.GoldBright, 0.132f);
+      DrawWorldOutline(marker, UiTheme.Shadow, 0.133f);
+    }
+  }
+
+  private void DrawPlanningMarks(int cellSize)
+  {
+    foreach (PlanningMark mark in _planningMarks)
+    {
+      DrawPlanningMark(mark.Start, mark.End, mark.Path, cellSize, UiTheme.GoldBright, 0.136f);
+    }
+
+    if (_planningGestureActive && _planningStart is (int x, int y) start)
+    {
+      Vector2 mouseWorld = Vector2.Transform(Mouse.GetState().Position.ToVector2(), Matrix.Invert(CreateCameraTransform()));
+      if (TryGetBoardPosition(mouseWorld, out (int x, int y) end))
+      {
+        DrawPlanningMark(start, start == end ? null : end, _planningPath, cellSize, UiTheme.TextPrimary, 0.137f);
+      }
+    }
+  }
+
+  private void DrawPlanningMark(
+    (int x, int y) start,
+    (int x, int y)? end,
+    PlanningPath path,
+    int cellSize,
+    Color colour,
+    float depth
+  )
+  {
+    if (!end.HasValue)
+    {
+      Rectangle highlight = new(
+        (start.x - _board.MinX) * cellSize + 4,
+        (start.y - _board.MinY) * cellSize + 4,
+        cellSize - 8,
+        cellSize - 8
+      );
+      DrawWorldOutline(highlight, colour, depth);
+      return;
+    }
+
+    Vector2 first = GetBoardSquareCenter(start, cellSize);
+    Vector2 last = GetBoardSquareCenter(end.Value, cellSize);
+    if (path == PlanningPath.Straight && first.X != last.X && first.Y != last.Y)
+    {
+      Vector2 corner = new(last.X, first.Y);
+      DrawWorldLine(first, corner, colour, depth, 3f);
+      DrawWorldLine(corner, last, colour, depth, 3f);
+    }
+    else
+    {
+      DrawWorldLine(first, last, colour, depth, 3f);
+    }
+
+    Vector2 direction = Vector2.Normalize(last - (path == PlanningPath.Straight && first.X != last.X && first.Y != last.Y
+      ? new Vector2(last.X, first.Y)
+      : first));
+    if (float.IsNaN(direction.X)) return;
+    Vector2 perpendicular = new(-direction.Y, direction.X);
+    DrawWorldLine(last, last - direction * 12f + perpendicular * 7f, colour, depth + 0.001f, 3f);
+    DrawWorldLine(last, last - direction * 12f - perpendicular * 7f, colour, depth + 0.001f, 3f);
+  }
+
   private void DrawWorldPieceText(Matrix cameraTransform, int cellSize)
   {
     // Piece information is a screen-space overlay, so it always reads upright.
     const float textRotation = 0f;
-    foreach (Piece piece in pieceSetup.Pieces)
+    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
     {
       if (piece.AttachedTo != null)
       {
@@ -4841,6 +5201,81 @@ internal sealed class Game1 : Game
   private string GetEconomyEditedValue(int index, string normalValue) =>
     _economyInputIndex == index ? (_economyInputText.Length == 0 ? "|" : _economyInputText) : normalValue;
 
+  private bool TryBeginTimerTextInput(Point position)
+  {
+    int timerStartIndex = GetModeRuleSettingCount();
+    for (int timerIndex = 0; timerIndex < 3; timerIndex++)
+    {
+      if (GetModeSettingsValueBounds(timerStartIndex + timerIndex + 1).Contains(position))
+      {
+        _timerInputIndex = timerIndex;
+        // A click selects the existing value, so typing replaces it.
+        _timerInputText = string.Empty;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private void UpdateTimerTextInput(Keys key)
+  {
+    if (key == Keys.Enter)
+    {
+      CommitTimerTextInput();
+      return;
+    }
+
+    if (key == Keys.Back)
+    {
+      if (_timerInputText.Length > 0)
+      {
+        _timerInputText = _timerInputText[..^1];
+      }
+      return;
+    }
+
+    if (TryGetOnlineInputCharacter(key, false, out char character) && char.IsDigit(character))
+    {
+      _timerInputText += character;
+    }
+  }
+
+  private void CommitTimerTextInput()
+  {
+    if (_timerInputIndex < 0)
+    {
+      return;
+    }
+
+    if (int.TryParse(_timerInputText, NumberStyles.Integer, CultureInfo.InvariantCulture, out int value))
+    {
+      switch (_timerInputIndex)
+      {
+        case 0:
+          _chessTimerMinutes = Math.Clamp(value, 0, 180);
+          break;
+        case 1:
+          _chessTimerSeconds = Math.Clamp(value, 0, 59);
+          break;
+        case 2:
+          _chessTimerIncrementSeconds = Math.Clamp(value, 0, 120);
+          break;
+      }
+    }
+
+    CancelTimerTextInput();
+  }
+
+  private void CancelTimerTextInput()
+  {
+    _timerInputIndex = -1;
+    _timerInputText = string.Empty;
+  }
+
+  private string GetTimerEditedValue(int timerIndex, string normalValue) =>
+    _timerInputIndex == timerIndex ? (_timerInputText.Length == 0 ? "|" : _timerInputText) : normalValue;
+
   private static int AdjustInteger(int value, int delta) =>
     (int)Math.Clamp((long)value + delta, int.MinValue, int.MaxValue);
 
@@ -4849,6 +5284,8 @@ internal sealed class Game1 : Game
 
   private void ResetMatchConfigurationValues()
   {
+    CancelEconomyTextInput();
+    CancelTimerTextInput();
     _startingCash = Globals.StartingCash;
     _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
@@ -4865,6 +5302,10 @@ internal sealed class Game1 : Game
     _plunderWinScore = Globals.DefaultPlunderWinScore;
     _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
     _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
+    _chessTimerEnabled = false;
+    _chessTimerMinutes = 10;
+    _chessTimerSeconds = 0;
+    _chessTimerIncrementSeconds = 0;
     EnsurePurchaseSelectionIsValid();
     CancelEconomyTextInput();
   }
@@ -4885,7 +5326,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSettingsPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    return UiLayout.Centered(viewport, 660, 620, UiTheme.SpaceLg);
+    return UiLayout.Centered(viewport, 660, 760, UiTheme.SpaceLg);
   }
 
   private Rectangle GetSettingsBindingBounds(int index)
@@ -4894,7 +5335,7 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     int actionCount = Enum.GetValues<BindingAction>().Length;
     int rowsTop = content.Y + 72;
-    int rowsBottom = GetSettingsRotationButtonBounds().Y - UiTheme.SpaceMd;
+    int rowsBottom = GetSettingsZoomAnchorButtonBounds().Y - UiTheme.SpaceMd;
     int rowHeight = Math.Clamp(
       (rowsBottom - rowsTop - UiTheme.SpaceXs * (actionCount - 1)) / actionCount,
       30,
@@ -4910,21 +5351,40 @@ internal sealed class Game1 : Game
 
   private Rectangle GetSettingsRotationButtonBounds()
   {
+    Rectangle resolution = GetSettingsResolutionButtonBounds();
+    return new Rectangle(resolution.X, resolution.Bottom + UiTheme.SpaceSm, resolution.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetSettingsZoomAnchorButtonBounds()
+  {
     Rectangle panel = GetSettingsPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     return new Rectangle(
       content.X,
-      content.Bottom - UiTheme.ButtonHeight * 2 - UiTheme.SpaceSm,
+      content.Bottom - UiTheme.ButtonHeight * 5 - UiTheme.SpaceSm * 4,
       content.Width,
       UiTheme.ButtonHeight
     );
+  }
+
+  private Rectangle GetSettingsFpsCapButtonBounds()
+  {
+    Rectangle zoom = GetSettingsZoomAnchorButtonBounds();
+    return new Rectangle(zoom.X, zoom.Bottom + UiTheme.SpaceSm, zoom.Width, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetSettingsResolutionButtonBounds()
+  {
+    Rectangle fps = GetSettingsFpsCapButtonBounds();
+    return new Rectangle(fps.X, fps.Bottom + UiTheme.SpaceSm, fps.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetSettingsBackButtonBounds()
   {
     Rectangle panel = GetSettingsPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    return new Rectangle(content.X, content.Bottom - UiTheme.ButtonHeight, content.Width, UiTheme.ButtonHeight);
+    Rectangle rotation = GetSettingsRotationButtonBounds();
+    return new Rectangle(rotation.X, rotation.Bottom + UiTheme.SpaceSm, rotation.Width, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetPausePanelBounds()
@@ -4973,7 +5433,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSetupPanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    int height = _setupStage == SetupStage.Economy ? 870 : 620;
+    int height = _setupStage is SetupStage.Economy or SetupStage.ModeSettings ? 870 : 620;
     return UiLayout.Centered(viewport, 640, height, UiTheme.SpaceLg);
   }
 
@@ -5138,6 +5598,9 @@ internal sealed class Game1 : Game
     return new Rectangle(content.X, content.Y + 168 + index * 58, content.Width, UiTheme.ButtonHeight);
   }
 
+  private int GetModeRuleSettingCount() => _gameMode == GameMode.Plunder ? 3 :
+    _gameMode == GameMode.Regicide ? 0 : 1;
+
   private Rectangle GetModeSettingsDecreaseButtonBounds(int index)
   {
     return GetStepperDecreaseButtonBounds(GetModeSettingsRowBounds(index));
@@ -5272,6 +5735,7 @@ internal sealed class Game1 : Game
   private void ReturnToTitle()
   {
     CancelCpuPlanning();
+    ClearPlanningMarks();
     _campaignTestPlay = false;
     if (_onlineClient != null)
     {
@@ -5319,7 +5783,12 @@ internal sealed class Game1 : Game
     _plunderWinScore = Globals.DefaultPlunderWinScore;
     _plunderDeliveryScore = Globals.DefaultPlunderDeliveryScore;
     _plunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty;
+    _chessTimerEnabled = false;
+    _chessTimerMinutes = 10;
+    _chessTimerSeconds = 0;
+    _chessTimerIncrementSeconds = 0;
     CancelEconomyTextInput();
+    CancelTimerTextInput();
     _winningTeam = null;
     _gameMode = GameMode.Regicide;
     _conquestWinScore = MatchRules.DefaultConquestWinScore;
@@ -5337,6 +5806,7 @@ internal sealed class Game1 : Game
   private void BeginMatchSetup(bool onlineHost = false, bool cpuOpponent = false)
   {
     CancelCpuPlanning();
+    ClearPlanningMarks();
     _cpuMatchVariationSeed = Random.Shared.Next();
     _screen = Screen.Setup;
     SetPlayerCount(2);
@@ -5358,6 +5828,7 @@ internal sealed class Game1 : Game
     _farmsEnabled = Globals.FarmsEnabled;
     _farmIncomePerTurn = Globals.FarmIncomePerTurn;
     CancelEconomyTextInput();
+    CancelTimerTextInput();
     _unitMaintenanceEnabled = Globals.UnitMaintenanceEnabled;
     _unitMaintenancePercent = Globals.UnitMaintenancePercent;
     _unitPricePercent = Globals.UnitPricePercent;
@@ -5393,6 +5864,7 @@ internal sealed class Game1 : Game
 
   private void PrepareOnlineRoom()
   {
+    ClearPlanningMarks();
     pieceSetup.ClearPieces();
     ConfigureTeamsForPlayerCount();
     ConfigureBattlefield(_selectedBoardSize, _forestDensity, _waterwayDensity, _terrainSeed);
@@ -5430,7 +5902,11 @@ internal sealed class Game1 : Game
       _dominionWinScore,
       _plunderWinScore,
       _plunderDeliveryScore,
-      _plunderRoyalKillPenalty
+      _plunderRoyalKillPenalty,
+      _chessTimerEnabled,
+      _chessTimerMinutes,
+      _chessTimerSeconds,
+      _chessTimerIncrementSeconds
     );
   }
 
@@ -5446,6 +5922,12 @@ internal sealed class Game1 : Game
       if (_economyInputIndex >= 0)
       {
         CancelEconomyTextInput();
+        return;
+      }
+
+      if (_timerInputIndex >= 0)
+      {
+        CancelTimerTextInput();
         return;
       }
 
@@ -5531,6 +6013,17 @@ internal sealed class Game1 : Game
         if (!_previousKeyboardState.IsKeyDown(key))
         {
           UpdateEconomyTextInput(key);
+        }
+      }
+    }
+
+    if (_screen == Screen.Setup && _setupStage == SetupStage.ModeSettings && _timerInputIndex >= 0)
+    {
+      foreach (Keys key in keyboard.GetPressedKeys())
+      {
+        if (!_previousKeyboardState.IsKeyDown(key))
+        {
+          UpdateTimerTextInput(key);
         }
       }
     }
@@ -5648,7 +6141,7 @@ internal sealed class Game1 : Game
         }
         else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
         {
-          _ = SendOnlineRoyalChoiceAsync();
+          BeginOnlineRoyalPlacement();
         }
         break;
 
@@ -5662,7 +6155,19 @@ internal sealed class Game1 : Game
           }
         }
 
-        if (GetSettingsRotationButtonBounds().Contains(mousePosition))
+        if (GetSettingsZoomAnchorButtonBounds().Contains(mousePosition))
+        {
+          _zoomTowardsMouse = !_zoomTowardsMouse;
+        }
+        else if (GetSettingsFpsCapButtonBounds().Contains(mousePosition))
+        {
+          CycleFpsCap();
+        }
+        else if (GetSettingsResolutionButtonBounds().Contains(mousePosition))
+        {
+          CycleResolution();
+        }
+        else if (GetSettingsRotationButtonBounds().Contains(mousePosition))
         {
           _rotateBoard = !_rotateBoard;
         }
@@ -5714,6 +6219,11 @@ internal sealed class Game1 : Game
             !GetEconomyValueBounds(_economyInputIndex).Contains(mousePosition))
         {
           CommitEconomyTextInput();
+        }
+        if (_setupStage == SetupStage.ModeSettings && _timerInputIndex >= 0 &&
+            !GetModeSettingsValueBounds(GetModeRuleSettingCount() + _timerInputIndex + 1).Contains(mousePosition))
+        {
+          CommitTimerTextInput();
         }
         if (GetSetupBackButtonBounds().Contains(mousePosition))
         {
@@ -5903,7 +6413,11 @@ internal sealed class Game1 : Game
         }
         else if (_setupStage == SetupStage.ModeSettings)
         {
-          if (_gameMode == GameMode.Conquest && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
+          if (TryBeginTimerTextInput(mousePosition))
+          {
+            break;
+          }
+          else if (_gameMode == GameMode.Conquest && GetModeSettingsDecreaseButtonBounds(0).Contains(mousePosition))
           {
             _conquestWinScore = Math.Max(1, _conquestWinScore - 1);
           }
@@ -5951,8 +6465,44 @@ internal sealed class Game1 : Game
           {
             _plunderRoyalKillPenalty++;
           }
+          else if (GetModeSettingsDecreaseButtonBounds(GetModeRuleSettingCount()).Contains(mousePosition))
+          {
+            _chessTimerEnabled = false;
+          }
+          else if (GetModeSettingsIncreaseButtonBounds(GetModeRuleSettingCount()).Contains(mousePosition))
+          {
+            _chessTimerEnabled = true;
+          }
+          else if (GetModeSettingsDecreaseButtonBounds(GetModeRuleSettingCount() + 1).Contains(mousePosition))
+          {
+            _chessTimerMinutes = Math.Max(0, _chessTimerMinutes - 1);
+          }
+          else if (GetModeSettingsIncreaseButtonBounds(GetModeRuleSettingCount() + 1).Contains(mousePosition))
+          {
+            _chessTimerMinutes = Math.Min(180, _chessTimerMinutes + 1);
+          }
+          else if (GetModeSettingsDecreaseButtonBounds(GetModeRuleSettingCount() + 2).Contains(mousePosition))
+          {
+            _chessTimerSeconds = Math.Max(0, _chessTimerSeconds - 1);
+          }
+          else if (GetModeSettingsIncreaseButtonBounds(GetModeRuleSettingCount() + 2).Contains(mousePosition))
+          {
+            _chessTimerSeconds = Math.Min(59, _chessTimerSeconds + 1);
+          }
+          else if (GetModeSettingsDecreaseButtonBounds(GetModeRuleSettingCount() + 3).Contains(mousePosition))
+          {
+            _chessTimerIncrementSeconds = Math.Max(0, _chessTimerIncrementSeconds - 1);
+          }
+          else if (GetModeSettingsIncreaseButtonBounds(GetModeRuleSettingCount() + 3).Contains(mousePosition))
+          {
+            _chessTimerIncrementSeconds = Math.Min(120, _chessTimerIncrementSeconds + 1);
+          }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
+            if (_chessTimerEnabled && _chessTimerMinutes == 0 && _chessTimerSeconds == 0)
+            {
+              _chessTimerSeconds = 1;
+            }
             foreach (Team team in _teams)
             {
               team.Money = _startingCash;
@@ -6036,6 +6586,21 @@ internal sealed class Game1 : Game
     Console.WriteLine($"Choose a starting position for {_setupTeam}'s {royal.Type}.");
   }
 
+  private void BeginOnlineRoyalPlacement()
+  {
+    if (_onlineClient?.Team is not NetworkTeam localTeam || _onlineRoyalChoicePending)
+    {
+      return;
+    }
+
+    _setupTeam = localTeam.ToTeamName();
+    _royalAwaitingPlacement = PieceDefinitions.Royals[_selectedRoyalIndex];
+    selectedPiece = null;
+    _isPurchaseMode = false;
+    _onlineStatus = "CHOOSE YOUR ROYAL'S STARTING SQUARE";
+    _screen = Screen.Playing;
+  }
+
   private void TryPlaceSelectedRoyal((int x, int y) position)
   {
     PieceDefinition royal = _royalAwaitingPlacement;
@@ -6044,9 +6609,17 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (!CanPlacePiece(royal, position, _setupTeam))
+    TeamName placementTeam = _onlineClient?.Team?.ToTeamName() ?? _setupTeam;
+    if (!CanPlacePiece(royal, position, placementTeam))
     {
       Console.WriteLine("Royals must be placed on empty, traversable squares in their own territory.");
+      return;
+    }
+
+    if (_onlineClient is not null)
+    {
+      _setupTeam = placementTeam;
+      _ = SendOnlineRoyalChoiceAsync(position);
       return;
     }
 
@@ -6207,6 +6780,7 @@ internal sealed class Game1 : Game
       BindingAction.ZoomIn => _zoomInKey,
       BindingAction.ZoomOut => _zoomOutKey,
       BindingAction.Buy => _buyKey,
+      BindingAction.EndTurn => _endTurnKey,
       _ => Keys.None
     };
   }
@@ -6222,6 +6796,7 @@ internal sealed class Game1 : Game
       case BindingAction.ZoomIn: _zoomInKey = key; break;
       case BindingAction.ZoomOut: _zoomOutKey = key; break;
       case BindingAction.Buy: _buyKey = key; break;
+      case BindingAction.EndTurn: _endTurnKey = key; break;
     }
   }
 
@@ -6236,6 +6811,7 @@ internal sealed class Game1 : Game
       BindingAction.ZoomIn => "Zoom in",
       BindingAction.ZoomOut => "Zoom out",
       BindingAction.Buy => "Open purchase panel",
+      BindingAction.EndTurn => "End turn",
       _ => action.ToString()
     };
   }
@@ -6352,6 +6928,7 @@ internal sealed class Game1 : Game
 
     CampaignPlayableState state = converted.State;
     CancelCpuPlanning();
+    ClearPlanningMarks();
     _cpuProfiles.Clear();
     _cpuActionQueue.Clear();
     pieceSetup.ClearPieces();
@@ -6359,7 +6936,7 @@ internal sealed class Game1 : Game
     _campaignTerritories = state.Territories;
     _terrain = state.Terrain;
     _roads.Clear();
-    _roads.UnionWith(state.Roads);
+    foreach ((int x, int y) road in state.Roads) _roads[road] = TeamName.Neutral;
     _barricades.Clear();
     foreach (KeyValuePair<(int x, int y), int> entry in state.Barricades) _barricades[entry.Key] = entry.Value;
     _mines.Clear();
@@ -6444,6 +7021,7 @@ internal sealed class Game1 : Game
   private void ReturnToEditorFromTestPlay()
   {
     CancelCpuPlanning();
+    ClearPlanningMarks();
     _cpuProfiles.Clear();
     _cpuActionQueue.Clear();
     selectedPiece = null;
@@ -6741,6 +7319,22 @@ internal sealed class Game1 : Game
       );
     }
 
+    DrawMenuButton(
+      GetSettingsZoomAnchorButtonBounds(),
+      _zoomTowardsMouse ? "ZOOM TOWARDS: MOUSE" : "ZOOM TOWARDS: CAMERA CENTRE",
+      _zoomTowardsMouse ? UiButtonTone.Accent : UiButtonTone.Neutral,
+      _zoomTowardsMouse
+    );
+    DrawMenuButton(
+      GetSettingsFpsCapButtonBounds(),
+      $"FRAME CAP: {GetFpsCapLabel()}",
+      UiButtonTone.Neutral
+    );
+    DrawMenuButton(
+      GetSettingsResolutionButtonBounds(),
+      $"RESOLUTION: {GetResolutionLabel()}",
+      UiButtonTone.Neutral
+    );
     DrawMenuButton(
       GetSettingsRotationButtonBounds(),
       _rotateBoard ? "BOARD ROTATION: 90 DEG" : "BOARD ROTATION: 0 DEG",
@@ -7063,21 +7657,34 @@ internal sealed class Game1 : Game
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text(title, new Vector2(content.X, content.Y), UiTheme.Gold);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("These settings apply only to the selected game mode.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
+    _ui.Text("Click a timer number to type a value; press Enter to save it.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
     _ui.Divider(content, content.Y + 56);
     DrawSetupProgress(content);
     _ui.TextWrapped(description, new Rectangle(content.X, content.Y + 88, content.Width, 68), UiTheme.TextPrimary, 0.62f);
 
-    for (int index = 0; index < labels.Length; index++)
+    string[] timerLabels = ["Timer", "Minutes", "Seconds", "Increment (s)"];
+    string[] timerValues =
+    [
+      _chessTimerEnabled ? "ON" : "OFF",
+      GetTimerEditedValue(0, _chessTimerMinutes.ToString(CultureInfo.InvariantCulture)),
+      GetTimerEditedValue(1, _chessTimerSeconds.ToString("00", CultureInfo.InvariantCulture)),
+      GetTimerEditedValue(2, _chessTimerIncrementSeconds.ToString(CultureInfo.InvariantCulture))
+    ];
+    string[] allLabels = labels.Concat(timerLabels).ToArray();
+    string[] allValues = values.Concat(timerValues).ToArray();
+    for (int index = 0; index < allLabels.Length; index++)
     {
       Rectangle row = GetModeSettingsRowBounds(index);
       Rectangle valueBounds = GetModeSettingsValueBounds(index);
+      bool isTimerToggle = index == labels.Length;
+      int timerInputIndex = index - labels.Length - 1;
+      bool isEditingTimer = timerInputIndex >= 0 && _timerInputIndex == timerInputIndex;
       DrawPanel(row, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
-      _ui.Text(labels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
-      DrawMenuButton(GetModeSettingsDecreaseButtonBounds(index), "-", UiButtonTone.Neutral);
-      DrawPanel(valueBounds, UiTheme.Panel, UiTheme.Gold);
-      _ui.CenterTextFitted(values[index], valueBounds, UiTheme.GoldBright, 0.78f);
-      DrawMenuButton(GetModeSettingsIncreaseButtonBounds(index), "+", UiButtonTone.Neutral);
+      _ui.Text(allLabels[index].ToUpperInvariant(), new Vector2(row.X + UiTheme.SpaceMd, row.Center.Y - 10), UiTheme.TextPrimary, 0.8f);
+      DrawMenuButton(GetModeSettingsDecreaseButtonBounds(index), isTimerToggle ? "OFF" : "-", isTimerToggle && !_chessTimerEnabled ? UiButtonTone.Danger : UiButtonTone.Neutral);
+      DrawPanel(valueBounds, UiTheme.Panel, isEditingTimer ? UiTheme.GoldBright : UiTheme.Gold);
+      _ui.CenterTextFitted(allValues[index], valueBounds, UiTheme.GoldBright, 0.78f);
+      DrawMenuButton(GetModeSettingsIncreaseButtonBounds(index), isTimerToggle ? "ON" : "+", isTimerToggle && _chessTimerEnabled ? UiButtonTone.Primary : UiButtonTone.Neutral);
     }
 
     DrawMenuButton(GetSetupConfirmButtonBounds(), _onlineHostingSetup ? "HOST ROOM" : "CHOOSE ROYALS", UiButtonTone.Primary);
@@ -7310,6 +7917,19 @@ internal sealed class Game1 : Game
     return new Rectangle(UiTheme.SpaceLg, UiTheme.SpaceLg, width, height);
   }
 
+  private Rectangle GetChessClockPanelBounds()
+  {
+    Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
+    int width = Math.Min(300, Math.Max(190, viewport.Width - UiTheme.SpaceLg * 2));
+    int height = 42 + _teams.Count * 32 + UiTheme.SpaceMd * 2;
+    return new Rectangle(
+      viewport.Right - UiTheme.SpaceLg - width,
+      viewport.Bottom - UiTheme.SpaceLg - height,
+      width,
+      height
+    );
+  }
+
   private Rectangle GetInitialBuyStopButtonBounds()
   {
     Rectangle panel = GetStatusPanelBounds();
@@ -7540,6 +8160,34 @@ internal sealed class Game1 : Game
     }
   }
 
+  private void DrawChessClockPanel()
+  {
+    if (!_chessTimerEnabled)
+    {
+      return;
+    }
+
+    Rectangle panel = GetChessClockPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceMd);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text(
+      _chessTimerIncrementSeconds > 0 ? $"CHESS CLOCK  +{_chessTimerIncrementSeconds}s" : "CHESS CLOCK",
+      new Vector2(content.X, content.Y),
+      UiTheme.Gold,
+      0.72f
+    );
+
+    int rowY = content.Y + 28;
+    foreach (Team team in _teams)
+    {
+      Color teamColour = UiTheme.GetTeamColour(team.TeamName);
+      Rectangle row = new(content.X, rowY, content.Width, 26);
+      DrawPanel(row, UiTheme.PanelRaised, team.TeamName == Team.CurrentTurn ? teamColour : UiTheme.PanelBorderSubtle);
+      _ui.LabelValueRow(row, UiText.GetTeamDisplayName(team.TeamName), FormatClock(team.TeamName), teamColour);
+      rowY += 32;
+    }
+  }
+
   private void DrawModeScoreboard(Rectangle bounds, string title, int scoreToWin)
   {
     _ui.Text(title, new Vector2(bounds.X, bounds.Y), UiTheme.Gold, 0.7f);
@@ -7624,6 +8272,7 @@ internal sealed class Game1 : Game
 
       _ui.Text("Gold squares: move", new Vector2(content.X, content.Y + 44), UiTheme.Move, 0.8f);
       _ui.Text("Red squares: attack", new Vector2(content.X, content.Y + 68), UiTheme.Attack, 0.8f);
+      _ui.Text("ALT + RIGHT-CLICK: plan", new Vector2(content.X, content.Y + 92), UiTheme.TextMuted, 0.66f);
       return;
     }
 
@@ -7675,7 +8324,7 @@ internal sealed class Game1 : Game
       UiTheme.TextPrimary
     );
     _ui.Text(
-      selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
+      selectedPiece.Team != Team.CurrentTurn ? "VIEWING ENEMY PIECE" : selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
       new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd),
       selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move,
       0.78f
@@ -7744,7 +8393,7 @@ internal sealed class Game1 : Game
     Rectangle button = GetOxCargoButtonBounds();
     _ui.Text($"CARGO: CARRYING {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
     _ui.TextWrapped(
-      "The Ox moves both units. Select cargo to move it separately and dismount it. Either piece can attack.",
+      "The Ox moves both units using the cargo's movement pattern with +2 range. Select cargo to move it separately and dismount it. Either piece can attack.",
       new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, button.Y - control.Y - 34)),
       UiTheme.TextMuted,
       0.56f
@@ -7800,7 +8449,7 @@ internal sealed class Game1 : Game
       EngineerAbility.Barrier => ("BARRIER", "20 HP wall; blocks movement and attacks."),
       EngineerAbility.Mine => ("MINE", "Place on an adjacent empty square; a triggering mine deals 30 damage in a 3 x 3 area."),
       EngineerAbility.Demolish => ("DEMOLISH", "Remove an adjacent road, barrier, or mine without triggering it."),
-      _ => ("ROAD", "Build on an adjacent empty square; forests cost 1 and open roads cost 0.")
+      _ => ("ROAD", "Build on an adjacent empty square; only your team gains the road's movement benefit.")
     };
 
     _ui.Text("ENGINEER ABILITY", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
@@ -8002,7 +8651,7 @@ internal sealed class Game1 : Game
             }
           }
 
-          if (_roads.Contains(boardPosition))
+          if (_roads.TryGetValue(boardPosition, out TeamName roadOwner))
           {
             bool roadIsInForest = _terrain.IsForest(boardPosition);
             DrawWorldRectangle(
@@ -8012,15 +8661,17 @@ internal sealed class Game1 : Game
                 roadIsInForest ? cellBounds.Width - 12 : cellBounds.Width,
                 roadIsInForest ? 16 : 10
               ),
-              roadIsInForest ? UiTheme.ForestRoad : UiTheme.Road,
-              0.101f
+              roadOwner == TeamName.Neutral
+                ? roadIsInForest ? UiTheme.ForestRoad : UiTheme.Road
+                : Color.Lerp(UiTheme.GetTeamColour(roadOwner), roadIsInForest ? UiTheme.ForestRoad : UiTheme.Road, 0.55f),
+              0.11f
             );
             if (roadIsInForest)
             {
               DrawWorldRectangle(
                 new Rectangle(cellBounds.X + 8, cellBounds.Center.Y - 2, cellBounds.Width - 16, 4),
                 UiTheme.RoadHighlight,
-                0.102f
+                0.111f
               );
             }
           }
@@ -8030,13 +8681,13 @@ internal sealed class Game1 : Game
             DrawWorldRectangle(
               new Rectangle(cellBounds.X + 8, cellBounds.Y + 16, cellBounds.Width - 16, cellBounds.Height - 32),
               UiTheme.Barricade,
-              0.11f
+              0.115f
             );
             int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / 20;
             DrawWorldRectangle(
               new Rectangle(cellBounds.X + 8, cellBounds.Bottom - 13, barrierHealthWidth, 3),
               UiTheme.Health,
-              0.111f
+              0.116f
             );
           }
 
@@ -8045,30 +8696,30 @@ internal sealed class Game1 : Game
             DrawWorldRectangle(
               new Rectangle(cellBounds.Center.X - 7, cellBounds.Center.Y - 7, 14, 14),
               UiTheme.GetTeamColour(mineOwner),
-              0.111f
+              0.116f
             );
             DrawWorldOutline(
               new Rectangle(cellBounds.Center.X - 9, cellBounds.Center.Y - 9, 18, 18),
               UiTheme.MineOutline,
-              0.112f
+              0.117f
             );
           }
 
           if (_gameMode == GameMode.Plunder && _treasurePosition == boardPosition)
           {
             Rectangle treasure = new(cellBounds.Center.X - 10, cellBounds.Center.Y - 10, 20, 20);
-            DrawWorldRectangle(treasure, UiTheme.GoldBright, 0.113f);
-            DrawWorldOutline(treasure, UiTheme.Shadow, 0.114f);
+            DrawWorldRectangle(treasure, UiTheme.GoldBright, 0.117f);
+            DrawWorldOutline(treasure, UiTheme.Shadow, 0.118f);
           }
 
           if (isValidMove)
           {
-            DrawWorldRectangle(cellBounds, UiTheme.MoveOverlay, 0.102f);
+            DrawWorldRectangle(cellBounds, UiTheme.MoveOverlay, 0.118f);
           }
 
           if (isValidAttack)
           {
-            DrawWorldOutline(cellBounds, UiTheme.AttackOutline, 0.103f);
+            DrawWorldOutline(cellBounds, UiTheme.AttackOutline, 0.119f);
           }
 
         }
@@ -8080,20 +8731,18 @@ internal sealed class Game1 : Game
 
     if (selectedPiece != null)
     {
-      DrawWorldOutline(GetPieceWorldBounds(selectedPiece, cellSize), UiTheme.SelectionOutline, 0.106f);
+      DrawWorldOutline(GetPieceWorldBounds(selectedPiece, cellSize), UiTheme.SelectionOutline, 0.134f);
     }
 
     /* Draw Pieces */
 
-    foreach (Piece piece in pieceSetup.Pieces)
+    foreach (Piece piece in pieceSetup.Pieces
+      .Where(piece => piece.AttachedTo is null)
+      .OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
     {
-      if (piece.AttachedTo != null)
-      {
-        continue;
-      }
-
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
       Color colour = UiTheme.GetTeamColour(piece.Team);
+      float pieceDepth = piece.Definition.Type == PieceType.Farm ? 0.108f : 0.12f;
 
       _spriteBatch.Draw(
           _pixel,
@@ -8108,10 +8757,10 @@ internal sealed class Game1 : Game
           0f,
           Vector2.Zero,
           SpriteEffects.None,
-          0.11f
+          pieceDepth
       );
 
-      DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), 0.111f);
+      DrawWorldOutline(pieceBounds, Color.Lerp(colour, UiTheme.Shadow, 0.45f), pieceDepth + 0.001f);
       if (IsTreasureCarrier(piece))
       {
         Rectangle treasureBadge = new(pieceBounds.Right - 20, pieceBounds.Y + 5, 15, 15);
@@ -8130,6 +8779,8 @@ internal sealed class Game1 : Game
       DrawWorldOutline(badge, outline, 0.126f);
     }
 
+    DrawSpyMarkIndicators(cellSize);
+    DrawPlanningMarks(cellSize);
     DrawAvailableUnitHighlights(cellSize);
 
     _spriteBatch.End();
@@ -8146,6 +8797,7 @@ internal sealed class Game1 : Game
       {
         DrawPurchasePanel();
       }
+      DrawChessClockPanel();
     }
     else
     {

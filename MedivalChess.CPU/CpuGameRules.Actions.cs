@@ -188,7 +188,7 @@ public static partial class CpuGameRules
 
     if (string.Equals(action.Ability, "Road", StringComparison.OrdinalIgnoreCase))
     {
-      state.Roads.Add(position);
+      state.Roads[position] = engineer.Team;
     }
     else if (string.Equals(action.Ability, "Barrier", StringComparison.OrdinalIgnoreCase))
     {

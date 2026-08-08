@@ -46,6 +46,15 @@ public sealed record NetworkConquestTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkModeTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkTreasureState(int? X, int? Y, string? CarrierId);
 
+/// <summary>Authoritative chess-clock snapshot. Values are milliseconds remaining for each team.</summary>
+public sealed record NetworkClockState(
+  IReadOnlyList<NetworkClockTeamState> Teams,
+  NetworkTeam ActiveTeam,
+  long UpdatedAtUnixMilliseconds
+);
+
+public sealed record NetworkClockTeamState(NetworkTeam Team, long RemainingMilliseconds);
+
 public sealed record NetworkMatchConfiguration(
   string BoardSize,
   string ForestDensity,
@@ -70,7 +79,11 @@ public sealed record NetworkMatchConfiguration(
   int DominionWinScore = Globals.DefaultDominionWinScore,
   int PlunderWinScore = Globals.DefaultPlunderWinScore,
   int PlunderDeliveryScore = Globals.DefaultPlunderDeliveryScore,
-  int PlunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty
+  int PlunderRoyalKillPenalty = Globals.DefaultPlunderRoyalKillPenalty,
+  bool ChessTimerEnabled = false,
+  int ChessTimerMinutes = 10,
+  int ChessTimerSeconds = 0,
+  int ChessTimerIncrementSeconds = 0
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on
@@ -106,7 +119,8 @@ public sealed record NetworkGameState(
   int ConquestScore = 0,
   IReadOnlyList<NetworkConquestTeamState>? ConquestScores = null,
   IReadOnlyList<NetworkModeTeamState>? ModeScores = null,
-  NetworkTreasureState? Treasure = null
+  NetworkTreasureState? Treasure = null,
+  NetworkClockState? Clock = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
@@ -129,7 +143,7 @@ public sealed record SkipTurnRequest();
 
 public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
-public sealed record RoyalSelectionRequest(string RoyalType);
+public sealed record RoyalSelectionRequest(string RoyalType, int? X = null, int? Y = null);
 
 public sealed record DebugTeamSelectionRequest(NetworkTeam Team);
 

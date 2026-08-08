@@ -883,9 +883,9 @@ public sealed class GameStateHasher
       Add(ref hash, stateTeam.ActionsRemaining);
       Add(ref hash, stateTeam.ChosenRoyal ?? string.Empty);
     }
-    foreach ((int x, int y) road in state.Roads.OrderBy(position => position.y).ThenBy(position => position.x))
+    foreach (KeyValuePair<(int x, int y), NetworkTeam> road in state.Roads.OrderBy(pair => pair.Key.y).ThenBy(pair => pair.Key.x))
     {
-      Add(ref hash, road.x); Add(ref hash, road.y);
+      Add(ref hash, road.Key.x); Add(ref hash, road.Key.y); Add(ref hash, road.Value);
     }
     foreach (KeyValuePair<(int x, int y), int> barricade in state.Barricades.OrderBy(pair => pair.Key.y).ThenBy(pair => pair.Key.x))
     {

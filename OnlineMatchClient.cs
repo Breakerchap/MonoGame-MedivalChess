@@ -70,9 +70,9 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     );
   }
 
-  internal async Task<ActionResult> ChooseRoyalAsync(string royalType)
+  internal async Task<ActionResult> ChooseRoyalAsync(string royalType, int x, int y)
   {
-    return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType));
+    return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType, x, y));
   }
 
   internal async Task<ActionResult> SelectDebugTeamAsync(NetworkTeam team)
