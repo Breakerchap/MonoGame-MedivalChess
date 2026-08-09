@@ -90,12 +90,14 @@ public sealed class CpuPlayer : ICpuPlayer
   {
     ArgumentNullException.ThrowIfNull(state);
     ArgumentNullException.ThrowIfNull(profile);
-    Stopwatch stopwatch = new();
+    // The advertised budget covers the whole decision: intent generation, evaluation, action
+    // ranking, and branch search. Starting here keeps a 1.4-second campaign turn responsive
+    // even on a first-use/JIT-heavy board.
+    Stopwatch stopwatch = Stopwatch.StartNew();
     CpuSearchSettings settings = profile.Search;
     ulong initialStateHash = _hasher.ComputeSearchHash(state);
     if (state.InitialBuy?.IsFarmPlacementPhase == true)
     {
-      stopwatch.Start();
       return ChooseOpeningFarmPlacement(state, team, profile, cancellationToken, stopwatch, initialStateHash);
     }
 
@@ -115,10 +117,8 @@ public sealed class CpuPlayer : ICpuPlayer
     Dictionary<ulong, EvaluationBreakdown> evaluatedStates = [];
     EvaluationBreakdown initialBreakdown = EvaluateCached(state, team, context, evaluatedStates, ref evaluationCacheHits);
     List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
-    // Snapshot preparation has no branching and is done exactly once. Start the bounded timer
-    // after it so first-use JIT work cannot make an otherwise identical seed choose a shallower
-    // plan than subsequent turns.
-    stopwatch.Start();
+    // Preparation is intentionally included in the time budget; when ranking begins, the search
+    // records a legal root fallback before it expands any branch.
     int maximumActions = GetMaximumActionsToPlan(state, team);
 
     int totalDepth = maximumActions + Math.Max(0, settings.TacticalExtensionDepth);
@@ -150,9 +150,18 @@ public sealed class CpuPlayer : ICpuPlayer
         {
           rootLegalActionCount = legal.Count;
         }
+        if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
+        {
+          break;
+        }
+        // Search actions have already passed the complete rule facade. Candidate selectors are
+        // an extension point, so retain the membership gate, but avoid recalculating movement
+        // paths and line-of-sight merely to prove the generated action legal a second time.
+        HashSet<ICpuGameAction> legalActionSet = [.. legal];
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
           node.State, team, legal, settings, profile.Personality);
-        candidates = ApplyAttackAndReservePriorities(node.State, team, profile, candidates);
+        candidates = candidates.Where(candidate => legalActionSet.Contains(candidate.Action)).ToArray();
+        candidates = ApplyAttackAndReservePriorities(node.State, team, candidates);
         if (depth >= maximumActions)
         {
           // Quiescence extension: once the ordinary horizon is reached, only continue forcing
@@ -162,14 +171,6 @@ public sealed class CpuPlayer : ICpuPlayer
         }
         foreach (ScoredAction candidate in candidates)
         {
-          // Candidate selection is strategic and may be replaced in tests or future profiles;
-          // never trust it as a legality authority. This also protects cached plans if a rule
-          // changes while a background worker is still finishing its snapshot.
-          if (!candidate.Action.IsLegal(node.State))
-          {
-            continue;
-          }
-
           // Keep the strongest legal root candidate as a safe fallback. Generation can
           // occasionally use most of a very small budget. Capture it before the post-ranking
           // time check so a live CPU turn cannot stall simply because candidate scoring consumed
@@ -188,31 +189,43 @@ public sealed class CpuPlayer : ICpuPlayer
       }
 
       int parallelism = GetParallelism(settings);
-      IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
-        pending, team, profile, intents, context, evaluatedStates, parallelism, ref evaluationCacheHits);
-      foreach (EvaluatedSearchExpansion branch in evaluated)
+      // A large beam previously ran as one indivisible Parallel.For call. On a busy board that
+      // could overrun the advertised time budget by an entire layer. Small ordered batches leave
+      // a precise cancellation/time checkpoint between waves without changing the final ordering.
+      foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
       {
-        nodesGenerated++;
-        nodesEvaluated++;
-        SearchNode node = branch.Pending.Node;
-        ScoredAction candidate = branch.Pending.Candidate;
-        // Preserve tactical urgency across the turn. Pure material evaluation otherwise
-        // overvalues buying before taking an immediately available kill.
-        float accumulatedActionPriority = node.Score - node.Breakdown.Total;
-        // A completed match or campaign objective is decisive. Do not let accumulated
-        // convenience bonuses make a purchase-before-win line outrank the move that ends
-        // the mission immediately.
-        float score = branch.Result.IsFinished
-          ? branch.Breakdown.Total
-          : branch.Breakdown.Total + accumulatedActionPriority + candidate.Score;
-        ulong hash = _hasher.ComputeSearchHash(branch.Result);
-        if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
+        if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
         {
-          duplicatesRemoved++;
-          continue;
+          break;
         }
-        bestScoreByState[hash] = score;
-        expanded.Add(new SearchNode(branch.Result, [.. node.Actions, candidate.Action], score, branch.Breakdown));
+
+        IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
+          batch, team, profile, intents, context, evaluatedStates, parallelism, stopwatch, settings,
+          cancellationToken, ref evaluationCacheHits);
+        foreach (EvaluatedSearchExpansion branch in evaluated)
+        {
+          nodesGenerated++;
+          nodesEvaluated++;
+          SearchNode node = branch.Pending.Node;
+          ScoredAction candidate = branch.Pending.Candidate;
+          // Preserve tactical urgency across the turn. Pure material evaluation otherwise
+          // overvalues buying before taking an immediately available kill.
+          float accumulatedActionPriority = node.Score - node.Breakdown.Total;
+          // A completed match or campaign objective is decisive. Do not let accumulated
+          // convenience bonuses make a purchase-before-win line outrank the move that ends
+          // the mission immediately.
+          float score = branch.Result.IsFinished
+            ? branch.Breakdown.Total
+            : branch.Breakdown.Total + accumulatedActionPriority + candidate.Score;
+          ulong hash = _hasher.ComputeSearchHash(branch.Result);
+          if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
+          {
+            duplicatesRemoved++;
+            continue;
+          }
+          bestScoreByState[hash] = score;
+          expanded.Add(new SearchNode(branch.Result, [.. node.Actions, candidate.Action], score, branch.Breakdown));
+        }
       }
 
       if (expanded.Count == 0)
@@ -316,35 +329,29 @@ public sealed class CpuPlayer : ICpuPlayer
   private static IReadOnlyList<ScoredAction> ApplyAttackAndReservePriorities(
     CpuGameState state,
     NetworkTeam team,
-    CpuProfile profile,
     IReadOnlyList<ScoredAction> candidates
   )
   {
-    bool mediumOrStronger = profile.Difficulty is CpuDifficultyLevel.Medium or CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best;
     ScoredAction[] attacks = candidates.Where(candidate => candidate.Action is AttackAction { TargetPieceId: not null }).ToArray();
-    if (attacks.Length > 0 && mediumOrStronger)
+    if (attacks.Length > 0)
     {
       return attacks;
     }
 
-    if (profile.Difficulty is CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best)
+    ScoredAction[] nearbyNeutralHires = candidates.Where(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" } purchase &&
+      IsFullHealthNeutralMercenaryAt(state, purchase.X, purchase.Y) &&
+      candidates.Any(other => other.Action is PurchaseAction regular && regular.UnitType != "Mercenary" &&
+        Distance((purchase.X, purchase.Y), (regular.X, regular.Y)) <= 4)).ToArray();
+    if (nearbyNeutralHires.Length > 0)
     {
-      ScoredAction[] nearbyNeutralHires = candidates.Where(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" } purchase &&
-        IsFullHealthNeutralMercenaryAt(state, purchase.X, purchase.Y) &&
-        candidates.Any(other => other.Action is PurchaseAction regular && regular.UnitType != "Mercenary" &&
-          Distance((purchase.X, purchase.Y), (regular.X, regular.Y)) <= 4)).ToArray();
-      if (nearbyNeutralHires.Length > 0)
-      {
-        return nearbyNeutralHires;
-      }
+      return nearbyNeutralHires;
     }
 
-    if (mediumOrStronger &&
-        state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
+    if (state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
         cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
     {
       ScoredAction[] immediateWins = candidates.Where(candidate => candidate.Action is MoveAction &&
-        candidate.Action.Apply(state).IsFinished).ToArray();
+        CpuGameRules.ApplyLegal(state, candidate.Action).IsFinished).ToArray();
       if (immediateWins.Length > 0)
       {
         return immediateWins;
@@ -357,7 +364,7 @@ public sealed class CpuPlayer : ICpuPlayer
       }
     }
 
-    if (mediumOrStronger && !Globals.ActionLimitsEnabled)
+    if (!Globals.ActionLimitsEnabled)
     {
       // With unlimited team actions, every unit still has its own once-per-turn move. Keep
       // cycling through those moves instead of allowing a quiet End Turn while useful pieces
@@ -392,7 +399,9 @@ public sealed class CpuPlayer : ICpuPlayer
   {
     List<ICpuGameAction> verified = [];
     CpuGameState current = state;
-    bool preserveAvailableAttacks = profile.Difficulty is CpuDifficultyLevel.Medium or CpuDifficultyLevel.Hard or CpuDifficultyLevel.Best;
+    // Difficulty changes only the deadline. Every level keeps the same tactical policy once a
+    // plan is selected, including resolving available attacks before ending an unlimited turn.
+    const bool preserveAvailableAttacks = true;
     foreach (ICpuGameAction action in actions)
     {
       // A narrow beam can settle on a quiet continuation after an earlier attack. In an
@@ -604,6 +613,7 @@ public sealed class CpuPlayer : ICpuPlayer
           placementLimit,
           searchActionCache
         );
+        HashSet<ICpuGameAction> legalActionSet = [.. legal];
         IReadOnlyList<ScoredAction> candidates = _candidateSelector.SelectCandidates(
           node.State, opponent, legal, opponentSettings, CpuPersonality.Aggressive);
         foreach (ScoredAction candidate in candidates)
@@ -614,14 +624,13 @@ public sealed class CpuPlayer : ICpuPlayer
             break;
           }
 
-          // The opponent model uses the same extension point as the primary search, so apply
-          // the same non-negotiable legality gate before simulating any reply.
-          if (!candidate.Action.IsLegal(node.State))
+          // Keep extension-point candidates constrained to the action generator's legal set.
+          if (!legalActionSet.Contains(candidate.Action))
           {
             continue;
           }
 
-          CpuGameState result = candidate.Action.Apply(node.State);
+          CpuGameState result = CpuGameRules.ApplyLegal(node.State, candidate.Action);
           nodesGenerated++;
           EvaluationBreakdown breakdown = EvaluateCached(result, perspective, context, evaluatedStates, ref evaluationCacheHits);
           nodesEvaluated++;
@@ -703,6 +712,9 @@ public sealed class CpuPlayer : ICpuPlayer
     EvaluationContext sequentialContext,
     Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
     int parallelism,
+    Stopwatch stopwatch,
+    CpuSearchSettings settings,
+    CancellationToken cancellationToken,
     ref int cacheHits
   )
   {
@@ -716,26 +728,50 @@ public sealed class CpuPlayer : ICpuPlayer
       List<EvaluatedSearchExpansion> sequential = new(pending.Count);
       foreach (PendingSearchExpansion branch in pending)
       {
-        CpuGameState result = branch.Candidate.Action.Apply(branch.Node.State);
+        if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
+        {
+          break;
+        }
+        CpuGameState result = CpuGameRules.ApplyLegal(branch.Node.State, branch.Candidate.Action);
         EvaluationBreakdown breakdown = EvaluateCached(result, team, sequentialContext, evaluatedStates, ref cacheHits);
         sequential.Add(new EvaluatedSearchExpansion(branch, result, breakdown));
       }
       return sequential;
     }
 
-    EvaluatedSearchExpansion[] parallel = new EvaluatedSearchExpansion[pending.Count];
+    EvaluatedSearchExpansion?[] parallel = new EvaluatedSearchExpansion[pending.Count];
     using ThreadLocal<EvaluationContext> workerContexts = new(() => new EvaluationContext(profile, intents, new CpuEvaluationCache()));
     Parallel.For(0, pending.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
     {
+      if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
+      {
+        return;
+      }
       PendingSearchExpansion branch = pending[index];
-      CpuGameState result = branch.Candidate.Action.Apply(branch.Node.State);
+      CpuGameState result = CpuGameRules.ApplyLegal(branch.Node.State, branch.Candidate.Action);
       // Each worker owns its cache. The main cache uses Dictionary and intentionally stays on
       // the coordinator thread; this avoids locks in its hottest lookup path.
       EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, team, workerContexts.Value!);
-      parallel[index] = new EvaluatedSearchExpansion(branch, result, breakdown);
+      if (!ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
+      {
+        parallel[index] = new EvaluatedSearchExpansion(branch, result, breakdown);
+      }
     });
-    return parallel;
+    return parallel.Where(branch => branch is not null).Select(branch => branch!).ToArray();
   }
+
+  private static int GetEvaluationBatchSize(int parallelism) => Math.Clamp(
+    Math.Max(1, parallelism) * 8,
+    8,
+    48
+  );
+
+  private static bool ShouldAbortBranchEvaluation(
+    Stopwatch stopwatch,
+    CpuSearchSettings settings,
+    CancellationToken cancellationToken
+  ) => cancellationToken.IsCancellationRequested ||
+    stopwatch.ElapsedMilliseconds >= Math.Max(1, settings.MaxSearchMilliseconds);
 
   private static bool ShouldStop(
     Stopwatch stopwatch,

@@ -549,18 +549,19 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
-  public void NormalProfile_UsesAnInteractiveBudgetAndSeededNearBestVariation()
+  public void NormalProfile_UsesTheSharedStrongSearchWithAMediumTimeBudget()
   {
     CpuProfile profile = CpuProfile.Normal(123);
 
     Assert.Equal(CpuDifficultyLevel.Normal, profile.Difficulty);
-    Assert.InRange(profile.Search.MaxSearchMilliseconds, 1, 3_000);
-    Assert.InRange(profile.Search.BeamWidth, 1, 6);
-    Assert.InRange(profile.Search.CandidatesPerNode, 1, 9);
-    Assert.InRange(profile.Search.MaximumPurchasePlacementCandidates, 1, 12);
-    Assert.Equal(3, profile.TopChoicesForRandomSelection);
-    Assert.True(profile.MistakeChance > 0f);
-    Assert.True(profile.Search.TopChoiceScoreWindow > 0f);
+    Assert.Equal(700, profile.Search.MaxSearchMilliseconds);
+    Assert.Equal(36, profile.Search.BeamWidth);
+    Assert.Equal(48, profile.Search.CandidatesPerNode);
+    Assert.Equal(96, profile.Search.MaximumPurchasePlacementCandidates);
+    Assert.Equal(1, profile.TopChoicesForRandomSelection);
+    Assert.Equal(0f, profile.MistakeChance);
+    Assert.Equal(0f, profile.StrategyVariationChance);
+    Assert.Equal(0f, profile.Search.Randomness);
   }
 
   [Fact]

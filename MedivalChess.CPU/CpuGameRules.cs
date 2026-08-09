@@ -39,6 +39,19 @@ public static partial class CpuGameRules
       throw new InvalidOperationException($"Illegal CPU action: {action.Describe()}");
     }
 
+    return ApplyLegal(state, action);
+  }
+
+  /// <summary>
+  /// Applies an action that was produced by <see cref="CpuActionGenerator"/> for this exact
+  /// snapshot. Search uses this after its membership check, avoiding a second, expensive rules
+  /// validation for every branch. Public callers must use <see cref="Apply"/> instead.
+  /// </summary>
+  internal static CpuGameState ApplyLegal(CpuGameState state, ICpuGameAction action)
+  {
+    ArgumentNullException.ThrowIfNull(state);
+    ArgumentNullException.ThrowIfNull(action);
+
     CpuMutableGameState mutable = state.ToMutable();
     switch (action)
     {

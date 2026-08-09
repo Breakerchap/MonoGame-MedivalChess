@@ -103,7 +103,10 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     // Apply the real CPU rule action once for ordering. This captures guards, forest cover,
     // marks, Ballista piercing, and Bombard splash instead of assuming every attack is a simple
     // single-target hit.
-    CpuGameState result = action.Apply(state);
+    // Candidates originate in CpuActionGenerator, which has already established legality for
+    // this snapshot. Revalidating attack geometry here duplicated one of the hottest paths in
+    // a turn search.
+    CpuGameState result = CpuGameRules.ApplyLegal(state, action);
     IReadOnlyDictionary<string, NetworkPiece> afterById = result.Pieces.ToDictionary(piece => piece.Id, StringComparer.Ordinal);
     float score = 0f;
     bool lethal = false;
@@ -313,7 +316,9 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       return 0f;
     }
 
-    CpuGameState movedState = action.Apply(state);
+    // The selector only scores generated legal actions, so avoid paying the movement-path
+    // validation cost a second time merely to inspect the resulting attack opportunities.
+    CpuGameState movedState = CpuGameRules.ApplyLegal(state, action);
     NetworkPiece? movedPiece = movedState.Pieces.FirstOrDefault(candidate => candidate.Id == piece.Id);
     if (movedPiece is null)
     {

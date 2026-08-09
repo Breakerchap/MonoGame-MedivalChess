@@ -74,121 +74,36 @@ public sealed class CpuProfile
   public float MistakeChance { get; init; }
   public int TopChoicesForRandomSelection { get; init; } = 1;
 
-  public static CpuProfile Easy(int seed = 1) => new()
-  {
-    Name = "Easy CPU",
-    Difficulty = CpuDifficultyLevel.Easy,
-    RandomSeed = seed,
-    // Easy is a shallow, understandable opponent rather than a random one. It only varies
-    // between close plans and never samples from the full legal-action list.
-    StrategyVariationChance = 0.7f,
-    MistakeChance = 0.08f,
-    TopChoicesForRandomSelection = 2,
-    Weights = new EvaluationWeights
-    {
-      RoyalSafety = 1.25f,
-      AssetSafety = 0.5f,
-      Formation = 0.1f,
-      Matchups = 0.25f
-    },
-    Search = new CpuSearchSettings
-    {
-      BeamWidth = 3,
-      CandidatesPerNode = 6,
-      OpponentBeamWidth = 0,
-      OpponentActionsToPredict = 0,
-      TacticalExtensionDepth = 0,
-      MaxSearchNodes = 42,
-      MaximumPurchasePlacementCandidates = 18,
-      MaxSearchMilliseconds = 60,
-      TopChoiceScoreWindow = 14f,
-      Randomness = 0.08f
-    }
-  };
+  // Difficulty controls deliberation time only. Every level evaluates the same position with the
+  // same tactical candidates, reply search, and evaluation weights. This makes a quick campaign
+  // opponent play like the strongest CPU when it finds a line early, rather than deliberately
+  // omitting whole categories of moves or choosing mistakes.
+  public static CpuProfile Easy(int seed = 1) => CreateTimeLimitedProfile(
+    "Easy CPU", CpuDifficultyLevel.Easy, seed, 250);
 
-  public static CpuProfile Medium(int seed = 1) => new()
-  {
-    Name = "Medium CPU",
-    Difficulty = CpuDifficultyLevel.Medium,
-    RandomSeed = seed,
-    // Small seeded variety keeps repeated games from looking scripted without choosing a weak plan.
-    StrategyVariationChance = 0.6f,
-    MistakeChance = 0.08f,
-    TopChoicesForRandomSelection = 3,
-    Weights = new EvaluationWeights
-    {
-      RoyalSafety = 4f,
-      AssetSafety = 2f,
-      Formation = 0.55f,
-      Matchups = 0.7f,
-      StrategicPosition = 1.1f,
-      Economy = 0.75f
-    },
-    Search = new CpuSearchSettings
-    {
-      // The local CPU runs on a worker, but it still has a visible hard ceiling. The deterministic
-      // node cap normally finishes this much sooner; three seconds is the requested failsafe for
-      // unusually complex boards or slow machines.
-      BeamWidth = 6,
-      CandidatesPerNode = 9,
-      OpponentBeamWidth = 2,
-      OpponentActionsToPredict = 1,
-      TacticalExtensionDepth = 1,
-      MaxSearchNodes = 180,
-      MaximumPurchasePlacementCandidates = 12,
-      MaxSearchMilliseconds = 3_000,
-      Randomness = 0.06f
-    }
-  };
+  public static CpuProfile Medium(int seed = 1) => CreateTimeLimitedProfile(
+    "Medium CPU", CpuDifficultyLevel.Medium, seed, 700);
 
   /// <summary>Compatibility alias for code and levels authored before Medium replaced Normal.</summary>
   public static CpuProfile Normal(int seed = 1) => Medium(seed);
 
-  public static CpuProfile Hard(int seed = 1) => new()
-  {
-    Name = "Hard CPU",
-    Difficulty = CpuDifficultyLevel.Hard,
-    RandomSeed = seed,
-    // Hard remains very strong, but a small seeded choice among essentially equal plans keeps
-    // repeated matches from becoming a memorised script.
-    StrategyVariationChance = 0.4f,
-    MistakeChance = 0.02f,
-    TopChoicesForRandomSelection = 2,
-    Weights = new EvaluationWeights
-    {
-      RoyalSafety = 7.5f,
-      AssetSafety = 4f,
-      Formation = 0.9f,
-      Matchups = 0.9f,
-      StrategicPosition = 1.15f,
-      Economy = 0.9f
-    },
-    Search = new CpuSearchSettings
-    {
-      BeamWidth = 18,
-      CandidatesPerNode = 24,
-      OpponentBeamWidth = 8,
-      OpponentActionsToPredict = 3,
-      TacticalExtensionDepth = 2,
-      MaximumPurchasePlacementCandidates = 60,
-      // Hard uses spare cores for independent beam branches. The node budget is larger than the
-      // single-threaded profile because those branches are evaluated concurrently.
-      MaxSearchNodes = 6_000,
-      MaxSearchMilliseconds = 1_500,
-      MaxParallelism = 0,
-      TopChoiceScoreWindow = 12f,
-      Randomness = 0.02f
-    }
-  };
+  /// <summary>The campaign profile: the full CPU logic with a responsive 1.4-second budget.</summary>
+  public static CpuProfile Hard(int seed = 1) => CreateTimeLimitedProfile(
+    "Hard CPU", CpuDifficultyLevel.Hard, seed, 1_400);
 
-  /// <summary>
-  /// The strongest local profile. It is intentionally bounded and cancellable so it cannot freeze
-  /// the game, but examines a much wider decision tree and assumes a strong full-turn reply.
-  /// </summary>
-  public static CpuProfile Best(int seed = 1) => new()
+  /// <summary>The full CPU logic with a five-second analysis budget.</summary>
+  public static CpuProfile Best(int seed = 1) => CreateTimeLimitedProfile(
+    "Best CPU", CpuDifficultyLevel.Best, seed, 5_000);
+
+  private static CpuProfile CreateTimeLimitedProfile(
+    string name,
+    CpuDifficultyLevel difficulty,
+    int seed,
+    int maxSearchMilliseconds
+  ) => new()
   {
-    Name = "Best CPU",
-    Difficulty = CpuDifficultyLevel.Best,
+    Name = name,
+    Difficulty = difficulty,
     RandomSeed = seed,
     StrategyVariationChance = 0f,
     MistakeChance = 0f,
@@ -204,17 +119,18 @@ public sealed class CpuProfile
     },
     Search = new CpuSearchSettings
     {
+      // This is intentionally the same search shape as the former Best profile. The generous
+      // common node cap is a failsafe; normal gameplay is governed by the time budget above.
       BeamWidth = 36,
       CandidatesPerNode = 48,
       OpponentBeamWidth = 16,
       OpponentActionsToPredict = 5,
       TacticalExtensionDepth = 3,
-      // Keep the deterministic node cap below the wall-clock safeguard now that the broader
-      // movement definitions produce more legal branches per position.
-      MaxSearchNodes = 20_000,
+      MaxSearchNodes = 200_000,
       MaximumPurchasePlacementCandidates = 96,
-      MaxSearchMilliseconds = 5_000,
+      MaxSearchMilliseconds = maxSearchMilliseconds,
       MaxParallelism = 0,
+      TopChoiceScoreWindow = 12f,
       Randomness = 0f
     }
   };

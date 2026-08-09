@@ -47,13 +47,9 @@ public static class CpuRoyalPlacementHeuristics
     };
     float protectionBias = Math.Max(0.65f,
       profile.Personality.RoyalProtection * profile.Personality.Caution - profile.Personality.Aggression * 0.15f);
-    float depthWeight = profile.Difficulty switch
-    {
-      CpuDifficultyLevel.Best => 320f,
-      CpuDifficultyLevel.Hard => 280f,
-      CpuDifficultyLevel.Medium => 240f,
-      _ => 190f
-    };
+    // CPU difficulty is a time budget, not a different strategic rule set. All levels place
+    // loss-condition royals with the same strong preference for deep home territory.
+    const float depthWeight = 320f;
 
     return objectiveImportance * (rearDepth * depthWeight * protectionBias +
       forestCover * 18f * protectionBias +

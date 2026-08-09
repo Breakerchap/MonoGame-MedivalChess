@@ -272,31 +272,49 @@ public sealed class CpuPlayerTests
   }
 
   [Fact]
-  public void DifficultyProfiles_UseIncreasingBoundedSearchQuality()
+  public void DifficultyProfiles_ShareSearchLogicAndOnlyVaryTheirTimeBudget()
   {
     CpuProfile easy = CpuProfile.Easy(84);
     CpuProfile medium = CpuProfile.Medium(84);
     CpuProfile hard = CpuProfile.Hard(84);
     CpuProfile best = CpuProfile.Best(84);
 
-    Assert.True(easy.Search.BeamWidth < medium.Search.BeamWidth && medium.Search.BeamWidth < hard.Search.BeamWidth &&
-      hard.Search.BeamWidth < best.Search.BeamWidth);
-    Assert.True(easy.Search.CandidatesPerNode < medium.Search.CandidatesPerNode &&
-      medium.Search.CandidatesPerNode < hard.Search.CandidatesPerNode && hard.Search.CandidatesPerNode < best.Search.CandidatesPerNode);
-    Assert.True(easy.Search.MaxSearchNodes < medium.Search.MaxSearchNodes &&
-      medium.Search.MaxSearchNodes < hard.Search.MaxSearchNodes && hard.Search.MaxSearchNodes < best.Search.MaxSearchNodes);
-    Assert.Equal(0, easy.Search.OpponentActionsToPredict);
-    Assert.Equal(1, medium.Search.OpponentActionsToPredict);
-    Assert.Equal(MatchRules.ActionsPerTurn, hard.Search.OpponentActionsToPredict);
-    Assert.Equal(0f, best.MistakeChance);
-    Assert.Equal(0f, best.StrategyVariationChance);
-    Assert.True(easy.StrategyVariationChance > hard.StrategyVariationChance);
-    Assert.True(best.Search.TacticalExtensionDepth > hard.Search.TacticalExtensionDepth);
-    Assert.Equal(1, best.TopChoicesForRandomSelection);
+    Assert.Equal(250, easy.Search.MaxSearchMilliseconds);
+    Assert.Equal(700, medium.Search.MaxSearchMilliseconds);
+    Assert.Equal(1_400, hard.Search.MaxSearchMilliseconds);
+    Assert.Equal(5_000, best.Search.MaxSearchMilliseconds);
+
+    Assert.Equal(easy.Search.BeamWidth, best.Search.BeamWidth);
+    Assert.Equal(easy.Search.CandidatesPerNode, best.Search.CandidatesPerNode);
+    Assert.Equal(easy.Search.OpponentBeamWidth, best.Search.OpponentBeamWidth);
+    Assert.Equal(easy.Search.OpponentActionsToPredict, best.Search.OpponentActionsToPredict);
+    Assert.Equal(easy.Search.TacticalExtensionDepth, best.Search.TacticalExtensionDepth);
+    Assert.Equal(easy.Search.MaxSearchNodes, best.Search.MaxSearchNodes);
+    Assert.Equal(easy.Search.MaximumPurchasePlacementCandidates, best.Search.MaximumPurchasePlacementCandidates);
+    Assert.Equal(easy.Search.MaxParallelism, best.Search.MaxParallelism);
+    Assert.Equal(easy.Search.Randomness, best.Search.Randomness);
+    Assert.Equal(WeightValues(best.Weights), WeightValues(hard.Weights));
+    Assert.Equal(WeightValues(best.Weights), WeightValues(medium.Weights));
+    Assert.Equal(WeightValues(best.Weights), WeightValues(easy.Weights));
+    Assert.All(new[] { easy, medium, hard, best }, profile =>
+    {
+      Assert.Equal(0f, profile.MistakeChance);
+      Assert.Equal(0f, profile.StrategyVariationChance);
+      Assert.Equal(1, profile.TopChoicesForRandomSelection);
+    });
+
+    static float[] WeightValues(EvaluationWeights weights) =>
+    [
+      weights.Material, weights.Health, weights.ImmediateThreats, weights.RoyalSafety,
+      weights.ObjectiveProgress, weights.IntentProgress, weights.StrategicPosition,
+      weights.MapControl, weights.Economy, weights.Mobility, weights.Formation,
+      weights.AssetSafety, weights.AbilityUsage, weights.Matchups, weights.ActionEfficiency,
+      weights.RepetitionPenalty
+    ];
   }
 
   [Fact]
-  public void BestProfile_IsDeterministicEvenWhenOtherProfilesCanVaryBetweenMatches()
+  public void BestProfile_IsDeterministicAcrossSeeds()
   {
     CpuGameState state = CreateState(
       new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
