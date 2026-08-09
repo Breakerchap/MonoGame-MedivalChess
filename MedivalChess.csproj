@@ -28,6 +28,8 @@
     <Compile Remove="MedivalChess.Shared\**\*.cs" />
     <Compile Remove="MedivalChess.Server\**\*.cs" />
     <Compile Remove="MedivalChess.CPU\**\*.cs" />
+    <!-- TerrainPainter is a separate WinForms utility within this repository. -->
+    <Compile Remove="TerrainPainter\**\*.cs" />
     <Compile Remove="Globals.cs" />
     <Compile Remove="GameBoard\Board.cs" />
     <Compile Remove="GameBoard\BattlefieldTerrain.cs" />

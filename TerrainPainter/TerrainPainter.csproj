@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>MedivalChess.TerrainPainter</AssemblyName>
+  </PropertyGroup>
+
+  <!-- Reuse the game's board geometry without referencing or modifying any
+       existing project. -->
+  <ItemGroup>
+    <ProjectReference Include="..\MedivalChess.Shared\MedivalChess.Shared.csproj" />
+    <None Include="..\GameBoard\board_*.json" Link="GameBoard\%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>
