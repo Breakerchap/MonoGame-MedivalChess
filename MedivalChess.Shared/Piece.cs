@@ -120,7 +120,7 @@ public static class PieceDefinitions
     PieceType.Crossbowman, PieceCategory.Ranged, (2, Shape.Any), 20, 15, (1, 1), (1, 3), Shape.Any, 50);
   public static readonly PieceDefinition Cavalier = new(
     PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 55,
-    "Movement refreshes after attacking.");
+    "If movement is already used, affter attacking allow a 2-Straight movement.");
   public static readonly PieceDefinition Chariot = new(
     PieceType.Chariot, PieceCategory.Melee, (5, Shape.Line), 15, 25, (1, 1), (1, 3), Shape.Line, 40);
   public static readonly PieceDefinition Cannon = new(
@@ -129,14 +129,14 @@ public static class PieceDefinitions
     PieceType.Spy, PieceCategory.Intelligence, (5, Shape.Any), 0, 15, (1, 1), (1, 3), Shape.Straight, 35,
     "Marks an enemy; it takes double damage until attacked.");
   public static readonly PieceDefinition Catapult = new(
-    PieceType.Catapult, PieceCategory.Mechanical, (1, Shape.Any), 20, 20, (1, 2), (3, 5), Shape.Any, 55,
+    PieceType.Catapult, PieceCategory.Mechanical, (1, Shape.Any), 20, 15, (1, 2), (4, 5), Shape.Any, 55,
     "Attacks over terrain and pieces.");
   public static readonly PieceDefinition Bombard = new(
     PieceType.Bombard, PieceCategory.Ranged, (2, Shape.Straight), 15, 15, (1, 1), (2, 3), Shape.Straight, 55,
     "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units.");
   public static readonly PieceDefinition Ox = new(
     PieceType.Ox, PieceCategory.Transport, (4, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Attaches to one friendly unit and increases that unit's Movement by 2. While attatched, if attacked, both units take damage.");
+    "Attaches to a 1x1 friendly unit and increases that unit's Movement by 2. While attatched, if attacked, both units take damage.");
   public static readonly PieceDefinition Engineer = new(
     PieceType.Engineer, PieceCategory.Intelligence, (3, Shape.Any), 0, 20, (1, 1), (1, 1), Shape.Any, 25,
     "Builds up to two: roads, 20-health barricades, or mines each turn. It may also demolish Engineer structures within range. Doesn't trigger mines.");
@@ -148,7 +148,7 @@ public static class PieceDefinitions
     "May move through enemies, damaging each crossed unit. Ignores terrain.");
   public static readonly PieceDefinition Guard = new(
     PieceType.Guard, PieceCategory.Melee, (3, Shape.Straight), 10, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Attaches to a friendly non-royal unit and takes damage for it.");
+    "Attaches to a friendly, non-royal unit and takes damage for it.");
   public static readonly PieceDefinition Mercenary = new(
     PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 15, 20, (1, 1), (1, 2), Shape.Straight, 25,
     "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill.");
