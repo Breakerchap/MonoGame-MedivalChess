@@ -7,13 +7,19 @@ namespace MedivalChess.Tests;
 public sealed class TerrainGenerationTests
 {
   [Fact]
-  public void MediumPresetTerrainLoadsAnAuthoredMapDeterministically()
+  public void MediumPresetTerrainUsesHeadersToFilterAndLoadsDeterministically()
   {
     Board board = new("board_medium.json");
 
     BattlefieldTerrain first = TerrainRules.Create(board, 8675309, "Heavy", "Heavy", terrainSource: "Preset", boardSize: "Medium");
-    BattlefieldTerrain second = TerrainRules.Create(board, 8675309, "Light", "Light", terrainSource: "Preset", boardSize: "Medium");
+    BattlefieldTerrain second = TerrainRules.Create(board, 8675309, "Heavy", "Heavy", terrainSource: "Preset", boardSize: "Medium");
+    BattlefieldTerrainPreset[] matchingPresets = BattlefieldTerrain.GetPresets(board, "Medium")
+      .Where(preset =>
+        string.Equals(preset.ForestDensity, "Heavy", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preset.WaterwayDensity, "Heavy", StringComparison.OrdinalIgnoreCase))
+      .ToArray();
 
+    Assert.NotEmpty(matchingPresets);
     Assert.NotEmpty(first.Forests);
     Assert.NotEmpty(first.Lakes);
     Assert.NotEmpty(first.Rivers);
@@ -21,7 +27,38 @@ public sealed class TerrainGenerationTests
     Assert.Equal(first.Lakes.Order(), second.Lakes.Order());
     Assert.Equal(first.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second),
       second.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second));
+    Assert.Contains(matchingPresets, preset =>
+      preset.Terrain.Forests.SetEquals(first.Forests) &&
+      preset.Terrain.Lakes.SetEquals(first.Lakes) &&
+      preset.Terrain.Rivers.SetEquals(first.Rivers));
     Assert.All(first.Forests.Concat(first.Lakes), position => Assert.True(board.ContainsCell(position)));
+  }
+
+  [Fact]
+  public void ExplicitPresetSelectionOverridesTheDensityFilter()
+  {
+    Board board = new("board_medium.json");
+    BattlefieldTerrainPreset selected = BattlefieldTerrain.GetPresets(board, "Medium")
+      .First(preset =>
+        string.Equals(preset.ForestDensity, "Light", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preset.WaterwayDensity, "Light", StringComparison.OrdinalIgnoreCase));
+
+    BattlefieldTerrain terrain = TerrainRules.Create(
+      board,
+      42,
+      "Heavy",
+      "Heavy",
+      terrainSource: "Preset",
+      boardSize: "Medium",
+      presetId: selected.Id
+    );
+
+    Assert.Equal(selected.Terrain.Forests.Order(), terrain.Forests.Order());
+    Assert.Equal(selected.Terrain.Lakes.Order(), terrain.Lakes.Order());
+    Assert.Equal(
+      selected.Terrain.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second),
+      terrain.Rivers.OrderBy(edge => edge.First).ThenBy(edge => edge.Second)
+    );
   }
 
   [Fact]

@@ -187,6 +187,12 @@ internal sealed class Game1 : Game
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
   private TerrainSource _terrainSource = TerrainSource.Preset;
+  private string _selectedTerrainPresetId;
+  private string _selectedTerrainPresetName;
+  private bool _terrainPresetBrowserOpen;
+  private IReadOnlyList<BattlefieldTerrainPreset> _terrainPresetBrowserPresets = [];
+  private Board _terrainPresetBrowserBoard;
+  private int _terrainPresetBrowserPage;
   private int _startingCash = Globals.StartingCash;
   private float _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
   private float _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
@@ -2471,6 +2477,8 @@ internal sealed class Game1 : Game
     _forestDensity = forestDensity;
     _waterwayDensity = waterwayDensity;
     _terrainSource = terrainSource;
+    _selectedTerrainPresetId = configuration.PresetId;
+    _selectedTerrainPresetName = null;
     _gameMode = gameMode;
     _startingCash = configuration.StartingCash;
     _killerRefundMultiplier = configuration.KillerRefundMultiplier;
@@ -5647,6 +5655,66 @@ internal sealed class Game1 : Game
     return GetStepperIncreaseButtonBounds(GetBattlefieldRowBounds(index));
   }
 
+  private Rectangle GetTerrainPresetBrowserButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSetupPanelBounds(), UiTheme.SpaceLg);
+    Rectangle confirm = GetSetupConfirmButtonBounds();
+    return new Rectangle(content.X, confirm.Y - 82, content.Width, 36);
+  }
+
+  private Rectangle GetTerrainPresetBrowserPanelBounds() => UiLayout.Centered(
+    UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height),
+    1400,
+    840,
+    UiTheme.SpaceLg
+  );
+
+  private Rectangle GetTerrainPresetBrowserGridBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetTerrainPresetBrowserPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Y + 70, content.Width, Math.Max(1, content.Height - 138));
+  }
+
+  private int GetTerrainPresetBrowserRows() => Math.Max(1, Math.Min(3, GetTerrainPresetBrowserGridBounds().Height / 180));
+
+  private int GetTerrainPresetBrowserPageSize() => 4 * GetTerrainPresetBrowserRows();
+
+  private Rectangle GetTerrainPresetBrowserCardBounds(int visibleIndex)
+  {
+    const int columns = 4;
+    Rectangle grid = GetTerrainPresetBrowserGridBounds();
+    int rowCount = GetTerrainPresetBrowserRows();
+    int row = visibleIndex / columns;
+    int column = visibleIndex % columns;
+    int gap = UiTheme.SpaceSm;
+    int height = Math.Max(1, (grid.Height - gap * Math.Max(0, rowCount - 1)) / rowCount);
+    int y = grid.Y + row * (height + gap);
+    if (row == rowCount - 1)
+    {
+      height = Math.Max(1, grid.Bottom - y);
+    }
+    Rectangle rowBounds = new(grid.X, y, grid.Width, height);
+    return UiLayout.HorizontalSlot(rowBounds, columns, column, gap);
+  }
+
+  private Rectangle GetTerrainPresetBrowserPreviousButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetTerrainPresetBrowserPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.X, content.Bottom - 44, 112, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetTerrainPresetBrowserNextButtonBounds()
+  {
+    Rectangle previous = GetTerrainPresetBrowserPreviousButtonBounds();
+    return new Rectangle(previous.Right + UiTheme.SpaceSm, previous.Y, 112, previous.Height);
+  }
+
+  private Rectangle GetTerrainPresetBrowserCloseButtonBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetTerrainPresetBrowserPanelBounds(), UiTheme.SpaceLg);
+    return new Rectangle(content.Right - 112, content.Bottom - 44, 112, UiTheme.ButtonHeight);
+  }
+
   private Rectangle GetModeSettingsRowBounds(int index)
   {
     Rectangle panel = GetSetupPanelBounds();
@@ -5687,6 +5755,51 @@ internal sealed class Game1 : Game
     ConfigureBattlefield(_selectedBoardSize, _forestDensity, _waterwayDensity, Random.Shared.Next());
   }
 
+  private void ClearTerrainPresetSelection()
+  {
+    _selectedTerrainPresetId = null;
+    _selectedTerrainPresetName = null;
+  }
+
+  private void OpenTerrainPresetBrowser()
+  {
+    _terrainPresetBrowserBoard = new Board(GetBoardFileName(_selectedBoardSize));
+    _terrainPresetBrowserPresets = BattlefieldTerrain.GetPresets(
+      _terrainPresetBrowserBoard,
+      _selectedBoardSize.ToString()
+    );
+    int selectedIndex = _terrainPresetBrowserPresets
+      .Select((preset, index) => (preset, index))
+      .FirstOrDefault(entry => entry.preset.Id == _selectedTerrainPresetId)
+      .index;
+    _terrainPresetBrowserPage = Math.Max(0, selectedIndex / GetTerrainPresetBrowserPageSize());
+    _terrainPresetBrowserOpen = true;
+  }
+
+  private void CloseTerrainPresetBrowser()
+  {
+    _terrainPresetBrowserOpen = false;
+    _terrainPresetBrowserPresets = [];
+    _terrainPresetBrowserBoard = null;
+    _terrainPresetBrowserPage = 0;
+  }
+
+  private void SelectTerrainPreset(BattlefieldTerrainPreset preset)
+  {
+    _selectedTerrainPresetId = preset.Id;
+    _selectedTerrainPresetName = preset.Name;
+    if (Enum.TryParse(preset.ForestDensity, ignoreCase: true, out TerrainDensity forestDensity))
+    {
+      _forestDensity = forestDensity;
+    }
+    if (Enum.TryParse(preset.WaterwayDensity, ignoreCase: true, out TerrainDensity waterwayDensity))
+    {
+      _waterwayDensity = waterwayDensity;
+    }
+    _terrainSource = TerrainSource.Preset;
+    CloseTerrainPresetBrowser();
+  }
+
   private void ConfigureBattlefield(
     BoardSize boardSize,
     TerrainDensity forestDensity,
@@ -5703,7 +5816,8 @@ internal sealed class Game1 : Game
       waterwayDensity.ToString(),
       _playerCount,
       _terrainSource.ToString(),
-      boardSize.ToString()
+      boardSize.ToString(),
+      _selectedTerrainPresetId
     );
     _roads.Clear();
     _barricades.Clear();
@@ -5824,6 +5938,7 @@ internal sealed class Game1 : Game
     _playerCount = 2;
     ConfigureTeamsForPlayerCount();
     _terrainSource = TerrainSource.Preset;
+    ClearTerrainPresetSelection();
     ConfigureBattlefield(BoardSize.Medium, TerrainDensity.Standard, TerrainDensity.Standard, Random.Shared.Next());
     selectedPiece = null;
     _movementAnimation = null;
@@ -5886,6 +6001,7 @@ internal sealed class Game1 : Game
     _forestDensity = TerrainDensity.Standard;
     _waterwayDensity = TerrainDensity.Standard;
     _terrainSource = TerrainSource.Preset;
+    ClearTerrainPresetSelection();
     _startingCash = Globals.StartingCash;
     _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
     _defeatedTeamRefundMultiplier = Globals.DefeatedTeamDeathRefundMultiplier;
@@ -5973,7 +6089,8 @@ internal sealed class Game1 : Game
       _chessTimerMinutes,
       _chessTimerSeconds,
       _chessTimerIncrementSeconds,
-      _terrainSource.ToString()
+      _terrainSource.ToString(),
+      _selectedTerrainPresetId
     );
   }
 
@@ -5984,6 +6101,19 @@ internal sealed class Game1 : Game
     bool wasEscapePressed
   )
   {
+    if (_terrainPresetBrowserOpen)
+    {
+      if (wasEscapePressed)
+      {
+        CloseTerrainPresetBrowser();
+      }
+      else if (wasLeftClick)
+      {
+        UpdateTerrainPresetBrowser(mouse.Position);
+      }
+      return;
+    }
+
     if (wasEscapePressed)
     {
       if (_economyInputIndex >= 0)
@@ -6353,11 +6483,21 @@ internal sealed class Game1 : Game
         {
           if (GetBattlefieldDecreaseButtonBounds(0).Contains(mousePosition))
           {
-            _selectedBoardSize = (BoardSize)Math.Max((int)BoardSize.Small, (int)_selectedBoardSize - 1);
+            BoardSize boardSize = (BoardSize)Math.Max((int)BoardSize.Small, (int)_selectedBoardSize - 1);
+            if (boardSize != _selectedBoardSize)
+            {
+              _selectedBoardSize = boardSize;
+              ClearTerrainPresetSelection();
+            }
           }
           else if (GetBattlefieldIncreaseButtonBounds(0).Contains(mousePosition))
           {
-            _selectedBoardSize = (BoardSize)Math.Min((int)BoardSize.Large, (int)_selectedBoardSize + 1);
+            BoardSize boardSize = (BoardSize)Math.Min((int)BoardSize.Large, (int)_selectedBoardSize + 1);
+            if (boardSize != _selectedBoardSize)
+            {
+              _selectedBoardSize = boardSize;
+              ClearTerrainPresetSelection();
+            }
           }
           else if (GetBattlefieldDecreaseButtonBounds(1).Contains(mousePosition))
           {
@@ -6369,19 +6509,43 @@ internal sealed class Game1 : Game
           }
           else if (GetBattlefieldDecreaseButtonBounds(2).Contains(mousePosition))
           {
-            _forestDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_forestDensity - 1);
+            TerrainDensity density = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_forestDensity - 1);
+            if (density != _forestDensity)
+            {
+              _forestDensity = density;
+              ClearTerrainPresetSelection();
+            }
           }
           else if (GetBattlefieldIncreaseButtonBounds(2).Contains(mousePosition))
           {
-            _forestDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_forestDensity + 1);
+            TerrainDensity density = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_forestDensity + 1);
+            if (density != _forestDensity)
+            {
+              _forestDensity = density;
+              ClearTerrainPresetSelection();
+            }
           }
           else if (GetBattlefieldDecreaseButtonBounds(3).Contains(mousePosition))
           {
-            _waterwayDensity = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_waterwayDensity - 1);
+            TerrainDensity density = (TerrainDensity)Math.Max((int)TerrainDensity.Light, (int)_waterwayDensity - 1);
+            if (density != _waterwayDensity)
+            {
+              _waterwayDensity = density;
+              ClearTerrainPresetSelection();
+            }
           }
           else if (GetBattlefieldIncreaseButtonBounds(3).Contains(mousePosition))
           {
-            _waterwayDensity = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_waterwayDensity + 1);
+            TerrainDensity density = (TerrainDensity)Math.Min((int)TerrainDensity.Heavy, (int)_waterwayDensity + 1);
+            if (density != _waterwayDensity)
+            {
+              _waterwayDensity = density;
+              ClearTerrainPresetSelection();
+            }
+          }
+          else if (GetTerrainPresetBrowserButtonBounds().Contains(mousePosition))
+          {
+            OpenTerrainPresetBrowser();
           }
           else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
@@ -7593,14 +7757,13 @@ internal sealed class Game1 : Game
     _ui.Divider(content, content.Y + 56);
     DrawSetupProgress(content);
 
-    string[] labels = ["Board size", "Terrain source", "Forest density", "Waterways"];
+    string[] labels = ["Board size", "Terrain source", "Forests", "Waterways"];
     string[] details =
     [
       "Small is compact; Large gives armies more room to manoeuvre.",
       _terrainSource switch
       {
-        TerrainSource.Preset when _selectedBoardSize == BoardSize.Medium => "Randomly selects one authored Medium terrain preset.",
-        TerrainSource.Preset => "Uses procedural terrain until presets are added for this board size.",
+        TerrainSource.Preset => "Selects an authored preset matching the forest and waterway headers.",
         TerrainSource.Procedural => "Generates a new terrain layout from the density settings.",
         _ => "Clears forests, lakes, and waterways for an open battlefield."
       },
@@ -7628,15 +7791,187 @@ internal sealed class Game1 : Game
       _ui.TextFitted(details[index], new Vector2(row.X, row.Bottom + 5), content.Width, UiTheme.TextMuted, 0.6f);
     }
 
-    string terrainHint = _terrainSource == TerrainSource.Procedural
+    string terrainHint = !string.IsNullOrWhiteSpace(_selectedTerrainPresetId)
+      ? $"Selected preset: {_selectedTerrainPresetName ?? "authored map"}. Its layout is locked in."
+      : _terrainSource == TerrainSource.Procedural
       ? "Light waterways use 1 river; Standard uses 2; Heavy uses 3."
-      : _terrainSource == TerrainSource.Preset && _selectedBoardSize == BoardSize.Medium
-        ? "Preset maps ignore the density settings."
+      : _terrainSource == TerrainSource.Preset
+        ? "Preset selection matches #! forest and #! water headers to the density settings."
         : _terrainSource == TerrainSource.None
           ? "No terrain ignores the density settings."
-          : "Preset maps will use these density settings until that board size has presets.";
-    _ui.TextFitted(terrainHint, new Vector2(content.X, GetSetupConfirmButtonBounds().Y - 34), content.Width, UiTheme.TextMuted, 0.68f);
+          : string.Empty;
+    Rectangle presetButton = GetTerrainPresetBrowserButtonBounds();
+    _ui.TextFitted(terrainHint, new Vector2(content.X, presetButton.Y - 27), content.Width, UiTheme.TextMuted, 0.62f);
+    DrawMenuButton(
+      presetButton,
+      _selectedBoardSize.ToString().ToUpperInvariant() + " PRESETS",
+      string.IsNullOrWhiteSpace(_selectedTerrainPresetId) ? UiButtonTone.Neutral : UiButtonTone.Accent,
+      !string.IsNullOrWhiteSpace(_selectedTerrainPresetId),
+      0.75f
+    );
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", UiButtonTone.Primary);
+  }
+
+  private void UpdateTerrainPresetBrowser(Point mousePosition)
+  {
+    int pageSize = GetTerrainPresetBrowserPageSize();
+    int pageCount = Math.Max(1, (_terrainPresetBrowserPresets.Count + pageSize - 1) / pageSize);
+    if (GetTerrainPresetBrowserCloseButtonBounds().Contains(mousePosition))
+    {
+      CloseTerrainPresetBrowser();
+      return;
+    }
+    if (GetTerrainPresetBrowserPreviousButtonBounds().Contains(mousePosition))
+    {
+      _terrainPresetBrowserPage = Math.Max(0, _terrainPresetBrowserPage - 1);
+      return;
+    }
+    if (GetTerrainPresetBrowserNextButtonBounds().Contains(mousePosition))
+    {
+      _terrainPresetBrowserPage = Math.Min(pageCount - 1, _terrainPresetBrowserPage + 1);
+      return;
+    }
+
+    int firstIndex = _terrainPresetBrowserPage * pageSize;
+    int visibleCount = Math.Min(pageSize, _terrainPresetBrowserPresets.Count - firstIndex);
+    for (int visibleIndex = 0; visibleIndex < visibleCount; visibleIndex++)
+    {
+      if (GetTerrainPresetBrowserCardBounds(visibleIndex).Contains(mousePosition))
+      {
+        SelectTerrainPreset(_terrainPresetBrowserPresets[firstIndex + visibleIndex]);
+        return;
+      }
+    }
+  }
+
+  private void DrawTerrainPresetBrowser()
+  {
+    Rectangle panel = GetTerrainPresetBrowserPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    int pageSize = GetTerrainPresetBrowserPageSize();
+    int pageCount = Math.Max(1, (_terrainPresetBrowserPresets.Count + pageSize - 1) / pageSize);
+    _terrainPresetBrowserPage = Math.Clamp(_terrainPresetBrowserPage, 0, pageCount - 1);
+
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text(
+      $"{_selectedBoardSize.ToString().ToUpperInvariant()} TERRAIN PRESETS",
+      new Vector2(content.X, content.Y),
+      UiTheme.GoldBright,
+      1.04f
+    );
+    _ui.Text(
+      _terrainPresetBrowserPresets.Count == 0
+        ? "No authored maps are available for this board size yet."
+        : "Click a preview to choose that authored layout for this match.",
+      new Vector2(content.X, content.Y + 30),
+      UiTheme.TextMuted,
+      0.67f
+    );
+    _ui.RightText(
+      $"{_terrainPresetBrowserPresets.Count} MAPS  {(_terrainPresetBrowserPage + 1)}/{pageCount}",
+      new Rectangle(content.X, content.Y, content.Width, 24),
+      UiTheme.TextDim,
+      0.62f
+    );
+    _ui.Divider(content, content.Y + 58);
+
+    if (_terrainPresetBrowserPresets.Count == 0)
+    {
+      _ui.CenterText(
+        "Use Procedural terrain or add .mctrn files for this board size.",
+        GetTerrainPresetBrowserGridBounds(),
+        UiTheme.TextMuted,
+        0.72f
+      );
+    }
+    else
+    {
+      int firstIndex = _terrainPresetBrowserPage * pageSize;
+      int visibleCount = Math.Min(pageSize, _terrainPresetBrowserPresets.Count - firstIndex);
+      for (int visibleIndex = 0; visibleIndex < visibleCount; visibleIndex++)
+      {
+        BattlefieldTerrainPreset preset = _terrainPresetBrowserPresets[firstIndex + visibleIndex];
+        Rectangle card = GetTerrainPresetBrowserCardBounds(visibleIndex);
+        bool isSelected = string.Equals(preset.Id, _selectedTerrainPresetId, StringComparison.Ordinal);
+        DrawMenuButton(card, string.Empty, isSelected ? UiButtonTone.Accent : UiButtonTone.Neutral, isSelected);
+        _ui.CenterTextFitted(
+          preset.Name.ToUpperInvariant(),
+          new Rectangle(card.X + 8, card.Y + 7, card.Width - 16, 24),
+          UiTheme.GoldBright,
+          0.68f
+        );
+        Rectangle preview = new(
+          card.X + UiTheme.SpaceSm,
+          card.Y + 36,
+          Math.Max(1, card.Width - UiTheme.SpaceSm * 2),
+          Math.Max(20, card.Height - 84)
+        );
+        DrawTerrainPresetPreview(preview, preset.Terrain);
+        _ui.CenterTextFitted(
+          $"FORESTS: {preset.ForestDensity.ToUpperInvariant()}  WATER: {preset.WaterwayDensity.ToUpperInvariant()}",
+          new Rectangle(card.X + 8, card.Bottom - 37, card.Width - 16, 16),
+          UiTheme.TextMuted,
+          0.49f,
+          0.4f
+        );
+        if (isSelected)
+        {
+          _ui.CenterText("SELECTED", new Rectangle(card.X + 8, card.Bottom - 20, card.Width - 16, 14), UiTheme.GoldBright, 0.45f);
+        }
+      }
+    }
+
+    DrawMenuButton(GetTerrainPresetBrowserPreviousButtonBounds(), "< PREVIOUS", UiButtonTone.Neutral, _terrainPresetBrowserPage > 0, 0.66f);
+    DrawMenuButton(GetTerrainPresetBrowserNextButtonBounds(), "NEXT >", UiButtonTone.Neutral, _terrainPresetBrowserPage < pageCount - 1, 0.66f);
+    DrawMenuButton(GetTerrainPresetBrowserCloseButtonBounds(), "CLOSE", UiButtonTone.Primary, false, 0.72f);
+  }
+
+  private void DrawTerrainPresetPreview(Rectangle bounds, BattlefieldTerrain terrain)
+  {
+    if (_terrainPresetBrowserBoard is null)
+    {
+      return;
+    }
+
+    DrawPanel(bounds, UiTheme.BoardBackground, UiTheme.PanelBorderSubtle);
+    int rows = _terrainPresetBrowserBoard.BoardArray.GetLength(0);
+    int columns = _terrainPresetBrowserBoard.BoardArray.GetLength(1);
+    int cellSize = Math.Max(1, Math.Min(
+      Math.Max(1, (bounds.Width - 8) / Math.Max(1, columns)),
+      Math.Max(1, (bounds.Height - 8) / Math.Max(1, rows))
+    ));
+    int width = columns * cellSize;
+    int height = rows * cellSize;
+    int startX = bounds.Center.X - width / 2;
+    int startY = bounds.Center.Y - height / 2;
+
+    for (int y = 0; y < rows; y++)
+    {
+      for (int x = 0; x < columns; x++)
+      {
+        if (_terrainPresetBrowserBoard.BoardArray[y, x] != 1)
+        {
+          continue;
+        }
+
+        (int x, int y) position = (x + _terrainPresetBrowserBoard.MinX, y + _terrainPresetBrowserBoard.MinY);
+        Rectangle cell = new(startX + x * cellSize, startY + y * cellSize, cellSize, cellSize);
+        Color colour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
+        if (terrain.IsLake(position)) colour = UiTheme.Lake;
+        else if (terrain.IsForest(position)) colour = UiTheme.Forest;
+        DrawWorldRectangle(cell, colour, 0f);
+
+        int riverWidth = Math.Max(1, cellSize / 4);
+        if (terrain.HasRiverBetween(position, (position.x + 1, position.y)))
+        {
+          DrawWorldRectangle(new Rectangle(cell.Right - riverWidth, cell.Y, riverWidth, cell.Height), UiTheme.River, 0f);
+        }
+        if (terrain.HasRiverBetween(position, (position.x, position.y + 1)))
+        {
+          DrawWorldRectangle(new Rectangle(cell.X, cell.Bottom - riverWidth, cell.Width, riverWidth), UiTheme.River, 0f);
+        }
+      }
+    }
   }
 
   private void DrawEconomySetup(Rectangle panel)
@@ -7963,6 +8298,11 @@ internal sealed class Game1 : Game
       case Screen.LevelEditor: _levelEditor.Draw(new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height)); break;
       case Screen.CustomLevels: DrawCustomLevelsScreen(); break;
       case Screen.EditorDiscardConfirm: DrawEditorDiscardConfirmation(); break;
+    }
+
+    if (_terrainPresetBrowserOpen)
+    {
+      DrawTerrainPresetBrowser();
     }
   }
 

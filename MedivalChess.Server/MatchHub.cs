@@ -1040,6 +1040,10 @@ public sealed class MatchStore
         configuration.UnitMaintenancePercent is < 0 or > 100 ||
         configuration.InterestPercent is < -100 or > 200 ||
         configuration.EscortRoyalHealthPercent is < 1 or > 100 ||
+        (configuration.PresetId is not null &&
+          (configuration.PresetId.Length > 160 ||
+           !configuration.PresetId.EndsWith(".mctrn", StringComparison.OrdinalIgnoreCase) ||
+           configuration.PresetId.Contains('/') || configuration.PresetId.Contains('\\'))) ||
         !float.IsFinite(configuration.KillerRefundMultiplier) ||
         !float.IsFinite(configuration.DefeatedTeamRefundMultiplier))
     {
@@ -1047,7 +1051,10 @@ public sealed class MatchStore
       return false;
     }
 
-    sanitized = configuration;
+    sanitized = configuration with
+    {
+      PresetId = string.IsNullOrWhiteSpace(configuration.PresetId) ? null : configuration.PresetId.Trim()
+    };
     return true;
   }
 
@@ -2081,7 +2088,7 @@ public sealed class MatchStore
     internal List<NetworkPiece> Pieces { get; } = [];
     internal BattlefieldTerrain Terrain { get; } = TerrainRules.Create(
       NetworkBoardRules.GetBoard(configuration), configuration.TerrainSeed, configuration.ForestDensity, configuration.WaterwayDensity,
-      configuration.PlayerCount, configuration.TerrainSource, configuration.BoardSize
+      configuration.PlayerCount, configuration.TerrainSource, configuration.BoardSize, configuration.PresetId
     );
     internal Dictionary<(int x, int y), NetworkTeam> Roads { get; } = [];
     internal Dictionary<(int x, int y), int> Barricades { get; } = [];

@@ -10,7 +10,8 @@ public static class TerrainRules
     string waterwayDensity,
     int playerCount = 2,
     string terrainSource = "Procedural",
-    string boardSize = "Medium"
+    string boardSize = "Medium",
+    string? presetId = null
   )
   {
     if (terrainSource == "None")
@@ -28,7 +29,20 @@ public static class TerrainRules
     };
 
     if (terrainSource == "Preset" &&
-        BattlefieldTerrain.TryCreateRandomPreset(board, seed, boardSize, out BattlefieldTerrain preset))
+        BattlefieldTerrain.TryCreatePreset(board, boardSize, presetId, out BattlefieldTerrain selectedPreset))
+    {
+      return selectedPreset;
+    }
+
+    if (terrainSource == "Preset" &&
+        BattlefieldTerrain.TryCreateRandomPreset(
+          board,
+          seed,
+          boardSize,
+          forestDensity,
+          waterwayDensity,
+          out BattlefieldTerrain preset
+        ))
     {
       return preset;
     }

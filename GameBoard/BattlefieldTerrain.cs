@@ -65,6 +65,15 @@ public sealed class TerrainGenerationSettings
   public int MaximumRiverTargetsPerOutlet { get; init; } = 12;
 }
 
+/// <summary>An authored terrain map and the metadata declared in its <c>#!</c> header.</summary>
+public sealed record BattlefieldTerrainPreset(
+  string Id,
+  string Name,
+  string ForestDensity,
+  string WaterwayDensity,
+  BattlefieldTerrain Terrain
+);
+
 public sealed class BattlefieldTerrain
 {
   private static readonly Regex PresetSectionPattern = new(
@@ -77,6 +86,10 @@ public sealed class BattlefieldTerrain
   );
   private static readonly Regex RiverPattern = new(
     @"\(\s*(?<firstX>-?\d+)\s*,\s*(?<firstY>-?\d+)\s*\)\s*-\s*\(\s*(?<secondX>-?\d+)\s*,\s*(?<secondY>-?\d+)\s*\)",
+    RegexOptions.Compiled
+  );
+  private static readonly Regex PresetMetadataPattern = new(
+    @"(?im)^\s*#!\s*(?<key>[a-z][a-z0-9_-]*)\s*:\s*(?<value>.*?)\s*;?\s*$",
     RegexOptions.Compiled
   );
   private readonly record struct RiverSegment(
@@ -117,51 +130,89 @@ public sealed class BattlefieldTerrain
     return _rivers.Contains(TileEdge.Between(first, second));
   }
 
-  /// <summary>
-  /// Loads one deterministically selected terrain preset for a board size. Presets are embedded in the
-  /// shared assembly so desktop clients, the server, and headless CPU simulations use the same terrain.
-  /// Returns <c>false</c> when that board size has no compatible presets yet.
-  /// </summary>
-  public static bool TryCreateRandomPreset(
-    Board board,
-    int seed,
-    string boardSize,
-    out BattlefieldTerrain terrain
-  )
+  /// <summary>Lists valid authored presets for a board size, including their <c>#!</c> metadata.</summary>
+  public static IReadOnlyList<BattlefieldTerrainPreset> GetPresets(Board board, string boardSize)
   {
     ArgumentNullException.ThrowIfNull(board);
-    terrain = new BattlefieldTerrain();
     string size = string.IsNullOrWhiteSpace(boardSize) ? "Medium" : boardSize;
     Assembly assembly = typeof(BattlefieldTerrain).Assembly;
     string resourcePrefix = $"{typeof(BattlefieldTerrain).Namespace}.GameBoard.BoardTerrains.{size}.";
-    string[] resources = assembly.GetManifestResourceNames()
+
+    List<BattlefieldTerrainPreset> presets = [];
+    foreach (string resource in assembly.GetManifestResourceNames()
       .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal) &&
         name.EndsWith(".mctrn", StringComparison.OrdinalIgnoreCase))
-      .OrderBy(name => name, StringComparer.Ordinal)
-      .ToArray();
-    if (resources.Length == 0)
+      .OrderBy(name => name, StringComparer.Ordinal))
     {
-      return false;
-    }
-
-    int firstResourceIndex = new Random(seed).Next(resources.Length);
-    for (int offset = 0; offset < resources.Length; offset++)
-    {
-      string resource = resources[(firstResourceIndex + offset) % resources.Length];
       using Stream? stream = assembly.GetManifestResourceStream(resource);
       if (stream is null)
       {
         continue;
       }
+
       using StreamReader reader = new(stream);
-      if (TryParsePreset(board, reader.ReadToEnd(), out terrain))
+      if (TryParsePreset(board, resource[resourcePrefix.Length..], reader.ReadToEnd(), out BattlefieldTerrainPreset? preset) &&
+          preset is not null)
       {
-        return true;
+        presets.Add(preset);
       }
     }
 
+    return presets;
+  }
+
+  /// <summary>
+  /// Loads one deterministically selected terrain preset matching both density settings. Presets are embedded in
+  /// the shared assembly so desktop clients, the server, and headless CPU simulations use the same terrain.
+  /// Returns <c>false</c> when that board size has no matching presets yet.
+  /// </summary>
+  public static bool TryCreateRandomPreset(
+    Board board,
+    int seed,
+    string boardSize,
+    string forestDensity,
+    string waterwayDensity,
+    out BattlefieldTerrain terrain
+  )
+  {
     terrain = new BattlefieldTerrain();
-    return false;
+    BattlefieldTerrainPreset[] presets = GetPresets(board, boardSize)
+      .Where(preset =>
+        string.Equals(preset.ForestDensity, forestDensity, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preset.WaterwayDensity, waterwayDensity, StringComparison.OrdinalIgnoreCase))
+      .ToArray();
+    if (presets.Length == 0)
+    {
+      return false;
+    }
+
+    terrain = presets[new Random(seed).Next(presets.Length)].Terrain;
+    return true;
+  }
+
+  /// <summary>Loads one authored preset by its stable ID, regardless of its density metadata.</summary>
+  public static bool TryCreatePreset(
+    Board board,
+    string boardSize,
+    string? presetId,
+    out BattlefieldTerrain terrain
+  )
+  {
+    terrain = new BattlefieldTerrain();
+    if (string.IsNullOrWhiteSpace(presetId))
+    {
+      return false;
+    }
+
+    BattlefieldTerrainPreset? preset = GetPresets(board, boardSize)
+      .FirstOrDefault(candidate => string.Equals(candidate.Id, presetId, StringComparison.Ordinal));
+    if (preset is null)
+    {
+      return false;
+    }
+
+    terrain = preset.Terrain;
+    return true;
   }
 
   public static BattlefieldTerrain CreateRandom(
@@ -270,9 +321,14 @@ public sealed class BattlefieldTerrain
     return new BattlefieldTerrain(forests, lakes, rivers, settings.ForestDamageReduction);
   }
 
-  private static bool TryParsePreset(Board board, string content, out BattlefieldTerrain terrain)
+  private static bool TryParsePreset(
+    Board board,
+    string id,
+    string content,
+    out BattlefieldTerrainPreset? preset
+  )
   {
-    terrain = new BattlefieldTerrain();
+    preset = null;
     Dictionary<string, string> sections = PresetSectionPattern.Matches(content)
       .Cast<Match>()
       .ToDictionary(
@@ -283,6 +339,19 @@ public sealed class BattlefieldTerrain
     if (!sections.TryGetValue("forest", out string? forestSection) ||
         !sections.TryGetValue("lake", out string? lakeSection) ||
         !sections.TryGetValue("river", out string? riverSection))
+    {
+      return false;
+    }
+
+    Dictionary<string, string> metadata = PresetMetadataPattern.Matches(content)
+      .Cast<Match>()
+      .ToDictionary(
+        match => match.Groups["key"].Value,
+        match => match.Groups["value"].Value.Trim().TrimEnd(';').Trim(),
+        StringComparer.OrdinalIgnoreCase
+      );
+    if (!metadata.TryGetValue("forest", out string? forestDensity) ||
+        !metadata.TryGetValue("water", out string? waterwayDensity))
     {
       return false;
     }
@@ -306,7 +375,16 @@ public sealed class BattlefieldTerrain
     }
 
     forests.ExceptWith(lakes);
-    terrain = new BattlefieldTerrain(forests, lakes, rivers);
+    string name = metadata.TryGetValue("name", out string? declaredName) && !string.IsNullOrWhiteSpace(declaredName)
+      ? declaredName
+      : Path.GetFileNameWithoutExtension(id).Replace('_', ' ');
+    preset = new BattlefieldTerrainPreset(
+      id,
+      name,
+      forestDensity,
+      waterwayDensity,
+      new BattlefieldTerrain(forests, lakes, rivers)
+    );
     return true;
   }
 

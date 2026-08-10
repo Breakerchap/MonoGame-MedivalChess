@@ -87,7 +87,9 @@ public sealed record NetworkMatchConfiguration(
   int ChessTimerIncrementSeconds = 0,
   // Preset uses an authored terrain file when that board size has one; otherwise it
   // deterministically falls back to Procedural.
-  string TerrainSource = "Preset"
+  string TerrainSource = "Preset",
+  // When supplied, this authored preset is used directly instead of choosing one from the density filter.
+  string? PresetId = null
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on

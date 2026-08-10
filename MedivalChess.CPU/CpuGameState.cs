@@ -75,7 +75,8 @@ public sealed class CpuGameState
       configuration.WaterwayDensity,
       configuration.PlayerCount,
       configuration.TerrainSource,
-      configuration.BoardSize
+      configuration.BoardSize,
+      configuration.PresetId
     );
     _pieces = pieces?.ToArray() ?? throw new ArgumentNullException(nameof(pieces));
     _teams = (teams ?? throw new ArgumentNullException(nameof(teams))).ToDictionary(team => team.Team);
