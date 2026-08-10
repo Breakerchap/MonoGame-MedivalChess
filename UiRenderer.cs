@@ -210,11 +210,24 @@ internal sealed class UiRenderer
     RightText(value, bounds, valueColour);
   }
 
-  internal void StatBlock(Rectangle bounds, string label, string value, Color valueColour)
+  internal void StatBlock(Rectangle bounds, string label, string value, Color valueColour, float fontScale = 1f)
   {
     Panel(bounds, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
-    Text(label, new Vector2(bounds.X + UiTheme.SpaceSm, bounds.Y + UiTheme.SpaceXs), UiTheme.TextMuted, 0.72f);
-    Text(value, new Vector2(bounds.X + UiTheme.SpaceSm, bounds.Y + 25), valueColour);
+    int textWidth = Math.Max(1, bounds.Width - UiTheme.SpaceSm * 2);
+    float preferredLabelScale = (bounds.Height >= 48 ? 0.68f : 0.58f) * fontScale;
+    float preferredValueScale = (bounds.Height >= 48 ? 0.90f : 0.78f) * fontScale;
+    int availableTextHeight = Math.Max(1, bounds.Height - UiTheme.SpaceXs);
+    float preferredTextHeight = _font.LineSpacing * (preferredLabelScale + preferredValueScale);
+    float verticalScale = Math.Min(1f, availableTextHeight / preferredTextHeight);
+    float labelScale = preferredLabelScale * verticalScale;
+    float valueScale = preferredValueScale * verticalScale;
+    int labelY = bounds.Y + UiTheme.SpaceXs / 2;
+    int valueY = labelY + (int)Math.Ceiling(_font.LineSpacing * labelScale);
+
+    float minimumLabelScale = Math.Min(labelScale, 0.42f);
+    float minimumValueScale = Math.Min(valueScale, 0.50f);
+    TextFitted(label, new Vector2(bounds.X + UiTheme.SpaceSm, labelY), textWidth, UiTheme.TextMuted, labelScale, minimumLabelScale);
+    TextFitted(value, new Vector2(bounds.X + UiTheme.SpaceSm, valueY), textWidth, valueColour, valueScale, minimumValueScale);
   }
 
   internal void PiecePreview(Rectangle bounds, Color teamColour, string label)

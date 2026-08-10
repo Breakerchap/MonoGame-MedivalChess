@@ -440,6 +440,11 @@ internal sealed class Game1 : Game
 
     if (IsCpuTurn())
     {
+      if (!planningInput && (wasLeftClick || wasRightClick))
+      {
+        InspectPieceAt(mouse.Position, mouseWorldBefore);
+      }
+
       UpdateCpuTurn(deltaTime);
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
@@ -3278,6 +3283,35 @@ internal sealed class Game1 : Game
     Console.WriteLine($"Selected {selectedPiece.Team} {selectedPiece.Definition.Type}.");
   }
 
+  private void InspectPieceAt(Point screenPosition, Vector2 worldPosition)
+  {
+    if (GetStatusPanelBounds().Contains(screenPosition) ||
+        GetSelectedPiecePanelBounds().Contains(screenPosition) ||
+        IsPointerOverPurchaseMenu(screenPosition) ||
+        GetChessClockPanelBounds().Contains(screenPosition))
+    {
+      return;
+    }
+
+    const int cellSize = 64;
+    (int x, int y) targetPosition = (
+      (int)MathF.Floor(worldPosition.X / cellSize) + _board.MinX,
+      (int)MathF.Floor(worldPosition.Y / cellSize) + _board.MinY
+    );
+    Piece piece = GetUnattachedPieceAt(targetPosition);
+    if (piece is not null)
+    {
+      SelectPiece(piece);
+    }
+    else
+    {
+      selectedPiece = null;
+    }
+  }
+
+  private bool CanActWithPiece(Piece piece) =>
+    piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn();
+
   private static bool AreAdjacent(Piece first, Piece second)
   {
     foreach ((int x, int y) firstSquare in first.OccupiedSquares())
@@ -4838,12 +4872,13 @@ internal sealed class Game1 : Game
     Rectangle statGrid = new(content.X, previewBounds.Bottom + UiTheme.SpaceLg, content.Width, statHeight * 3 + statRowGap * 2);
     Rectangle leftColumn = UiLayout.HorizontalSlot(statGrid, 2, 0, UiTheme.SpaceSm);
     Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack);
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + statHeight + statRowGap, leftColumn.Width, statHeight), "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + statHeight + statRowGap, rightColumn.Width, statHeight), "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour);
+    const float purchaseStatFontScale = 1.50f;
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + statHeight + statRowGap, leftColumn.Width, statHeight), "MOVE RANGE", UiText.FormatAction(definition.Movement), UiTheme.Move, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + statHeight + statRowGap, rightColumn.Width, statHeight), "ATTACK RANGE", UiText.FormatAction(definition.AttackRange, definition.AttackPattern), UiTheme.TextPrimary, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
 
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
@@ -7513,8 +7548,8 @@ internal sealed class Game1 : Game
     _ui.LabelValueRow(new Rectangle(details.X, details.Y + 86, details.Width, 26), "SIZE", $"{royal.Size.x} x {royal.Size.y}", UiTheme.TextPrimary);
 
     Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceLg, content.Width, 54);
-    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm), "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
-    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm), "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm), "MOVE RANGE", UiText.FormatAction(royal.Movement), UiTheme.Move);
+    _ui.StatBlock(UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm), "ATTACK RANGE", UiText.FormatAction(royal.AttackRange, royal.AttackPattern), UiTheme.Attack);
     DrawRoyalAbility(royal, content, actionGrid.Bottom + UiTheme.SpaceLg);
 
     if (IsDebugOnlineMatch)
@@ -7639,8 +7674,8 @@ internal sealed class Game1 : Game
     Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceLg, content.Width, 54);
     Rectangle moveStat = UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm);
     Rectangle rangeStat = UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm);
-    _ui.StatBlock(moveStat, "MOVE", UiText.FormatAction(royal.Movement), UiTheme.Move);
-    _ui.StatBlock(rangeStat, "ATTACK RANGE", UiText.FormatAction(royal.AttackShape), UiTheme.Attack);
+    _ui.StatBlock(moveStat, "MOVE RANGE", UiText.FormatAction(royal.Movement), UiTheme.Move);
+    _ui.StatBlock(rangeStat, "ATTACK RANGE", UiText.FormatAction(royal.AttackRange, royal.AttackPattern), UiTheme.Attack);
     DrawRoyalAbility(royal, content, actionGrid.Bottom + UiTheme.SpaceLg);
 
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
@@ -8185,8 +8220,8 @@ internal sealed class Game1 : Game
     Rectangle statSix = UiLayout.HorizontalSlot(statRowTwo, 3, 2, UiTheme.SpaceXs);
     _ui.StatBlock(statOne, "HEALTH", definition.Health.ToString(), UiTheme.Health);
     _ui.StatBlock(statTwo, "ATTACK", definition.Attack.ToString(), UiTheme.Attack);
-    _ui.StatBlock(statThree, "MOVE", UiText.FormatAction(definition.Movement), UiTheme.Move);
-    _ui.StatBlock(statFour, "RANGE", UiText.FormatAction(definition.AttackShape), UiTheme.TextPrimary);
+    _ui.StatBlock(statThree, "MOVE RANGE", UiText.FormatAction(definition.Movement), UiTheme.Move);
+    _ui.StatBlock(statFour, "ATTACK RANGE", UiText.FormatAction(definition.AttackRange, definition.AttackPattern), UiTheme.TextPrimary);
     _ui.StatBlock(statFive, "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary);
     _ui.StatBlock(statSix, "COST", definition.Cost == 0 ? "START" : definition.Cost.ToString(), UiTheme.GoldBright);
 
@@ -8729,37 +8764,43 @@ internal sealed class Game1 : Game
       UiTheme.Health
     );
 
+    bool canActWithSelectedPiece = CanActWithPiece(selectedPiece);
     Rectangle actionGrid = new(content.X, preview.Bottom + UiTheme.SpaceMd, content.Width, 48);
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 0, UiTheme.SpaceSm),
-      "MOVE",
-      selectedPiece.HasMovedThisTurn ? "USED" : UiText.FormatAction(selectedPiece.Definition.Movement),
-      selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move
+      "MOVE RANGE",
+      UiText.FormatAction(selectedPiece.Definition.Movement),
+      UiTheme.Move
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
       selectedPiece.Definition.Type == PieceType.Engineer ? "ABILITY" : "ATTACK",
-      selectedPiece.HasAttackedThisTurn
+      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
         ? "USED"
         : selectedPiece.Definition.Type == PieceType.Engineer
           ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
           : selectedPiece.Definition.Attack.ToString(),
-      selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
+      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
     _ui.StatBlock(
       rangeRow,
       selectedPiece.Definition.Type == PieceType.Engineer ? "BUILD RANGE" : "ATTACK RANGE",
-      UiText.FormatAction(selectedPiece.Definition.AttackShape),
+      UiText.FormatAction(selectedPiece.Definition.AttackRange, selectedPiece.Definition.AttackPattern),
       UiTheme.TextPrimary
     );
     _ui.Text(
-      selectedPiece.Team != Team.CurrentTurn ? "VIEWING ENEMY PIECE" : selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
+      !canActWithSelectedPiece ? "VIEWING PIECE - ACTIONS UNAVAILABLE" : selectedPiece.HasMovedThisTurn ? "MOVE USED THIS TURN" : "LEFT-CLICK gold to move",
       new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd),
-      selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move,
+      !canActWithSelectedPiece || selectedPiece.HasMovedThisTurn ? UiTheme.TextDim : UiTheme.Move,
       0.78f
     );
-    _ui.Text(GetSelectedPieceControlHint(selectedPiece), new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23), UiTheme.Attack, 0.72f);
+    _ui.Text(
+      canActWithSelectedPiece ? GetSelectedPieceControlHint(selectedPiece) : "SELECT AN ACTIVE TEAM PIECE TO ACT",
+      new Vector2(content.X, rangeRow.Bottom + UiTheme.SpaceMd + 23),
+      canActWithSelectedPiece ? UiTheme.Attack : UiTheme.TextMuted,
+      0.72f
+    );
 
     int abilityInfoY = rangeRow.Bottom + UiTheme.SpaceMd + 44;
     int abilityInfoBottom = selectedPiece.Definition.Type switch

@@ -18,6 +18,12 @@ public class UiTextTests
   }
 
   [Fact]
+  public void FormatAction_ShowsTheEntireInclusiveAttackRange()
+  {
+    Assert.Equal("2-3 Any", UiText.FormatAction(new AttackRange(2, 3), Shape.Any));
+  }
+
+  [Fact]
   public void SpriteFontSafety_RejectsUnsupportedUnicodeCharacters()
   {
     Assert.False(UiText.IsSpriteFontSafe("damage • range"));
