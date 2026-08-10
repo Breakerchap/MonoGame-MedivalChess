@@ -156,20 +156,19 @@ public static class PieceDefinitions
     PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 40,
     "Earns 5 gold at the start of each owner turn. Units may move and attack over it.");
   public static readonly PieceDefinition King = new(
-    PieceType.King, PieceCategory.Royal, (1, Shape.Any), 15, 110, (1, 1), (1, 1), Shape.Any, 0,
-    "Adjacent allies take 5 less damage, to a minimum of 5.");
+    PieceType.King, PieceCategory.Royal, (1, Shape.Any), 15, 95, (1, 1), (1, 1), Shape.Any, 0);
   public static readonly PieceDefinition Princess = new(
-    PieceType.Princess, PieceCategory.Royal, (1, Shape.Any), 15, 80, (1, 1), (1, 4), Shape.Any, 0,
-    "May attack over friendly units.");
+    PieceType.Princess, PieceCategory.Royal, (2, Shape.Straight), 15, 70, (1, 1), (1, 4), Shape.Any, 0,
+    "May attack over units and terrain and barricades.");
   public static readonly PieceDefinition Palace = new(
-    PieceType.Palace, PieceCategory.Royal, (0, Shape.None), 0, 130, (3, 2), (0, 0), Shape.None, 0,
-    "Earns 5 gold at the start of each owner turn.");
+    PieceType.Palace, PieceCategory.Royal, (0, Shape.None), 0, 110, (3, 2), (0, 0), Shape.None, 0,
+    "Friendly pieces moving in the direction of the Palace gain +1 movement and ignore terrain.");
   public static readonly PieceDefinition Baron = new(
-    PieceType.Baron, PieceCategory.Royal, (2, Shape.Straight), 10, 100, (1, 1), (1, 1), Shape.Any, 0,
-    "Adjacent allies deal 5 additional damage. Multiple bonuses do not stack.");
+    PieceType.Baron, PieceCategory.Royal, (3, Shape.Straight), 10, 80, (1, 1), (1, 1), Shape.Any, 0,
+    "Adjacent allies deal 5 additional damage and take 5 less damage.");
   public static readonly PieceDefinition Emissary = new(
-    PieceType.Emissary, PieceCategory.Royal, (4, Shape.Any), 5, 80, (1, 1), (1, 1), Shape.Any, 0,
-    "Moves directly adjacent friendly 1x1 allies with it.");
+    PieceType.Emissary, PieceCategory.Royal, (4, Shape.Any), 5, 70, (1, 1), (1, 1), Shape.Any, 0,
+    "Moves (diagonally) adjacent friendly 1x1 pieces with it.");
 
   public static readonly PieceDefinition[] All =
   [

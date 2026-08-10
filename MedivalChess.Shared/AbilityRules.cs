@@ -5,6 +5,47 @@ public static class AbilityRules
 {
   public static bool IsTerrainImmune(UnitRule unit) => unit.Type == "Elephant";
 
+  /// <summary>Whether the unit's attack ignores terrain, barricades, and intervening pieces.</summary>
+  public static bool AttacksOverObstacles(UnitRule unit) => unit.Type == nameof(PieceType.Princess);
+
+  /// <summary>Whether a friendly one-square unit qualifies to move alongside an Emissary.</summary>
+  public static bool IsEmissaryCompanion(UnitRule unit, (int x, int y) emissaryPosition, (int x, int y) unitPosition) =>
+    unit.Width == 1 && unit.Height == 1 &&
+    Math.Max(Math.Abs(unitPosition.x - emissaryPosition.x), Math.Abs(unitPosition.y - emissaryPosition.y)) == 1;
+
+  /// <summary>
+  /// Determines whether a move closes the taxicab gap between a unit's footprint and a Palace's
+  /// footprint. Palace-supported moves gain one range and ignore terrain.
+  /// </summary>
+  public static bool MovesTowardPalace(
+    UnitRule movingUnit,
+    (int x, int y) from,
+    (int x, int y) to,
+    UnitRule palace,
+    (int x, int y) palacePosition
+  ) => FootprintDistance(movingUnit, to, palace, palacePosition) <
+       FootprintDistance(movingUnit, from, palace, palacePosition);
+
+  private static int FootprintDistance(
+    UnitRule first,
+    (int x, int y) firstPosition,
+    UnitRule second,
+    (int x, int y) secondPosition
+  )
+  {
+    int horizontalGap = Math.Max(
+      0,
+      Math.Max(secondPosition.x - (firstPosition.x + first.Width - 1),
+        firstPosition.x - (secondPosition.x + second.Width - 1))
+    );
+    int verticalGap = Math.Max(
+      0,
+      Math.Max(secondPosition.y - (firstPosition.y + first.Height - 1),
+        firstPosition.y - (secondPosition.y + second.Height - 1))
+    );
+    return horizontalGap + verticalGap;
+  }
+
   /// <summary>Whether an attack unlocks the Cavalier's one two-square straight follow-up move.</summary>
   public static bool GrantsCavalierFollowUpMove(string unitType, bool hasMovedThisTurn) =>
     hasMovedThisTurn && string.Equals(unitType, nameof(PieceType.Cavalier), StringComparison.Ordinal);

@@ -13,14 +13,19 @@ public static partial class CpuGameRules
   )
   {
     rule = GetEffectiveMovementRule(source, pieces, piece, rule);
+    bool hasPalaceSupport = HasPalaceSupport(pieces, piece);
     return MovementRules.FindPaths(
       rule,
       (piece.X, piece.Y),
       piece.Team,
-      destination => CanLand(source, pieces, piece, rule, destination),
+      destination => CanLand(source, pieces, piece, rule, destination, hasPalaceSupport),
       (from, destination) => CanTravelThrough(source, pieces, piece, rule, from, destination),
       destination => GetMovementCost(source, piece, rule, destination),
-      (from, destination) => CrossesRiver(source, rule, from, destination)
+      (from, destination) => CrossesRiver(source, pieces, piece, rule, from, destination),
+      (from, destination) => GetMovementCost(source, pieces, piece, rule, from, destination),
+      destination => rule.MoveRange + (IsPalaceAssistedMovement(
+        pieces, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
+      rule.MoveRange + (hasPalaceSupport ? 1 : 0)
     );
   }
 
@@ -44,7 +49,14 @@ public static partial class CpuGameRules
       : rule;
   }
 
-  private static bool CanLand(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule, (int x, int y) destination) =>
+  private static bool CanLand(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) destination,
+    bool mayUsePalaceSupport = false
+  ) =>
     CanPlace(
       state,
       pieces,
@@ -52,7 +64,7 @@ public static partial class CpuGameRules
       destination.x,
       destination.y,
       piece.Id,
-      piece.Type == "Elephant",
+      piece.Type == "Elephant" || mayUsePalaceSupport,
       piece.Type == "Elephant" ? piece.Team : null
     );
 
@@ -102,8 +114,10 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
+        bool ignoresTerrain = piece.Type == "Elephant" ||
+          IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
-            (piece.Type != "Elephant" && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+            (!ignoresTerrain && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
         {
           return false;
         }
@@ -120,25 +134,45 @@ public static partial class CpuGameRules
 
   private static int GetMovementCost(CpuGameState state, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
   {
+    return GetMovementCost(state, state.Pieces, piece, rule, (piece.X, piece.Y), destination);
+  }
+
+  private static int GetMovementCost(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) from,
+    (int x, int y) destination
+  )
+  {
     if (rule.Type == "Elephant")
     {
       return 1;
     }
     int cost = 0;
+    bool ignoresTerrain = IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
         (roadOwner == piece.Team || roadOwner == NetworkTeam.Neutral);
-      cost = Math.Max(cost, state.Terrain.IsForest(square) && !usesOwnedRoad
+      cost = Math.Max(cost, state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
         ? 2
         : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1);
     }
     return cost;
   }
 
-  private static bool CrossesRiver(CpuGameState state, UnitRule rule, (int x, int y) from, (int x, int y) to)
+  private static bool CrossesRiver(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
   {
-    if (rule.Type == "Elephant")
+    if (rule.Type == "Elephant" || IsPalaceAssistedMovement(pieces, piece, rule, from, to))
     {
       return false;
     }
@@ -152,6 +186,24 @@ public static partial class CpuGameRules
       }
     }
     return false;
+  }
+
+  private static bool HasPalaceSupport(IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece) =>
+    piece.Type != "Palace" && pieces.Any(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == "Palace");
+
+  private static bool IsPalaceAssistedMovement(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule movingRule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
+  {
+    NetworkPiece? palace = pieces.FirstOrDefault(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == "Palace");
+    return palace is not null && UnitRules.TryGet(palace.Type, out UnitRule palaceRule) &&
+      AbilityRules.MovesTowardPalace(movingRule, from, to, palaceRule, (palace.X, palace.Y));
   }
 
   private static bool HasClearAttackPath(

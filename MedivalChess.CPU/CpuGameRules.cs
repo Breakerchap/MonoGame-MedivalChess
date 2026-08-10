@@ -121,7 +121,7 @@ public static partial class CpuGameRules
       unmitigated,
       false,
       false,
-      HasAdjacentUnit(state, state.Pieces, damaged, damaged.Team, "King"),
+      HasAdjacentUnit(state, state.Pieces, damaged, damaged.Team, "Baron"),
       IsInForest(state, damaged),
       state.Terrain.ForestDamageReduction
     );
@@ -390,7 +390,7 @@ public static partial class CpuGameRules
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentUnit(state, damaged, damaged.Team, "King"),
+      HasAdjacentUnit(state, damaged, damaged.Team, "Baron"),
       IsInForest(state, damaged),
       state.Source.Terrain.ForestDamageReduction
     );
@@ -591,7 +591,7 @@ public static partial class CpuGameRules
     List<string> companionIds = state.Pieces
       .Where(piece => piece.Id != emissary.Id && piece.Id != state.TreasureCarrierId && piece.Team == emissary.Team &&
         piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        Math.Abs(piece.X - oldX) + Math.Abs(piece.Y - oldY) == 1)
+        AbilityRules.IsEmissaryCompanion(rule, (oldX, oldY), (piece.X, piece.Y)))
       .Select(piece => piece.Id)
       .ToList();
     foreach (string companionId in companionIds)
@@ -796,8 +796,7 @@ public static partial class CpuGameRules
       money = ClampCurrency((long)money + EconomyRules.GetInterest(money, state.Source.Configuration.InterestPercent));
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
-    int palaces = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Palace");
-    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn + palaces * 5L);
+    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn);
     for (int index = 0; index < state.Pieces.Count; index++)
     {
       NetworkPiece mercenary = state.Pieces[index];

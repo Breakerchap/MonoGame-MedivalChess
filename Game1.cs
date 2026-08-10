@@ -1819,13 +1819,11 @@ internal sealed class Game1 : Game
 
     int farmCount = pieceSetup.Pieces.Count(piece =>
       piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Farm);
-    int palaceCount = pieceSetup.Pieces.Count(piece =>
-      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Palace);
-    long income = farmCount * (long)_farmIncomePerTurn + palaceCount * 5L;
+    long income = farmCount * (long)_farmIncomePerTurn;
     if (income != 0)
     {
       team.Money = ClampCurrency((long)team.Money + income);
-      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms and palaces.");
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms.");
     }
 
     int paidMercenaries = 0;
@@ -2812,15 +2810,37 @@ internal sealed class Game1 : Game
 
   private Dictionary<(int x, int y), List<(int x, int y)>> GetMovementPaths(Piece piece)
   {
+    UnitRule movementRule = GetEffectiveMovementRule(piece);
+    bool hasPalaceSupport = GetSupportingPalace(piece) is not null;
     return MovementPathfinder.FindPaths(
       piece,
-      destination => CanLandPieceAt(piece, destination),
+      destination => CanLandPieceAt(piece, destination, hasPalaceSupport),
       (from, destination) => CanTravelThroughPosition(piece, from, destination),
       destination => GetMovementCost(piece, destination),
       (from, to) => CrossesRiver(piece, from, to),
-      GetEffectiveMovementRule(piece)
+      movementRule,
+      (from, destination) => GetMovementCost(piece, from, destination),
+      destination => GetMovementRangeAt(piece, movementRule, destination),
+      movementRule.MoveRange + (hasPalaceSupport ? 1 : 0)
     );
   }
+
+  private Piece GetSupportingPalace(Piece piece) => piece.Definition.Type == PieceType.Palace
+    ? null
+    : pieceSetup.Pieces.FirstOrDefault(candidate => candidate.Team == piece.Team && candidate.AttachedTo is null &&
+      candidate.Definition.Type == PieceType.Palace);
+
+  private bool IsPalaceAssistedMovement(Piece piece, (int x, int y) from, (int x, int y) destination)
+  {
+    Piece palace = GetSupportingPalace(piece);
+    return palace is not null && AbilityRules.MovesTowardPalace(
+      GetEffectiveMovementRule(piece), from, destination,
+      UnitRules.GetRequired(palace.Definition.Type.ToString()), palace.Position
+    );
+  }
+
+  private int GetMovementRangeAt(Piece piece, UnitRule movementRule, (int x, int y) destination) =>
+    movementRule.MoveRange + (IsPalaceAssistedMovement(piece, piece.Position, destination) ? 1 : 0);
 
   private UnitRule GetEffectiveMovementRule(Piece piece)
   {
@@ -2878,11 +2898,17 @@ internal sealed class Game1 : Game
     return false;
   }
 
-  private bool CanLandPieceAt(Piece piece, (int x, int y) destination)
+  private bool CanLandPieceAt(Piece piece, (int x, int y) destination, bool mayUsePalaceSupport)
   {
     if (piece.Definition.Type != PieceType.Elephant)
     {
-      return CanPlacePiece(piece.Definition, destination, null, piece);
+      if (!IsFootprintOnBoard(piece.Definition, destination) ||
+          OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey) ||
+          (!mayUsePalaceSupport && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
+      {
+        return false;
+      }
+      return pieceSetup.IsFootprintClear(piece.Definition, destination, piece);
     }
 
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
@@ -2912,9 +2938,10 @@ internal sealed class Game1 : Game
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        bool terrainBlocks = piece.Definition.Type != PieceType.Elephant && !IsTraversableTerrainSquare(occupiedSquare);
-        bool elephantBarrier = piece.Definition.Type == PieceType.Elephant && _barricades.ContainsKey(occupiedSquare);
-        if (terrainBlocks || elephantBarrier ||
+        bool ignoresTerrain = piece.Definition.Type == PieceType.Elephant ||
+          IsPalaceAssistedMovement(piece, from, destination);
+        bool terrainBlocks = !ignoresTerrain && !IsTraversableTerrainSquare(occupiedSquare);
+        if (terrainBlocks || _barricades.ContainsKey(occupiedSquare) ||
             !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
@@ -2945,15 +2972,21 @@ internal sealed class Game1 : Game
 
   private int GetMovementCost(Piece piece, (int x, int y) destination)
   {
+    return GetMovementCost(piece, piece.Position, destination);
+  }
+
+  private int GetMovementCost(Piece piece, (int x, int y) from, (int x, int y) destination)
+  {
     if (piece.Definition.Type == PieceType.Elephant)
     {
       return 1;
     }
     int cost = 0;
+    bool ignoresTerrain = IsPalaceAssistedMovement(piece, from, destination);
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       bool usesOwnedRoad = UsesRoad(piece.Team, occupiedSquare);
-      if (_terrain.IsForest(occupiedSquare) && !usesOwnedRoad)
+      if (_terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain)
       {
         cost = Math.Max(cost, 2);
       }
@@ -2977,7 +3010,7 @@ internal sealed class Game1 : Game
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
-    if (piece.Definition.Type == PieceType.Elephant)
+    if (piece.Definition.Type == PieceType.Elephant || IsPalaceAssistedMovement(piece, from, to))
     {
       return false;
     }
@@ -3301,7 +3334,7 @@ internal sealed class Game1 : Game
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentPieceOfType(damagedPiece, PieceType.King, damagedPiece.Team),
+      HasAdjacentPieceOfType(damagedPiece, PieceType.Baron, damagedPiece.Team),
       IsPieceInForest(damagedPiece),
       _terrain.ForestDamageReduction
     );
@@ -3732,7 +3765,8 @@ internal sealed class Game1 : Game
       foreach (Piece candidate in pieceSetup.Pieces)
       {
         if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null && !IsTreasureCarrier(candidate) &&
-            candidate.Definition.Size == (1, 1) && AreAdjacent(piece, candidate))
+            AbilityRules.IsEmissaryCompanion(
+              UnitRules.GetRequired(candidate.Definition.Type.ToString()), piece.Position, candidate.Position))
         {
           companions.Add(candidate);
         }

@@ -30,11 +30,17 @@ internal static class MovementPathfinder
     Func<(int x, int y), (int x, int y), bool> canTravelThrough,
     Func<(int x, int y), int> landingCost,
     Func<(int x, int y), (int x, int y), bool> crossesRiver,
-    UnitRule movementRule = null
+    UnitRule movementRule = null,
+    Func<(int x, int y), (int x, int y), int> stepCost = null,
+    Func<(int x, int y), int> movementRangeAt = null,
+    int? maximumMovementRange = null
   )
   {
     UnitRule rule = movementRule ?? UnitRules.GetRequired(piece.Definition.Type.ToString());
     NetworkTeam team = piece.Team.ToNetworkTeam();
-    return MovementRules.FindPaths(rule, piece.Position, team, canLand, canTravelThrough, landingCost, crossesRiver);
+    return MovementRules.FindPaths(
+      rule, piece.Position, team, canLand, canTravelThrough, landingCost, crossesRiver,
+      stepCost, movementRangeAt, maximumMovementRange
+    );
   }
 }

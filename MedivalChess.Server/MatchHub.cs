@@ -355,7 +355,9 @@ public sealed class MatchStore
         piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
       }
 
-      if (!CanLandAt(foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY)))
+      if (!CanLandAt(
+        foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY),
+        HasPalaceSupport(foundMatch, piece)))
       {
         return new(false, "That destination is not available.", foundMatch.State());
       }
@@ -1179,20 +1181,31 @@ public sealed class MatchStore
       rule,
       (piece.X, piece.Y),
       piece.Team,
-      destination => CanLandAt(match, piece, rule, destination),
+      destination => CanLandAt(match, piece, rule, destination, HasPalaceSupport(match, piece)),
       (from, to) => CanTravelThrough(match, piece, rule, from, to),
       destination => GetMovementCost(match, piece, rule, destination),
-      (from, to) => CrossesRiver(match, rule, from, to)
+      (from, to) => CrossesRiver(match, piece, rule, from, to),
+      (from, destination) => GetMovementCost(match, piece, rule, from, destination),
+      destination => rule.MoveRange + (IsPalaceAssistedMovement(
+        match, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
+      rule.MoveRange + (HasPalaceSupport(match, piece) ? 1 : 0)
     );
     return paths.TryGetValue((destinationX, destinationY), out path!);
   }
 
-  private static bool CanLandAt(Match match, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
+  private static bool CanLandAt(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) destination,
+    bool mayUsePalaceSupport = false
+  )
   {
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      if ((piece.Type != "Elephant" && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+      if ((piece.Type != "Elephant" && !mayUsePalaceSupport && match.Terrain.IsLake(square)) ||
+          match.Barricades.ContainsKey(square)) return false;
     }
 
     HashSet<string> ignoredPieces = match.Pieces
@@ -1241,8 +1254,10 @@ public sealed class MatchStore
     foreach ((int x, int y) position in PositionsBetween(from, destination))
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
+        bool ignoresTerrain = piece.Type == "Elephant" ||
+          IsPalaceAssistedMovement(match, piece, rule, from, destination);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
-            (piece.Type != "Elephant" && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+            (!ignoresTerrain && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
 
         NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
@@ -1255,21 +1270,39 @@ public sealed class MatchStore
 
   private static int GetMovementCost(Match match, NetworkPiece piece, UnitRule rule, (int x, int y) destination)
   {
+    return GetMovementCost(match, piece, rule, (piece.X, piece.Y), destination);
+  }
+
+  private static int GetMovementCost(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) from,
+    (int x, int y) destination
+  )
+  {
     if (rule.Type == "Elephant") return 1;
     int cost = 0;
+    bool ignoresTerrain = IsPalaceAssistedMovement(match, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = match.Roads.TryGetValue(square, out NetworkTeam roadOwner) && roadOwner == piece.Team;
-      cost = Math.Max(cost, match.Terrain.IsForest(square) && !usesOwnedRoad
+      cost = Math.Max(cost, match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
         ? 2
         : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1);
     }
     return cost;
   }
 
-  private static bool CrossesRiver(Match match, UnitRule rule, (int x, int y) from, (int x, int y) to)
+  private static bool CrossesRiver(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
   {
-    if (rule.Type == "Elephant") return false;
+    if (rule.Type == "Elephant" || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
     foreach ((int x, int y) fromSquare in OccupiedSquares(rule, from))
     {
       var toSquare = (fromSquare.x + to.x - from.x, fromSquare.y + to.y - from.y);
@@ -1279,6 +1312,24 @@ public sealed class MatchStore
       }
     }
     return false;
+  }
+
+  private static bool HasPalaceSupport(Match match, NetworkPiece piece) =>
+    piece.Type != "Palace" && match.Pieces.Any(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == "Palace");
+
+  private static bool IsPalaceAssistedMovement(
+    Match match,
+    NetworkPiece piece,
+    UnitRule movingRule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
+  {
+    NetworkPiece? palace = match.Pieces.FirstOrDefault(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == "Palace");
+    return palace is not null && UnitRules.TryGet(palace.Type, out UnitRule palaceRule) &&
+      AbilityRules.MovesTowardPalace(movingRule, from, to, palaceRule, (palace.X, palace.Y));
   }
 
   private static bool HasClearAttackPath(Match match, NetworkPiece attacker, (int x, int y) targetPosition, string? targetId)
@@ -1371,7 +1422,7 @@ public sealed class MatchStore
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "King"),
+      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "Baron"),
       IsInForest(match, damagedPiece),
       match.Terrain.ForestDamageReduction
     );
@@ -1591,7 +1642,7 @@ public sealed class MatchStore
       .Select((piece, index) => (piece, index))
       .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Id != match.TreasureCarrierId && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
         UnitRules.TryGet(entry.piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        Math.Abs(entry.piece.X - oldEmissaryX) + Math.Abs(entry.piece.Y - oldEmissaryY) == 1)
+        AbilityRules.IsEmissaryCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y)))
       .Select(entry => entry.index).ToList();
     foreach (int index in companions)
     {
@@ -1947,8 +1998,7 @@ public sealed class MatchStore
     }
 
     int farmCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
-    int palaceCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Palace");
-    long income = farmCount * (long)match.Configuration.FarmIncomePerTurn + palaceCount * 5L;
+    long income = farmCount * (long)match.Configuration.FarmIncomePerTurn;
     if (income != 0)
     {
       player.Money = ClampCurrency((long)player.Money + income);

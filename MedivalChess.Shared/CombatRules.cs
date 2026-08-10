@@ -13,14 +13,14 @@ public static class CombatRules
     int baseDamage,
     bool hasBaronBonus,
     bool isSpyMarked,
-    bool hasKingProtection,
+    bool hasDamageReduction,
     bool isInForest,
     int forestDamageReduction
   )
   {
     int damage = baseDamage + (hasBaronBonus ? 5 : 0);
     if (isSpyMarked) damage *= 2;
-    if (hasKingProtection) damage = Math.Max(5, damage - 5);
+    if (hasDamageReduction) damage = Math.Max(5, damage - 5);
     return isInForest ? Math.Max(1, damage - forestDamageReduction) : damage;
   }
 }
@@ -46,6 +46,8 @@ public static class LineOfSightRules
       if (!TeamRules.GetActiveTeams(4).Any(team => UnitRules.CanAttackOffset(
         attacker.AttackPattern, attacker.MinimumAttackRange, attacker.AttackRange,
         team, deltaX, deltaY))) continue;
+
+      if (AbilityRules.AttacksOverObstacles(attacker)) return true;
 
       bool clear = true;
       foreach ((int x, int y) square in SquaresBetween(origin, target))
