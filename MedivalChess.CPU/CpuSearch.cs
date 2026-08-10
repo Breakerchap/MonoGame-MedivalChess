@@ -190,8 +190,9 @@ public sealed class CpuPlayer : ICpuPlayer
 
       int parallelism = GetParallelism(settings);
       // A large beam previously ran as one indivisible Parallel.For call. On a busy board that
-      // could overrun the advertised time budget by an entire layer. Small ordered batches leave
-      // a precise cancellation/time checkpoint between waves without changing the final ordering.
+      // could overrun the advertised time budget by an entire layer. Small ordered batches let
+      // the CPU finish a little in-flight work after the soft deadline, then stop before it
+      // starts another wave.
       foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
       {
         if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
@@ -347,20 +348,35 @@ public sealed class CpuPlayer : ICpuPlayer
       return nearbyNeutralHires;
     }
 
-    if (state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) &&
-        cpuTeam.Money >= CpuActionCandidateSelector.CombatPurchaseReserveThreshold)
+    // A move that ends the match remains urgent, but ordinary purchases are deliberately left
+    // to the army planner's counter/reserve/economy scores. Forcing every high-cash position
+    // into the combat-purchase family was what caused one-unit spam and starved safe farms.
+    ScoredAction[] immediateWins = candidates.Where(candidate => candidate.Action is MoveAction &&
+      CpuGameRules.ApplyLegal(state, candidate.Action).IsFinished).ToArray();
+    if (immediateWins.Length > 0)
     {
-      ScoredAction[] immediateWins = candidates.Where(candidate => candidate.Action is MoveAction &&
-        CpuGameRules.ApplyLegal(state, candidate.Action).IsFinished).ToArray();
-      if (immediateWins.Length > 0)
-      {
-        return immediateWins;
-      }
+      return immediateWins;
+    }
+
+    if (state.Teams.TryGetValue(team, out CpuTeamState? cpuTeam) && cpuTeam.Money >= 80)
+    {
       ScoredAction[] combatPurchases = candidates.Where(candidate => candidate.Action is PurchaseAction purchase &&
         UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0).ToArray();
       if (combatPurchases.Length > 0)
       {
-        return combatPurchases;
+        float bestCombatScore = combatPurchases.Max(candidate => candidate.Score);
+        // The planner may correctly decide that a protected farm is the best spend on a quiet
+        // board. Retain it only when it genuinely beats the best available combat role; otherwise
+        // spend the surplus on one of the counter-aware combat candidates.
+        ScoredAction[] highValueSpends = candidates.Where(candidate => candidate.Action is PurchaseAction purchase &&
+          (UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0 ||
+           purchase.UnitType == "Farm" && candidate.Score >= bestCombatScore))
+          .Where(candidate => candidate.Score >= bestCombatScore - 16f)
+          .ToArray();
+        if (highValueSpends.Length > 0)
+        {
+          return highValueSpends;
+        }
       }
     }
 
@@ -399,9 +415,11 @@ public sealed class CpuPlayer : ICpuPlayer
   {
     List<ICpuGameAction> verified = [];
     CpuGameState current = state;
-    // Difficulty changes only the deadline. Every level keeps the same tactical policy once a
-    // plan is selected, including resolving available attacks before ending an unlimited turn.
-    const bool preserveAvailableAttacks = true;
+    // Difficulty changes only the deadline. Every normal profile keeps the same tactical policy
+    // once a plan is selected, including resolving available attacks before ending an unlimited
+    // turn. A deliberately one-node caller requested exactly one analysed action, so do not add
+    // an unsearched follow-up that was not legal in the original snapshot.
+    bool preserveAvailableAttacks = profile.Search.MaxSearchNodes > 1;
     foreach (ICpuGameAction action in actions)
     {
       // A narrow beam can settle on a quiet continuation after an earlier attack. In an
@@ -438,6 +456,36 @@ public sealed class CpuPlayer : ICpuPlayer
       }
       verified.Add(availableAttack);
       current = availableAttack.Apply(current);
+    }
+    if (!Globals.ActionLimitsEnabled && actions.Any(action => action is MoveAction) &&
+        current.CurrentTurn == team && !current.IsFinished)
+    {
+      // Unlimited turns are intended to let every unit contribute once. If the bounded beam has
+      // already committed to moving this turn, finish the remaining legal unit moves rather than
+      // end after only the highest-scored one. Recheck attacks after every movement so a newly
+      // created firing line is still resolved before the turn ends.
+      while (current.CurrentTurn == team && !current.IsFinished)
+      {
+        AttackAction? availableAttack = _actionGenerator.GenerateSearchActions(current, team, 1)
+          .OfType<AttackAction>()
+          .FirstOrDefault(candidate => candidate.TargetPieceId is not null);
+        if (availableAttack is not null)
+        {
+          verified.Add(availableAttack);
+          current = availableAttack.Apply(current);
+          continue;
+        }
+
+        MoveAction? availableMove = _actionGenerator.GenerateSearchActions(current, team, 1)
+          .OfType<MoveAction>()
+          .FirstOrDefault();
+        if (availableMove is null)
+        {
+          break;
+        }
+        verified.Add(availableMove);
+        current = availableMove.Apply(current);
+      }
     }
     if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
     {
@@ -761,9 +809,9 @@ public sealed class CpuPlayer : ICpuPlayer
   }
 
   private static int GetEvaluationBatchSize(int parallelism) => Math.Clamp(
-    Math.Max(1, parallelism) * 8,
-    8,
-    48
+    Math.Max(1, parallelism) * 2,
+    4,
+    16
   );
 
   private static bool ShouldAbortBranchEvaluation(
@@ -771,7 +819,20 @@ public sealed class CpuPlayer : ICpuPlayer
     CpuSearchSettings settings,
     CancellationToken cancellationToken
   ) => cancellationToken.IsCancellationRequested ||
-    stopwatch.ElapsedMilliseconds >= Math.Max(1, settings.MaxSearchMilliseconds);
+    stopwatch.ElapsedMilliseconds >= GetHardDeadlineMilliseconds(settings);
+
+  /// <summary>
+  /// The advertised limit is a soft search deadline: no new branch wave begins after it.
+  /// Let a small in-flight evaluation batch complete within this tightly bounded grace window so
+  /// the CPU can return its best completed line instead of discarding useful work at the exact
+  /// millisecond boundary. This is intentionally short even for Best to keep the UI responsive.
+  /// </summary>
+  private static int GetHardDeadlineMilliseconds(CpuSearchSettings settings)
+  {
+    int softDeadline = Math.Max(1, settings.MaxSearchMilliseconds);
+    int grace = Math.Clamp(softDeadline / 25, 12, 80);
+    return softDeadline + grace;
+  }
 
   private static bool ShouldStop(
     Stopwatch stopwatch,

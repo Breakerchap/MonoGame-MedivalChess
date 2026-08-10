@@ -20,19 +20,51 @@ public static class CpuStrategicHeuristics
     ["Spearman"] = ["Soldier", "Cavalier", "Knight", "Chariot"],
     ["Peasant"] = ["#DamagedExpensive"],
     ["Knight"] = ["Archer", "Spy", "Engineer", "Bombard", "Cannon", "Catapult", "Ballista", "Cavalier", "Soldier", "Defender", "Peasant", "Mercenary"],
-    ["Crossbowman"] = ["Soldier", "Defender", "Spearman", "Archer", "Spy", "Bombard", "Engineer", "Knight", "Elephant", "Mercenary"],
+    ["Crossbowman"] = ["Soldier", "Spearman", "Archer", "Spy", "Bombard", "Engineer", "Mercenary"],
     ["Cavalier"] = ["Archer", "Crossbowman", "Spy", "Engineer", "Bombard", "Cannon", "Catapult"],
-    ["Chariot"] = ["Archer", "Crossbowman", "Spy", "Engineer", "Bombard", "Cannon", "Catapult", "Ballista"],
-    ["Cannon"] = ["Knight", "Defender", "Guard", "Chariot", "$Mechanical", "$Large"],
+    ["Chariot"] = ["Archer", "Crossbowman", "Spy", "Engineer", "Bombard"],
+    ["Cannon"] = ["Knight", "Defender", "Guard", "$Mechanical", "$Large"],
     ["Spy"] = ["King", "Princess", "Palace", "Baron", "Emissary", "Elephant", "Knight", "Guard", "$Mechanical", "#HighHealth"],
     ["Catapult"] = ["Archer", "Crossbowman", "Spearman", "Cannon", "Ballista", "Bombard", "Engineer", "Princess", "Palace", "Baron", "Emissary"],
     ["Bombard"] = ["#Clustered"],
-    ["Ballista"] = ["Defender", "Knight", "Cavalier", "Chariot", "Baron", "Emissary", "$Mechanical", "$Large", "#Aligned"],
+    ["Ballista"] = ["Defender", "Baron", "Emissary", "$Mechanical", "$Large", "#Aligned"],
     ["Elephant"] = ["Peasant", "Defender", "#Barricade"],
     ["Mercenary"] = ["Archer", "Spy", "Engineer", "Bombard"],
     ["King"] = ["Peasant", "Soldier", "Defender", "Spearman", "Mercenary"],
     ["Princess"] = ["Archer", "Spearman", "Defender"],
     ["Baron"] = ["Peasant", "Soldier", "Defender"]
+  };
+
+  // The original table expressed only what each unit likes to fight. Combos.md also gives the
+  // reverse half of the relationship, which is crucial for recruitment: a unit that has a target
+  // must still be rejected when it will be immediately countered by the enemy formation.
+  private static readonly IReadOnlyDictionary<string, string[]> BadAgainst = new Dictionary<string, string[]>(StringComparer.Ordinal)
+  {
+    ["Soldier"] = ["Knight", "Crossbowman", "Chariot", "Cannon", "Defender"],
+    ["Defender"] = ["Cannon", "Crossbowman", "Ballista", "Bombard", "Spy"],
+    ["Archer"] = ["Knight", "Cavalier", "Chariot", "Crossbowman", "Catapult", "Princess"],
+    ["Spearman"] = ["Archer", "Crossbowman", "Catapult", "Princess"],
+    ["Peasant"] = ["Bombard", "Ballista", "Elephant"],
+    ["Knight"] = ["Cannon", "Crossbowman", "Ballista", "Spy"],
+    ["Crossbowman"] = ["Knight", "Cavalier", "Chariot", "Catapult", "Defender"],
+    ["Cavalier"] = ["Spearman", "Knight", "Defender"],
+    ["Chariot"] = ["Spearman", "Cannon", "Catapult", "Ballista"],
+    ["Cannon"] = ["Knight", "Cavalier", "Chariot", "Soldier", "Peasant"],
+    ["Spy"] = ["Archer", "Knight", "Cavalier", "Chariot", "Crossbowman"],
+    ["Catapult"] = ["Knight", "Cavalier", "Chariot"],
+    ["Bombard"] = ["Knight", "Cavalier", "Chariot", "Crossbowman"],
+    ["Ox"] = ["Knight", "Cavalier", "Chariot", "Crossbowman"],
+    ["Engineer"] = ["Archer", "Knight", "Cavalier", "Chariot", "Catapult"],
+    ["Ballista"] = ["Knight", "Cavalier", "Chariot"],
+    ["Elephant"] = ["Spy", "Cannon", "Ballista", "Crossbowman"],
+    ["Guard"] = ["Cannon", "Spy", "Bombard"],
+    ["Mercenary"] = ["Defender", "Knight", "Crossbowman"],
+    ["Farm"] = ["Knight", "Cavalier", "Chariot", "Cannon", "Catapult", "Ballista", "Bombard"],
+    ["King"] = ["Cannon", "Ballista", "Spy"],
+    ["Princess"] = ["Knight", "Cavalier", "Chariot", "Cannon", "Catapult", "Ballista"],
+    ["Palace"] = ["Cannon", "Catapult", "Ballista"],
+    ["Baron"] = ["Bombard", "Ballista", "Catapult"],
+    ["Emissary"] = ["Bombard", "Ballista"]
   };
 
   private static readonly HashSet<string> ValuableRanged = new(StringComparer.Ordinal)
@@ -78,6 +110,19 @@ public static class CpuStrategicHeuristics
     if (target.Type == "Cannon" && Distance(attacker, target) <= 1) score += 0.8f;
     if (attacker.Type is "Catapult" or "Bombard" && Distance(attacker, target) < attackerRule.MinimumAttackRange) score -= 0.65f;
     if (target.Type is "Catapult" or "Bombard" && Distance(attacker, target) < targetRule.MinimumAttackRange) score += 0.65f;
+    return score;
+  }
+
+  /// <summary>
+  /// Full counter relationship used for recruitment. The normal board evaluator stays focused on
+  /// concrete positions, while this adds the explicit "Bad against" half of Combos.md to reject
+  /// a new unit that would simply walk into an established counter formation.
+  /// </summary>
+  internal static float GetRecruitmentMatchupScore(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
+  {
+    float score = GetMatchupScore(state, attacker, target);
+    if (IsListedBadAgainst(state, attacker, target)) score -= 0.9f;
+    if (IsListedBadAgainst(state, target, attacker)) score += 0.9f;
     return score;
   }
 
@@ -201,7 +246,7 @@ public static class CpuStrategicHeuristics
     foreach (NetworkPiece enemy in state.Pieces.Where(piece => piece.Team != action.Team && piece.Team != NetworkTeam.Neutral &&
       piece.AttachedToId is null))
     {
-      score += GetMatchupScore(state, prototype, enemy) * 10f;
+      score += GetRecruitmentMatchupScore(state, prototype, enemy) * 10f;
     }
 
     score += action.UnitType switch
@@ -352,6 +397,10 @@ public static class CpuStrategicHeuristics
 
   private static bool IsListedGoodAgainst(CpuGameState state, NetworkPiece source, NetworkPiece target) =>
     GoodAgainst.TryGetValue(source.Type, out string[]? patterns) &&
+    patterns.Any(pattern => MatchesPattern(state, source, target, pattern));
+
+  private static bool IsListedBadAgainst(CpuGameState state, NetworkPiece source, NetworkPiece target) =>
+    BadAgainst.TryGetValue(source.Type, out string[]? patterns) &&
     patterns.Any(pattern => MatchesPattern(state, source, target, pattern));
 
   private static bool MatchesPattern(CpuGameState state, NetworkPiece source, NetworkPiece target, string pattern)

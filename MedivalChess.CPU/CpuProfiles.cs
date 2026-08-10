@@ -5,6 +5,12 @@ public sealed class CpuSearchSettings
 {
   public int BeamWidth { get; init; } = 12;
   public int CandidatesPerNode { get; init; } = 16;
+  /// <summary>
+  /// Hard ceiling for actions that survive strategic pruning. <see cref="CandidatesPerNode"/>
+  /// remains an outer compatibility/configuration cap; this lower ceiling makes short searches
+  /// spend their budget on distinct, plausible plans rather than near-identical placements.
+  /// </summary>
+  public int PromisingCandidatesPerNode { get; init; } = 16;
   public int OpponentBeamWidth { get; init; } = 6;
   public int OpponentActionsToPredict { get; init; } = 1;
   /// <summary>Extra attack-only plies after the ordinary turn horizon to resolve forcing exchanges.</summary>
@@ -23,7 +29,7 @@ public sealed class CpuSearchSettings
   /// Maximum worker threads used to evaluate independent search branches. Set to zero to use a
   /// conservative machine-dependent limit; one keeps the search single-threaded.
   /// </summary>
-  public int MaxParallelism { get; init; } = 1;
+  public int MaxParallelism { get; init; }
   public float Randomness { get; init; } = 0.05f;
 }
 
@@ -113,6 +119,8 @@ public sealed class CpuProfile
       RoyalSafety = 12f,
       AssetSafety = 7f,
       Formation = 1.2f,
+      // Recruitment now gives counter coverage and documented formations priority before the
+      // beam. Keep board evaluation balanced so it still favours concrete tactical lines.
       Matchups = 1.1f,
       StrategicPosition = 1.2f,
       Economy = 1f
@@ -123,6 +131,9 @@ public sealed class CpuProfile
       // common node cap is a failsafe; normal gameplay is governed by the time budget above.
       BeamWidth = 36,
       CandidatesPerNode = 48,
+      // The selector keeps at most this many strategically distinct actions.  It is shared by
+      // every difficulty, so the campaign CPU differs from Best only in thinking time.
+      PromisingCandidatesPerNode = 16,
       OpponentBeamWidth = 16,
       OpponentActionsToPredict = 5,
       TacticalExtensionDepth = 3,

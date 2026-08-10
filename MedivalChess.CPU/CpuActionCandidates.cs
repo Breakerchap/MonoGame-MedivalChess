@@ -18,8 +18,6 @@ public interface IActionCandidateSelector
 /// <summary>Ranks legal actions before beam search without changing their legality.</summary>
 public sealed class CpuActionCandidateSelector : IActionCandidateSelector
 {
-  internal const int CombatPurchaseReserveThreshold = 80;
-
   private readonly ICpuThreatMapBuilder _threatMapBuilder = new CpuThreatMapBuilder();
 
   public IReadOnlyList<ScoredAction> SelectCandidates(
@@ -38,18 +36,170 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     // an objective scan and farm-territory scan for every legal movement or purchase.
     IReadOnlyDictionary<string, NetworkPiece> piecesById = state.Pieces.ToDictionary(piece => piece.Id, StringComparer.Ordinal);
     (int x, int y)[] goals = GetGoalPositions(state, team).ToArray();
+    NetworkPiece[] relevantEnemies = state.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral &&
+      piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && (rule.Attack > 0 || piece.Type == "Farm"))
+      .ToArray();
     int? farmForwardProjection = legalActions.Any(action => action is PurchaseAction { UnitType: "Farm" })
       ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
       : null;
+    int candidateLimit = Math.Max(1, Math.Min(settings.CandidatesPerNode, settings.PromisingCandidatesPerNode));
+    IReadOnlyList<ICpuGameAction> actionsToScore = SelectActionsForDetailedScoring(
+      state, team, legalActions, piecesById, goals, relevantEnemies, farmForwardProjection, candidateLimit);
+    // Build the economy/counter doctrine once for the whole position. Every purchase then uses
+    // the same reading of the enemy army, counter reserve, combo partners, and home safety.
+    CpuArmyPlanner? armyPlan = actionsToScore.Any(action => action is PurchaseAction)
+      ? CpuArmyPlanner.Create(state, team)
+      : null;
 
-    ScoredAction[] ranked = legalActions
-      .Select(action => Score(state, team, action, piecesById, goals, farmForwardProjection,
-        personality ?? CpuPersonality.Balanced))
+    ScoredAction[] ranked = actionsToScore
+      .Select(action => Score(state, team, action, piecesById, goals, relevantEnemies, farmForwardProjection,
+        armyPlan, personality ?? CpuPersonality.Balanced))
       .OrderByDescending(candidate => candidate.Score)
       .ThenBy(candidate => candidate.Action.Kind)
       .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
       .ToArray();
-    return KeepTacticalDiversity(ranked, settings.CandidatesPerNode);
+    return KeepTacticalDiversity(KeepStrategicallyPromisingActions(ranked, candidateLimit), candidateLimit);
+  }
+
+  /// <summary>
+  /// Performs a cheap, rule-aware shortlist before the expensive simulated attack/move scoring.
+  /// Purchase generation can yield hundreds of legal squares for the same role; evaluating each
+  /// one would consume most of a short campaign turn before the beam begins. This stage keeps a
+  /// few distinct destinations per unit/role, while the detailed scorer makes the final choice.
+  /// </summary>
+  private static IReadOnlyList<ICpuGameAction> SelectActionsForDetailedScoring(
+    CpuGameState state,
+    NetworkTeam team,
+    IReadOnlyList<ICpuGameAction> legalActions,
+    IReadOnlyDictionary<string, NetworkPiece> piecesById,
+    IReadOnlyList<(int x, int y)> goals,
+    IReadOnlyList<NetworkPiece> relevantEnemies,
+    int? farmForwardProjection,
+    int candidateLimit
+  )
+  {
+    int scoringCapacity = Math.Clamp(candidateLimit * 4, 24, 64);
+    if (legalActions.Count <= scoringCapacity)
+    {
+      return legalActions;
+    }
+
+    List<ICpuGameAction> selected = [];
+    HashSet<string> seen = new(StringComparer.Ordinal);
+    void Add(ICpuGameAction action)
+    {
+      if (seen.Add(action.Describe())) selected.Add(action);
+    }
+
+    // A royal-targeting attack may be a forced win; preserve it before quota sampling.
+    foreach (AttackAction attack in legalActions.OfType<AttackAction>().Where(attack => attack.TargetPieceId is not null &&
+      piecesById.TryGetValue(attack.TargetPieceId, out NetworkPiece? target) && IsRoyalPiece(target))) Add(attack);
+
+    int attackQuota = Math.Max(6, scoringCapacity / 3);
+    foreach (AttackAction attack in legalActions.OfType<AttackAction>()
+      .OrderByDescending(attack => GetQuickAttackScore(attack, piecesById))
+      .ThenBy(attack => attack.Describe(), StringComparer.Ordinal)
+      .Take(attackQuota)) Add(attack);
+
+    int moveQuota = Math.Max(6, scoringCapacity / 3);
+    foreach (MoveAction move in legalActions.OfType<MoveAction>()
+      .GroupBy(move => move.PieceId, StringComparer.Ordinal)
+      .SelectMany(group => group
+        .OrderByDescending(move => GetQuickMoveScore(move, piecesById, goals, relevantEnemies))
+        .ThenBy(move => move.Describe(), StringComparer.Ordinal)
+        .Take(2))
+      .OrderByDescending(move => GetQuickMoveScore(move, piecesById, goals, relevantEnemies))
+      .ThenBy(move => move.Describe(), StringComparer.Ordinal)
+      .Take(moveQuota)) Add(move);
+
+    int purchaseQuota = Math.Max(8, scoringCapacity / 3);
+    foreach (PurchaseAction purchase in legalActions.OfType<PurchaseAction>()
+      .GroupBy(purchase => purchase.UnitType, StringComparer.Ordinal)
+      .SelectMany(group => group
+        .OrderByDescending(purchase => GetQuickPurchasePlacementScore(state, purchase, relevantEnemies, farmForwardProjection))
+        .ThenBy(purchase => purchase.Describe(), StringComparer.Ordinal)
+        .Take(2))
+      .OrderByDescending(purchase => GetQuickPurchasePlacementScore(state, purchase, relevantEnemies, farmForwardProjection))
+      .ThenBy(purchase => purchase.Describe(), StringComparer.Ordinal)
+      .Take(purchaseQuota)) Add(purchase);
+
+    int abilityQuota = Math.Max(3, scoringCapacity / 8);
+    foreach (UseAbilityAction ability in legalActions.OfType<UseAbilityAction>()
+      .Where(ability => ability.Ability == "PickUpTreasure")
+      .Concat(legalActions.OfType<UseAbilityAction>()
+        .GroupBy(ability => (ability.ActorId, ability.Ability))
+        .Select(group => group.OrderByDescending(ability => GetQuickAbilityScore(ability, piecesById)).First()))
+      .OrderByDescending(ability => GetQuickAbilityScore(ability, piecesById))
+      .ThenBy(ability => ability.Describe(), StringComparer.Ordinal)
+      .Take(abilityQuota)) Add(ability);
+
+    // End Turn only matters if no productive legal action exists, so leave it as the final
+    // fallback rather than spending detailed scoring on it every search node.
+    if (selected.Count == 0)
+    {
+      Add(legalActions[0]);
+    }
+    return selected;
+  }
+
+  private static float GetQuickAttackScore(AttackAction action, IReadOnlyDictionary<string, NetworkPiece> piecesById)
+  {
+    if (action.TargetPieceId is null || !piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target))
+    {
+      return 2f;
+    }
+    if (!UnitRules.TryGet(target.Type, out UnitRule rule)) return 2f;
+    float score = rule.Cost + rule.Attack * 1.5f + rule.Health * 0.15f;
+    if (rule.Category == RuleCategory.Royal) score += 500f;
+    if (target.Type == "Farm") score += 28f;
+    return score - target.Health * 0.1f;
+  }
+
+  private static bool IsRoyalPiece(NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+    rule.Category == RuleCategory.Royal;
+
+  private static float GetQuickMoveScore(
+    MoveAction action,
+    IReadOnlyDictionary<string, NetworkPiece> piecesById,
+    IReadOnlyList<(int x, int y)> goals,
+    IReadOnlyList<NetworkPiece> relevantEnemies
+  )
+  {
+    if (!piecesById.TryGetValue(action.PieceId, out NetworkPiece? piece)) return float.MinValue;
+    int goalProgress = goals.Count == 0 ? 0 :
+      goals.Min(goal => Distance((piece.X, piece.Y), goal)) - goals.Min(goal => Distance((action.DestinationX, action.DestinationY), goal));
+    int enemyProgress = relevantEnemies.Count == 0 ? 0 :
+      relevantEnemies.Min(enemy => Distance((piece.X, piece.Y), (enemy.X, enemy.Y))) -
+      relevantEnemies.Min(enemy => Distance((action.DestinationX, action.DestinationY), (enemy.X, enemy.Y)));
+    return goalProgress * 12f + enemyProgress * 1.5f;
+  }
+
+  private static float GetQuickPurchasePlacementScore(
+    CpuGameState state,
+    PurchaseAction action,
+    IReadOnlyList<NetworkPiece> relevantEnemies,
+    int? farmForwardProjection
+  )
+  {
+    if (action.UnitType == "Farm")
+    {
+      return CpuPlacementHeuristics.GetFarmProtectionScore(state, action.Team, action.X, action.Y, farmForwardProjection ?? 0);
+    }
+    bool neutralMercenary = action.UnitType == "Mercenary" && state.Pieces.Any(piece => piece.Team == NetworkTeam.Neutral &&
+      piece.Type == "Mercenary" && piece.X == action.X && piece.Y == action.Y);
+    int nearestEnemy = relevantEnemies.Select(enemy => Distance((action.X, action.Y), (enemy.X, enemy.Y))).DefaultIfEmpty(14).Min();
+    return (neutralMercenary ? 80f : 0f) + Math.Max(0, 14 - nearestEnemy);
+  }
+
+  private static float GetQuickAbilityScore(UseAbilityAction action, IReadOnlyDictionary<string, NetworkPiece> piecesById)
+  {
+    if (action.Ability == "PickUpTreasure") return 1_000f;
+    if (action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target) &&
+        UnitRules.TryGet(target.Type, out UnitRule rule))
+    {
+      return rule.Cost + rule.Attack + (rule.Category == RuleCategory.Royal ? 100f : 0f);
+    }
+    return action.Ability is "Barrier" or "Mine" ? 8f : 2f;
   }
 
   private ScoredAction Score(
@@ -58,13 +208,15 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     ICpuGameAction action,
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
     IReadOnlyList<(int x, int y)> goals,
+    IReadOnlyList<NetworkPiece> relevantEnemies,
     int? farmForwardProjection,
+    CpuArmyPlanner? armyPlan,
     CpuPersonality personality
   ) => action switch
   {
     AttackAction attack => AddStrategyScore(ScoreAttack(state, attack, piecesById), state, attack),
-    MoveAction move => AddStrategyScore(ScoreMove(state, team, move, piecesById, goals), state, move),
-    PurchaseAction purchase => AddStrategyScore(ScorePurchase(state, purchase, farmForwardProjection), state, purchase),
+    MoveAction move => AddStrategyScore(ScoreMove(state, team, move, piecesById, goals, relevantEnemies), state, move),
+    PurchaseAction purchase => AddStrategyScore(ScorePurchase(state, purchase, farmForwardProjection, armyPlan, personality), state, purchase),
     UseAbilityAction ability => AddStrategyScore(ScoreAbility(state, ability, personality), state, ability),
     EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
     StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
@@ -158,7 +310,8 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     NetworkTeam team,
     MoveAction action,
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
-    IReadOnlyList<(int x, int y)> goals
+    IReadOnlyList<(int x, int y)> goals,
+    IReadOnlyList<NetworkPiece> relevantEnemies
   )
   {
     if (!piecesById.TryGetValue(action.PieceId, out NetworkPiece? piece))
@@ -208,17 +361,35 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         : "Retreats or shelters the royal");
     }
 
-    score += ScoreMoveIntoAttackRange(state, action, piece);
-    score += ScoreApproachToEnemyRoyals(state, team, piece, action);
-    score += ScoreApproachToInvadersNearOwnRoyal(state, team, piece, action);
+    float firingSetup = ScoreMoveIntoAttackRange(state, action, piece);
+    float royalApproach = ScoreApproachToEnemyRoyals(state, team, piece, action);
+    float defensiveApproach = ScoreApproachToInvadersNearOwnRoyal(state, team, piece, action);
+    float battlefieldApproach = ScoreApproachToRelevantEnemy(relevantEnemies, action, piece);
+    score += firingSetup + royalApproach + defensiveApproach + battlefieldApproach;
 
-    return new ScoredAction(action, score, score > 0 ? "Advances toward a target or firing position" : "Repositions a unit");
+    // A narrow search cannot afford to spend branches on a move that neither makes progress,
+    // creates a firing line, protects home, nor improves contact with an enemy force. Formation
+    // bonuses from CpuStrategicHeuristics can still rescue a genuine combo move afterwards.
+    bool advancesGoal = goals.Count > 0 && newDistance < oldDistance;
+    if (!advancesGoal && firingSetup <= 0f && royalApproach <= 0f && defensiveApproach <= 0f && battlefieldApproach <= 0f)
+    {
+      score -= 18f;
+      return new ScoredAction(action, score, "Avoids an aimless reposition");
+    }
+
+    return new ScoredAction(action, score,
+      firingSetup > 0f ? "Creates an immediate firing line" :
+      defensiveApproach > 0f ? "Moves toward an invader threatening home assets" :
+      advancesGoal || royalApproach > 0f ? "Advances toward a target or objective" :
+      "Improves contact with the enemy force");
   }
 
   private static ScoredAction ScorePurchase(
     CpuGameState state,
     PurchaseAction action,
-    int? farmForwardProjection
+    int? farmForwardProjection,
+    CpuArmyPlanner? armyPlan,
+    CpuPersonality personality
   )
   {
     float affordability = state.Teams[action.Team].Money > 0 ? 2f : 0f;
@@ -226,8 +397,10 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     {
       float protection = CpuPlacementHeuristics.GetFarmProtectionScore(
         state, action.Team, action.X, action.Y, farmForwardProjection ?? 0);
-      return new ScoredAction(action, affordability + protection,
-        protection > 0f ? "Places a farm in protected rear terrain" : "Places an income-producing farm");
+      CpuRecruitmentAdvice advice = armyPlan?.EvaluatePurchase(action, UnitRules.GetRequired("Farm"), personality) ??
+        new CpuRecruitmentAdvice(0f, "Places an income-producing farm", false, false);
+      return new ScoredAction(action, affordability + protection + advice.Score,
+        advice.Reason);
     }
 
     NetworkPiece? neutralMercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&
@@ -235,11 +408,14 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     if (action.UnitType == "Mercenary" && neutralMercenary is not null &&
         UnitRules.TryGet("Mercenary", out UnitRule mercenaryRule) && neutralMercenary.Health >= mercenaryRule.Health)
     {
-      return new ScoredAction(action, 95f, "Hires a full-health neutral Mercenary for 15 gold");
+      CpuRecruitmentAdvice advice = armyPlan?.EvaluatePurchase(action, mercenaryRule, personality) ??
+        new CpuRecruitmentAdvice(0f, "Hires a full-health neutral Mercenary", false, false);
+      // A full-health neutral hire is a useful tactical discount, but it must still fit the
+      // counter plan and leave enough gold for a more important answer next turn.
+      return new ScoredAction(action, 42f + advice.Score, advice.Reason);
     }
 
     float score = affordability;
-    bool spendingReserve = false;
     if (UnitRules.TryGet(action.UnitType, out UnitRule purchasedRule) && purchasedRule.Attack > 0)
     {
       NetworkPiece[] enemies = state.Pieces.Where(piece => piece.Team != action.Team && piece.Team != NetworkTeam.Neutral &&
@@ -252,16 +428,6 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         score += 8f;
       }
 
-      int availableGold = state.Teams[action.Team].Money;
-      spendingReserve = availableGold >= CombatPurchaseReserveThreshold;
-      if (spendingReserve)
-      {
-        // A large unused balance cannot contest the board. Give combat purchases enough
-        // priority to beat quiet repositioning while still retaining the unit-specific checks
-        // below (for example, avoiding duplicate Ballistas and Mercenaries).
-        score += 40f + Math.Min(40f, (availableGold - CombatPurchaseReserveThreshold) * 0.5f) +
-          Math.Min(10f, purchasedRule.Attack * 0.25f);
-      }
     }
     int ownedCount = state.Pieces.Count(piece => piece.Team == action.Team && piece.AttachedToId is null &&
       piece.Type == action.UnitType);
@@ -302,9 +468,11 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         break;
     }
 
-    if (spendingReserve)
+    if (UnitRules.TryGet(action.UnitType, out UnitRule rule) && armyPlan is not null)
     {
-      reason = "Deploys a combat unit instead of hoarding gold";
+      CpuRecruitmentAdvice advice = armyPlan.EvaluatePurchase(action, rule, personality);
+      score += advice.Score;
+      reason = advice.Reason;
     }
     return new ScoredAction(action, score, reason);
   }
@@ -370,6 +538,25 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int oldDistance = invaders.Min(target => Distance((piece.X, piece.Y), (target.X, target.Y)));
     int newDistance = invaders.Min(target => Distance((action.DestinationX, action.DestinationY), (target.X, target.Y)));
     return (oldDistance - newDistance) * 3f;
+  }
+
+  private static float ScoreApproachToRelevantEnemy(
+    IReadOnlyList<NetworkPiece> relevantEnemies,
+    MoveAction action,
+    NetworkPiece piece
+  )
+  {
+    // This is deliberately broader than royal pursuit. Campaign battles often have to clear a
+    // defender, artillery piece, or farm before the royal is reachable; a short horizon still
+    // needs a reason to move a suitable unit toward that useful fight.
+    if (relevantEnemies.Count == 0)
+    {
+      return 0f;
+    }
+
+    int oldDistance = relevantEnemies.Min(target => Distance((piece.X, piece.Y), (target.X, target.Y)));
+    int newDistance = relevantEnemies.Min(target => Distance((action.DestinationX, action.DestinationY), (target.X, target.Y)));
+    return Math.Max(0, oldDistance - newDistance) * 1.5f;
   }
 
   private static bool HasImmediateBattlefieldRole(CpuGameState state, PurchaseAction action, int maximumDistance) => state.Pieces
@@ -455,6 +642,96 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
 
   private static int Distance((int x, int y) first, (int x, int y) second) =>
     Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
+
+  /// <summary>
+  /// Converts a wide legal-action list into a deliberately small set of strategically different
+  /// continuations. The beam therefore has room to search replies/deeper actions even on boards
+  /// with dozens of equivalent placements. Tactical families are retained before score-only
+  /// filling so one arbitrary cannon square cannot crowd out a counter purchase or useful move.
+  /// </summary>
+  private static IReadOnlyList<ScoredAction> KeepStrategicallyPromisingActions(
+    IReadOnlyList<ScoredAction> ranked,
+    int limit
+  )
+  {
+    int count = Math.Max(1, limit);
+    if (ranked.Count <= count || count == 1)
+    {
+      return ranked.Take(count).ToArray();
+    }
+
+    List<ScoredAction> selected = [];
+    HashSet<string> seen = new(StringComparer.Ordinal);
+    void Add(ScoredAction? candidate)
+    {
+      if (candidate is not null && selected.Count < count && seen.Add(candidate.Action.Describe()))
+      {
+        selected.Add(candidate);
+      }
+    }
+
+    // Mission-completing moves and forced attacks are never pruned merely because buying a
+    // counter has a large heuristic score. The first instance of each core family also preserves
+    // the tactical diversity required by a very small beam.
+    foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Score >= 900f).Take(2)) Add(candidate);
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is AttackAction));
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is MoveAction && IsPlausibleMove(candidate)));
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is PurchaseAction && IsPlausiblePurchase(candidate)));
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is UseAbilityAction && IsPlausibleAbility(candidate)));
+
+    int attackQuota = Math.Max(3, count / 2);
+    foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is AttackAction).Take(attackQuota)) Add(candidate);
+
+    // One movement plan per piece is normally enough at this horizon. Different destinations
+    // from the same piece tend to be symmetric unless they create a firing line, which is already
+    // represented by the score ordering above.
+    int moveQuota = Math.Max(2, count / 3);
+    foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is MoveAction && IsPlausibleMove(candidate))
+      .GroupBy(candidate => ((MoveAction)candidate.Action).PieceId, StringComparer.Ordinal)
+      .Select(group => group.First())
+      .Take(moveQuota)) Add(candidate);
+
+    // Purchase placement is especially combinatorial. Retain the best square for each unit
+    // role, rather than filling the beam with the same unit placed one tile apart. A farm is
+    // treated as its own role, so a safe economic investment can compete with a counter unit.
+    int purchaseQuota = Math.Max(3, count / 3);
+    foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is PurchaseAction && IsPlausiblePurchase(candidate))
+      .GroupBy(candidate => ((PurchaseAction)candidate.Action).UnitType, StringComparer.Ordinal)
+      .Select(group => group.First())
+      .Take(purchaseQuota)) Add(candidate);
+
+    foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is UseAbilityAction && IsPlausibleAbility(candidate)).Take(2)) Add(candidate);
+    foreach (ScoredAction candidate in ranked.Where(IsPlausibleAction)) Add(candidate);
+
+    // A damaged/stalemated position may have no action meeting the normal usefulness bars. Keep
+    // the highest-ranked legal action as a safe fallback rather than creating an empty branch.
+    if (selected.Count == 0)
+    {
+      Add(ranked[0]);
+    }
+    return selected
+      .OrderByDescending(candidate => candidate.Score)
+      .ThenBy(candidate => candidate.Action.Kind)
+      .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
+      .ToArray();
+  }
+
+  private static bool IsPlausibleAction(ScoredAction candidate) => candidate.Action switch
+  {
+    AttackAction => true,
+    MoveAction => IsPlausibleMove(candidate),
+    PurchaseAction => IsPlausiblePurchase(candidate),
+    UseAbilityAction => IsPlausibleAbility(candidate),
+    _ => false
+  };
+
+  private static bool IsPlausibleMove(ScoredAction candidate) => candidate.Score >= -20f;
+
+  private static bool IsPlausiblePurchase(ScoredAction candidate) => candidate.Score >= -30f ||
+    candidate.Reason.Contains("needed counter", StringComparison.Ordinal);
+
+  private static bool IsPlausibleAbility(ScoredAction candidate) => candidate.Action is UseAbilityAction { Ability: "PickUpTreasure" } ||
+    candidate.Score >= 8f;
 
   /// <summary>
   /// Keep one high-ranked action from each tactical family before filling the beam. This stops a
