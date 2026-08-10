@@ -1,0 +1,7 @@
+#! water: none;
+#! forest: none;
+#! name: Open Field;
+forest: []
+lake: []
+river: [
+]

@@ -134,7 +134,7 @@ internal sealed class TerrainPainterForm : Form
       Padding = new Padding(12, 8, 12, 0),
       ForeColor = Color.Gainsboro,
       BackColor = Color.FromArgb(32, 42, 53),
-      Text = "Forest/Lake: click or drag squares. River: click a start then an end, or drag. Right-drag erases. Ctrl+Z undoes. Middle-drag (or Space + drag) pans; mouse wheel zooms."
+      Text = "Forest/Lake: click or drag squares. River: click or drag across the two tiles its edge belongs between. Right-drag erases. Ctrl+Z undoes. Middle-drag (or Space + drag) pans; mouse wheel zooms."
     };
 
     Controls.Add(_viewport);
@@ -436,37 +436,40 @@ internal sealed class TerrainPainterForm : Form
 
   private void ApplyAtCell((int x, int y) cell, bool isInitialCell, PaintTool tool)
   {
-    HashSet<(int x, int y)> dirtyCells = [cell];
-    if (tool == PaintTool.Erase && !isInitialCell && _lastDragCell is { } previous)
-    {
-      foreach (TileEdge edge in GetRiverEdgesAlongGesture(previous, cell))
-      {
-        _rivers.Remove(edge);
-        dirtyCells.Add(edge.First);
-        dirtyCells.Add(edge.Second);
-      }
-    }
+    IEnumerable<(int x, int y)> paintedCells = !isInitialCell && _lastDragCell is { } previous
+      ? GetCellsAlongGesture(previous, cell)
+      : [cell];
+    HashSet<(int x, int y)> dirtyCells = [];
 
-    switch (tool)
+    foreach ((int x, int y) paintedCell in paintedCells)
     {
-      case PaintTool.Forest:
-        _lakes.Remove(cell);
-        _forests.Add(cell);
-        break;
-      case PaintTool.Lake:
-        _forests.Remove(cell);
-        _lakes.Add(cell);
-        break;
-      case PaintTool.Erase when isInitialCell:
-        _forests.Remove(cell);
-        _lakes.Remove(cell);
-        foreach (TileEdge edge in _rivers.Where(edge => edge.First == cell || edge.Second == cell).ToArray())
-        {
-          _rivers.Remove(edge);
-          dirtyCells.Add(edge.First);
-          dirtyCells.Add(edge.Second);
-        }
-        break;
+      if (!_board.ContainsCell(paintedCell))
+      {
+        continue;
+      }
+
+      dirtyCells.Add(paintedCell);
+      switch (tool)
+      {
+        case PaintTool.Forest:
+          _lakes.Remove(paintedCell);
+          _forests.Add(paintedCell);
+          break;
+        case PaintTool.Lake:
+          _forests.Remove(paintedCell);
+          _lakes.Add(paintedCell);
+          break;
+        case PaintTool.Erase:
+          _forests.Remove(paintedCell);
+          _lakes.Remove(paintedCell);
+          foreach (TileEdge edge in _rivers.Where(edge => edge.First == paintedCell || edge.Second == paintedCell).ToArray())
+          {
+            _rivers.Remove(edge);
+            dirtyCells.Add(edge.First);
+            dirtyCells.Add(edge.Second);
+          }
+          break;
+      }
     }
 
     UpdateSummary();
@@ -476,8 +479,12 @@ internal sealed class TerrainPainterForm : Form
   private void PaintRiverBetween((int x, int y) start, (int x, int y) end)
   {
     HashSet<(int x, int y)> dirtyCells = [start, end];
-    foreach (TileEdge edge in GetRiverEdgesAlongGesture(start, end))
+    foreach (TileEdge edge in GetEdgesBetween(start, end))
     {
+      if (!_board.ContainsCell(edge.First) || !_board.ContainsCell(edge.Second))
+      {
+        continue;
+      }
       _rivers.Add(edge);
       dirtyCells.Add(edge.First);
       dirtyCells.Add(edge.Second);
@@ -486,47 +493,38 @@ internal sealed class TerrainPainterForm : Form
     InvalidateTerrainCells(dirtyCells);
   }
 
-  /// <summary>
-  /// A river is stored as an edge between two cells, so its visual direction is
-  /// perpendicular to the adjacent-cell relationship. This maps the gesture to
-  /// the visually expected result: drag sideways for a horizontal river.
-  /// </summary>
-  private IEnumerable<TileEdge> GetRiverEdgesAlongGesture((int x, int y) start, (int x, int y) end)
+  /// <summary>Fills gaps when the pointer crosses several cells between mouse-move events.</summary>
+  private static IEnumerable<(int x, int y)> GetCellsAlongGesture((int x, int y) start, (int x, int y) end)
   {
+    int x = start.x;
+    int y = start.y;
     int deltaX = Math.Abs(end.x - start.x);
     int deltaY = Math.Abs(end.y - start.y);
-    if (deltaX >= deltaY)
-    {
-      int edgeY = FindHorizontalRiverRow(start);
-      for (int x = Math.Min(start.x, end.x); x <= Math.Max(start.x, end.x); x++)
-      {
-        (int x, int y) above = (x, edgeY);
-        (int x, int y) below = (x, edgeY + 1);
-        if (_board.ContainsCell(above) && _board.ContainsCell(below))
-        {
-          yield return TileEdge.Between(above, below);
-        }
-      }
-      yield break;
-    }
+    int stepX = Math.Sign(end.x - start.x);
+    int stepY = Math.Sign(end.y - start.y);
+    int error = deltaX - deltaY;
 
-    int edgeX = FindVerticalRiverColumn(start);
-    for (int y = Math.Min(start.y, end.y); y <= Math.Max(start.y, end.y); y++)
+    while (true)
     {
-      (int x, int y) left = (edgeX, y);
-      (int x, int y) right = (edgeX + 1, y);
-      if (_board.ContainsCell(left) && _board.ContainsCell(right))
+      yield return (x, y);
+      if (x == end.x && y == end.y)
       {
-        yield return TileEdge.Between(left, right);
+        yield break;
+      }
+
+      int doubledError = error * 2;
+      if (doubledError > -deltaY)
+      {
+        error -= deltaY;
+        x += stepX;
+      }
+      if (doubledError < deltaX)
+      {
+        error += deltaX;
+        y += stepY;
       }
     }
   }
-
-  private int FindHorizontalRiverRow((int x, int y) cell) =>
-    _board.ContainsCell((cell.x, cell.y + 1)) ? cell.y : cell.y - 1;
-
-  private int FindVerticalRiverColumn((int x, int y) cell) =>
-    _board.ContainsCell((cell.x + 1, cell.y)) ? cell.x : cell.x - 1;
 
   private static IEnumerable<TileEdge> GetEdgesBetween((int x, int y) start, (int x, int y) end)
   {

@@ -38,13 +38,13 @@ dotnet restore
 
 Publish a self-contained release for the target platform. Each command places the packaged game in `publish/<runtime>`:
 
-| Platform | Runtime identifier | Command |
-| --- | --- | --- |
-| Linux Intel/AMD 64-bit | `linux-x64` | `dotnet publish MedivalChess.csproj -c Release -r linux-x64 --self-contained true -o publish/linux-x64` |
-| Linux ARM 64-bit | `linux-arm64` | `dotnet publish MedivalChess.csproj -c Release -r linux-arm64 --self-contained true -o publish/linux-arm64` |
-| macOS Intel | `osx-x64` | `dotnet publish MedivalChess.csproj -c Release -r osx-x64 --self-contained true -o publish/osx-x64` |
-| macOS Apple silicon | `osx-arm64` | `dotnet publish MedivalChess.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64` |
-| Windows Intel/AMD 64-bit | `win-x64` | `dotnet publish MedivalChess.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64` |
+| Platform                 | Runtime identifier | Command                                                                                                     |
+| ------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Linux Intel/AMD 64-bit   | `linux-x64`        | `dotnet publish MedivalChess.csproj -c Release -r linux-x64 --self-contained true -o publish/linux-x64`     |
+| Linux ARM 64-bit         | `linux-arm64`      | `dotnet publish MedivalChess.csproj -c Release -r linux-arm64 --self-contained true -o publish/linux-arm64` |
+| macOS Intel              | `osx-x64`          | `dotnet publish MedivalChess.csproj -c Release -r osx-x64 --self-contained true -o publish/osx-x64`         |
+| macOS Apple silicon      | `osx-arm64`        | `dotnet publish MedivalChess.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64`     |
+| Windows Intel/AMD 64-bit | `win-x64`          | `dotnet publish MedivalChess.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64`         |
 
 On Linux and macOS, make the published executable runnable before starting it:
 
@@ -63,3 +63,6 @@ On Windows, run `publish/win-x64/MedivalChess.exe`. If MonoGame content has not 
 ```bash
 dotnet mgcb Content/Content.mgcb
 ```
+
+### Run Terrain Painter:
+` `
