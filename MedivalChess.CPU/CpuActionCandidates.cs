@@ -50,10 +50,12 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     CpuArmyPlanner? armyPlan = actionsToScore.Any(action => action is PurchaseAction)
       ? CpuArmyPlanner.Create(state, team)
       : null;
+    bool hasImmediateAttack = legalActions.OfType<AttackAction>().Any();
+    bool hasMoveAvailable = legalActions.OfType<MoveAction>().Any();
 
     ScoredAction[] ranked = actionsToScore
       .Select(action => Score(state, team, action, piecesById, goals, relevantEnemies, farmForwardProjection,
-        armyPlan, personality ?? CpuPersonality.Balanced))
+        armyPlan, personality ?? CpuPersonality.Balanced, hasImmediateAttack, hasMoveAvailable))
       .OrderByDescending(candidate => candidate.Score)
       .ThenBy(candidate => candidate.Action.Kind)
       .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
@@ -105,10 +107,10 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     foreach (MoveAction move in legalActions.OfType<MoveAction>()
       .GroupBy(move => move.PieceId, StringComparer.Ordinal)
       .SelectMany(group => group
-        .OrderByDescending(move => GetQuickMoveScore(move, piecesById, goals, relevantEnemies))
+        .OrderByDescending(move => GetQuickMoveScore(state, move, piecesById, goals, relevantEnemies))
         .ThenBy(move => move.Describe(), StringComparer.Ordinal)
         .Take(2))
-      .OrderByDescending(move => GetQuickMoveScore(move, piecesById, goals, relevantEnemies))
+      .OrderByDescending(move => GetQuickMoveScore(state, move, piecesById, goals, relevantEnemies))
       .ThenBy(move => move.Describe(), StringComparer.Ordinal)
       .Take(moveQuota)) Add(move);
 
@@ -159,6 +161,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     rule.Category == RuleCategory.Royal;
 
   private static float GetQuickMoveScore(
+    CpuGameState state,
     MoveAction action,
     IReadOnlyDictionary<string, NetworkPiece> piecesById,
     IReadOnlyList<(int x, int y)> goals,
@@ -171,7 +174,9 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int enemyProgress = relevantEnemies.Count == 0 ? 0 :
       relevantEnemies.Min(enemy => Distance((piece.X, piece.Y), (enemy.X, enemy.Y))) -
       relevantEnemies.Min(enemy => Distance((action.DestinationX, action.DestinationY), (enemy.X, enemy.Y)));
-    return goalProgress * 12f + enemyProgress * 1.5f;
+    return goalProgress * 16f + enemyProgress * 3f +
+      ScoreApproachToPriorityTargets(state, action.Team, piece, action) +
+      ScoreCounterEngagement(state, piece, action);
   }
 
   private static float GetQuickPurchasePlacementScore(
@@ -211,17 +216,106 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     IReadOnlyList<NetworkPiece> relevantEnemies,
     int? farmForwardProjection,
     CpuArmyPlanner? armyPlan,
-    CpuPersonality personality
-  ) => action switch
+    CpuPersonality personality,
+    bool hasImmediateAttack,
+    bool hasMoveAvailable
+  )
   {
-    AttackAction attack => AddStrategyScore(ScoreAttack(state, attack, piecesById), state, attack),
-    MoveAction move => AddStrategyScore(ScoreMove(state, team, move, piecesById, goals, relevantEnemies), state, move),
-    PurchaseAction purchase => AddStrategyScore(ScorePurchase(state, purchase, farmForwardProjection, armyPlan, personality), state, purchase),
-    UseAbilityAction ability => AddStrategyScore(ScoreAbility(state, ability, personality), state, ability),
-    EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
-    StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
-    _ => new ScoredAction(action, 0f, "Legal action")
-  };
+    ScoredAction candidate = action switch
+    {
+      AttackAction attack => AddStrategyScore(ScoreAttack(state, attack, piecesById), state, attack),
+      MoveAction move => AddStrategyScore(ScoreMove(state, team, move, piecesById, goals, relevantEnemies), state, move),
+      PurchaseAction purchase => AddStrategyScore(ScorePurchase(state, purchase, farmForwardProjection, armyPlan, personality), state, purchase),
+      UseAbilityAction ability => AddStrategyScore(ScoreAbility(state, ability, personality), state, ability),
+      EndTurnAction => new ScoredAction(action, -25f, "Ends the remaining actions"),
+      StopInitialBuyingAction => new ScoredAction(action, -10f, "Stops the opening buy phase"),
+      _ => new ScoredAction(action, 0f, "Legal action")
+    };
+
+    candidate = ApplyActionUrgency(state, action, candidate, hasImmediateAttack, hasMoveAvailable);
+    return ApplyActionSafety(state, team, action, candidate);
+  }
+
+  private static ScoredAction ApplyActionUrgency(
+    CpuGameState state,
+    ICpuGameAction action,
+    ScoredAction candidate,
+    bool hasImmediateAttack,
+    bool hasMoveAvailable
+  )
+  {
+    if (action is AttackAction)
+    {
+      return candidate with { Score = candidate.Score + 180f, Reason = $"{candidate.Reason}; takes an available attack" };
+    }
+
+    float penalty = 0f;
+    if (hasImmediateAttack)
+    {
+      penalty += action switch
+      {
+        PurchaseAction => 110f,
+        UseAbilityAction => 80f,
+        EndTurnAction => 220f,
+        MoveAction move when state.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId) is NetworkPiece mover &&
+          state.Pieces.Any(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral &&
+            target.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, mover, target)) => 150f,
+        _ => 0f
+      };
+    }
+
+    if (hasMoveAvailable && action is PurchaseAction or UseAbilityAction)
+    {
+      penalty += 20f;
+    }
+    return penalty <= 0f
+      ? candidate
+      : candidate with { Score = candidate.Score - penalty, Reason = $"{candidate.Reason}; defers a more urgent board action" };
+  }
+
+  private static ScoredAction ApplyActionSafety(
+    CpuGameState state,
+    NetworkTeam team,
+    ICpuGameAction action,
+    ScoredAction candidate
+  )
+  {
+    CpuGameState result;
+    NetworkPiece? exposedPiece;
+    switch (action)
+    {
+      case MoveAction move:
+        result = CpuGameRules.ApplyLegal(state, move);
+        exposedPiece = result.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId);
+        break;
+      case PurchaseAction purchase:
+        result = CpuGameRules.ApplyLegal(state, purchase);
+        exposedPiece = result.Pieces.FirstOrDefault(piece => piece.Team == team && piece.Type == purchase.UnitType &&
+          piece.X == purchase.X && piece.Y == purchase.Y);
+        break;
+      default:
+        return candidate;
+    }
+
+    if (exposedPiece is null || exposedPiece.Team != team)
+    {
+      return candidate;
+    }
+
+    CpuTacticalSafety.Assessment assessment = CpuTacticalSafety.Assess(result, team, exposedPiece);
+    float penalty = CpuTacticalSafety.GetActionRiskPenalty(result, exposedPiece, assessment);
+    if (penalty <= 0f)
+    {
+      return candidate;
+    }
+
+    string danger = assessment.IsDirectlyLethal
+      ? "avoids an immediate kill"
+      : assessment.CanBeKilledAfterAnEnemyMove
+        ? "avoids a move-and-attack kill"
+        : "reduces enemy attack exposure";
+    return candidate with { Score = candidate.Score - penalty, Reason = $"{candidate.Reason}; {danger}" };
+  }
 
   private static ScoredAction AddStrategyScore(ScoredAction candidate, CpuGameState state, ICpuGameAction action)
   {
@@ -365,13 +459,16 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     float royalApproach = ScoreApproachToEnemyRoyals(state, team, piece, action);
     float defensiveApproach = ScoreApproachToInvadersNearOwnRoyal(state, team, piece, action);
     float battlefieldApproach = ScoreApproachToRelevantEnemy(relevantEnemies, action, piece);
-    score += firingSetup + royalApproach + defensiveApproach + battlefieldApproach;
+    float priorityTargetApproach = ScoreApproachToPriorityTargets(state, team, piece, action);
+    float counterEngagement = ScoreCounterEngagement(state, piece, action);
+    score += firingSetup + royalApproach + defensiveApproach + battlefieldApproach + priorityTargetApproach + counterEngagement;
 
     // A narrow search cannot afford to spend branches on a move that neither makes progress,
     // creates a firing line, protects home, nor improves contact with an enemy force. Formation
     // bonuses from CpuStrategicHeuristics can still rescue a genuine combo move afterwards.
     bool advancesGoal = goals.Count > 0 && newDistance < oldDistance;
-    if (!advancesGoal && firingSetup <= 0f && royalApproach <= 0f && defensiveApproach <= 0f && battlefieldApproach <= 0f)
+    if (!advancesGoal && firingSetup <= 0f && royalApproach <= 0f && defensiveApproach <= 0f && battlefieldApproach <= 0f &&
+        priorityTargetApproach <= 0f && counterEngagement <= 0f)
     {
       score -= 18f;
       return new ScoredAction(action, score, "Avoids an aimless reposition");
@@ -380,6 +477,8 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     return new ScoredAction(action, score,
       firingSetup > 0f ? "Creates an immediate firing line" :
       defensiveApproach > 0f ? "Moves toward an invader threatening home assets" :
+      counterEngagement > 0f ? "Pursues a favorable matchup or withdraws from a counter" :
+      priorityTargetApproach > 0f ? "Pressures an opposing royal, farm, or unit" :
       advancesGoal || royalApproach > 0f ? "Advances toward a target or objective" :
       "Improves contact with the enemy force");
   }
@@ -557,6 +656,57 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int oldDistance = relevantEnemies.Min(target => Distance((piece.X, piece.Y), (target.X, target.Y)));
     int newDistance = relevantEnemies.Min(target => Distance((action.DestinationX, action.DestinationY), (target.X, target.Y)));
     return Math.Max(0, oldDistance - newDistance) * 1.5f;
+  }
+
+  private static float ScoreApproachToPriorityTargets(
+    CpuGameState state,
+    NetworkTeam team,
+    NetworkPiece piece,
+    MoveAction action
+  )
+  {
+    float best = 0f;
+    foreach (NetworkPiece enemy in state.Pieces.Where(candidate => candidate.Team != team &&
+      candidate.Team != NetworkTeam.Neutral && candidate.AttachedToId is null && UnitRules.TryGet(candidate.Type, out _)))
+    {
+      int distanceChange = Distance((piece.X, piece.Y), (enemy.X, enemy.Y)) -
+        Distance((action.DestinationX, action.DestinationY), (enemy.X, enemy.Y));
+      if (distanceChange <= 0)
+      {
+        continue;
+      }
+
+      UnitRule rule = UnitRules.GetRequired(enemy.Type);
+      float priority = rule.Category == RuleCategory.Royal
+        ? CpuObjectiveRules.ShouldPursueEnemyRoyal(state) ? 22f : 11f
+        : rule.Type == "Farm" ? 14f : 3f + rule.Cost * 0.08f + rule.Attack * 0.1f;
+      best = Math.Max(best, distanceChange * priority);
+    }
+    return best;
+  }
+
+  private static float ScoreCounterEngagement(CpuGameState state, NetworkPiece piece, MoveAction action)
+  {
+    float score = 0f;
+    foreach (NetworkPiece enemy in state.Pieces.Where(candidate => candidate.Team != piece.Team &&
+      candidate.Team != NetworkTeam.Neutral && candidate.AttachedToId is null))
+    {
+      int distanceChange = Distance((piece.X, piece.Y), (enemy.X, enemy.Y)) -
+        Distance((action.DestinationX, action.DestinationY), (enemy.X, enemy.Y));
+      float matchup = CpuStrategicHeuristics.GetMatchupScore(state, piece, enemy);
+      float enemyMatchup = CpuStrategicHeuristics.GetMatchupScore(state, enemy, piece);
+      if (matchup > 0.2f)
+      {
+        score += distanceChange * (5f + matchup * 5f);
+      }
+      if (enemyMatchup > 0.6f)
+      {
+        // A negative distance change means the unit is withdrawing, which is preferred when it
+        // is walking toward a unit listed as a counter in the matchup reference.
+        score -= distanceChange * (4f + enemyMatchup * 4f);
+      }
+    }
+    return score;
   }
 
   private static bool HasImmediateBattlefieldRole(CpuGameState state, PurchaseAction action, int maximumDistance) => state.Pieces

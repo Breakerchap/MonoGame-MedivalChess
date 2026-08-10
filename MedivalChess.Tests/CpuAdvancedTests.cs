@@ -24,6 +24,41 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void TacticalSafety_DetectsAnEnemyMoveAndAttackThatCouldKillAUnit()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-peasant", "Peasant", NetworkTeam.Red, 0, 0, 5),
+      new NetworkPiece("blue-knight", "Knight", NetworkTeam.Blue, 0, -4, 30)
+    );
+
+    CpuTacticalSafety.Assessment safety = CpuTacticalSafety.Assess(
+      state, NetworkTeam.Red, state.Pieces.Single(piece => piece.Id == "red-peasant"));
+
+    Assert.False(safety.IsDirectlyLethal);
+    Assert.True(safety.CanBeKilledAfterAnEnemyMove);
+    Assert.True(safety.StrongestMoveAttackDamage >= 5);
+  }
+
+  [Fact]
+  public void CandidateRanking_AvoidsMovingAUnitIntoAnImmediateKill()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("blue-cannon", "Cannon", NetworkTeam.Blue, 0, -3, 15)
+    );
+    MoveAction exposed = new(NetworkTeam.Red, "red-knight", 0, -1);
+    MoveAction sheltered = new(NetworkTeam.Red, "red-knight", 1, 1);
+
+    Assert.True(exposed.IsLegal(state));
+    Assert.True(sheltered.IsLegal(state));
+    ScoredAction selected = Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red, [exposed, sheltered], new CpuSearchSettings { CandidatesPerNode = 1 }));
+
+    Assert.Equal(sheltered, selected.Action);
+    Assert.Contains("immediate kill", selected.Reason, StringComparison.Ordinal);
+  }
+
+  [Fact]
   public void CpuMovesItsRoyalOutOfAnImmediateLethalThreat()
   {
     CpuGameState state = CreateState(
