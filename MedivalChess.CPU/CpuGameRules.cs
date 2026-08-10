@@ -72,7 +72,8 @@ public static partial class CpuGameRules
     NetworkPiece piece
   )
   {
-    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || piece.HasMovedThisTurn ||
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || (piece.HasMovedThisTurn &&
+        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind == NetworkAttachmentKind.Guard)
     {
       return new Dictionary<(int x, int y), List<(int x, int y)>>();
@@ -153,7 +154,8 @@ public static partial class CpuGameRules
   private static bool IsLegalMove(CpuGameState state, MoveAction action)
   {
     NetworkPiece? piece = FindPiece(state.Pieces, action.PieceId);
-    if (piece is null || piece.Team != action.Team || piece.HasMovedThisTurn ||
+    if (piece is null || piece.Team != action.Team || (piece.HasMovedThisTurn &&
+        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind == NetworkAttachmentKind.Guard)
     {
       return false;
@@ -318,8 +320,7 @@ public static partial class CpuGameRules
     (int x, int y) position = (action.TargetX, action.TargetY);
     if (demolition)
     {
-      return state.Roads.ContainsKey(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position) ||
-        state.RiverBridges.Contains(TileEdge.Between((actor.X, actor.Y), position));
+      return state.Roads.ContainsKey(position) || state.Barricades.ContainsKey(position) || state.Mines.ContainsKey(position);
     }
 
     return BoardRules.Contains(state.Board, action.TargetX, action.TargetY) &&
@@ -841,6 +842,7 @@ public static partial class CpuGameRules
         {
           HasMovedThisTurn = false,
           HasAttackedThisTurn = false,
+          CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
           CannotContributeToConquestThisTurn = false
         };

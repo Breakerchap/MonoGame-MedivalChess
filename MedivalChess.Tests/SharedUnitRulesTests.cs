@@ -129,7 +129,7 @@ public sealed class SharedUnitRulesTests
     Assert.False(AbilityRules.CanGuardAttach(guard, king, false, false));
     Assert.False(AbilityRules.CanGuardAttach(guard, soldier, true, false));
     Assert.True(AbilityRules.CanOxAttach(ox, soldier, false, false));
-    Assert.True(AbilityRules.CanOxAttach(ox, cannon, false, false));
+    Assert.False(AbilityRules.CanOxAttach(ox, cannon, false, false));
     Assert.False(AbilityRules.CanOxAttach(ox, cannon, false, true));
   }
 }

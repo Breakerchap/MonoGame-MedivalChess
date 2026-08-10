@@ -46,7 +46,7 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
-  public void CavalierAttack_RefreshesMovementForTheRestOfItsTurn()
+  public void CavalierAttack_AfterMoving_UnlocksOneTwoSquareStraightFollowUpMove()
   {
     CpuGameState state = CreateState(
       new NetworkPiece("red-cavalier", "Cavalier", NetworkTeam.Red, 0, 0, 20, HasMovedThisTurn: true),
@@ -59,8 +59,15 @@ public sealed class CpuGameStateTests
     NetworkPiece cavalier = afterAttack.Pieces.Single(piece => piece.Id == "red-cavalier");
 
     Assert.True(cavalier.HasAttackedThisTurn);
-    Assert.False(cavalier.HasMovedThisTurn);
+    Assert.True(cavalier.HasMovedThisTurn);
+    Assert.True(cavalier.CavalierFollowUpMoveAvailable);
     Assert.True(new MoveAction(NetworkTeam.Red, cavalier.Id, 0, 1).IsLegal(afterAttack));
+    Assert.False(new MoveAction(NetworkTeam.Red, cavalier.Id, 0, 3).IsLegal(afterAttack));
+
+    CpuGameState afterMove = new MoveAction(NetworkTeam.Red, cavalier.Id, 0, 1).Apply(afterAttack);
+    NetworkPiece movedCavalier = afterMove.Pieces.Single(piece => piece.Id == cavalier.Id);
+    Assert.False(movedCavalier.CavalierFollowUpMoveAvailable);
+    Assert.False(new MoveAction(NetworkTeam.Red, movedCavalier.Id, 1, 1).IsLegal(afterMove));
   }
 
   [Fact]
@@ -316,7 +323,7 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
-  public void EngineerCanDemolishAScenarioProvidedRiverBridge()
+  public void EngineerCannotDemolishAScenarioProvidedRiverBridge()
   {
     TileEdge bridge = TileEdge.Between((0, 0), (0, -1));
     CpuGameState state = new(
@@ -332,12 +339,8 @@ public sealed class CpuGameStateTests
     );
     UseAbilityAction demolish = new(NetworkTeam.Red, "red-engineer", "Demolish", null, 0, -1);
 
-    Assert.True(demolish.IsLegal(state));
-    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(demolish));
-
-    CpuGameState afterDemolish = demolish.Apply(state);
-
-    Assert.DoesNotContain(bridge, afterDemolish.RiverBridges);
+    Assert.False(demolish.IsLegal(state));
+    Assert.DoesNotContain(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action => action.Equals(demolish));
   }
 
   [Fact]

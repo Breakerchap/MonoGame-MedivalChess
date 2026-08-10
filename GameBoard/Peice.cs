@@ -24,6 +24,7 @@ internal sealed class Piece
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
   internal bool HasMovedThisTurn { get; set; }
   internal bool HasAttackedThisTurn { get; set; }
+  internal bool CavalierFollowUpMoveAvailable { get; set; }
   internal int EngineerBuildsThisTurn { get; set; }
   internal bool CannotContributeToConquestThisTurn { get; set; }
   internal long NextMercenaryBid => (long)LastBid + 10;

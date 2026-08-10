@@ -5,9 +5,12 @@ public static class AbilityRules
 {
   public static bool IsTerrainImmune(UnitRule unit) => unit.Type == "Elephant";
 
-  /// <summary>Whether an attack restores the unit's opportunity to move this turn.</summary>
-  public static bool RefreshesMovementAfterAttacking(string unitType) =>
-    string.Equals(unitType, nameof(PieceType.Cavalier), StringComparison.Ordinal);
+  /// <summary>Whether an attack unlocks the Cavalier's one two-square straight follow-up move.</summary>
+  public static bool GrantsCavalierFollowUpMove(string unitType, bool hasMovedThisTurn) =>
+    hasMovedThisTurn && string.Equals(unitType, nameof(PieceType.Cavalier), StringComparison.Ordinal);
+
+  public static bool CanUseCavalierFollowUpMove(string unitType, bool isAvailable) =>
+    isAvailable && string.Equals(unitType, nameof(PieceType.Cavalier), StringComparison.Ordinal);
 
   /// <summary>Whether damage dealt to this unit is also dealt to its carried unit.</summary>
   public static bool SharesDamageWithCargo(string unitType) =>
@@ -27,7 +30,7 @@ public static class AbilityRules
   )
   {
     return ox.Type == "Ox" && !targetIsAttached && !oxAlreadyHasCargo &&
-      ((target.Width == 1 && target.Height == 1) || target.Category == RuleCategory.Mechanical);
+      target.Width == 1 && target.Height == 1;
   }
 
   public static bool IsEngineerBuild(string ability) =>

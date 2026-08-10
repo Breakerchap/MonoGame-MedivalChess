@@ -30,7 +30,8 @@ public sealed record NetworkPiece(
   string? MarkedTargetId = null,
   int LastBid = 0,
   int EngineerBuildsThisTurn = 0,
-  bool CannotContributeToConquestThisTurn = false
+  bool CannotContributeToConquestThisTurn = false,
+  bool CavalierFollowUpMoveAvailable = false
 );
 
 public sealed record NetworkImprovement(

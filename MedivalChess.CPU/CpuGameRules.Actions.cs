@@ -9,6 +9,8 @@ public static partial class CpuGameRules
   {
     int index = FindPieceIndex(state.Pieces, action.PieceId);
     NetworkPiece piece = state.Pieces[index];
+    bool usesCavalierFollowUpMove = AbilityRules.CanUseCavalierFollowUpMove(
+      piece.Type, piece.CavalierFollowUpMoveAvailable);
     if (piece.AttachedToId is not null)
     {
       piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
@@ -43,7 +45,10 @@ public static partial class CpuGameRules
       X = action.DestinationX,
       Y = action.DestinationY,
       HasMovedThisTurn = true,
-      HasAttackedThisTurn = elephantDamaged || state.Pieces[index].HasAttackedThisTurn
+      HasAttackedThisTurn = elephantDamaged || state.Pieces[index].HasAttackedThisTurn,
+      CavalierFollowUpMoveAvailable = usesCavalierFollowUpMove
+        ? false
+        : state.Pieces[index].CavalierFollowUpMoveAvailable
     };
     state.Pieces[index] = piece;
     state.RecordMove(action.Team, piece.Id, oldX, oldY, action.DestinationX, action.DestinationY);
@@ -73,9 +78,8 @@ public static partial class CpuGameRules
     NetworkPiece attacker = state.Pieces[attackerIndex] with
     {
       HasAttackedThisTurn = true,
-      HasMovedThisTurn = AbilityRules.RefreshesMovementAfterAttacking(state.Pieces[attackerIndex].Type)
-        ? false
-        : state.Pieces[attackerIndex].HasMovedThisTurn
+      CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
+        state.Pieces[attackerIndex].Type, state.Pieces[attackerIndex].HasMovedThisTurn)
     };
     state.Pieces[attackerIndex] = attacker;
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
@@ -181,8 +185,7 @@ public static partial class CpuGameRules
     (int x, int y) position = (action.TargetX, action.TargetY);
     if (AbilityRules.IsEngineerDemolition(action.Ability))
     {
-      _ = state.Roads.Remove(position) || state.Barricades.Remove(position) || state.Mines.Remove(position) ||
-        state.RiverBridges.Remove(TileEdge.Between((engineer.X, engineer.Y), position));
+      _ = state.Roads.Remove(position) || state.Barricades.Remove(position) || state.Mines.Remove(position);
       return;
     }
 

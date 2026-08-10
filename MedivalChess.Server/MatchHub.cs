@@ -339,7 +339,8 @@ public sealed class MatchStore
       }
 
       NetworkPiece piece = foundMatch.Pieces[index];
-      if (piece.HasMovedThisTurn)
+      if (piece.HasMovedThisTurn && !AbilityRules.CanUseCavalierFollowUpMove(
+        piece.Type, piece.CavalierFollowUpMoveAvailable))
       {
         return new(false, "That unit has already moved this turn.", foundMatch.State());
       }
@@ -382,7 +383,14 @@ public sealed class MatchStore
       if (pieceIndex < 0) return new(false, "That unit is no longer on the board.", foundMatch.State());
       int oldX = piece.X;
       int oldY = piece.Y;
-      piece = piece with { X = request.ToX, Y = request.ToY, HasMovedThisTurn = true, HasAttackedThisTurn = elephantDamagedAnEnemy || piece.HasAttackedThisTurn };
+      piece = piece with
+      {
+        X = request.ToX,
+        Y = request.ToY,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = elephantDamagedAnEnemy || piece.HasAttackedThisTurn,
+        CavalierFollowUpMoveAvailable = false
+      };
       foundMatch.Pieces[pieceIndex] = piece;
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
       MoveEmissaryCompanions(foundMatch, piece, oldX, oldY);
@@ -500,9 +508,8 @@ public sealed class MatchStore
       foundMatch.Pieces[attackerIndex] = attacker with
       {
         HasAttackedThisTurn = true,
-        HasMovedThisTurn = AbilityRules.RefreshesMovementAfterAttacking(attacker.Type)
-          ? false
-          : attacker.HasMovedThisTurn
+        CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
+          attacker.Type, attacker.HasMovedThisTurn)
       };
       if (target is null)
       {
@@ -1213,8 +1220,13 @@ public sealed class MatchStore
       }
     }
 
-    return match.TreasureCarrierId == piece.Id
-      ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) }
+    if (match.TreasureCarrierId == piece.Id)
+    {
+      rule = rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) };
+    }
+
+    return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
+      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
       : rule;
   }
 
@@ -1825,6 +1837,7 @@ public sealed class MatchStore
         {
           HasMovedThisTurn = false,
           HasAttackedThisTurn = false,
+          CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
           CannotContributeToConquestThisTurn = false
         };

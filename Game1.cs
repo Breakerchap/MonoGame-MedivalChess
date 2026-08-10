@@ -661,10 +661,8 @@ internal sealed class Game1 : Game
               }
 
               selectedPiece.HasAttackedThisTurn = true;
-              if (AbilityRules.RefreshesMovementAfterAttacking(selectedPiece.Definition.Type.ToString()))
-              {
-                selectedPiece.HasMovedThisTurn = false;
-              }
+              selectedPiece.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
+                selectedPiece.Definition.Type.ToString(), selectedPiece.HasMovedThisTurn);
 
               Console.WriteLine(
                 $"Attacked at ({boardX}, {boardY})."
@@ -1580,7 +1578,8 @@ internal sealed class Game1 : Game
         piece.MarkedTarget?.NetworkId,
         piece.LastBid,
         piece.EngineerBuildsThisTurn,
-        piece.CannotContributeToConquestThisTurn
+        piece.CannotContributeToConquestThisTurn,
+        piece.CavalierFollowUpMoveAvailable
       )),
       _teams.Select(team => new CpuTeamState(
         team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString(), team.ActionLimit
@@ -1784,10 +1783,8 @@ internal sealed class Game1 : Game
     }
 
     attacker.HasAttackedThisTurn = true;
-    if (AbilityRules.RefreshesMovementAfterAttacking(attacker.Definition.Type.ToString()))
-    {
-      attacker.HasMovedThisTurn = false;
-    }
+    attacker.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
+      attacker.Definition.Type.ToString(), attacker.HasMovedThisTurn);
     if (_screen == Screen.Playing)
     {
       CompleteAction();
@@ -1803,6 +1800,7 @@ internal sealed class Game1 : Game
       {
         piece.HasMovedThisTurn = false;
         piece.HasAttackedThisTurn = false;
+        piece.CavalierFollowUpMoveAvailable = false;
         piece.EngineerBuildsThisTurn = 0;
         piece.CannotContributeToConquestThisTurn = false;
       }
@@ -2552,6 +2550,7 @@ internal sealed class Game1 : Game
         CurrentHealth = networkPiece.Health,
         HasMovedThisTurn = networkPiece.HasMovedThisTurn,
         HasAttackedThisTurn = networkPiece.HasAttackedThisTurn,
+        CavalierFollowUpMoveAvailable = networkPiece.CavalierFollowUpMoveAvailable,
         LastBid = networkPiece.LastBid,
         EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn,
         CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn
@@ -2834,10 +2833,19 @@ internal sealed class Game1 : Game
       UnitRule cargoRule = UnitRules.GetRequired(cargo.Definition.Type.ToString());
       rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
     }
-    return IsTreasureCarrier(piece)
-      ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) }
+    if (IsTreasureCarrier(piece))
+    {
+      rule = rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) };
+    }
+
+    return AbilityRules.CanUseCavalierFollowUpMove(
+      piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable)
+      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
       : rule;
   }
+
+  private static bool CanMoveThisTurn(Piece piece) => !piece.HasMovedThisTurn ||
+    AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable);
 
   private bool TryGetMovementPathAt(
     Piece piece,
@@ -2845,7 +2853,7 @@ internal sealed class Game1 : Game
     out List<(int x, int y)> path
   )
   {
-    if (piece.HasMovedThisTurn)
+    if (!CanMoveThisTurn(piece))
     {
       path = null;
       return false;
@@ -3039,7 +3047,7 @@ internal sealed class Game1 : Game
   private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
   {
     HashSet<(int x, int y)> highlightedSquares = [];
-    if (piece.HasMovedThisTurn)
+    if (!CanMoveThisTurn(piece))
     {
       return highlightedSquares;
     }
@@ -3201,7 +3209,7 @@ internal sealed class Game1 : Game
       piece.Team == Team.CurrentTurn && piece.AttachedTo is null))
     {
       Rectangle bounds = GetPieceWorldBounds(piece, cellSize);
-      bool canMove = !piece.HasMovedThisTurn && GetMovementPaths(piece).Count > 0;
+      bool canMove = CanMoveThisTurn(piece) && GetMovementPaths(piece).Count > 0;
       bool canAttack = HasAvailableAttack(piece);
 
       if (canMove && piece != selectedPiece)
@@ -3633,8 +3641,7 @@ internal sealed class Game1 : Game
     bool removed = _roads.Remove(targetPosition) ||
       _barricades.Remove(targetPosition) ||
       _mines.Remove(targetPosition) ||
-      _restoredLakeTiles.Remove(targetPosition) ||
-      _riverBridges.Remove(TileEdge.Between(engineer.Position, targetPosition));
+      _restoredLakeTiles.Remove(targetPosition);
     if (removed)
     {
       Console.WriteLine("Engineer demolished an improvement.");
@@ -3836,6 +3843,7 @@ internal sealed class Game1 : Game
 
     Piece movedPiece = completedAnimation.Piece;
     (int x, int y) destination = completedAnimation.Path[^1];
+    bool usesCavalierFollowUpMove = movedPiece.CavalierFollowUpMoveAvailable;
 
     if (movedPiece.Definition.Type == PieceType.Elephant &&
         AttackUnitsMovedOver(movedPiece, completedAnimation.Path))
@@ -3844,6 +3852,10 @@ internal sealed class Game1 : Game
     }
 
     MovePieceWithCompanions(movedPiece, destination);
+    if (usesCavalierFollowUpMove)
+    {
+      movedPiece.CavalierFollowUpMoveAvailable = false;
+    }
     TriggerMinesAlongMovement(movedPiece, completedAnimation.Path);
 
     if (_screen == Screen.GameOver || !pieceSetup.Pieces.Contains(movedPiece))

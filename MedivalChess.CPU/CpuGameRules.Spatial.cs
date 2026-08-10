@@ -34,7 +34,14 @@ public static partial class CpuGameRules
         rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
       }
     }
-    return state.TreasureCarrierId == piece.Id ? rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) } : rule;
+    if (state.TreasureCarrierId == piece.Id)
+    {
+      rule = rule with { MoveRange = Math.Max(1, rule.MoveRange - 1) };
+    }
+
+    return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
+      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
+      : rule;
   }
 
   private static bool CanLand(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule, (int x, int y) destination) =>

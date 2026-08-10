@@ -972,6 +972,7 @@ public sealed class GameStateHasher
       Add(ref hash, piece.LastBid);
       Add(ref hash, piece.EngineerBuildsThisTurn);
       Add(ref hash, piece.CannotContributeToConquestThisTurn);
+      Add(ref hash, piece.CavalierFollowUpMoveAvailable);
     }
     foreach ((NetworkTeam team, CpuTeamState stateTeam) in state.Teams.OrderBy(pair => pair.Key))
     {
