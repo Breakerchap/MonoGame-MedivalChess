@@ -5,7 +5,14 @@ namespace MedivalChess;
 
 internal static class UiLayout
 {
-  internal static Rectangle Viewport(int width, int height) => new(0, 0, width, height);
+  internal static float Scale { get; set; } = 1f;
+
+  internal static Rectangle Viewport(int width, int height) => new(
+    0,
+    0,
+    Math.Max(1, (int)MathF.Floor(width / Scale)),
+    Math.Max(1, (int)MathF.Floor(height / Scale))
+  );
 
   internal static Rectangle Centered(Rectangle available, int desiredWidth, int desiredHeight, int margin)
   {

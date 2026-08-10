@@ -19,6 +19,7 @@ internal sealed class UiRenderer
   private readonly SpriteBatch _spriteBatch;
   private readonly Texture2D _pixel;
   private readonly SpriteFont _font;
+  internal float InputScale { get; set; } = 1f;
 
   internal UiRenderer(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font)
   {
@@ -45,7 +46,11 @@ internal sealed class UiRenderer
   internal void Button(Rectangle bounds, string label, UiButtonTone tone, bool selected = false, float textScale = 1f)
   {
     MouseState mouse = Mouse.GetState();
-    bool isHovered = bounds.Contains(mouse.Position);
+    Point mousePosition = new(
+      (int)MathF.Floor(mouse.Position.X / InputScale),
+      (int)MathF.Floor(mouse.Position.Y / InputScale)
+    );
+    bool isHovered = bounds.Contains(mousePosition);
     bool isPressed = isHovered && mouse.LeftButton == ButtonState.Pressed;
     Color fill = GetButtonColour(tone);
 

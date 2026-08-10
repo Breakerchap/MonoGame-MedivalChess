@@ -90,6 +90,7 @@ internal sealed class LevelEditorScreen
     KeyboardState keyboard,
     KeyboardState previousKeyboard,
     MouseState mouse,
+    Point pointer,
     bool wasLeftClick,
     bool isLeftHeld,
     bool wasRightClick,
@@ -105,7 +106,7 @@ internal sealed class LevelEditorScreen
     }
 
     EditorLayout layout = new(screen);
-    Point point = mouse.Position;
+    Point point = pointer;
     UpdateKeyboardNavigation(keyboard, previousKeyboard);
     UpdateTextInput(keyboard, previousKeyboard);
 

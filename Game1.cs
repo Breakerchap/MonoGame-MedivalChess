@@ -166,6 +166,7 @@ internal sealed class Game1 : Game
   private const int purchaseUnitListGap = 4;
   private const int purchaseUnitListMinimumRowHeight = 18;
   private const int purchaseUnitListMaximumRowHeight = 32;
+  private const int settingsControlHeight = 36;
   private int _terrainSeed;
   // Separate from terrain so lower CPU difficulties can vary their close-plan strategy between
   // matches even when a developer reuses a terrain seed.
@@ -247,6 +248,7 @@ internal sealed class Game1 : Game
   private Keys _endTurnKey = Keys.Space;
   private bool _zoomTowardsMouse;
   private FpsCap _fpsCap = FpsCap.Sixty;
+  private float _uiScale = 1f;
   private int _resolutionIndex = 1;
   private readonly List<PlanningMark> _planningMarks = [];
   private (int x, int y)? _planningStart;
@@ -320,6 +322,8 @@ internal sealed class Game1 : Game
     _pixel.SetData(new[] { Color.White });
     _pieceLabelFont = Content.Load<SpriteFont>("PieceLabel");
     _ui = new UiRenderer(_spriteBatch, _pixel, _pieceLabelFont);
+    UiLayout.Scale = _uiScale;
+    _ui.InputScale = _uiScale;
     _levelEditor = new LevelEditorScreen(_ui, _spriteBatch, _pixel);
   }
 
@@ -366,11 +370,12 @@ internal sealed class Game1 : Game
         keyboard,
         _previousKeyboardState,
         mouse,
+        ToUiPoint(mouse.Position),
         wasLeftClick,
         mouse.LeftButton == ButtonState.Pressed,
         wasRightClick,
         wasEscapePressed,
-        new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height)
+        GetUiViewport()
       );
       HandleLevelEditorRequests();
       _previousMouseState = mouse;
@@ -442,7 +447,7 @@ internal sealed class Game1 : Game
     {
       if (!planningInput && (wasLeftClick || wasRightClick))
       {
-        InspectPieceAt(mouse.Position, mouseWorldBefore);
+        InspectPieceAt(ToUiPoint(mouse.Position), mouseWorldBefore);
       }
 
       UpdateCpuTurn(deltaTime);
@@ -489,19 +494,19 @@ internal sealed class Game1 : Game
     }
 
     bool clickedPurchasePanel =
-      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(mouse.Position);
+      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
     bool clickedInitialBuyStop =
-      wasLeftClick && HandleInitialBuyStopClick(mouse.Position);
+      wasLeftClick && HandleInitialBuyStopClick(ToUiPoint(mouse.Position));
     bool clickedSkipTurn =
-      wasLeftClick && HandleSkipTurnClick(mouse.Position);
+      wasLeftClick && HandleSkipTurnClick(ToUiPoint(mouse.Position));
     bool clickedDebugTeamSwitch =
-      wasLeftClick && HandleDebugTeamSwitchClick(mouse.Position);
+      wasLeftClick && HandleDebugTeamSwitchClick(ToUiPoint(mouse.Position));
     bool clickedEngineerPanel =
-      wasLeftClick && HandleEngineerAbilityClick(mouse.Position);
+      wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
-      wasLeftClick && HandleOxCarryPanelClick(mouse.Position);
+      wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
     bool clickedMercenaryPanel =
-      wasLeftClick && HandleMercenaryPanelClick(mouse.Position);
+      wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
     if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
@@ -745,6 +750,23 @@ internal sealed class Game1 : Game
     _fpsCap = caps[(Math.Max(0, index) + 1) % caps.Length];
     ApplyFpsCap();
   }
+
+  private void AdjustUiScale(int direction)
+  {
+    const float minimum = 0.5f;
+    const float maximum = 2.5f;
+    const float step = 0.1f;
+    _uiScale = Math.Clamp(MathF.Round(_uiScale + direction * step, 1), minimum, maximum);
+    UiLayout.Scale = _uiScale;
+    _ui.InputScale = _uiScale;
+  }
+
+  private Point ToUiPoint(Point screenPoint) => new(
+    (int)MathF.Floor(screenPoint.X / _uiScale),
+    (int)MathF.Floor(screenPoint.Y / _uiScale)
+  );
+
+  private Rectangle GetUiViewport() => UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
 
   private void CycleResolution()
   {
@@ -2705,7 +2727,7 @@ internal sealed class Game1 : Game
     }
 
     MouseState mouse = Mouse.GetState();
-    if (IsPointerOverPurchaseMenu(mouse.Position))
+    if (IsPointerOverPurchaseMenu(ToUiPoint(mouse.Position)))
     {
       return false;
     }
@@ -2778,7 +2800,7 @@ internal sealed class Game1 : Game
     }
 
     MouseState mouse = Mouse.GetState();
-    if (GetStatusPanelBounds().Contains(mouse.Position))
+    if (GetStatusPanelBounds().Contains(ToUiPoint(mouse.Position)))
     {
       return;
     }
@@ -5434,10 +5456,10 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     int actionCount = Enum.GetValues<BindingAction>().Length;
     int rowsTop = content.Y + 72;
-    int rowsBottom = GetSettingsZoomAnchorButtonBounds().Y - UiTheme.SpaceMd;
+    int rowsBottom = GetSettingsUiScaleButtonBounds().Y - UiTheme.SpaceMd;
     int rowHeight = Math.Clamp(
       (rowsBottom - rowsTop - UiTheme.SpaceXs * (actionCount - 1)) / actionCount,
-      30,
+      18,
       44
     );
     return new Rectangle(
@@ -5451,7 +5473,7 @@ internal sealed class Game1 : Game
   private Rectangle GetSettingsRotationButtonBounds()
   {
     Rectangle resolution = GetSettingsResolutionButtonBounds();
-    return new Rectangle(resolution.X, resolution.Bottom + UiTheme.SpaceSm, resolution.Width, UiTheme.ButtonHeight);
+    return new Rectangle(resolution.X, resolution.Bottom + UiTheme.SpaceSm, resolution.Width, settingsControlHeight);
   }
 
   private Rectangle GetSettingsZoomAnchorButtonBounds()
@@ -5460,22 +5482,46 @@ internal sealed class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     return new Rectangle(
       content.X,
-      content.Bottom - UiTheme.ButtonHeight * 5 - UiTheme.SpaceSm * 4,
+      content.Bottom - settingsControlHeight * 6 - UiTheme.SpaceSm * 5,
       content.Width,
-      UiTheme.ButtonHeight
+      settingsControlHeight
     );
+  }
+
+  private Rectangle GetSettingsUiScaleButtonBounds()
+  {
+    Rectangle zoom = GetSettingsZoomAnchorButtonBounds();
+    return new Rectangle(zoom.X, zoom.Y - settingsControlHeight - UiTheme.SpaceSm, zoom.Width, settingsControlHeight);
+  }
+
+  private Rectangle GetSettingsUiScaleDecreaseButtonBounds()
+  {
+    Rectangle row = GetSettingsUiScaleButtonBounds();
+    return new Rectangle(row.X, row.Y, row.Height, row.Height);
+  }
+
+  private Rectangle GetSettingsUiScaleValueBounds()
+  {
+    Rectangle row = GetSettingsUiScaleButtonBounds();
+    return new Rectangle(row.X + row.Height + UiTheme.SpaceSm, row.Y, row.Width - (row.Height + UiTheme.SpaceSm) * 2, row.Height);
+  }
+
+  private Rectangle GetSettingsUiScaleIncreaseButtonBounds()
+  {
+    Rectangle row = GetSettingsUiScaleButtonBounds();
+    return new Rectangle(row.Right - row.Height, row.Y, row.Height, row.Height);
   }
 
   private Rectangle GetSettingsFpsCapButtonBounds()
   {
     Rectangle zoom = GetSettingsZoomAnchorButtonBounds();
-    return new Rectangle(zoom.X, zoom.Bottom + UiTheme.SpaceSm, zoom.Width, UiTheme.ButtonHeight);
+    return new Rectangle(zoom.X, zoom.Bottom + UiTheme.SpaceSm, zoom.Width, settingsControlHeight);
   }
 
   private Rectangle GetSettingsResolutionButtonBounds()
   {
     Rectangle fps = GetSettingsFpsCapButtonBounds();
-    return new Rectangle(fps.X, fps.Bottom + UiTheme.SpaceSm, fps.Width, UiTheme.ButtonHeight);
+    return new Rectangle(fps.X, fps.Bottom + UiTheme.SpaceSm, fps.Width, settingsControlHeight);
   }
 
   private Rectangle GetSettingsBackButtonBounds()
@@ -5483,7 +5529,7 @@ internal sealed class Game1 : Game
     Rectangle panel = GetSettingsPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     Rectangle rotation = GetSettingsRotationButtonBounds();
-    return new Rectangle(rotation.X, rotation.Bottom + UiTheme.SpaceSm, rotation.Width, UiTheme.ButtonHeight);
+    return new Rectangle(rotation.X, rotation.Bottom + UiTheme.SpaceSm, rotation.Width, settingsControlHeight);
   }
 
   private Rectangle GetPausePanelBounds()
@@ -6144,7 +6190,7 @@ internal sealed class Game1 : Game
       }
       else if (wasLeftClick)
       {
-        UpdateTerrainPresetBrowser(mouse.Position);
+        UpdateTerrainPresetBrowser(ToUiPoint(mouse.Position));
       }
       return;
     }
@@ -6265,7 +6311,7 @@ internal sealed class Game1 : Game
       return;
     }
 
-    Point mousePosition = mouse.Position;
+    Point mousePosition = ToUiPoint(mouse.Position);
 
     switch (_screen)
     {
@@ -6387,7 +6433,15 @@ internal sealed class Game1 : Game
           }
         }
 
-        if (GetSettingsZoomAnchorButtonBounds().Contains(mousePosition))
+        if (GetSettingsUiScaleDecreaseButtonBounds().Contains(mousePosition))
+        {
+          AdjustUiScale(-1);
+        }
+        else if (GetSettingsUiScaleIncreaseButtonBounds().Contains(mousePosition))
+        {
+          AdjustUiScale(1);
+        }
+        else if (GetSettingsZoomAnchorButtonBounds().Contains(mousePosition))
         {
           _zoomTowardsMouse = !_zoomTowardsMouse;
         }
@@ -7373,7 +7427,7 @@ internal sealed class Game1 : Game
       return;
     }
     if (!wasLeftClick) return;
-    Point point = mouse.Position;
+    Point point = ToUiPoint(mouse.Position);
     if (GetCustomLevelsBackButtonBounds().Contains(point))
     {
       _screen = Screen.LevelEditor;
@@ -7438,13 +7492,14 @@ internal sealed class Game1 : Game
       return;
     }
     if (!wasLeftClick) return;
-    if (GetEditorConfirmationButtonBounds(0).Contains(mouse.Position))
+    Point point = ToUiPoint(mouse.Position);
+    if (GetEditorConfirmationButtonBounds(0).Contains(point))
     {
       if (_editorConfirmAction == EditorConfirmAction.New) _levelEditor.ReplaceState(LevelEditorState.CreateNew());
       else _screen = Screen.Title;
       if (_editorConfirmAction == EditorConfirmAction.New) _screen = Screen.LevelEditor;
     }
-    else if (GetEditorConfirmationButtonBounds(1).Contains(mouse.Position))
+    else if (GetEditorConfirmationButtonBounds(1).Contains(point))
     {
       _screen = Screen.LevelEditor;
     }
@@ -7593,6 +7648,10 @@ internal sealed class Game1 : Game
       );
     }
 
+    DrawMenuButton(GetSettingsUiScaleDecreaseButtonBounds(), "-", UiButtonTone.Neutral);
+    DrawPanel(GetSettingsUiScaleValueBounds(), UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    _ui.CenterText($"UI SCALE: {MathF.Round(_uiScale * 100f):0}%", GetSettingsUiScaleValueBounds(), UiTheme.TextPrimary, 0.82f);
+    DrawMenuButton(GetSettingsUiScaleIncreaseButtonBounds(), "+", UiButtonTone.Neutral);
     DrawMenuButton(
       GetSettingsZoomAnchorButtonBounds(),
       _zoomTowardsMouse ? "ZOOM TOWARDS: MOUSE" : "ZOOM TOWARDS: CAMERA CENTRE",
@@ -8330,7 +8389,7 @@ internal sealed class Game1 : Game
       case Screen.Pause: DrawPauseScreen(); break;
       case Screen.Encyclopedia: DrawEncyclopediaScreen(); break;
       case Screen.GameOver: DrawGameOverScreen(); break;
-      case Screen.LevelEditor: _levelEditor.Draw(new Rectangle(0, 0, GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height)); break;
+      case Screen.LevelEditor: _levelEditor.Draw(GetUiViewport()); break;
       case Screen.CustomLevels: DrawCustomLevelsScreen(); break;
       case Screen.EditorDiscardConfirm: DrawEditorDiscardConfirmation(); break;
     }
@@ -8989,7 +9048,7 @@ internal sealed class Game1 : Game
 
     if (!drawsGameView)
     {
-      _spriteBatch.Begin();
+      _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
       DrawMenuScreen();
       _spriteBatch.End();
       base.Draw(gameTime);
@@ -9259,6 +9318,9 @@ internal sealed class Game1 : Game
     _spriteBatch.Begin();
 
     DrawWorldPieceText(cameraTransform, cellSize);
+
+    _spriteBatch.End();
+    _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
 
     if (_screen == Screen.Playing)
     {
