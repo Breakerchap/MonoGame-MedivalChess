@@ -36,14 +36,14 @@ jobs:
         id: tests
         continue-on-error: true
         run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore --logger "trx;LogFileName=myra-tests.trx" --results-directory TestResults
-      - name: Commit integrated Game1
+      - name: Commit integrated Myra source
         if: steps.build_game.outcome == 'success' && github.event_name == 'push' && github.actor != 'github-actions[bot]'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Game1.cs
+          git add Game1.cs Game1.MyraUi.cs
           if ! git diff --cached --quiet; then
-            git commit -m "Integrate Myra UI into game loop"
+            git commit -m "Apply compiled Myra integration"
             git push origin HEAD:feature/myra-ui-refactor
           fi
       - name: Report failed tests
