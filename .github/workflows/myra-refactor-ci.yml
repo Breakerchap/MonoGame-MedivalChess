@@ -19,9 +19,11 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Restore tools
         run: dotnet tool restore
-      - name: Restore
-        run: dotnet restore MedivalChess.sln
-      - name: Build
-        run: dotnet build MedivalChess.sln --configuration Release --no-restore
+      - name: Restore game
+        run: dotnet restore MedivalChess.csproj
+      - name: Restore tests
+        run: dotnet restore MedivalChess.Tests/MedivalChess.Tests.csproj
+      - name: Build game
+        run: dotnet build MedivalChess.csproj --configuration Release --no-restore
       - name: Test
-        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-build
+        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore
