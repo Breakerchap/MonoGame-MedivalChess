@@ -151,6 +151,19 @@ public static partial class CpuGameRules
     return false;
   }
 
+  private static NetworkPiece? FindUnitOnAttackedSquare(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece attacker,
+    int targetX,
+    int targetY
+  )
+  {
+    return pieces.FirstOrDefault(piece => piece.Id != attacker.Id && piece.Team != attacker.Team &&
+      piece.AttachedToId is null && piece.Type != "Farm" &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      Occupies(rule, piece, (targetX, targetY)));
+  }
+
   private static bool IsLegalMove(CpuGameState state, MoveAction action)
   {
     NetworkPiece? piece = FindPiece(state.Pieces, action.PieceId);
@@ -174,6 +187,10 @@ public static partial class CpuGameRules
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    if (target is { Type: "Farm" })
+    {
+      target = FindUnitOnAttackedSquare(state.Pieces, attacker, action.TargetX, action.TargetY) ?? target;
+    }
     if (target is null)
     {
       return action.TargetPieceId is null && state.Barricades.ContainsKey((action.TargetX, action.TargetY)) &&

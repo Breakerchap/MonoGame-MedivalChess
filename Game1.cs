@@ -620,8 +620,7 @@ internal sealed class Game1 : Game
               !selectedPiece.HasAttackedThisTurn &&
               selectedPiece.Definition.Attack > 0 &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
-              HasClearAttackPath(selectedPiece, targetPosition) &&
-              !(hostilePieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(hostilePieceAtTarget));
+              HasClearAttackPath(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
               if (hostilePieceAtTarget is not null)
@@ -654,8 +653,7 @@ internal sealed class Game1 : Game
               HasClearAttackPath(selectedPiece, targetPosition) &&
               selectedPiece.Definition.Attack > 0 &&
               (hostilePieceAtTarget is not null ||
-               _barricades.ContainsKey(targetPosition)) &&
-              !(hostilePieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(hostilePieceAtTarget));
+               _barricades.ContainsKey(targetPosition));
 
             if (isValidAttack)
             {
@@ -3237,8 +3235,7 @@ internal sealed class Game1 : Game
 
         var targetPosition = (x: x + _board.MinX, y: y + _board.MinY);
         Piece pieceAtTarget = GetUnattachedPieceAt(targetPosition);
-        if (pieceAtTarget?.Team == piece.Team ||
-            (pieceAtTarget?.Definition.Type == PieceType.Farm && IsFarmCoveredByUnit(pieceAtTarget)))
+        if (pieceAtTarget?.Team == piece.Team)
         {
           continue;
         }
@@ -3270,11 +3267,6 @@ internal sealed class Game1 : Game
       piece.Team != team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
     ?? pieceSetup.Pieces.FirstOrDefault(piece =>
       piece.Team != team && piece.AttachedTo is null && piece.Occupies(position));
-
-  private bool IsFarmCoveredByUnit(Piece farm) =>
-    farm?.Definition.Type == PieceType.Farm && pieceSetup.Pieces.Any(piece =>
-      piece != farm && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm &&
-      FootprintsOverlap(farm.Definition, farm.Position, piece.Definition, piece.Position));
 
   private bool HasAvailableAttack(Piece piece)
   {
