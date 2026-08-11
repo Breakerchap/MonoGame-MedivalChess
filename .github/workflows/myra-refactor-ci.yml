@@ -21,8 +21,10 @@ jobs:
           dotnet-version: |
             8.0.x
             9.0.x
-      - name: Apply Game1 integration
-        run: python3 tools/apply_myra_refactor.py
+      - name: Apply Myra integration
+        run: |
+          python3 tools/apply_myra_refactor.py
+          python3 tools/apply_myra_runtime_fixes.py
       - name: Restore tools
         run: dotnet tool restore
       - name: Restore game
