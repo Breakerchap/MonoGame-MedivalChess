@@ -203,6 +203,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     if (action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target) &&
         UnitRules.TryGet(target.Type, out UnitRule rule))
     {
+      if (action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) &&
+          piecesById.TryGetValue(action.ActorId, out NetworkPiece? actor) && actor.Type == "Guard")
+      {
+        // Guard attachment is a scarce permanent protection choice. Make replacement cost dwarf
+        // target attack here so an expensive low-attack asset survives the cheap shortlist.
+        return rule.Cost * 4f + rule.Health * 0.1f;
+      }
       return rule.Cost + rule.Attack + (rule.Category == RuleCategory.Royal ? 100f : 0f);
     }
     return action.Ability is "Barrier" or "Mine" ? 8f : 2f;
