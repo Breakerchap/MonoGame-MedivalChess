@@ -7,12 +7,14 @@ namespace MedivalChess;
 
 internal sealed partial class Game1
 {
-  // Field initialisation runs before LoadContent creates any Myra widgets, so the
-  // entire code-first UI picks up the game theme without a visual-editor asset.
-  private readonly bool _myraThemeInitialised = InitialiseMyraTheme();
+  private bool _myraThemeInitialised;
 
-  private static bool InitialiseMyraTheme()
+  private void InitialiseMyraTheme()
   {
+    if (_myraThemeInitialised) return;
+
+    // Stylesheet.Current lazily loads Myra's default assets and therefore requires
+    // MyraEnvironment.Game to have already been assigned by InitializeMyraUi().
     Stylesheet stylesheet = Stylesheet.Current;
 
     ButtonStyle button = stylesheet.ButtonStyle;
@@ -43,7 +45,7 @@ internal sealed partial class Game1
     textBox.BorderThickness = new Thickness(1);
     textBox.Padding = new Thickness(UiTheme.SpaceSm, UiTheme.SpaceXs);
 
-    return true;
+    _myraThemeInitialised = true;
   }
 
   private static SolidBrush Brush(Color colour) => new(colour);
