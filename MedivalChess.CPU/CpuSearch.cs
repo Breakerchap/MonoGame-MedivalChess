@@ -503,7 +503,7 @@ public sealed class CpuPlayer : ICpuPlayer
         {
           IReadOnlyList<ICpuGameAction> concrete = GetConcreteActions(candidate.Action);
           if (node.Actions.Count == 0 && fallbackAction is null) fallbackAction = concrete[0];
-          if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken,
+          if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken, softDeadlineMilliseconds,
             out timedOut, out nodeBudgetReached, out cancelled))
           {
             return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
@@ -516,7 +516,7 @@ public sealed class CpuPlayer : ICpuPlayer
       int parallelism = GetParallelism(profile.Search);
       foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
       {
-        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken, softDeadlineMilliseconds,
           out timedOut, out nodeBudgetReached, out cancelled))
         {
           return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);

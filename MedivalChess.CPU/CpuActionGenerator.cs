@@ -206,7 +206,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     int centreY = state.Board.MinY + state.Board.BoardArray.GetLength(0) / 2;
     bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true;
     UnitRule farmRule = UnitRules.GetRequired("Farm");
-    int furthestForwardProjection = openingFarmPlacement
+    int furthestForwardProjection = state.Configuration.FarmsEnabled
       ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
       : 0;
     List<(int x, int y)> positions = openingFarmPlacement
