@@ -7,7 +7,7 @@ on:
     branches: [master]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -15,17 +15,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: |
             8.0.x
             9.0.x
+      - name: Apply editor Myra integration
+        run: python3 tools/apply_editor_myra.py
       - name: Restore tools
         run: dotnet tool restore
       - name: Restore game
         run: dotnet restore MedivalChess.csproj
       - name: Build game
+        id: build_game
         run: dotnet build MedivalChess.csproj --configuration Release --no-restore
+      - name: Commit compiled editor integration
+        if: steps.build_game.outcome == 'success' && github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Campaign/LevelEditorScreen.cs Campaign/LevelEditorScreen.Myra.cs
+          if ! git diff --cached --quiet; then
+            git commit -m "Apply compiled Myra level editor integration"
+            git push origin HEAD:feature/myra-ui-refactor
+          fi
 
   tests:
     name: Existing test suite
