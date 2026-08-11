@@ -1,0 +1,34 @@
+name: CPU tactical safety check
+
+on:
+  push:
+    branches:
+      - cpu-search-behaviour-fixes
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cpu-search-behaviour-fixes
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Apply tactical safety improvements
+        run: python tools/apply_cpu_tactical_safety.py
+      - name: Restore
+        run: dotnet restore CrownAndSiege.sln
+      - name: Test
+        run: dotnet test CrownAndSiege.sln --configuration Release --no-restore
+      - name: Commit verified improvements
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MedivalChess.CPU/CpuSearch.cs MedivalChess.CPU/Evaluation.cs MedivalChess.Tests/CpuTacticalSafetyTests.cs
+          git diff --cached --quiet && exit 0
+          git commit -m "Improve CPU tactical safety and reply search"
+          git push origin HEAD:cpu-search-behaviour-fixes
