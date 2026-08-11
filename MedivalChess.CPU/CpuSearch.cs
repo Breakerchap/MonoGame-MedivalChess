@@ -423,6 +423,12 @@ public sealed class CpuPlayer : ICpuPlayer
         IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
           batch, team, profile, intents, context, evaluatedStates, parallelism, stopwatch, profile.Search,
           cancellationToken, ref evaluationCacheHits);
+        if (evaluated.Count < batch.Length)
+        {
+          cancelled = cancellationToken.IsCancellationRequested;
+          timedOut = !cancelled && stopwatch.ElapsedMilliseconds >= Math.Max(1, profile.Search.MaxSearchMilliseconds);
+          return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+        }
         foreach (EvaluatedSearchExpansion branch in evaluated)
         {
           nodesGenerated++;
