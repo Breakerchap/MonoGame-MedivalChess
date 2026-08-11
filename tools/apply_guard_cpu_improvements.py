@@ -1,0 +1,242 @@
+from pathlib import Path
+
+
+def replace_exact(text: str, old: str, new: str, label: str) -> str:
+    if old not in text:
+        raise SystemExit(f"Could not find expected block: {label}")
+    return text.replace(old, new, 1)
+
+
+strategic_path = Path("MedivalChess.CPU/CpuStrategicHeuristics.cs")
+strategic = strategic_path.read_text()
+
+strategic = replace_exact(
+    strategic,
+    '''    if (actor.Type == "Guard" && action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) && target is not null)
+    {
+      float score = GuardPriorities.Contains(target.Type) ? 28f : -8f;
+      if (IsThreatenedNow(state, target)) score += 12f;
+      if (HasThreatenedGuardPriority(state, action.Team) && !GuardPriorities.Contains(target.Type)) score -= 18f;
+      return score;
+    }
+''',
+    '''    if (actor.Type == "Guard" && action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) && target is not null)
+    {
+      // A Guard effectively buys the protected piece another health bar, so replacement cost is
+      // the primary decision. Threat and the documented artillery/ranged pairings refine that
+      // choice, but a cheap unit should not steal a Guard from a much more expensive asset.
+      float score = GetGuardProtectionPriority(state, target);
+      float bestAvailable = GetBestUnguardedGuardPriority(state, action.Team, actor.Id);
+      if (bestAvailable > score)
+      {
+        // Penalise spending the one-shot attachment on a noticeably worse target. Keep the
+        // penalty partial because the best board-wide target may not be in this Guard's range.
+        score -= (bestAvailable - score) * 0.45f;
+      }
+      return score;
+    }
+''',
+    "Guard attach score",
+)
+
+strategic = replace_exact(
+    strategic,
+    '''      "Guard" when ActivePieces(state, action.Team).Any(piece => GuardPriorities.Contains(piece.Type)) => 10f,
+''',
+    '''      "Guard" => Math.Clamp(GetBestUnguardedGuardPriority(state, action.Team) * 0.22f, 0f, 34f),
+''',
+    "Guard purchase score",
+)
+
+strategic = replace_exact(
+    strategic,
+    '''    foreach (NetworkPiece ally in ActivePieces(state, action.Team).Where(piece => piece.Id != mover.Id))
+    {
+      int before = Distance(mover, ally);
+      int after = Distance(destination, (ally.X, ally.Y));
+      if (Supports(mover.Type, ally.Type)) score += (before - after) * 2.5f;
+    }
+    if (mover.Type == "Peasant" && IsBombardThreatenedCluster(state, action.Team, destination)) score -= 12f;
+''',
+    '''    foreach (NetworkPiece ally in ActivePieces(state, action.Team).Where(piece => piece.Id != mover.Id))
+    {
+      int before = Distance(mover, ally);
+      int after = Distance(destination, (ally.X, ally.Y));
+      if (Supports(mover.Type, ally.Type)) score += (before - after) * 2.5f;
+    }
+    if (mover.Type == "Guard")
+    {
+      score += ScoreGuardApproach(state, action.Team, mover, destination);
+    }
+    if (mover.Type == "Peasant" && IsBombardThreatenedCluster(state, action.Team, destination)) score -= 12f;
+''',
+    "Guard movement score",
+)
+
+strategic = replace_exact(
+    strategic,
+    '''    foreach (NetworkPiece guard in state.Pieces.Where(piece => piece.Team == team && piece.AttachmentKind == NetworkAttachmentKind.Guard &&
+      piece.AttachedToId is not null))
+    {
+      NetworkPiece? protectedPiece = state.Pieces.FirstOrDefault(piece => piece.Id == guard.AttachedToId);
+      score += protectedPiece is not null && GuardPriorities.Contains(protectedPiece.Type) ? 25f : 3f;
+    }
+''',
+    '''    foreach (NetworkPiece guard in state.Pieces.Where(piece => piece.Team == team && piece.AttachmentKind == NetworkAttachmentKind.Guard &&
+      piece.AttachedToId is not null))
+    {
+      NetworkPiece? protectedPiece = state.Pieces.FirstOrDefault(piece => piece.Id == guard.AttachedToId);
+      if (protectedPiece is null) continue;
+      float guardHealth = UnitRules.TryGet(guard.Type, out UnitRule guardRule)
+        ? Math.Clamp(guard.Health / (float)Math.Max(1, guardRule.Health), 0f, 1f)
+        : 1f;
+      // Once attached, value the real asset being protected rather than the Guard's own flat
+      // material value. A damaged Guard still helps, but proportionally less.
+      score += GetGuardProtectionPriority(state, protectedPiece) * 0.38f * (0.35f + guardHealth * 0.65f);
+    }
+''',
+    "Applied Guard value",
+)
+
+strategic = replace_exact(
+    strategic,
+    '''    if (HasThreatenedGuardPriority(state, team) && state.Pieces.Any(piece => piece.Team == team && piece.Type == "Guard" &&
+      piece.AttachedToId is not null && state.Pieces.FirstOrDefault(target => target.Id == piece.AttachedToId) is NetworkPiece attached &&
+      !GuardPriorities.Contains(attached.Type))) risk += 14f;
+    return risk;
+''',
+    '''    float urgentGuardTarget = GetBestThreatenedUnguardedGuardPriority(state, team);
+    if (urgentGuardTarget > 0f)
+    {
+      foreach (NetworkPiece guard in state.Pieces.Where(piece => piece.Team == team && piece.Type == "Guard" &&
+        piece.AttachmentKind == NetworkAttachmentKind.Guard && piece.AttachedToId is not null))
+      {
+        NetworkPiece? attached = state.Pieces.FirstOrDefault(target => target.Id == guard.AttachedToId);
+        if (attached is null) continue;
+        float attachedPriority = GetGuardProtectionPriority(state, attached);
+        if (urgentGuardTarget > attachedPriority + 18f)
+        {
+          // This primarily affects the branch where the Guard is choosing what to attach to: it
+          // rejects sacrificing the attachment on a cheap piece while an expensive threatened
+          // asset is still exposed.
+          risk += Math.Clamp((urgentGuardTarget - attachedPriority) * 0.22f, 8f, 30f);
+        }
+      }
+    }
+    return risk;
+''',
+    "Guard anti-combo risk",
+)
+
+strategic = replace_exact(
+    strategic,
+    '''  private static bool HasThreatenedGuardPriority(CpuGameState state, NetworkTeam team) => ActivePieces(state, team).Any(piece =>
+    GuardPriorities.Contains(piece.Type) && IsThreatenedNow(state, piece) && !state.Pieces.Any(guard =>
+      guard.AttachmentKind == NetworkAttachmentKind.Guard && guard.AttachedToId == piece.Id));
+
+  private static bool IsWithinDiverReach''',
+    '''  private static float GetGuardProtectionPriority(CpuGameState state, NetworkPiece target)
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule rule) || rule.Category == RuleCategory.Royal || target.Type == "Guard")
+    {
+      return 0f;
+    }
+
+    // Cost intentionally dominates. The extra high-cost slope makes a 50-70 gold piece clearly
+    // preferable to a 10-25 gold body even when the cheaper unit happens to be under light fire.
+    float cost = Math.Max(0f, rule.Cost);
+    float priority = cost * 1.65f + Math.Max(0f, cost - 30f) * 1.25f;
+    if (GuardPriorities.Contains(target.Type)) priority += 9f;
+    if (target.Type == "Farm") priority *= 0.55f;
+
+    float healthFraction = Math.Clamp(target.Health / (float)Math.Max(1, rule.Health), 0f, 1f);
+    if (healthFraction <= 0.5f) priority += 8f + cost * 0.15f;
+    if (IsThreatenedNow(state, target)) priority += 22f + cost * 0.7f;
+    if (IsWithinDiverReach(state, target.Team, (target.X, target.Y))) priority += 5f + cost * 0.12f;
+    return priority;
+  }
+
+  private static IEnumerable<NetworkPiece> UnguardedGuardTargets(CpuGameState state, NetworkTeam team, string? excludingGuardId = null) =>
+    ActivePieces(state, team).Where(piece => piece.Id != excludingGuardId && piece.Id != state.TreasureCarrierId &&
+      piece.Type != "Guard" && UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category != RuleCategory.Royal &&
+      !state.Pieces.Any(guard => guard.AttachmentKind == NetworkAttachmentKind.Guard && guard.AttachedToId == piece.Id));
+
+  private static float GetBestUnguardedGuardPriority(CpuGameState state, NetworkTeam team, string? excludingGuardId = null) =>
+    UnguardedGuardTargets(state, team, excludingGuardId)
+      .Select(target => GetGuardProtectionPriority(state, target))
+      .DefaultIfEmpty(0f)
+      .Max();
+
+  private static float GetBestThreatenedUnguardedGuardPriority(CpuGameState state, NetworkTeam team) =>
+    UnguardedGuardTargets(state, team)
+      .Where(target => IsThreatenedNow(state, target))
+      .Select(target => GetGuardProtectionPriority(state, target))
+      .DefaultIfEmpty(0f)
+      .Max();
+
+  private static float ScoreGuardApproach(
+    CpuGameState state,
+    NetworkTeam team,
+    NetworkPiece guard,
+    (int x, int y) destination
+  )
+  {
+    float best = 0f;
+    foreach (NetworkPiece target in UnguardedGuardTargets(state, team, guard.Id))
+    {
+      int progress = Distance((guard.X, guard.Y), (target.X, target.Y)) -
+        Distance(destination, (target.X, target.Y));
+      if (progress <= 0) continue;
+      float targetPriority = GetGuardProtectionPriority(state, target);
+      // A single step toward a premium target should survive candidate pruning, while movement
+      // toward cheap pieces remains only a mild formation preference.
+      best = Math.Max(best, progress * Math.Clamp(targetPriority * 0.16f, 2f, 24f));
+    }
+    return best;
+  }
+
+  private static bool HasThreatenedGuardPriority(CpuGameState state, NetworkTeam team) =>
+    GetBestThreatenedUnguardedGuardPriority(state, team) > 0f;
+
+  private static bool IsWithinDiverReach''',
+    "Guard priority helpers",
+)
+
+strategic_path.write_text(strategic)
+
+candidate_path = Path("MedivalChess.CPU/CpuActionCandidates.cs")
+candidate = candidate_path.read_text()
+candidate = replace_exact(
+    candidate,
+    '''  private static float GetQuickAbilityScore(UseAbilityAction action, IReadOnlyDictionary<string, NetworkPiece> piecesById)
+  {
+    if (action.Ability == "PickUpTreasure") return 1_000f;
+    if (action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target) &&
+        UnitRules.TryGet(target.Type, out UnitRule rule))
+    {
+      return rule.Cost + rule.Attack + (rule.Category == RuleCategory.Royal ? 100f : 0f);
+    }
+    return action.Ability is "Barrier" or "Mine" ? 8f : 2f;
+  }
+''',
+    '''  private static float GetQuickAbilityScore(UseAbilityAction action, IReadOnlyDictionary<string, NetworkPiece> piecesById)
+  {
+    if (action.Ability == "PickUpTreasure") return 1_000f;
+    if (action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target) &&
+        UnitRules.TryGet(target.Type, out UnitRule rule))
+    {
+      if (action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) &&
+          piecesById.TryGetValue(action.ActorId, out NetworkPiece? actor) && actor.Type == "Guard")
+      {
+        // Guard attachment is a scarce permanent protection choice. Make replacement cost dwarf
+        // target attack here so an expensive low-attack asset survives the cheap shortlist.
+        return rule.Cost * 4f + rule.Health * 0.1f;
+      }
+      return rule.Cost + rule.Attack + (rule.Category == RuleCategory.Royal ? 100f : 0f);
+    }
+    return action.Ability is "Barrier" or "Mine" ? 8f : 2f;
+  }
+''',
+    "Quick Guard attachment ordering",
+)
+candidate_path.write_text(candidate)
