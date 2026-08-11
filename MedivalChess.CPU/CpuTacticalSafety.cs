@@ -78,7 +78,7 @@ public static class CpuTacticalSafety
     float directFraction = Math.Clamp(assessment.DirectDamage / (float)Math.Max(1, target.Health), 0f, 2f);
     float moveFraction = Math.Clamp(assessment.StrongestMoveAttackDamage / (float)Math.Max(1, target.Health), 0f, 1f);
     float penalty = directFraction * (value * 2.5f + 32f) +
-      moveFraction * (value * 1.8f + 18f) + assessment.MoveAttackers * 8f;
+      moveFraction * (value * 0.9f + 12f) + assessment.MoveAttackers * 4f;
 
     if (assessment.IsDirectlyLethal)
     {
@@ -86,9 +86,10 @@ public static class CpuTacticalSafety
     }
     if (assessment.CanBeKilledAfterAnEnemyMove)
     {
-      // A move-and-attack kill is less immediate than a direct kill, but it should still outweigh
-      // ordinary positional gains. Search may override this with a forcing win or winning trade.
-      penalty += 260f + value * 5f;
+      // This is a forecast, not a capture that has already happened. Keep it meaningful, but
+      // leave room for an advancing unit to pressure a farm, contest an objective, or create a
+      // supported exchange instead of reflexively retreating from every enemy's future reach.
+      penalty += 90f + value * 2.5f;
     }
     if (rule.Category == RuleCategory.Royal)
     {

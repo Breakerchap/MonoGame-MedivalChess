@@ -283,6 +283,41 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
+  public void CandidateRanking_EngagesAnAttackerThreateningAFriendlyFarm()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("red-farm", "Farm", NetworkTeam.Red, 0, 4, 30),
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, 3, 15)
+      ],
+      configuration,
+      redMoney: 0
+    );
+    NetworkPiece farm = state.Pieces.Single(piece => piece.Id == "red-farm");
+    NetworkPiece attacker = state.Pieces.Single(piece => piece.Id == "blue-soldier");
+    IReadOnlyList<ICpuGameAction> moves = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<MoveAction>()
+      .Where(move => move.PieceId == "red-soldier")
+      .Cast<ICpuGameAction>()
+      .ToArray();
+
+    Assert.True(CpuGameRules.CanDirectlyAttack(state, attacker, farm));
+    MoveAction selected = Assert.IsType<MoveAction>(Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red, moves, new CpuSearchSettings { CandidatesPerNode = 1 })).Action);
+    CpuGameState moved = selected.Apply(state);
+    NetworkPiece soldier = moved.Pieces.Single(piece => piece.Id == "red-soldier");
+    NetworkPiece movedAttacker = moved.Pieces.Single(piece => piece.Id == "blue-soldier");
+
+    Assert.True(
+      Math.Abs(selected.DestinationX - attacker.X) + Math.Abs(selected.DestinationY - attacker.Y) <
+      Math.Abs(0 - attacker.X) + Math.Abs(0 - attacker.Y),
+      selected.Describe());
+    Assert.True(CpuGameRules.CanDirectlyAttack(moved, soldier, movedAttacker), selected.Describe());
+  }
+
+  [Fact]
   public void CandidateRankingPrefersMovingIntoAttackRangeOfTheEnemyRoyal()
   {
     CpuGameState state = CreateState(

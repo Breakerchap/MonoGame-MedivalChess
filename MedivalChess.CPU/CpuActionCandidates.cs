@@ -174,7 +174,8 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int enemyProgress = relevantEnemies.Count == 0 ? 0 :
       relevantEnemies.Min(enemy => Distance((piece.X, piece.Y), (enemy.X, enemy.Y))) -
       relevantEnemies.Min(enemy => Distance((action.DestinationX, action.DestinationY), (enemy.X, enemy.Y)));
-    return goalProgress * 16f + enemyProgress * 3f +
+    float farmInterception = CanAttackFarmAttackerAfterMove(state, action, piece) ? 220f : 0f;
+    return goalProgress * 16f + enemyProgress * 3f + farmInterception +
       ScoreApproachToPriorityTargets(state, action.Team, piece, action) +
       ScoreCounterEngagement(state, piece, action);
   }
@@ -313,6 +314,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
         .Any(target => CpuGameRules.CanDirectlyAttack(result, exposedPiece, target) &&
           (UnitRules.GetRequired(target.Type).Category == RuleCategory.Royal ||
            target.Type == "Mercenary" ||
+           CanDirectlyThreatenFriendlyFarm(result, team, target) ||
            CpuStrategicHeuristics.GetMatchupScore(result, exposedPiece, target) > 0f));
     if (createsForcingAttack)
     {
@@ -321,6 +323,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
 
     CpuTacticalSafety.Assessment assessment = CpuTacticalSafety.Assess(result, team, exposedPiece);
     float penalty = CpuTacticalSafety.GetActionRiskPenalty(result, exposedPiece, assessment);
+    if (action is MoveAction defensiveMove && MovesTowardFarmAttacker(state, team, defensiveMove))
+    {
+      // A defender that closes on an attacker already threatening a farm is spending itself to
+      // save an income asset. Keep a meaningful risk cost, but do not prune the only active
+      // defence in favour of a passive retreat.
+      penalty *= 0.45f;
+    }
     if (penalty <= 0f)
     {
       return candidate;
@@ -475,16 +484,17 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     float firingSetup = ScoreMoveIntoAttackRange(state, action, piece);
     float royalApproach = ScoreApproachToEnemyRoyals(state, team, piece, action);
     float defensiveApproach = ScoreApproachToInvadersNearOwnRoyal(state, team, piece, action);
+    float farmDefense = ScoreApproachToFarmAttackers(state, team, piece, action);
     float battlefieldApproach = ScoreApproachToRelevantEnemy(relevantEnemies, action, piece);
     float priorityTargetApproach = ScoreApproachToPriorityTargets(state, team, piece, action);
     float counterEngagement = ScoreCounterEngagement(state, piece, action);
-    score += firingSetup + royalApproach + defensiveApproach + battlefieldApproach + priorityTargetApproach + counterEngagement;
+    score += firingSetup + royalApproach + defensiveApproach + farmDefense + battlefieldApproach + priorityTargetApproach + counterEngagement;
 
     // A narrow search cannot afford to spend branches on a move that neither makes progress,
     // creates a firing line, protects home, nor improves contact with an enemy force. Formation
     // bonuses from CpuStrategicHeuristics can still rescue a genuine combo move afterwards.
     bool advancesGoal = goals.Count > 0 && newDistance < oldDistance;
-    if (!advancesGoal && firingSetup <= 0f && royalApproach <= 0f && defensiveApproach <= 0f && battlefieldApproach <= 0f &&
+    if (!advancesGoal && firingSetup <= 0f && royalApproach <= 0f && defensiveApproach <= 0f && farmDefense <= 0f && battlefieldApproach <= 0f &&
         priorityTargetApproach <= 0f && counterEngagement <= 0f)
     {
       score -= 18f;
@@ -494,6 +504,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     return new ScoredAction(action, score,
       firingSetup > 0f ? "Creates an immediate firing line" :
       defensiveApproach > 0f ? "Moves toward an invader threatening home assets" :
+      farmDefense > 0f ? "Moves to defend a threatened farm" :
       counterEngagement > 0f ? "Pursues a favorable matchup or withdraws from a counter" :
       priorityTargetApproach > 0f ? "Pressures an opposing royal, farm, or unit" :
       advancesGoal || royalApproach > 0f ? "Advances toward a target or objective" :
@@ -609,12 +620,19 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       return 0f;
     }
 
-    return movedState.Pieces
+    float rangeSetup = movedState.Pieces
       .Where(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral && target.AttachedToId is null)
       .Where(target => CpuGameRules.CanDirectlyAttack(movedState, movedPiece, target))
       .Select(target => CombatTargetScoring.GetRangeSetupReward(movedState, action.Team, target))
       .DefaultIfEmpty(0f)
       .Max();
+    HashSet<string> farmAttackerIds = GetFarmAttackers(state, action.Team)
+      .Select(attacker => attacker.Id)
+      .ToHashSet(StringComparer.Ordinal);
+    bool interceptsFarmAttacker = farmAttackerIds.Count > 0 && movedState.Pieces
+      .Where(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral && target.AttachedToId is null)
+      .Any(target => farmAttackerIds.Contains(target.Id) && CpuGameRules.CanDirectlyAttack(movedState, movedPiece, target));
+    return rangeSetup + (interceptsFarmAttacker ? 220f : 0f);
   }
 
   private static float ScoreApproachToEnemyRoyals(CpuGameState state, NetworkTeam team, NetworkPiece piece, MoveAction action)
@@ -673,6 +691,60 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int oldDistance = relevantEnemies.Min(target => Distance((piece.X, piece.Y), (target.X, target.Y)));
     int newDistance = relevantEnemies.Min(target => Distance((action.DestinationX, action.DestinationY), (target.X, target.Y)));
     return Math.Max(0, oldDistance - newDistance) * 1.5f;
+  }
+
+  private static float ScoreApproachToFarmAttackers(
+    CpuGameState state,
+    NetworkTeam team,
+    NetworkPiece piece,
+    MoveAction action
+  )
+  {
+    NetworkPiece[] attackers = GetFarmAttackers(state, team);
+    if (attackers.Length == 0)
+    {
+      return 0f;
+    }
+
+    int oldDistance = attackers.Min(attacker => Distance((piece.X, piece.Y), (attacker.X, attacker.Y)));
+    int newDistance = attackers.Min(attacker => Distance((action.DestinationX, action.DestinationY), (attacker.X, attacker.Y)));
+    return Math.Max(0, oldDistance - newDistance) * 24f;
+  }
+
+  private static bool MovesTowardFarmAttacker(CpuGameState state, NetworkTeam team, MoveAction move)
+  {
+    NetworkPiece? mover = state.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId);
+    if (mover is null)
+    {
+      return false;
+    }
+
+    return GetFarmAttackers(state, team).Any(attacker =>
+      Distance((move.DestinationX, move.DestinationY), (attacker.X, attacker.Y)) <
+      Distance((mover.X, mover.Y), (attacker.X, attacker.Y)));
+  }
+
+  private static NetworkPiece[] GetFarmAttackers(CpuGameState state, NetworkTeam defendingTeam) => state.Pieces
+    .Where(piece => piece.Team != defendingTeam && piece.Team != NetworkTeam.Neutral &&
+      piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0)
+    .Where(attacker => CanDirectlyThreatenFriendlyFarm(state, defendingTeam, attacker))
+    .ToArray();
+
+  private static bool CanDirectlyThreatenFriendlyFarm(CpuGameState state, NetworkTeam defendingTeam, NetworkPiece attacker) => state.Pieces
+    .Where(piece => piece.Team == defendingTeam && piece.AttachedToId is null && piece.Type == "Farm")
+    .Any(farm => CpuGameRules.CanDirectlyAttack(state, attacker, farm));
+
+  private static bool CanAttackFarmAttackerAfterMove(CpuGameState state, MoveAction action, NetworkPiece mover)
+  {
+    if (!UnitRules.TryGet(mover.Type, out UnitRule moverRule))
+    {
+      return false;
+    }
+
+    return GetFarmAttackers(state, action.Team).Any(attacker =>
+      UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
+      UnitRules.CanAttack(moverRule, action.DestinationX, action.DestinationY, action.Team,
+        attackerRule, attacker.X, attacker.Y));
   }
 
   private static float ScoreApproachToPriorityTargets(
