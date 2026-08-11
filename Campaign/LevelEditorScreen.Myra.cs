@@ -93,8 +93,8 @@ internal sealed partial class LevelEditorScreen
   {
     Panel root = new()
     {
-      Width = layout.Screen.Width,
-      Height = layout.Screen.Height,
+      Width = _editorMyraScreen.Width,
+      Height = _editorMyraScreen.Height,
       Background = new SolidBrush(Color.Transparent),
       HorizontalAlignment = HorizontalAlignment.Left,
       VerticalAlignment = VerticalAlignment.Top

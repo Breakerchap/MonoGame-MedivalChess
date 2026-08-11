@@ -14,7 +14,7 @@ using MedivalChess.Shared;
 namespace MedivalChess.Campaign;
 
 /// <summary>MonoGame editor surface backed exclusively by <see cref="LevelEditorState"/>.</summary>
-internal sealed class LevelEditorScreen
+internal sealed partial class LevelEditorScreen
 {
   private enum TextField
   {
@@ -174,6 +174,7 @@ internal sealed class LevelEditorScreen
   {
     if (wasEscapePressed)
     {
+      if (HandleMyraEditorEscape()) return;
       if (_textField != TextField.None)
       {
         _textField = TextField.None;
@@ -192,7 +193,8 @@ internal sealed class LevelEditorScreen
 
     EditorLayout layout = new(screen, State.Level.Teams.Count);
     Point point = pointer;
-    UpdateKeyboardNavigation(keyboard, previousKeyboard);
+    EnsureMyraEditor(screen);
+    if (!IsMyraEditorTextInputFocused()) UpdateKeyboardNavigation(keyboard, previousKeyboard);
     UpdateTextInput(keyboard, previousKeyboard);
 
     // Right click is deliberately immediate and context-free: it is the fast erase gesture.
@@ -202,18 +204,19 @@ internal sealed class LevelEditorScreen
       return;
     }
 
-    if (wasLeftClick)
+    if (wasLeftClick && IsMyraEditorChromePoint(layout, point))
     {
       CommitAndEndTextEdit();
-      if (HandleHeaderClick(layout, point)) return;
-      if (HandleToolClick(layout, point)) return;
-      if (HandlePropertyClick(layout, point)) return;
+      return;
     }
+
+    if (wasLeftClick) CommitAndEndTextEdit();
 
     // Painting continues while held for tools that do not have a one-click semantic.
     if (layout.Canvas.Contains(point) && (wasLeftClick || (isLeftHeld && CanPaintContinuously())))
     {
       HandleBoardClick(layout, point);
+      MarkEditorMyraDirty();
     }
   }
 
@@ -227,11 +230,14 @@ internal sealed class LevelEditorScreen
       _lastCanvasSize = layout.Canvas.Size;
     }
     _spriteBatch.Draw(_pixel, screen, UiTheme.MenuBackground);
-    DrawHeader(layout);
     DrawBoard(layout);
-    DrawToolPanel(layout);
-    DrawProperties(layout);
-    DrawProblems(layout);
+
+    // Game1 owns the surrounding SpriteBatch. Pause it while Myra renders the editor
+    // chrome, then restore the same logical UI transform for the caller's final End().
+    _spriteBatch.End();
+    EnsureMyraEditor(screen);
+    RenderMyraEditor(layout);
+    _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(UiLayout.Scale));
   }
 
   private void DrawHeader(EditorLayout layout)
