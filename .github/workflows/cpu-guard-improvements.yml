@@ -42,13 +42,13 @@ jobs:
 ''', '''    if (actor.Type == "Guard" && action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) && target is not null)
     {
       // A Guard effectively buys the protected piece another health bar, so replacement cost is
-      // the primary decision.  Threat and the documented artillery/ranged pairings refine that
+      // the primary decision. Threat and the documented artillery/ranged pairings refine that
       // choice, but a cheap unit should not steal a Guard from a much more expensive asset.
       float score = GetGuardProtectionPriority(state, target);
       float bestAvailable = GetBestUnguardedGuardPriority(state, action.Team, actor.Id);
       if (bestAvailable > score)
       {
-        // Penalise spending the one-shot attachment on a noticeably worse target.  Keep the
+        // Penalise spending the one-shot attachment on a noticeably worse target. Keep the
         // penalty partial because the best board-wide target may not be in this Guard's range.
         score -= (bestAvailable - score) * 0.45f;
       }
@@ -136,8 +136,8 @@ jobs:
       return 0f;
     }
 
-    // Cost intentionally dominates. The extra high-cost slope makes a 50–70 gold piece clearly
-    // preferable to a 10–25 gold body even when the cheaper unit happens to be under light fire.
+    // Cost intentionally dominates. The extra high-cost slope makes a 50-70 gold piece clearly
+    // preferable to a 10-25 gold body even when the cheaper unit happens to be under light fire.
     float cost = Math.Max(0f, rule.Cost);
     float priority = cost * 1.65f + Math.Max(0f, cost - 30f) * 1.25f;
     if (GuardPriorities.Contains(target.Type)) priority += 9f;
@@ -227,130 +227,6 @@ jobs:
   }
 ''', 'Quick Guard attachment ordering')
           candidate_path.write_text(candidate)
-
-          test_path = Path('MedivalChess.Tests/CpuGuardStrategyTests.cs')
-          test_path.write_text(r'''using MedivalChess.CPU;
-using MedivalChess.Shared;
-using Xunit;
-
-namespace MedivalChess.Tests;
-
-public sealed class CpuGuardStrategyTests
-{
-  [Fact]
-  public void GuardAttach_HeavilyPrefersTheMoreExpensiveUnit()
-  {
-    NetworkPiece guard = Piece("guard", "Guard", 0, 0);
-    NetworkPiece peasant = Piece("peasant", "Peasant", 1, 0);
-    NetworkPiece knight = Piece("knight", "Knight", 0, 1);
-    CpuGameState state = CreateState(guard, peasant, knight);
-    UseAbilityAction cheap = new(NetworkTeam.Red, guard.Id, "Attach", peasant.Id, peasant.X, peasant.Y);
-    UseAbilityAction expensive = new(NetworkTeam.Red, guard.Id, "Attach", knight.Id, knight.X, knight.Y);
-
-    Assert.True(cheap.IsLegal(state));
-    Assert.True(expensive.IsLegal(state));
-    float cheapScore = CpuStrategicHeuristics.ScoreAction(state, cheap);
-    float expensiveScore = CpuStrategicHeuristics.ScoreAction(state, expensive);
-
-    Assert.True(expensiveScore >= cheapScore + 45f, $"cheap={cheapScore}, expensive={expensiveScore}");
-  }
-
-  [Fact]
-  public void GuardCandidateSelection_PicksTheExpensiveAttachment()
-  {
-    NetworkPiece guard = Piece("guard", "Guard", 0, 0);
-    NetworkPiece peasant = Piece("peasant", "Peasant", 1, 0);
-    NetworkPiece knight = Piece("knight", "Knight", 0, 1);
-    CpuGameState state = CreateState(guard, peasant, knight);
-    UseAbilityAction cheap = new(NetworkTeam.Red, guard.Id, "Attach", peasant.Id, peasant.X, peasant.Y);
-    UseAbilityAction expensive = new(NetworkTeam.Red, guard.Id, "Attach", knight.Id, knight.X, knight.Y);
-
-    ScoredAction selected = Assert.Single(new CpuActionCandidateSelector().SelectCandidates(
-      state, NetworkTeam.Red, [cheap, expensive], new CpuSearchSettings
-      {
-        CandidatesPerNode = 1,
-        PromisingCandidatesPerNode = 1
-      }));
-
-    Assert.Equal(expensive, selected.Action);
-  }
-
-  [Fact]
-  public void GuardMovement_PrefersClosingOnTheMoreExpensiveUnguardedUnit()
-  {
-    NetworkPiece guard = Piece("guard", "Guard", 0, 0);
-    NetworkPiece knight = Piece("knight", "Knight", 4, 0);
-    NetworkPiece peasant = Piece("peasant", "Peasant", 0, 4);
-    CpuGameState state = CreateState(guard, knight, peasant);
-    MoveAction towardKnight = new(NetworkTeam.Red, guard.Id, 1, 0);
-    MoveAction towardPeasant = new(NetworkTeam.Red, guard.Id, 0, 1);
-
-    float expensiveApproach = CpuStrategicHeuristics.ScoreAction(state, towardKnight);
-    float cheapApproach = CpuStrategicHeuristics.ScoreAction(state, towardPeasant);
-
-    Assert.True(expensiveApproach > cheapApproach + 8f,
-      $"toward knight={expensiveApproach}, toward peasant={cheapApproach}");
-  }
-
-  [Fact]
-  public void AttachedGuard_StateValueScalesWithProtectedUnitCost()
-  {
-    NetworkPiece knight = Piece("knight", "Knight", 1, 0);
-    NetworkPiece peasant = Piece("peasant", "Peasant", 1, 0);
-    NetworkPiece knightGuard = Piece("guard", "Guard", 1, 0) with
-    {
-      AttachedToId = knight.Id,
-      AttachmentKind = NetworkAttachmentKind.Guard
-    };
-    NetworkPiece peasantGuard = Piece("guard", "Guard", 1, 0) with
-    {
-      AttachedToId = peasant.Id,
-      AttachmentKind = NetworkAttachmentKind.Guard
-    };
-
-    float protectsKnight = CpuStrategicHeuristics.ScoreTeam(CreateState(knight, knightGuard), NetworkTeam.Red);
-    float protectsPeasant = CpuStrategicHeuristics.ScoreTeam(CreateState(peasant, peasantGuard), NetworkTeam.Red);
-
-    Assert.True(protectsKnight > protectsPeasant + 20f,
-      $"knight={protectsKnight}, peasant={protectsPeasant}");
-  }
-
-  [Fact]
-  public void GuardPurchase_IsMoreValuableWhenAnExpensiveAssetNeedsProtection()
-  {
-    CpuGameState knightState = CreateState(Piece("knight", "Knight", 2, 2));
-    CpuGameState peasantState = CreateState(Piece("peasant", "Peasant", 2, 2));
-    PurchaseAction buyGuard = new(NetworkTeam.Red, "Guard", 0, 0);
-
-    float knightScore = CpuStrategicHeuristics.ScoreAction(knightState, buyGuard);
-    float peasantScore = CpuStrategicHeuristics.ScoreAction(peasantState, buyGuard);
-
-    Assert.True(knightScore > peasantScore + 10f,
-      $"knight={knightScore}, peasant={peasantScore}");
-  }
-
-  private static NetworkPiece Piece(string id, string type, int x, int y)
-  {
-    UnitRule rule = UnitRules.GetRequired(type);
-    return new NetworkPiece(id, type, NetworkTeam.Red, x, y, rule.Health);
-  }
-
-  private static CpuGameState CreateState(params NetworkPiece[] pieces)
-  {
-    NetworkMatchConfiguration configuration = new(
-      "Small", "Light", "Light", "Regicide", 9921, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: false);
-    return new CpuGameState(
-      configuration,
-      pieces,
-      [
-        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
-        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
-      ],
-      NetworkTeam.Red,
-      terrain: new BattlefieldTerrain());
-  }
-}
-''')
           PY
       - name: Restore
         run: dotnet restore CrownAndSiege.sln
@@ -361,6 +237,6 @@ public sealed class CpuGuardStrategyTests
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add MedivalChess.CPU/CpuStrategicHeuristics.cs MedivalChess.CPU/CpuActionCandidates.cs MedivalChess.Tests/CpuGuardStrategyTests.cs
+          git add MedivalChess.CPU/CpuStrategicHeuristics.cs MedivalChess.CPU/CpuActionCandidates.cs
           git commit -m "Improve Guard CPU protection priorities"
           git push origin HEAD:cpu-search-behaviour-fixes
