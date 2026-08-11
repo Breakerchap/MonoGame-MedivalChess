@@ -50,3 +50,13 @@ if text != original:
     print("Applied Myra integration to Game1.cs")
 else:
     print("Game1.cs already integrated")
+
+myra_path = Path("Game1.MyraUi.cs")
+myra_text = myra_path.read_text(encoding="utf-8")
+myra_original = myra_text
+myra_text = myra_text.replace("    _myraDesktop.UpdateInput();\n", "")
+if myra_text != myra_original:
+    myra_path.write_text(myra_text, encoding="utf-8")
+    print("Removed duplicate Myra input sampling")
+else:
+    print("Myra input handling already updated")
