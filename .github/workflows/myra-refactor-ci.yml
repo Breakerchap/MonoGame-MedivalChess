@@ -11,8 +11,11 @@ permissions:
 
 jobs:
   build:
-    name: Release build
-    runs-on: ubuntu-latest
+    name: Release build (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
