@@ -1,4 +1,4 @@
-﻿using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MedivalChess.Campaign;
@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 
 namespace MedivalChess;
 
-internal sealed class Game1 : Game
+internal sealed partial class Game1 : Game
 {
   private enum Screen
   {
@@ -325,6 +325,7 @@ internal sealed class Game1 : Game
     UiLayout.Scale = _uiScale;
     _ui.InputScale = _uiScale;
     _levelEditor = new LevelEditorScreen(_ui, _spriteBatch, _pixel);
+    InitializeMyraUi();
   }
 
   protected override void Update(GameTime gameTime)
@@ -384,18 +385,9 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (_screen == Screen.CustomLevels)
+    if (_screen is Screen.CustomLevels or Screen.EditorDiscardConfirm)
     {
-      UpdateCustomLevels(mouse, wasLeftClick, wasEscapePressed);
-      _previousMouseState = mouse;
-      _previousKeyboardState = keyboard;
-      base.Update(gameTime);
-      return;
-    }
-
-    if (_screen == Screen.EditorDiscardConfirm)
-    {
-      UpdateEditorDiscardConfirmation(mouse, wasLeftClick, wasEscapePressed);
+      UpdateMyraUi(keyboard, wasEscapePressed);
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -421,7 +413,14 @@ internal sealed class Game1 : Game
 
     if (_screen != Screen.Playing)
     {
-      UpdateMenu(keyboard, mouse, wasLeftClick, wasEscapePressed);
+      if (UsesMyraUi(_screen))
+      {
+        UpdateMyraUi(keyboard, wasEscapePressed);
+      }
+      else
+      {
+        UpdateMenu(keyboard, mouse, wasLeftClick, wasEscapePressed);
+      }
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -493,22 +492,10 @@ internal sealed class Game1 : Game
       CyclePurchaseSelection(1);
     }
 
-    bool clickedPurchasePanel =
-      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
-    bool clickedInitialBuyStop =
-      wasLeftClick && HandleInitialBuyStopClick(ToUiPoint(mouse.Position));
-    bool clickedSkipTurn =
-      wasLeftClick && HandleSkipTurnClick(ToUiPoint(mouse.Position));
-    bool clickedDebugTeamSwitch =
-      wasLeftClick && HandleDebugTeamSwitchClick(ToUiPoint(mouse.Position));
-    bool clickedEngineerPanel =
-      wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
-    bool clickedOxCarryPanel =
-      wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
-    bool clickedMercenaryPanel =
-      wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
+    bool clickedMyraHud =
+      (wasLeftClick || wasRightClick) && IsPointerOverMyraPlayingHud(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedMyraHud && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -757,6 +744,7 @@ internal sealed class Game1 : Game
     _uiScale = Math.Clamp(MathF.Round(_uiScale + direction * step, 1), minimum, maximum);
     UiLayout.Scale = _uiScale;
     _ui.InputScale = _uiScale;
+    ApplyMyraUiScale();
   }
 
   private Point ToUiPoint(Point screenPoint) => new(
@@ -9067,9 +9055,16 @@ internal sealed class Game1 : Game
 
     if (!drawsGameView)
     {
-      _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
-      DrawMenuScreen();
-      _spriteBatch.End();
+      if (UsesMyraUi(_screen))
+      {
+        RenderMyraUi();
+      }
+      else
+      {
+        _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
+        DrawMenuScreen();
+        _spriteBatch.End();
+      }
       base.Draw(gameTime);
       return;
     }
@@ -9341,7 +9336,7 @@ internal sealed class Game1 : Game
     _spriteBatch.End();
     _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
 
-    if (_screen == Screen.Playing)
+    if (_screen == Screen.Playing && !UsesMyraUi(_screen))
     {
       DrawStatusPanel();
       DrawSelectedPiecePanel();
@@ -9351,14 +9346,16 @@ internal sealed class Game1 : Game
       }
       DrawChessClockPanel();
     }
-    else
+    else if (_screen != Screen.Playing)
     {
       Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
       _spriteBatch.Draw(_pixel, viewport, new Color(5, 9, 14, 176));
-      DrawMenuScreen();
+      if (!UsesMyraUi(_screen)) DrawMenuScreen();
     }
 
     _spriteBatch.End();
+
+    if (UsesMyraUi(_screen)) RenderMyraUi();
 
     base.Draw(gameTime);
   }

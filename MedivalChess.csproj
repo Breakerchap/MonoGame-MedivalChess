@@ -1,38 +1,37 @@
 <Project Sdk="Microsoft.NET.Sdk">
+
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <OutputType Condition="'$(RuntimeIdentifier)' == 'win-x64'">WinExe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
     <RollForward>Major</RollForward>
     <PublishReadyToRun>false</PublishReadyToRun>
     <TieredCompilation>false</TieredCompilation>
-    <!-- 1. ADDED: Runtime identifiers to enable cross-compilation target packaging -->
-    <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
-  </PropertyGroup>
-
-  <!-- 2. MODIFIED: Isolated Windows-only manifest and desktop icon settings -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) or '$(RuntimeIdentifier)' == 'win-x64'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Be explicit here because this project sits above several nested projects. This also
+         protects local builds from parent MSBuild props that alter the SDK's normal bin/obj excludes. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
 
-  <!-- Optional: If you eventually make an Apple Icon.icns for your Mac dock, target it here -->
-  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) or '$(RuntimeIdentifier)' == 'osx-x64' or '$(RuntimeIdentifier)' == 'osx-arm64'">
-    <!-- <ApplicationIcon>Icon.icns</ApplicationIcon> -->
-  </PropertyGroup>
+  <!-- The game project lives at the repository root. Keep sources owned by nested projects
+       out of the game assembly, and consume the shared rules project normally instead. -->
+  <ItemGroup>
+    <Compile Remove="**/bin/**/*.cs" />
+    <Compile Remove="**/obj/**/*.cs" />
+    <Compile Remove="MedivalChess.Tests/**/*.cs" />
+    <Compile Remove="MedivalChess.Server/**/*.cs" />
+    <Compile Remove="MedivalChess.Shared/**/*.cs" />
+    <Compile Remove="TerrainPainter/**/*.cs" />
+    <Compile Remove="Globals.cs" />
+    <Compile Remove="GameBoard/Board.cs" />
+    <Compile Remove="GameBoard/BattlefieldTerrain.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Remove="Icon.ico" />
     <None Remove="Icon.bmp" />
-    <Compile Remove="MedivalChess.Tests\**\*.cs" />
-    <Compile Remove="MedivalChess.Shared\**\*.cs" />
-    <Compile Remove="MedivalChess.Server\**\*.cs" />
-    <Compile Remove="MedivalChess.CPU\**\*.cs" />
-    <!-- TerrainPainter is a separate WinForms utility within this repository. -->
-    <Compile Remove="TerrainPainter\**\*.cs" />
-    <Compile Remove="Globals.cs" />
-    <Compile Remove="GameBoard\Board.cs" />
-    <Compile Remove="GameBoard\BattlefieldTerrain.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -45,20 +44,18 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
-    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+    <ProjectReference Include="MedivalChess.Shared/MedivalChess.Shared.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="MedivalChess.Shared\MedivalChess.Shared.csproj" />
-    <ProjectReference Include="MedivalChess.CPU\MedivalChess.CPU.csproj" />
+    <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
+    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.*" />
+    <PackageReference Include="Myra" Version="1.6.3" />
   </ItemGroup>
 
-  <ItemGroup> 
-    <None Update="GameBoard\board_*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> 
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory> 
-    </None> 
-  </ItemGroup>
+  <Target Name="RestoreDotnetTools" BeforeTargets="Restore">
+    <Message Text="Restoring dotnet tools" Importance="High" />
+    <Exec Command="dotnet tool restore" />
+  </Target>
 </Project>

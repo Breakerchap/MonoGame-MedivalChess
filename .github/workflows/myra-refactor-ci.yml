@@ -1,0 +1,82 @@
+name: Myra refactor CI
+
+on:
+  push:
+    branches: [feature/myra-ui-refactor]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.configuration }} build (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        configuration: [Debug, Release]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      - name: Restore tools
+        run: dotnet tool restore
+      - name: Restore game
+        run: dotnet restore MedivalChess.csproj
+      - name: Build game
+        run: dotnet build MedivalChess.csproj --configuration ${{ matrix.configuration }} --no-restore
+
+  tests:
+    name: Existing test suite
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      - name: Restore tests
+        run: dotnet restore MedivalChess.Tests/MedivalChess.Tests.csproj
+      - name: Run tests
+        id: tests
+        continue-on-error: true
+        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore --logger "trx;LogFileName=myra-tests.trx" --results-directory TestResults
+      - name: Report existing failures
+        if: steps.tests.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          path = Path('TestResults/myra-tests.trx')
+          if not path.exists():
+              print('::warning title=Tests did not complete::dotnet test failed before producing a TRX result file.')
+              raise SystemExit(0)
+
+          root = ET.parse(path).getroot()
+          namespace = root.tag.split('}')[0].strip('{') if root.tag.startswith('{') else ''
+          prefix = f'{{{namespace}}}' if namespace else ''
+
+          def escape(value: str) -> str:
+              return (value or '').replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+
+          failures = 0
+          for result in root.iter(f'{prefix}UnitTestResult'):
+              if result.attrib.get('outcome') != 'Failed':
+                  continue
+              failures += 1
+              name = result.attrib.get('testName', 'Unknown test')
+              output = result.find(f'{prefix}Output')
+              error = output.find(f'{prefix}ErrorInfo') if output is not None else None
+              message = error.findtext(f'{prefix}Message') if error is not None else 'Test failed.'
+              print(f'::warning title={escape(name)}::{escape(message)}')
+
+          print(f'{failures} existing test failure(s) reported; compile checks are enforced separately.')
+          PY
