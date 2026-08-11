@@ -36,7 +36,7 @@ internal static class MovementPathfinder
     int? maximumMovementRange = null
   )
   {
-    UnitRule rule = movementRule ?? UnitRules.GetRequired(piece.Definition.Type.ToString());
+    UnitRule rule = movementRule ?? UnitRules.FromPieceDefinition(piece.Definition);
     NetworkTeam team = piece.Team.ToNetworkTeam();
     return MovementRules.FindPaths(
       rule, piece.Position, team, canLand, canTravelThrough, landingCost, crossesRiver,

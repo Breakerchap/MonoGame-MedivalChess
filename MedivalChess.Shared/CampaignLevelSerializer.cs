@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text;
 using System.Security;
+using System.Security.Cryptography;
 
 public sealed class CampaignLevelLoadResult
 {
@@ -39,6 +40,7 @@ public static class CampaignLevelSerializer
   {
     ArgumentNullException.ThrowIfNull(level);
     level.FormatVersion = CampaignLevelFormat.CurrentVersion;
+    level.Uid = CalculateUid(level);
     return JsonSerializer.Serialize(level, Options);
   }
 
@@ -180,12 +182,20 @@ public static class CampaignLevelSerializer
         return new CampaignLevelLoadResult { Problems = problems };
       }
 
-      CampaignLevelMigrator.ApplyLegacyBoardCells(level, root, sourceVersion);
       CampaignLevelMigrationResult migration = CampaignLevelMigrator.Migrate(level, sourceVersion);
       problems.AddRange(migration.Problems);
       if (!migration.IsSuccess)
       {
         return new CampaignLevelLoadResult { Problems = problems };
+      }
+
+      if (string.IsNullOrWhiteSpace(level.Uid))
+      {
+        problems.Add(CampaignValidationProblem.Error("uid.missing", "Level files must include a content UID."));
+      }
+      else if (!string.Equals(level.Uid, CalculateUid(level), StringComparison.OrdinalIgnoreCase))
+      {
+        problems.Add(CampaignValidationProblem.Error("uid.invalid", "The level content does not match its UID. Export it again from the editor."));
       }
 
       CampaignLevelValidator.Validate(level, problems);
@@ -205,6 +215,24 @@ public static class CampaignLevelSerializer
 
   public static bool HasExpectedExtension(string? path) => !string.IsNullOrWhiteSpace(path) &&
     string.Equals(Path.GetExtension(path), CampaignLevelFormat.Extension, StringComparison.OrdinalIgnoreCase);
+
+  /// <summary>Returns a deterministic identifier for all serialised level content except the UID itself.</summary>
+  public static string CalculateUid(CampaignLevelDefinition level)
+  {
+    ArgumentNullException.ThrowIfNull(level);
+    string? originalUid = level.Uid;
+    try
+    {
+      level.Uid = null;
+      string canonicalJson = JsonSerializer.Serialize(level, Options);
+      byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonicalJson));
+      return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+    finally
+    {
+      level.Uid = originalUid;
+    }
+  }
 }
 
 public sealed class CampaignLevelMigrationResult
@@ -227,58 +255,14 @@ public static class CampaignLevelMigrator
     }
 
     NormaliseCollections(level);
-    if (sourceVersion <= 2)
+    if (sourceVersion != CampaignLevelFormat.CurrentVersion)
     {
-      // Version 2 made per-team action limits and restrictions explicit. Version 3 added
-      // optional authored territories; old maps deliberately keep the standard game zones.
-      foreach (CampaignTeamDefinition team in level.Teams)
-      {
-        team.ActionsPerTurn = team.ActionsPerTurn <= 0 ? 2 : team.ActionsPerTurn;
-        team.AvailableUnitTypes ??= [];
-        team.DisabledAbilityUnitTypes ??= [];
-        team.CpuProfile ??= new CampaignCpuProfileDefinition();
-      }
-      level.Restrictions ??= new CampaignRestrictionsDefinition();
-      level.FormatVersion = CampaignLevelFormat.CurrentVersion;
-      problems.Add(CampaignValidationProblem.Warning(
-        $"migration.v{sourceVersion}",
-        $"Migrated level format version {sourceVersion} to version {CampaignLevelFormat.CurrentVersion}."
-      ));
+      problems.Add(CampaignValidationProblem.Error("migration.version", "Only the current .mclvl format is supported."));
+      return new CampaignLevelMigrationResult { Problems = problems };
     }
-    else
-    {
-      level.FormatVersion = CampaignLevelFormat.CurrentVersion;
-    }
+    level.FormatVersion = CampaignLevelFormat.CurrentVersion;
 
     return new CampaignLevelMigrationResult { Problems = problems };
-  }
-
-  internal static void ApplyLegacyBoardCells(CampaignLevelDefinition level, JsonElement root, int sourceVersion)
-  {
-    if (sourceVersion != 1 || !root.TryGetProperty("board", out JsonElement boardElement) ||
-        boardElement.ValueKind != JsonValueKind.Object || !boardElement.TryGetProperty("cells", out JsonElement cells) ||
-        cells.ValueKind != JsonValueKind.Array || level.Board.Tiles.Count > 0)
-    {
-      return;
-    }
-
-    foreach (JsonElement cell in cells.EnumerateArray())
-    {
-      if (cell.ValueKind == JsonValueKind.Array && cell.GetArrayLength() == 2 &&
-          cell[0].TryGetInt32(out int x) && cell[1].TryGetInt32(out int y))
-      {
-        level.Board.Tiles.Add(new CampaignCoordinate(x, y));
-      }
-    }
-
-    if (level.Board.Tiles.Count > 0)
-    {
-      level.Board.Shape = CampaignBoardShape.Custom;
-      level.Board.OriginX = level.Board.Tiles.Min(tile => tile.X);
-      level.Board.OriginY = level.Board.Tiles.Min(tile => tile.Y);
-      level.Board.Width = level.Board.Tiles.Max(tile => tile.X) - level.Board.OriginX + 1;
-      level.Board.Height = level.Board.Tiles.Max(tile => tile.Y) - level.Board.OriginY + 1;
-    }
   }
 
   private static void NormaliseCollections(CampaignLevelDefinition level)
@@ -290,6 +274,16 @@ public static class CampaignLevelMigrator
     level.Rivers ??= [];
     level.Objects ??= [];
     level.Units ??= [];
+    level.UnitOverrides ??= [];
+    foreach (CampaignUnitTemplateOverrideDefinition unitOverride in level.UnitOverrides)
+    {
+      unitOverride.StatOverrides ??= new CampaignUnitStatOverrides();
+    }
+    level.CustomUnits ??= [];
+    foreach (CampaignCustomUnitDefinition customUnit in level.CustomUnits)
+    {
+      customUnit.StatOverrides ??= new CampaignUnitStatOverrides();
+    }
     level.Teams ??= [];
     level.Formations ??= [];
     level.Scenario ??= new CampaignScenarioDefinition();
@@ -316,12 +310,6 @@ public static class CampaignLevelMigrator
     foreach (CampaignTeamDefinition team in level.Teams)
     {
       team.CpuProfile ??= new CampaignCpuProfileDefinition();
-      // Normal was the original name for the middle CPU tier. Preserve old levels while
-      // serialising and presenting the clearer Easy / Medium / Hard / Best ladder.
-      if (string.Equals(team.CpuProfile.Difficulty, "Normal", StringComparison.OrdinalIgnoreCase))
-      {
-        team.CpuProfile.Difficulty = "Medium";
-      }
     }
   }
 }

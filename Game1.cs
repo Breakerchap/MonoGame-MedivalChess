@@ -915,7 +915,7 @@ internal sealed class Game1 : Game
 
   private void TryPurchaseAndPlace(PieceDefinition definition, (int x, int y) targetPosition)
   {
-    if (!IsCampaignPurchaseAllowed(Team.CurrentTurn, definition.Type))
+    if (!IsCampaignPurchaseAllowed(Team.CurrentTurn, definition.Identifier))
     {
       Console.WriteLine($"{definition.Type} is not available for {Team.CurrentTurn} in this campaign level.");
       return;
@@ -1066,9 +1066,28 @@ internal sealed class Game1 : Game
     }
   }
 
-  private IReadOnlyList<PieceDefinition> GetPurchasablePieces() => _farmsEnabled
-    ? PieceDefinitions.Purchasable
-    : PieceDefinitions.Purchasable.Where(definition => definition.Type != PieceType.Farm).ToArray();
+  private IReadOnlyList<PieceDefinition> GetPurchasablePieces()
+  {
+    IEnumerable<PieceDefinition> definitions;
+    if (_campaignTestPlay && _campaignTestDefinition is not null)
+    {
+      definitions = CampaignUnitResolver.GetPurchasableIdentifiers(_campaignTestDefinition)
+        .Select(identifier => CampaignUnitResolver.TryResolve(_campaignTestDefinition, identifier, null, out PieceDefinition definition)
+          ? definition
+          : null)
+        .Where(definition => definition is not null)
+        .Cast<PieceDefinition>()
+        .Where(definition => IsCampaignPurchaseAllowed(Team.CurrentTurn, definition.Identifier));
+    }
+    else
+    {
+      definitions = PieceDefinitions.Purchasable;
+    }
+
+    return _farmsEnabled
+      ? definitions.ToArray()
+      : definitions.Where(definition => definition.Type != PieceType.Farm).ToArray();
+  }
 
   private void EnsurePurchaseSelectionIsValid()
   {
@@ -1679,15 +1698,23 @@ internal sealed class Game1 : Game
   private static PieceType ParsePieceType(string type) =>
     Enum.TryParse(type, ignoreCase: false, out PieceType parsed) ? parsed : PieceType.Peasant;
 
-  private bool IsCampaignPurchaseAllowed(TeamName teamName, PieceType type)
+  private bool IsCampaignPurchaseAllowed(TeamName teamName, PieceType type) =>
+    IsCampaignPurchaseAllowed(teamName, type.ToString());
+
+  private bool IsCampaignPurchaseAllowed(TeamName teamName, string unitType)
   {
     if (!_campaignTestPlay || _campaignTestDefinition is null) return true;
     CampaignRestrictionsDefinition restrictions = _campaignTestDefinition.Restrictions;
     CampaignTeamDefinition team = _campaignTestDefinition.Teams.FirstOrDefault(candidate => candidate.Team == teamName.ToNetworkTeam());
-    string unitType = type.ToString();
-    return restrictions.PurchasesEnabled && team is not null && team.PurchasesEnabled &&
+    bool teamAllowsUnit = team?.PurchaseListMode switch
+    {
+      CampaignPurchaseListMode.All => CampaignUnitResolver.GetPurchasableIdentifiers(_campaignTestDefinition).Contains(unitType),
+      CampaignPurchaseListMode.Custom => team.AvailableUnitTypes.Contains(unitType),
+      _ => false
+    };
+    return restrictions.PurchasesEnabled && team is not null && team.PurchasesEnabled && teamAllowsUnit &&
       (restrictions.AllowedUnitTypes.Count == 0 || restrictions.AllowedUnitTypes.Contains(unitType)) &&
-      !restrictions.DisabledUnitTypes.Contains(unitType) && team.AvailableUnitTypes.Contains(unitType);
+      !restrictions.DisabledUnitTypes.Contains(unitType);
   }
 
   private bool IsCampaignAbilityAllowed(TeamName teamName, PieceType type)
@@ -2870,7 +2897,7 @@ internal sealed class Game1 : Game
     Piece palace = GetSupportingPalace(piece);
     return palace is not null && AbilityRules.MovesTowardPalace(
       GetEffectiveMovementRule(piece), from, destination,
-      UnitRules.GetRequired(palace.Definition.Type.ToString()), palace.Position
+      UnitRules.FromPieceDefinition(palace.Definition), palace.Position
     );
   }
 
@@ -2879,13 +2906,13 @@ internal sealed class Game1 : Game
 
   private UnitRule GetEffectiveMovementRule(Piece piece)
   {
-    UnitRule rule = UnitRules.GetRequired(piece.Definition.Type.ToString());
+    UnitRule rule = UnitRules.FromPieceDefinition(piece.Definition);
     Piece cargo = piece.Definition.Type == PieceType.Ox
       ? pieceSetup.GetAttachedPiece(piece, AttachmentKind.Carried)
       : null;
     if (cargo is not null)
     {
-      UnitRule cargoRule = UnitRules.GetRequired(cargo.Definition.Type.ToString());
+      UnitRule cargoRule = UnitRules.FromPieceDefinition(cargo.Definition);
       rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
     }
     if (IsTreasureCarrier(piece))
@@ -3553,8 +3580,8 @@ internal sealed class Game1 : Game
         targetPiece.Team == actor.Team &&
         !IsTreasureCarrier(targetPiece) &&
         AbilityRules.CanGuardAttach(
-          UnitRules.GetRequired(actor.Definition.Type.ToString()),
-          UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
+          UnitRules.FromPieceDefinition(actor.Definition),
+          UnitRules.FromPieceDefinition(targetPiece.Definition),
           actor.AttachedTo != null,
           pieceSetup.GetAttachedPiece(targetPiece, AttachmentKind.Guard) != null
         ) &&
@@ -3571,8 +3598,8 @@ internal sealed class Game1 : Game
         targetPiece != actor &&
         !IsTreasureCarrier(targetPiece) &&
         AbilityRules.CanOxAttach(
-          UnitRules.GetRequired(actor.Definition.Type.ToString()),
-          UnitRules.GetRequired(targetPiece.Definition.Type.ToString()),
+          UnitRules.FromPieceDefinition(actor.Definition),
+          UnitRules.FromPieceDefinition(targetPiece.Definition),
           targetPiece.AttachedTo != null,
           pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) != null
         ) &&
@@ -3830,7 +3857,7 @@ internal sealed class Game1 : Game
       {
         if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null && !IsTreasureCarrier(candidate) &&
             AbilityRules.IsEmissaryCompanion(
-              UnitRules.GetRequired(candidate.Definition.Type.ToString()), piece.Position, candidate.Position))
+              UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position))
         {
           companions.Add(candidate);
         }
@@ -4007,9 +4034,9 @@ internal sealed class Game1 : Game
       }
 
       bool wasMovedOver = AbilityRules.PathOverlapsUnit(
-        UnitRules.GetRequired(attacker.Definition.Type.ToString()),
+        UnitRules.FromPieceDefinition(attacker.Definition),
         path,
-        UnitRules.GetRequired(crossedPiece.Definition.Type.ToString()),
+        UnitRules.FromPieceDefinition(crossedPiece.Definition),
         crossedPiece.Position.x,
         crossedPiece.Position.y
       );
@@ -4072,7 +4099,7 @@ internal sealed class Game1 : Game
 
   private void PerformPiercingAttack(Piece attacker, (int x, int y) targetPosition)
   {
-    UnitRule ballistaRule = UnitRules.GetRequired(attacker.Definition.Type.ToString());
+    UnitRule ballistaRule = UnitRules.FromPieceDefinition(attacker.Definition);
     foreach ((int x, int y) position in AbilityRules.GetPiercingRay(
       ballistaRule,
       attacker.Position.x,
@@ -4176,8 +4203,8 @@ internal sealed class Game1 : Game
 
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
-    UnitRule rule = UnitRules.GetRequired(attacker.Definition.Type.ToString());
-    if (rule.Type == "Catapult") return true;
+    UnitRule rule = UnitRules.FromPieceDefinition(attacker.Definition);
+    if (attacker.Definition.Type == PieceType.Catapult) return true;
     return LineOfSightRules.HasClearAttackPath(
       rule,
       attacker.OccupiedSquares(),
@@ -4880,7 +4907,7 @@ internal sealed class Game1 : Game
     string label = UiText.BuildPieceLabel(definition);
     _ui.PiecePreview(previewBounds, teamColour, label);
     float detailX = previewBounds.Right + UiTheme.SpaceMd;
-    _ui.Text(definition.Type.ToString().ToUpperInvariant(), new Vector2(detailX, previewBounds.Y + 4), UiTheme.TextPrimary);
+    _ui.Text(definition.DisplayName.ToUpperInvariant(), new Vector2(detailX, previewBounds.Y + 4), UiTheme.TextPrimary);
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     _ui.Text(
@@ -4967,7 +4994,7 @@ internal sealed class Game1 : Game
         (initialBuyActive && unit.Type == PieceType.Mercenary);
       DrawMenuButton(
         GetPurchaseUnitListItemBounds(index),
-        GetPieceDisplayName(unit.Type),
+        unit.DisplayName,
         unavailable ? UiButtonTone.Danger : UiButtonTone.Neutral,
         index == _selectedPurchaseIndex,
         labelScale

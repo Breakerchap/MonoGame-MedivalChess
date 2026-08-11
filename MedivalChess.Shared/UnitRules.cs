@@ -84,6 +84,27 @@ public static class UnitRules
     ? rule.AbilityDescription
     : string.Empty;
 
+  /// <summary>Builds a rules view from a runtime definition, including campaign stat overrides.</summary>
+  public static UnitRule FromPieceDefinition(PieceDefinition definition)
+  {
+    ArgumentNullException.ThrowIfNull(definition);
+    return new UnitRule(
+      definition.Identifier,
+      (RuleCategory)definition.Category,
+      definition.Movement.range,
+      ToRuleShape(definition.Movement.shape),
+      definition.Attack,
+      definition.Health,
+      definition.Size.x,
+      definition.Size.y,
+      definition.AttackRange.Maximum,
+      ToRuleShape(definition.AttackPattern),
+      definition.Cost,
+      definition.AttackRange.Minimum,
+      definition.AbilityDescription
+    );
+  }
+
   private static RuleShape ToRuleShape(Shape shape) => shape switch
   {
     Shape.Any => RuleShape.Any,

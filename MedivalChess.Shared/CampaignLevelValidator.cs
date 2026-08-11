@@ -47,15 +47,17 @@ public static class CampaignLevelValidator
 
     ValidateMetadata(level.Metadata, problems);
     HashSet<(int x, int y)> cells = ValidateBoard(level.Board, problems);
-    HashSet<NetworkTeam> teams = ValidateTeams(level.Teams, problems);
+    ValidateUnitOverrides(level.UnitOverrides, problems);
+    HashSet<string> customUnitIds = ValidateCustomUnits(level.CustomUnits, problems);
+    HashSet<NetworkTeam> teams = ValidateTeams(level.Teams, customUnitIds, problems);
     ValidateTerritories(level.Scenario?.Territories, cells, teams, problems);
-    HashSet<string> unitIds = ValidateUnits(level.Units, teams, cells, level.Terrain, problems);
+    HashSet<string> unitIds = ValidateUnits(level, level.Units, teams, cells, level.Terrain, problems);
     ValidateTerrain(level.Terrain, cells, problems);
     ValidateRivers(level.Rivers, cells, problems);
     ValidateObjects(level.Objects, teams, cells, problems);
     ValidateFormations(level.Formations, level.Units, unitIds, teams, problems);
     ValidateScenario(level.Scenario, teams, unitIds, cells, problems);
-    ValidateRestrictions(level.Restrictions, problems);
+    ValidateRestrictions(level.Restrictions, customUnitIds, problems);
     ValidateReinforcements(level.Reinforcements, teams, cells, problems);
     ValidateScriptedEvents(level.ScriptedEvents, problems);
   }
@@ -135,8 +137,113 @@ public static class CampaignLevelValidator
     return cells;
   }
 
+  private static HashSet<string> ValidateCustomUnits(
+    IReadOnlyList<CampaignCustomUnitDefinition>? definitions,
+    ICollection<CampaignValidationProblem> problems
+  )
+  {
+    HashSet<string> ids = new(StringComparer.Ordinal);
+    foreach (CampaignCustomUnitDefinition? custom in definitions ?? [])
+    {
+      if (custom is null)
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.null", "Custom unit entries cannot be null."));
+        continue;
+      }
+      if (string.IsNullOrWhiteSpace(custom.Id) || !ids.Add(custom.Id))
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.id", "Each custom unit needs a unique ID."));
+      }
+      else if (UnitRules.TryGet(custom.Id, out _))
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.id", "Custom unit IDs cannot replace built-in unit IDs."));
+      }
+      if (string.IsNullOrWhiteSpace(custom.Name) || custom.Name.Length > 80)
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.name", "Custom unit names must be between 1 and 80 characters."));
+      }
+      if (string.IsNullOrWhiteSpace(custom.Abbreviation) || custom.Abbreviation.Length > 4)
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.abbreviation", "Custom unit abbreviations must contain between 1 and 4 characters."));
+      }
+      if (!UnitRules.TryGet(custom.BaseUnitType, out _))
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.base", $"'{custom.BaseUnitType}' is not a recognised base unit."));
+      }
+      if (!IsValidAbilitySource(custom.AbilitySourceUnitType))
+      {
+        problems.Add(CampaignValidationProblem.Error("customUnit.ability", $"'{custom.AbilitySourceUnitType}' is not a recognised ability source."));
+      }
+      ValidateStatOverrides(custom.StatOverrides, "customUnit.stats", problems);
+    }
+    return ids;
+  }
+
+  private static void ValidateUnitOverrides(
+    IReadOnlyList<CampaignUnitTemplateOverrideDefinition>? definitions,
+    ICollection<CampaignValidationProblem> problems
+  )
+  {
+    HashSet<string> unitTypes = new(StringComparer.Ordinal);
+    foreach (CampaignUnitTemplateOverrideDefinition? unitOverride in definitions ?? [])
+    {
+      if (unitOverride is null)
+      {
+        problems.Add(CampaignValidationProblem.Error("unitOverride.null", "Built-in unit override entries cannot be null."));
+        continue;
+      }
+      if (!UnitRules.TryGet(unitOverride.UnitType, out _) || !unitTypes.Add(unitOverride.UnitType))
+      {
+        problems.Add(CampaignValidationProblem.Error("unitOverride.type", "Each built-in unit override needs a unique built-in unit type."));
+      }
+      if (string.IsNullOrWhiteSpace(unitOverride.Name) || unitOverride.Name.Length > 80)
+      {
+        problems.Add(CampaignValidationProblem.Error("unitOverride.name", "Built-in unit names must be between 1 and 80 characters."));
+      }
+      if (string.IsNullOrWhiteSpace(unitOverride.Abbreviation) || unitOverride.Abbreviation.Length > 4)
+      {
+        problems.Add(CampaignValidationProblem.Error("unitOverride.abbreviation", "Unit abbreviations must contain between 1 and 4 characters."));
+      }
+      if (!IsValidAbilitySource(unitOverride.AbilitySourceUnitType))
+      {
+        problems.Add(CampaignValidationProblem.Error("unitOverride.ability", "Choose None or a recognised ability source."));
+      }
+      ValidateStatOverrides(unitOverride.StatOverrides, "unitOverride.stats", problems);
+    }
+  }
+
+  private static bool IsValidAbilitySource(string? source) =>
+    string.Equals(source, "None", StringComparison.OrdinalIgnoreCase) || UnitRules.TryGet(source ?? string.Empty, out _);
+
+  private static void ValidateStatOverrides(
+    CampaignUnitStatOverrides? overrides,
+    string code,
+    ICollection<CampaignValidationProblem> problems
+  )
+  {
+    if (overrides is null) return;
+    if (overrides.MoveRange is < 0 or > 32 || overrides.Attack is < 0 or > 10_000 ||
+        overrides.Health is < 1 or > 10_000 || overrides.Width is < 1 or > 8 ||
+        overrides.Height is < 1 or > 8 || overrides.MinimumAttackRange is < 0 or > 32 ||
+        overrides.MaximumAttackRange is < 0 or > 32 || overrides.Cost is < 0 or > 1_000_000)
+    {
+      problems.Add(CampaignValidationProblem.Error(code, "Custom stat values are outside the supported range."));
+    }
+    if (overrides.MinimumAttackRange.HasValue && overrides.MaximumAttackRange.HasValue &&
+        overrides.MaximumAttackRange.Value < overrides.MinimumAttackRange.Value)
+    {
+      problems.Add(CampaignValidationProblem.Error(code, "Maximum attack range cannot be lower than minimum attack range."));
+    }
+    if (overrides.MovePattern is Shape.MoveOnEnemy or Shape.PierceStraight ||
+        overrides.AttackPattern is Shape.MoveOnEnemy)
+    {
+      problems.Add(CampaignValidationProblem.Error(code, "That pattern is reserved for built-in unit behaviour."));
+    }
+  }
+
   private static HashSet<NetworkTeam> ValidateTeams(
     IReadOnlyList<CampaignTeamDefinition>? definitions,
+    IReadOnlySet<string> customUnitIds,
     ICollection<CampaignValidationProblem> problems
   )
   {
@@ -174,8 +281,8 @@ public static class CampaignLevelValidator
       {
         problems.Add(CampaignValidationProblem.Error("team.royal", $"{team.ChosenRoyal} is not a recognised royal."));
       }
-      ValidateUnitIdentifiers(team.AvailableUnitTypes, $"team.{team.Team}.availableUnits", problems);
-      ValidateUnitIdentifiers(team.DisabledAbilityUnitTypes, $"team.{team.Team}.disabledAbilities", problems);
+      ValidateUnitIdentifiers(team.AvailableUnitTypes, $"team.{team.Team}.availableUnits", customUnitIds, problems);
+      ValidateUnitIdentifiers(team.DisabledAbilityUnitTypes, $"team.{team.Team}.disabledAbilities", customUnitIds, problems);
       if (team.CpuProfile is null || team.CpuProfile.Difficulty is not ("Easy" or "Medium" or "Hard" or "Best"))
       {
         problems.Add(CampaignValidationProblem.Error("team.cpu.difficulty", $"{team.Team} CPU difficulty must be Easy, Medium, Hard, or Best."));
@@ -267,6 +374,7 @@ public static class CampaignLevelValidator
   }
 
   private static HashSet<string> ValidateUnits(
+    CampaignLevelDefinition level,
     IReadOnlyList<CampaignUnitDefinition>? definitions,
     IReadOnlySet<NetworkTeam> teams,
     IReadOnlySet<(int x, int y)> cells,
@@ -296,14 +404,15 @@ public static class CampaignLevelValidator
       {
         problems.Add(CampaignValidationProblem.Error("unit.id.duplicate", $"Unit ID '{unit.Id}' is used more than once."));
       }
-      if (!UnitRules.TryGet(unit.UnitType, out UnitRule rule))
+      if (!CampaignUnitResolver.TryResolve(level, unit.UnitType, unit.StatOverrides, out PieceDefinition definition))
       {
         problems.Add(CampaignValidationProblem.Error("unit.type", $"'{unit.UnitType}' is not a recognised unit type."));
         continue;
       }
+      ValidateStatOverrides(unit.StatOverrides, "unit.stats", problems);
       if (unit.Team == NetworkTeam.Neutral)
       {
-        if (unit.UnitType != "Mercenary")
+        if (definition.Type != PieceType.Mercenary)
         {
           problems.Add(CampaignValidationProblem.Error("unit.team.neutral", "Only Mercenary units may start neutral."));
         }
@@ -317,17 +426,17 @@ public static class CampaignLevelValidator
         problems.Add(CampaignValidationProblem.Error("unit.position", $"Unit '{unit.Id}' has no position."));
         continue;
       }
-      if (unit.Health is < 1 or > int.MaxValue || unit.Health > rule.Health)
+      if (unit.Health is < 1 or > int.MaxValue || unit.Health > definition.Health)
       {
-        problems.Add(CampaignValidationProblem.Error("unit.health", $"Unit '{unit.Id}' health must be between 1 and {rule.Health}."));
+        problems.Add(CampaignValidationProblem.Error("unit.health", $"Unit '{unit.Id}' health must be between 1 and {definition.Health}."));
       }
       if (!Enum.IsDefined(unit.Rotation))
       {
         problems.Add(CampaignValidationProblem.Error("unit.rotation", $"Unit '{unit.Id}' has an unsupported rotation."));
       }
 
-      for (int y = 0; y < rule.Height; y++)
-      for (int x = 0; x < rule.Width; x++)
+      for (int y = 0; y < definition.Size.y; y++)
+      for (int x = 0; x < definition.Size.x; x++)
       {
         (int x, int y) square = (unit.Position.X + x, unit.Position.Y + y);
         if (!cells.Contains(square))
@@ -335,12 +444,12 @@ public static class CampaignLevelValidator
           problems.Add(CampaignValidationProblem.Error("unit.bounds", $"Unit '{unit.Id}' does not fit on a playable tile at ({square.x}, {square.y})."));
           continue;
         }
-        if (lakes.Contains(square) && unit.UnitType != "Elephant")
+        if (lakes.Contains(square) && definition.Type != PieceType.Elephant)
         {
           problems.Add(CampaignValidationProblem.Error("unit.lake", $"Unit '{unit.Id}' cannot start on a lake tile."));
         }
         if (occupied.TryGetValue(square, out CampaignUnitDefinition? other) &&
-            other.UnitType != "Farm" && unit.UnitType != "Farm")
+            other.UnitType != "Farm" && definition.Type != PieceType.Farm)
         {
           problems.Add(CampaignValidationProblem.Error("unit.overlap", $"Units '{other.Id}' and '{unit.Id}' overlap at ({square.x}, {square.y})."));
         }
@@ -618,28 +727,33 @@ public static class CampaignLevelValidator
     }
   }
 
-  private static void ValidateRestrictions(CampaignRestrictionsDefinition? restrictions, ICollection<CampaignValidationProblem> problems)
+  private static void ValidateRestrictions(
+    CampaignRestrictionsDefinition? restrictions,
+    IReadOnlySet<string> customUnitIds,
+    ICollection<CampaignValidationProblem> problems
+  )
   {
     if (restrictions is null)
     {
       problems.Add(CampaignValidationProblem.Error("restrictions.missing", "Restrictions settings are required."));
       return;
     }
-    ValidateUnitIdentifiers(restrictions.AllowedUnitTypes, "restriction.allowedUnits", problems);
-    ValidateUnitIdentifiers(restrictions.DisabledUnitTypes, "restriction.disabledUnits", problems);
-    ValidateUnitIdentifiers(restrictions.DisabledAbilityUnitTypes, "restriction.disabledAbilities", problems);
+    ValidateUnitIdentifiers(restrictions.AllowedUnitTypes, "restriction.allowedUnits", customUnitIds, problems);
+    ValidateUnitIdentifiers(restrictions.DisabledUnitTypes, "restriction.disabledUnits", customUnitIds, problems);
+    ValidateUnitIdentifiers(restrictions.DisabledAbilityUnitTypes, "restriction.disabledAbilities", customUnitIds, problems);
   }
 
   private static void ValidateUnitIdentifiers(
     IEnumerable<string>? identifiers,
     string code,
+    IReadOnlySet<string> customUnitIds,
     ICollection<CampaignValidationProblem> problems
   )
   {
     HashSet<string> seen = new(StringComparer.Ordinal);
     foreach (string? identifier in identifiers ?? [])
     {
-      if (string.IsNullOrWhiteSpace(identifier) || !UnitRules.TryGet(identifier, out _))
+      if (string.IsNullOrWhiteSpace(identifier) || (!UnitRules.TryGet(identifier, out _) && !customUnitIds.Contains(identifier)))
       {
         problems.Add(CampaignValidationProblem.Error(code, $"'{identifier ?? "(missing)"}' is not a recognised unit type."));
       }

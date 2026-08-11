@@ -59,6 +59,12 @@ public enum PieceCategory
 public sealed class PieceDefinition
 {
   public PieceType Type { get; }
+  /// <summary>Stable purchase/editor identifier. Native units use their <see cref="Type"/> name.</summary>
+  public string Identifier { get; }
+  /// <summary>Player-facing name; custom campaign units can differ from their copied ability source.</summary>
+  public string DisplayName { get; }
+  /// <summary>Short in-board label. Empty uses the game's standard abbreviation for native units.</summary>
+  public string? Abbreviation { get; }
   public PieceCategory Category { get; }
   public (int range, Shape shape) Movement { get; }
   public int Attack { get; }
@@ -81,10 +87,16 @@ public sealed class PieceDefinition
     AttackRange attackRange,
     Shape attackPattern,
     int cost,
-    string abilityDescription = ""
+    string abilityDescription = "",
+    string? identifier = null,
+    string? displayName = null,
+    string? abbreviation = null
   )
   {
     Type = type;
+    Identifier = string.IsNullOrWhiteSpace(identifier) ? type.ToString() : identifier;
+    DisplayName = string.IsNullOrWhiteSpace(displayName) ? type.ToString() : displayName;
+    Abbreviation = string.IsNullOrWhiteSpace(abbreviation) ? null : abbreviation;
     Category = category;
     Movement = movement;
     Attack = attack;

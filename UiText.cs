@@ -1,3 +1,5 @@
+using System;
+using System.Linq;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using MedivalChess.Shared;
@@ -8,6 +10,12 @@ internal static class UiText
 {
   internal static string BuildPieceLabel(PieceDefinition definition)
   {
+    if (!string.IsNullOrWhiteSpace(definition.Abbreviation)) return definition.Abbreviation.ToUpperInvariant();
+    if (!string.Equals(definition.Identifier, definition.Type.ToString(), StringComparison.Ordinal))
+    {
+      string letters = new(definition.DisplayName.Where(char.IsLetterOrDigit).Take(2).ToArray());
+      return string.IsNullOrWhiteSpace(letters) ? "CU" : letters.ToUpperInvariant();
+    }
     return definition.Type switch
     {
       PieceType.Soldier => "So",

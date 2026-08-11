@@ -106,7 +106,8 @@ internal sealed class UiRenderer
     float minimumScale = 0.5f
   )
   {
-    Text(text, position, colour, GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale));
+    float scale = GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale);
+    Text(TruncateToWidth(text, maximumWidth, scale), position, colour, scale);
   }
 
   internal void TextWrapped(string text, Rectangle bounds, Color colour, float scale = 1f)
@@ -167,7 +168,8 @@ internal sealed class UiRenderer
   )
   {
     int maximumWidth = Math.Max(1, bounds.Width - horizontalPadding * 2);
-    CenterText(text, bounds, colour, GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale));
+    float scale = GetFittedTextScale(text, maximumWidth, preferredScale, minimumScale);
+    CenterText(TruncateToWidth(text, maximumWidth, scale), bounds, colour, scale);
   }
 
   internal void CenterTextWrapped(string text, Rectangle bounds, Color colour, float scale = 1f)
@@ -294,7 +296,37 @@ internal sealed class UiRenderer
     }
 
     float fittedScale = maximumWidth / textWidth;
-    return MathHelper.Clamp(Math.Min(preferredScale, fittedScale), minimumScale, preferredScale);
+    // A minimum font scale is useful for readability, but it must never make a label spill into
+    // an adjacent control.  Callers receive an ellipsised label when the minimum cannot fit.
+    return MathHelper.Clamp(Math.Min(preferredScale, fittedScale), Math.Min(minimumScale, preferredScale), preferredScale);
+  }
+
+  private string TruncateToWidth(string text, int maximumWidth, float scale)
+  {
+    if (string.IsNullOrEmpty(text) || _font.MeasureString(text).X * scale <= maximumWidth)
+    {
+      return text;
+    }
+
+    const string suffix = "...";
+    if (_font.MeasureString(suffix).X * scale > maximumWidth)
+    {
+      return string.Empty;
+    }
+
+    int length = text.Length;
+    while (length > 0)
+    {
+      string candidate = text[..length] + suffix;
+      if (_font.MeasureString(candidate).X * scale <= maximumWidth)
+      {
+        return candidate;
+      }
+
+      length--;
+    }
+
+    return suffix;
   }
 
   private IEnumerable<string> SplitLongWord(string word, int maximumWidth, float scale)

@@ -211,7 +211,8 @@ public sealed class LevelEditorState
         Team = unit.Team,
         Position = unit.Position,
         Health = unit.Health,
-        Rotation = unit.Rotation
+        Rotation = unit.Rotation,
+        StatOverrides = CloneStatOverrides(unit.StatOverrides)
       };
       if (string.IsNullOrWhiteSpace(copy.Id) || level.Units.Any(existing => existing.Id == copy.Id))
       {
@@ -229,7 +230,7 @@ public sealed class LevelEditorState
   public bool CanPlaceUnit(CampaignUnitDefinition unit, out string reason, string? ignoredUnitId = null)
   {
     ArgumentNullException.ThrowIfNull(unit);
-    if (!CampaignRuntimeFactory.TryGetPieceDefinition(unit.UnitType, out PieceDefinition definition))
+    if (!CampaignRuntimeFactory.TryGetPieceDefinition(Level, unit.UnitType, unit.StatOverrides, out PieceDefinition definition))
     {
       reason = $"Unknown unit type: {unit.UnitType}.";
       return false;
@@ -265,7 +266,7 @@ public sealed class LevelEditorState
       reason = $"{unit.UnitType} does not fit on the board at ({unit.Position.X}, {unit.Position.Y}).";
       return false;
     }
-    if (!CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? candidate) || candidate is null)
+    if (!CampaignRuntimeFactory.TryCreatePiece(Level, unit, out Piece? candidate) || candidate is null)
     {
       reason = $"Unknown unit type: {unit.UnitType}.";
       return false;
@@ -282,7 +283,7 @@ public sealed class LevelEditorState
 
     foreach (CampaignUnitDefinition other in Level.Units.Where(other => other.Id != ignoredUnitId))
     {
-      if (!CampaignRuntimeFactory.TryCreatePiece(other, out Piece? otherPiece) || otherPiece is null) continue;
+      if (!CampaignRuntimeFactory.TryCreatePiece(Level, other, out Piece? otherPiece) || otherPiece is null) continue;
       if (candidate.Definition.Type == PieceType.Farm || otherPiece.Definition.Type == PieceType.Farm) continue;
       if (candidate.OccupiedSquares().Any(otherPiece.Occupies))
       {
@@ -324,7 +325,8 @@ public sealed class LevelEditorState
       Team = unit.Team,
       Position = position,
       Health = unit.Health,
-      Rotation = unit.Rotation
+      Rotation = unit.Rotation,
+      StatOverrides = CloneStatOverrides(unit.StatOverrides)
     };
     if (!CanPlaceUnit(candidate, out reason, unitId)) return false;
     MoveUnit(unitId, position);
@@ -448,6 +450,82 @@ public sealed class LevelEditorState
     ArgumentNullException.ThrowIfNull(update);
     if (!Level.Units.Any(unit => unit.Id == unitId)) return;
     Change("Update unit", level => update(level.Units.First(unit => unit.Id == unitId)));
+  }
+
+  public CampaignCustomUnitDefinition AddCustomUnit(CampaignCustomUnitDefinition? template = null)
+  {
+    CampaignCustomUnitDefinition source = template ?? new CampaignCustomUnitDefinition();
+    CampaignCustomUnitDefinition created = CloneCustomUnit(source);
+    Change("Create custom unit", level =>
+    {
+      string baseId = string.IsNullOrWhiteSpace(created.Id) ? "custom-unit" : created.Id.Trim();
+      created.Id = baseId;
+      int suffix = 2;
+      while (level.CustomUnits.Any(unit => string.Equals(unit.Id, created.Id, StringComparison.Ordinal)))
+      {
+        created.Id = $"{baseId}-{suffix++}";
+      }
+      if (string.IsNullOrWhiteSpace(created.Name)) created.Name = "Custom Unit";
+      level.CustomUnits.Add(created);
+      if (created.Purchasable)
+      {
+        foreach (CampaignTeamDefinition team in level.Teams.Where(team => team.PurchaseListMode != CampaignPurchaseListMode.None))
+        {
+          if (!team.AvailableUnitTypes.Contains(created.Id)) team.AvailableUnitTypes.Add(created.Id);
+        }
+      }
+    });
+    return created;
+  }
+
+  public void UpdateCustomUnit(string id, Action<CampaignCustomUnitDefinition> update)
+  {
+    ArgumentNullException.ThrowIfNull(update);
+    if (!Level.CustomUnits.Any(unit => unit.Id == id)) return;
+    Change("Update custom unit", level => update(level.CustomUnits.First(unit => unit.Id == id)));
+  }
+
+  public void UpdateBuiltInUnit(string unitType, Action<CampaignUnitTemplateOverrideDefinition> update)
+  {
+    ArgumentNullException.ThrowIfNull(update);
+    if (!CampaignUnitResolver.TryResolve(Level, unitType, null, out PieceDefinition current)) return;
+    Change("Edit built-in unit", level =>
+    {
+      CampaignUnitTemplateOverrideDefinition? existing = level.UnitOverrides.FirstOrDefault(unit => unit.UnitType == unitType);
+      if (existing is null)
+      {
+        existing = new CampaignUnitTemplateOverrideDefinition
+        {
+          UnitType = unitType,
+          Name = current.DisplayName,
+          Abbreviation = current.Abbreviation ?? UiText.BuildPieceLabel(current),
+          AbilitySourceUnitType = current.Type.ToString()
+        };
+        level.UnitOverrides.Add(existing);
+      }
+      existing.StatOverrides ??= new CampaignUnitStatOverrides();
+      update(existing);
+    });
+  }
+
+  public void ResetBuiltInUnit(string unitType)
+  {
+    if (!Level.UnitOverrides.Any(unit => unit.UnitType == unitType)) return;
+    Change("Reset built-in unit", level => level.UnitOverrides.RemoveAll(unit => unit.UnitType == unitType));
+  }
+
+  public void DeleteCustomUnit(string id)
+  {
+    if (!Level.CustomUnits.Any(unit => unit.Id == id)) return;
+    Change("Delete custom unit", level =>
+    {
+      level.CustomUnits.RemoveAll(unit => unit.Id == id);
+      level.Units.RemoveAll(unit => unit.UnitType == id);
+      foreach (CampaignTeamDefinition team in level.Teams) team.AvailableUnitTypes.RemoveAll(type => type == id);
+      level.Restrictions.AllowedUnitTypes.RemoveAll(type => type == id);
+      level.Restrictions.DisabledUnitTypes.RemoveAll(type => type == id);
+      level.Restrictions.DisabledAbilityUnitTypes.RemoveAll(type => type == id);
+    });
   }
 
   public void AddObject(CampaignBoardObjectDefinition boardObject)
@@ -641,4 +719,31 @@ public sealed class LevelEditorState
     board.Width = board.Tiles.Max(tile => tile.X) - board.OriginX + 1;
     board.Height = board.Tiles.Max(tile => tile.Y) - board.OriginY + 1;
   }
+
+  private static CampaignUnitStatOverrides? CloneStatOverrides(CampaignUnitStatOverrides? source) => source is null
+    ? null
+    : new CampaignUnitStatOverrides
+    {
+      MoveRange = source.MoveRange,
+      MovePattern = source.MovePattern,
+      Attack = source.Attack,
+      Health = source.Health,
+      Width = source.Width,
+      Height = source.Height,
+      MinimumAttackRange = source.MinimumAttackRange,
+      MaximumAttackRange = source.MaximumAttackRange,
+      AttackPattern = source.AttackPattern,
+      Cost = source.Cost
+    };
+
+  private static CampaignCustomUnitDefinition CloneCustomUnit(CampaignCustomUnitDefinition source) => new()
+  {
+    Id = source.Id,
+    Name = source.Name,
+    Abbreviation = source.Abbreviation,
+    BaseUnitType = source.BaseUnitType,
+    AbilitySourceUnitType = source.AbilitySourceUnitType,
+    Purchasable = source.Purchasable,
+    StatOverrides = CloneStatOverrides(source.StatOverrides) ?? new CampaignUnitStatOverrides()
+  };
 }

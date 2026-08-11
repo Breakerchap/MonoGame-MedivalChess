@@ -78,7 +78,7 @@ public sealed class CampaignLevelTests
   }
 
   [Fact]
-  public void MigratesVersionOneLevelToCurrentFormat()
+  public void RejectsOlderFormatsBecauseTheCompactRangeFormatIsRequired()
   {
     CampaignLevelDefinition level = CreateValidLevel();
     string versionOne = CampaignLevelSerializer.Serialize(level)
@@ -86,10 +86,8 @@ public sealed class CampaignLevelTests
 
     CampaignLevelLoadResult result = CampaignLevelSerializer.Deserialize(versionOne);
 
-    Assert.True(result.IsSuccess, FormatProblems(result.Problems));
-    Assert.NotNull(result.Level);
-    Assert.Equal(CampaignLevelFormat.CurrentVersion, result.Level.FormatVersion);
-    Assert.Contains(result.Problems, problem => problem.Code == "migration.v1");
+    Assert.False(result.IsSuccess);
+    Assert.Contains(result.Problems, problem => problem.Code == "format.old");
   }
 
   [Fact]
@@ -204,6 +202,115 @@ public sealed class CampaignLevelTests
     Assert.True(loaded.IsSuccess, FormatProblems(loaded.Problems));
     Assert.Null(Assert.Single(loaded.Level!.Units).Health);
     Assert.Equal("Soldier", loaded.Level.Units[0].UnitType);
+  }
+
+  [Fact]
+  public void CompactBoardRangesAndContentUidRoundTrip()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.Board = CampaignBoardDefinition.CreateRectangle(32, 12);
+
+    string json = CampaignLevelSerializer.Serialize(level);
+    CampaignLevelLoadResult loaded = CampaignLevelSerializer.Deserialize(json);
+
+    Assert.Contains("\"tileRanges\"", json, StringComparison.Ordinal);
+    Assert.DoesNotContain("\"tiles\"", json, StringComparison.Ordinal);
+    Assert.True(loaded.IsSuccess, FormatProblems(loaded.Problems));
+    Assert.Equal(level.Board.Tiles, loaded.Level!.Board.Tiles);
+    Assert.False(string.IsNullOrWhiteSpace(loaded.Level.Uid));
+    Assert.Equal(CampaignLevelSerializer.CalculateUid(loaded.Level), loaded.Level.Uid);
+
+    string firstUid = loaded.Level.Uid!;
+    loaded.Level.Metadata.Name = "Changed";
+    string changedJson = CampaignLevelSerializer.Serialize(loaded.Level);
+    Assert.NotEqual(firstUid, loaded.Level.Uid);
+    Assert.Contains(loaded.Level.Uid!, changedJson, StringComparison.Ordinal);
+  }
+
+  [Fact]
+  public void CustomUnitsCanOverrideStatsAndCopyAnotherUnitsAbility()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.CustomUnits.Add(new CampaignCustomUnitDefinition
+    {
+      Id = "siege-scout",
+      Name = "Siege Scout",
+      BaseUnitType = "Soldier",
+      AbilitySourceUnitType = "Ballista",
+      StatOverrides = new CampaignUnitStatOverrides { MoveRange = 5, Attack = 7, Cost = 42 }
+    });
+    level.Teams[0].AvailableUnitTypes.Add("siege-scout");
+    level.Units.Add(new CampaignUnitDefinition
+    {
+      Id = "custom-unit",
+      UnitType = "siege-scout",
+      Team = NetworkTeam.Red,
+      Position = new CampaignCoordinate(0, 0)
+    });
+
+    CampaignLevelLoadResult result = CampaignLevelSerializer.Deserialize(CampaignLevelSerializer.Serialize(level));
+
+    Assert.True(result.IsSuccess, FormatProblems(result.Problems));
+    Assert.True(CampaignUnitResolver.TryResolve(result.Level!, "siege-scout", null, out PieceDefinition definition));
+    Assert.Equal(PieceType.Ballista, definition.Type);
+    Assert.Equal(5, definition.Movement.range);
+    Assert.Equal(7, definition.Attack);
+    Assert.Equal(42, definition.Cost);
+  }
+
+  [Fact]
+  public void CustomUnitCannotReplaceABuiltInUnitIdentifier()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.CustomUnits.Add(new CampaignCustomUnitDefinition
+    {
+      Id = "Soldier",
+      Name = "Not a Soldier",
+      BaseUnitType = "Soldier",
+      AbilitySourceUnitType = "Soldier"
+    });
+
+    CampaignValidationResult result = CampaignLevelValidator.Validate(level);
+
+    Assert.Contains(result.Problems, problem => problem.Code == "customUnit.id");
+  }
+
+  [Fact]
+  public void BuiltInUnitCatalogueOverridesAreStoredAndDriveRuntimeAndBuying()
+  {
+    CampaignLevelDefinition level = CreateValidLevel();
+    level.UnitOverrides.Add(new CampaignUnitTemplateOverrideDefinition
+    {
+      UnitType = "Archer",
+      Name = "Longbow",
+      Abbreviation = "LB",
+      AbilitySourceUnitType = "None",
+      Purchasable = false,
+      StatOverrides = new CampaignUnitStatOverrides
+      {
+        MoveRange = 4,
+        Health = 12,
+        Attack = 17,
+        MinimumAttackRange = 3,
+        MaximumAttackRange = 6,
+        AttackPattern = Shape.Line,
+        Cost = 33
+      }
+    });
+
+    CampaignLevelLoadResult result = CampaignLevelSerializer.Deserialize(CampaignLevelSerializer.Serialize(level));
+
+    Assert.True(result.IsSuccess, FormatProblems(result.Problems));
+    Assert.True(CampaignUnitResolver.TryResolve(result.Level!, "Archer", null, out PieceDefinition archer));
+    Assert.Equal("Longbow", archer.DisplayName);
+    Assert.Equal("LB", archer.Abbreviation);
+    Assert.Equal(4, archer.Movement.range);
+    Assert.Equal(17, archer.Attack);
+    Assert.Equal(12, archer.Health);
+    Assert.Equal(new AttackRange(3, 6), archer.AttackRange);
+    Assert.Equal(Shape.Line, archer.AttackPattern);
+    Assert.Equal(33, archer.Cost);
+    Assert.DoesNotContain("Archer", CampaignUnitResolver.GetPurchasableIdentifiers(result.Level!));
   }
 
   [Fact]

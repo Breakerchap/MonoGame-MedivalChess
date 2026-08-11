@@ -1,15 +1,23 @@
+using System.Text.Json.Serialization;
+
 namespace MedivalChess.Shared;
 
 /// <summary>Portable, rendering-free definition of a custom campaign level.</summary>
 public sealed class CampaignLevelDefinition
 {
   public int FormatVersion { get; set; } = CampaignLevelFormat.CurrentVersion;
+  /// <summary>A deterministic SHA-256 identity of this level's content, excluding this field.</summary>
+  public string? Uid { get; set; }
   public CampaignLevelMetadata Metadata { get; set; } = new();
   public CampaignBoardDefinition Board { get; set; } = CampaignBoardDefinition.CreateRectangle(16, 12);
   public List<CampaignTerrainTileDefinition> Terrain { get; set; } = [];
   public List<CampaignRiverDefinition> Rivers { get; set; } = [];
   public List<CampaignBoardObjectDefinition> Objects { get; set; } = [];
   public List<CampaignUnitDefinition> Units { get; set; } = [];
+  /// <summary>Level-local edits to built-in units. They keep native identifiers so existing placements and rules stay simple.</summary>
+  public List<CampaignUnitTemplateOverrideDefinition> UnitOverrides { get; set; } = [];
+  /// <summary>Author-defined unit templates that can be placed and optionally added to team buy lists.</summary>
+  public List<CampaignCustomUnitDefinition> CustomUnits { get; set; } = [];
   public List<CampaignTeamDefinition> Teams { get; set; } = [];
   public List<CampaignFormationDefinition> Formations { get; set; } = [];
   public CampaignScenarioDefinition Scenario { get; set; } = new();
@@ -74,8 +82,8 @@ public sealed class CampaignLevelDefinition
 
 public static class CampaignLevelFormat
 {
-  public const int OldestSupportedVersion = 1;
-  public const int CurrentVersion = 3;
+  public const int OldestSupportedVersion = 5;
+  public const int CurrentVersion = 5;
   public const string Extension = ".mclvl";
   public const int MaximumFileBytes = 5 * 1024 * 1024;
   public const int MaximumBoardTiles = 4_096;
@@ -104,7 +112,17 @@ public sealed class CampaignBoardDefinition
   public int OriginY { get; set; }
   public int Width { get; set; }
   public int Height { get; set; }
+  /// <summary>Expanded cells used by editor and game code. Files store these as compact row ranges.</summary>
+  [JsonIgnore]
   public List<CampaignCoordinate> Tiles { get; set; } = [];
+
+  /// <summary>Run-length encoded playable squares, one horizontal range per row segment.</summary>
+  [JsonPropertyName("tileRanges")]
+  public List<CampaignTileRange> TileRanges
+  {
+    get => CampaignTileRangeCodec.Encode(Tiles);
+    set => Tiles = CampaignTileRangeCodec.Decode(value);
+  }
 
   public static CampaignBoardDefinition CreateRectangle(int width, int height, int originX = 0, int originY = 0)
   {
@@ -129,6 +147,63 @@ public sealed class CampaignBoardDefinition
 }
 
 public sealed record CampaignCoordinate(int X, int Y);
+
+/// <summary>An inclusive horizontal run of playable squares in a board row.</summary>
+public sealed class CampaignTileRange
+{
+  public int X { get; set; }
+  public int Y { get; set; }
+  public int Length { get; set; }
+}
+
+internal static class CampaignTileRangeCodec
+{
+  internal static List<CampaignTileRange> Encode(IEnumerable<CampaignCoordinate>? tiles)
+  {
+    List<CampaignTileRange> ranges = [];
+    foreach (IGrouping<int, CampaignCoordinate> row in (tiles ?? []).Distinct().OrderBy(tile => tile.Y).ThenBy(tile => tile.X).GroupBy(tile => tile.Y))
+    {
+      CampaignCoordinate? start = null;
+      CampaignCoordinate? previous = null;
+      foreach (CampaignCoordinate tile in row)
+      {
+        if (start is null || previous is null || tile.X != previous.X + 1)
+        {
+          if (start is not null && previous is not null)
+          {
+            ranges.Add(new CampaignTileRange { X = start.X, Y = start.Y, Length = previous.X - start.X + 1 });
+          }
+          start = tile;
+        }
+        previous = tile;
+      }
+      if (start is not null && previous is not null)
+      {
+        ranges.Add(new CampaignTileRange { X = start.X, Y = start.Y, Length = previous.X - start.X + 1 });
+      }
+    }
+    return ranges;
+  }
+
+  internal static List<CampaignCoordinate> Decode(IEnumerable<CampaignTileRange>? ranges)
+  {
+    List<CampaignCoordinate> tiles = [];
+    int remaining = CampaignLevelFormat.MaximumBoardTiles + 1;
+    foreach (CampaignTileRange range in ranges ?? [])
+    {
+      // Validation reports malformed values after deserialisation; avoid allocating absurd input
+      // before that boundary has a chance to run.
+      int length = Math.Clamp(range.Length, 0, Math.Max(0, remaining));
+      for (int offset = 0; offset < length; offset++)
+      {
+        tiles.Add(new CampaignCoordinate(range.X + offset, range.Y));
+      }
+      remaining -= length;
+      if (remaining == 0) break;
+    }
+    return tiles;
+  }
+}
 
 public enum CampaignTerrainType
 {
@@ -188,12 +263,63 @@ public sealed class CampaignUnitDefinition
   /// <summary>Null uses the unit's current default health from UnitRules.</summary>
   public int? Health { get; set; }
   public CampaignUnitRotation Rotation { get; set; }
+  /// <summary>Optional stat switches for this placed unit. Null leaves the source unit stat unchanged.</summary>
+  public CampaignUnitStatOverrides? StatOverrides { get; set; }
+}
+
+/// <summary>Optional overrides applied to a standard or custom unit. Each nullable field is an on/off stat switch.</summary>
+public sealed class CampaignUnitStatOverrides
+{
+  public int? MoveRange { get; set; }
+  public Shape? MovePattern { get; set; }
+  public int? Attack { get; set; }
+  public int? Health { get; set; }
+  public int? Width { get; set; }
+  public int? Height { get; set; }
+  public int? MinimumAttackRange { get; set; }
+  public int? MaximumAttackRange { get; set; }
+  public Shape? AttackPattern { get; set; }
+  public int? Cost { get; set; }
+}
+
+/// <summary>Reusable campaign unit template. Its selected ability source also supplies special runtime behaviour.</summary>
+public sealed class CampaignCustomUnitDefinition
+{
+  public string Id { get; set; } = "custom-unit";
+  public string Name { get; set; } = "Custom Unit";
+  public string Abbreviation { get; set; } = "CU";
+  /// <summary>The standard unit whose category and baseline stats are used before applying overrides.</summary>
+  public string BaseUnitType { get; set; } = "Soldier";
+  /// <summary>The standard unit whose special ability behaviour is copied.</summary>
+  public string AbilitySourceUnitType { get; set; } = "Soldier";
+  public CampaignUnitStatOverrides StatOverrides { get; set; } = new();
+  public bool Purchasable { get; set; } = true;
+}
+
+/// <summary>Editable level-local version of a built-in unit. Its ID is always a native unit identifier.</summary>
+public sealed class CampaignUnitTemplateOverrideDefinition
+{
+  public string UnitType { get; set; } = "Soldier";
+  public string Name { get; set; } = "Soldier";
+  public string Abbreviation { get; set; } = "So";
+  /// <summary>A built-in unit whose special behaviour is borrowed, or <c>None</c> for no special ability.</summary>
+  public string AbilitySourceUnitType { get; set; } = "Soldier";
+  public CampaignUnitStatOverrides StatOverrides { get; set; } = new();
+  public bool Purchasable { get; set; } = true;
 }
 
 public enum CampaignTeamController
 {
   Human,
   Cpu
+}
+
+/// <summary>Editor-friendly preset for a team's purchasable-unit list.</summary>
+public enum CampaignPurchaseListMode
+{
+  All,
+  Custom,
+  None
 }
 
 public sealed class CampaignCpuProfileDefinition
@@ -209,6 +335,7 @@ public sealed class CampaignTeamDefinition
   public int StartingMoney { get; set; } = Globals.StartingCash;
   public int ActionsPerTurn { get; set; } = MatchRules.ActionsPerTurn;
   public bool PurchasesEnabled { get; set; } = true;
+  public CampaignPurchaseListMode PurchaseListMode { get; set; } = CampaignPurchaseListMode.All;
   public string? ChosenRoyal { get; set; }
   public List<string> AvailableUnitTypes { get; set; } = [];
   public List<string> DisabledAbilityUnitTypes { get; set; } = [];

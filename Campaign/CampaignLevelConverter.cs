@@ -62,7 +62,7 @@ internal static class CampaignLevelConverter
       }).ToArray();
       IReadOnlyList<Piece> pieces = level.Units.Select(unit =>
       {
-        if (!CampaignRuntimeFactory.TryCreatePiece(unit, out Piece? piece))
+        if (!CampaignRuntimeFactory.TryCreatePiece(level, unit, out Piece? piece))
         {
           throw new InvalidOperationException($"Unknown unit type '{unit.UnitType}'.");
         }

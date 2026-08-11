@@ -34,10 +34,31 @@ internal static class CampaignRuntimeFactory
     return true;
   }
 
+  internal static bool TryGetPieceDefinition(CampaignLevelDefinition level, string? unitType, CampaignUnitStatOverrides? overrides, out PieceDefinition definition) =>
+    CampaignUnitResolver.TryResolve(level, unitType, overrides, out definition);
+
   internal static bool TryCreatePiece(CampaignUnitDefinition unit, out Piece? piece)
   {
     ArgumentNullException.ThrowIfNull(unit);
     if (!TryGetPieceDefinition(unit.UnitType, out PieceDefinition definition))
+    {
+      piece = null;
+      return false;
+    }
+
+    piece = new Piece(definition, (unit.Position.X, unit.Position.Y), unit.Team.ToTeamName())
+    {
+      NetworkId = unit.Id,
+      CurrentHealth = unit.Health ?? definition.Health
+    };
+    return true;
+  }
+
+  internal static bool TryCreatePiece(CampaignLevelDefinition level, CampaignUnitDefinition unit, out Piece? piece)
+  {
+    ArgumentNullException.ThrowIfNull(level);
+    ArgumentNullException.ThrowIfNull(unit);
+    if (!TryGetPieceDefinition(level, unit.UnitType, unit.StatOverrides, out PieceDefinition definition))
     {
       piece = null;
       return false;
