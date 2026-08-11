@@ -744,6 +744,7 @@ internal sealed partial class Game1 : Game
     _uiScale = Math.Clamp(MathF.Round(_uiScale + direction * step, 1), minimum, maximum);
     UiLayout.Scale = _uiScale;
     _ui.InputScale = _uiScale;
+    ApplyMyraUiScale();
   }
 
   private Point ToUiPoint(Point screenPoint) => new(

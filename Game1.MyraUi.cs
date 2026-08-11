@@ -2,6 +2,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using Myra;
 using Myra.Graphics2D;
+using Myra.Graphics2D.Brushes;
 using Myra.Graphics2D.UI;
 using MedivalChess.Campaign;
 using MedivalChess.CPU;
@@ -24,7 +25,13 @@ internal sealed partial class Game1
   private void InitializeMyraUi()
   {
     MyraEnvironment.Game = this;
-    _myraDesktop = new Desktop();
+    _myraDesktop = new Desktop
+    {
+      Background = new SolidBrush(Color.Transparent),
+      TransformOrigin = Vector2.Zero,
+      BoundsFetcher = GetMyraBounds
+    };
+    ApplyMyraUiScale();
     _myraDirty = true;
     RebuildMyraUi();
   }
@@ -35,6 +42,22 @@ internal sealed partial class Game1
     Screen.Encyclopedia or Screen.GameOver or Screen.CustomLevels or Screen.EditorDiscardConfirm;
 
   private void MarkMyraDirty() => _myraDirty = true;
+
+
+  private Rectangle GetMyraBounds() => new(
+    0,
+    0,
+    Math.Max(1, (int)MathF.Ceiling(GraphicsDevice.Viewport.Width / _uiScale)),
+    Math.Max(1, (int)MathF.Ceiling(GraphicsDevice.Viewport.Height / _uiScale))
+  );
+
+  private void ApplyMyraUiScale()
+  {
+    if (_myraDesktop is null) return;
+    _myraDesktop.Scale = new Vector2(_uiScale);
+    _myraDesktop.TransformOrigin = Vector2.Zero;
+    MarkMyraDirty();
+  }
 
   private void UpdateMyraUi(KeyboardState keyboard, bool wasEscapePressed)
   {
@@ -808,7 +831,9 @@ internal sealed partial class Game1
       MaxHeight = maximumPanelHeight,
       HorizontalAlignment = HorizontalAlignment.Left,
       VerticalAlignment = VerticalAlignment.Top,
-      Margin = new Thickness(16)
+      Margin = new Thickness(16),
+      Padding = new Thickness(UiTheme.SpaceMd),
+      Background = new SolidBrush(UiTheme.Panel)
     };
     root.Widgets.Add(leftScroll);
 
@@ -822,7 +847,9 @@ internal sealed partial class Game1
         MaxHeight = maximumPanelHeight,
         HorizontalAlignment = HorizontalAlignment.Right,
         VerticalAlignment = VerticalAlignment.Top,
-        Margin = new Thickness(16)
+        Margin = new Thickness(16),
+        Padding = new Thickness(UiTheme.SpaceMd),
+        Background = new SolidBrush(UiTheme.Panel)
       };
       root.Widgets.Add(purchaseScroll);
     }
