@@ -108,6 +108,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new MaterialEvaluation(),
       new HealthEvaluation(),
       new ThreatEvaluation(_threatMapBuilder),
+      new HangingPieceEvaluation(_threatMapBuilder),
       new RoyalSafetyEvaluation(_threatMapBuilder),
       new ObjectiveEvaluation(),
       new IntentEvaluation(),
@@ -185,6 +186,7 @@ public sealed class StateEvaluator : IStateEvaluator
       "Material" => weights.Material * scenario.Material,
       "Health" => weights.Health,
       "Threat" => weights.ImmediateThreats * personality.Aggression,
+      "HangingPieces" => weights.AssetSafety * personality.Caution * 0.85f,
       "RoyalSafety" => weights.RoyalSafety * personality.RoyalProtection * personality.Caution * scenario.RoyalSafety *
         CpuObjectiveRules.GetRoyalSafetyImportance(state),
       "Objective" => weights.ObjectiveProgress * personality.ObjectiveFocus * scenario.ObjectiveProgress,
@@ -405,6 +407,118 @@ public sealed class ThreatEvaluation : IEvaluationTerm
     float importantValue = threat.IsStrategicallyImportant && royalIsRelevant ? 80f : 0f;
     return damageValue + lethalValue + focusValue + importantValue;
   });
+}
+
+/// <summary>
+/// Explicit exchange-safety evaluation for pieces that can be damaged or removed immediately.
+/// Unlike flat material, this uses a compressed purchase-cost curve only while judging a concrete
+/// tactical loss, so a Knight is more worth saving than a Peasant without teaching the CPU to
+/// passively hoard expensive units. A credible recapture reduces, but never erases, the danger.
+/// </summary>
+public sealed class HangingPieceEvaluation : IEvaluationTerm
+{
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
+
+  public HangingPieceEvaluation(ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
+  }
+
+  public string Name => "HangingPieces";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float score = 0f;
+    foreach (NetworkPiece target in state.Pieces.Where(piece =>
+      piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category != RuleCategory.Royal))
+    {
+      float worstRisk = 0f;
+      foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != target.Team))
+      {
+        CpuPieceThreat? threat = context.Cache.GetThreatMap(state, enemy, _threatMapBuilder).GetThreat(target.Id);
+        if (threat is null)
+        {
+          continue;
+        }
+
+        // Guard damage is redirected to the attached Guard. Judge the health/value actually at
+        // risk first rather than incorrectly calling the protected premium unit itself hanging.
+        NetworkPiece exposed = state.Pieces.FirstOrDefault(piece =>
+          piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+        float exposedValue = GetExchangeValue(exposed.Type, state);
+        float incomingRatio = Math.Min(1.5f, threat.TotalExpectedDamage / (float)Math.Max(1, exposed.Health));
+        bool lethal = threat.TotalExpectedDamage >= exposed.Health;
+        float risk = exposedValue * incomingRatio * 0.45f;
+        if (lethal)
+        {
+          risk += exposedValue * 1.1f;
+        }
+        if (threat.AttackerCount > 1)
+        {
+          risk += exposedValue * Math.Min(0.28f, (threat.AttackerCount - 1) * 0.08f);
+        }
+
+        float recaptureValue = GetBestRecaptureValue(state, target.Team, threat);
+        if (recaptureValue > 0f)
+        {
+          risk -= Math.Min(risk * 0.65f, recaptureValue * 0.7f);
+        }
+        worstRisk = Math.Max(worstRisk, Math.Max(0f, risk));
+      }
+      score += target.Team == perspective ? -worstRisk : worstRisk;
+    }
+    return score;
+  }
+
+  internal static float GetExchangeValue(string type, CpuGameState state)
+  {
+    if (!UnitRules.TryGet(type, out UnitRule rule))
+    {
+      return 20f;
+    }
+
+    if (rule.Category == RuleCategory.Royal)
+    {
+      return MaterialEvaluation.GetUnitValue(type, state);
+    }
+
+    // Price matters here because this is a concrete sacrifice/trade calculation. Compress the
+    // curve above 40 gold so costly specialists are protected without becoming untouchable.
+    float cost = Math.Max(0f, rule.Cost);
+    return 20f + Math.Min(cost, 40f) * 0.9f + Math.Max(0f, cost - 40f) * 0.45f;
+  }
+
+  private static float GetBestRecaptureValue(CpuGameState state, NetworkTeam defendingTeam, CpuPieceThreat threat)
+  {
+    float best = 0f;
+    foreach (string attackerId in threat.AttackerIds)
+    {
+      NetworkPiece? attacker = state.Pieces.FirstOrDefault(piece => piece.Id == attackerId);
+      if (attacker is null || !UnitRules.TryGet(attacker.Type, out _))
+      {
+        continue;
+      }
+
+      float attackerValue = GetExchangeValue(attacker.Type, state);
+      foreach (NetworkPiece defender in state.Pieces.Where(piece =>
+        piece.Team == defendingTeam && piece.Id != threat.PieceId && piece.AttachedToId is null &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0 && !piece.HasAttackedThisTurn))
+      {
+        if (!CpuGameRules.CanDirectlyAttack(state, defender, attacker))
+        {
+          continue;
+        }
+
+        int damage = CpuGameRules.EstimateAttackDamage(state, defender, attacker);
+        float recoverable = damage >= attacker.Health
+          ? attackerValue
+          : attackerValue * Math.Clamp(damage / (float)Math.Max(1, attacker.Health), 0f, 1f) * 0.45f;
+        best = Math.Max(best, recoverable);
+      }
+    }
+    return best;
+  }
 }
 
 public sealed class RoyalSafetyEvaluation : IEvaluationTerm

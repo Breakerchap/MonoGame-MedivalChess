@@ -39,6 +39,71 @@ internal sealed record SearchIterationResult(
   int TacticalMacrosGenerated
 );
 
+public readonly record struct CpuOpponentSearchShape(int ActionsToPredict, int BeamWidth, bool IsTactical);
+
+/// <summary>
+/// Concentrates reply-search effort on positions where the opponent has a concrete tactical shot.
+/// Quiet positions still receive a reply check, but lethal attacks, strategically important
+/// targets, and expensive exposed assets retain the full configured opponent horizon and beam.
+/// </summary>
+public static class CpuOpponentSearchPolicy
+{
+  public static CpuOpponentSearchShape Choose(
+    CpuGameState state,
+    NetworkTeam perspective,
+    CpuProfile profile,
+    EvaluationContext context,
+    ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    int configuredActions = Globals.ActionLimitsEnabled
+      ? Math.Min(profile.Search.OpponentActionsToPredict, state.ActionsRemaining)
+      : profile.Search.OpponentActionsToPredict;
+    int configuredBeam = Math.Max(1, profile.Search.OpponentBeamWidth);
+    if (configuredActions <= 1 || state.CurrentTurn == perspective || state.CurrentTurn == NetworkTeam.Neutral)
+    {
+      return new CpuOpponentSearchShape(Math.Max(0, configuredActions), configuredBeam, false);
+    }
+
+    ICpuThreatMapBuilder builder = threatMapBuilder ?? new CpuThreatMapBuilder();
+    CpuThreatMap map = context.Cache.GetThreatMap(state, state.CurrentTurn, builder);
+    float urgency = 0f;
+    int threatened = 0;
+    foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team == perspective && piece.AttachedToId is null))
+    {
+      CpuPieceThreat? threat = map.GetThreat(target.Id);
+      if (threat is null || !UnitRules.TryGet(target.Type, out UnitRule rule))
+      {
+        continue;
+      }
+
+      threatened++;
+      urgency += 1f;
+      if (threat.IsLethal) urgency += 4f;
+      if (threat.IsStrategicallyImportant) urgency += 3f;
+      if (rule.Cost >= 40) urgency += 2f;
+      if (state.TreasureCarrierId == target.Id) urgency += 3f;
+    }
+
+    if (urgency >= 5f)
+    {
+      return new CpuOpponentSearchShape(configuredActions, configuredBeam, true);
+    }
+
+    if (threatened > 0)
+    {
+      int activeActions = Math.Max(2, (int)Math.Ceiling(configuredActions * 0.7));
+      int activeBeam = Math.Max(6, (int)Math.Ceiling(configuredBeam * 0.7));
+      return new CpuOpponentSearchShape(Math.Min(configuredActions, activeActions), Math.Min(configuredBeam, activeBeam), true);
+    }
+
+    // No immediate tactical contact: keep enough search to catch move-then-attack macros, while
+    // avoiding five-ply/full-beam proof of a quiet reply that can consume the whole turn budget.
+    int quietActions = Math.Max(2, (int)Math.Ceiling(configuredActions * 0.4));
+    int quietBeam = Math.Max(4, (int)Math.Ceiling(configuredBeam * 0.5));
+    return new CpuOpponentSearchShape(Math.Min(configuredActions, quietActions), Math.Min(configuredBeam, quietBeam), false);
+  }
+}
+
 /// <summary>
 /// Search-only compound action. It consumes two ordinary legal actions in one beam expansion,
 /// then is flattened back to those ordinary actions before a CpuTurnPlan leaves the CPU layer.
@@ -222,13 +287,20 @@ public sealed class CpuPlayer : ICpuPlayer
     List<(SearchNode Node, float Score, float OpponentPenalty)> ranked = [];
     foreach (SearchNode node in beam)
     {
-      if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
+      if (cancelled || nodeBudgetReached)
       {
         break;
       }
+
       float adjustedScore = node.Score;
       float opponentPenalty = 0f;
-      if (settings.OpponentActionsToPredict > 0 && node.State.Winner is null && node.State.CurrentTurn != team)
+      // If deepening consumed the soft budget, keep the best fully completed beam instead of
+      // throwing that work away and falling back to the first legal root action. Opponent reply
+      // search is optional refinement and only runs while actual decision time remains.
+      bool replyTimeAvailable = !timedOut &&
+        stopwatch.ElapsedMilliseconds < Math.Max(1, settings.MaxSearchMilliseconds);
+      if (replyTimeAvailable && settings.OpponentActionsToPredict > 0 &&
+          node.State.Winner is null && node.State.CurrentTurn != team)
       {
         float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken,
           searchActionCache, candidateCache, evaluatedStates, ref evaluationCacheHits, ref candidateCacheHits,
@@ -905,18 +977,16 @@ public sealed class CpuPlayer : ICpuPlayer
   )
   {
     NetworkTeam opponent = state.CurrentTurn;
-    int actionsToPredict = Globals.ActionLimitsEnabled
-      ? Math.Min(profile.Search.OpponentActionsToPredict, state.ActionsRemaining)
-      : profile.Search.OpponentActionsToPredict;
+    CpuOpponentSearchShape replyShape = CpuOpponentSearchPolicy.Choose(state, perspective, profile, context);
+    int actionsToPredict = replyShape.ActionsToPredict;
     if (actionsToPredict <= 0)
     {
       return EvaluateCached(state, perspective, context, evaluatedStates, ref evaluationCacheHits).Total;
     }
 
-    // Medium mode looks only one opponent action ahead. Hard looks three and Best five, so they
-    // model a longer enemy turn with a deliberately narrower beam instead of greedily fixing
-    // the first reply and missing a move-then-attack combination.
-    int opponentBeamWidth = Math.Max(1, profile.Search.OpponentBeamWidth);
+    // Tactical positions keep the full configured response horizon. Quiet positions use a
+    // narrower reply proof, freeing the same fixed turn budget for more principal search work.
+    int opponentBeamWidth = replyShape.BeamWidth;
     int placementLimit = GetPurchasePlacementLimit(profile.Search, 12);
     CpuSearchSettings opponentSettings = new()
     {
