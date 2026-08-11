@@ -10,6 +10,14 @@
     <ApplicationIcon>Icon.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- The game project lives at the repository root, so SDK default globs would otherwise
+       compile source files belonging to the nested test/server/tool projects into the game. -->
+  <ItemGroup>
+    <Compile Remove="MedivalChess.Tests/**/*.cs" />
+    <Compile Remove="MedivalChess.Server/**/*.cs" />
+    <Compile Remove="TerrainPainter/**/*.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <None Remove="Icon.ico" />
     <None Remove="Icon.bmp" />
