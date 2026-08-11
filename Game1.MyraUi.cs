@@ -19,6 +19,7 @@ internal sealed partial class Game1
   private bool _myraDirty = true;
   private bool _myraPresetBrowserOpen;
   private string _myraStatusSnapshot = string.Empty;
+  private readonly Dictionary<TeamName, Label> _myraClockLabels = [];
 
   private void InitializeMyraUi()
   {
@@ -81,6 +82,7 @@ internal sealed partial class Game1
       MarkMyraDirty();
     }
     if (_myraDirty) RebuildMyraUi();
+    UpdateMyraPlayingClockLabels();
     _myraDesktop.Render();
   }
 
@@ -96,11 +98,7 @@ internal sealed partial class Game1
     string initialBuy = _initialBuyPhase is null
       ? "none"
       : $"{_initialBuyPhase.CurrentTeam}:{_initialBuyPhase.PurchasesThisTurn}:{_initialBuyPhase.PurchasesPerTurn}:{_initialBuyPhase.IsFarmPlacementPhase}:{_initialBuyPhase.CanStopCurrentBuyer}";
-    string clocks = _chessTimerEnabled
-      ? string.Join(",", Team.ActiveTeams.Select(team => $"{team}:{FormatClock(team)}"))
-      : "off";
-
-    return $"{common}|turn:{Team.CurrentTurn}|money:{currentTeam?.Money}|actions:{currentTeam?.ActionPoints}|selected:{selected}|buy:{_isPurchaseMode}:{_selectedPurchaseIndex}:{_isPurchaseUnitListExpanded}|initial:{initialBuy}|engineer:{_selectedEngineerAbility}|clock:{clocks}|mode:{GetMyraModeScoreText()}|royal:{_royalAwaitingPlacement?.Identifier}|debug:{_debugTeamSwitchPending}";
+    return $"{common}|turn:{Team.CurrentTurn}|money:{currentTeam?.Money}|actions:{currentTeam?.ActionPoints}|selected:{selected}|buy:{_isPurchaseMode}:{_selectedPurchaseIndex}:{_isPurchaseUnitListExpanded}|initial:{initialBuy}|engineer:{_selectedEngineerAbility}|mode:{GetMyraModeScoreText()}|royal:{_royalAwaitingPlacement?.Identifier}|debug:{_debugTeamSwitchPending}";
   }
 
   private void HandleMyraEscape()
@@ -689,6 +687,7 @@ internal sealed partial class Game1
 
   private Widget BuildMyraPlayingHud()
   {
+    _myraClockLabels.Clear();
     Grid root = new()
     {
       HorizontalAlignment = HorizontalAlignment.Stretch,
@@ -839,7 +838,9 @@ internal sealed partial class Game1
       };
       foreach (TeamName team in Team.ActiveTeams)
       {
-        clocks.Widgets.Add(MyraInfo($"{UiText.GetTeamDisplayName(team).ToUpperInvariant()} {FormatClock(team)}", UiTheme.GetTeamColour(team)));
+        Label clockLabel = MyraInfo($"{UiText.GetTeamDisplayName(team).ToUpperInvariant()} {FormatClock(team)}", UiTheme.GetTeamColour(team));
+        _myraClockLabels[team] = clockLabel;
+        clocks.Widgets.Add(clockLabel);
       }
       root.Widgets.Add(clocks);
     }
@@ -983,5 +984,15 @@ internal sealed partial class Game1
     if (GetStatusPanelBounds().Contains(position) || GetSelectedPiecePanelBounds().Contains(position)) return true;
     if (_chessTimerEnabled && GetChessClockPanelBounds().Contains(position)) return true;
     return _royalAwaitingPlacement is null && IsPointerOverPurchaseMenu(position);
+  }
+
+
+  private void UpdateMyraPlayingClockLabels()
+  {
+    if (_screen != Screen.Playing || !_chessTimerEnabled) return;
+    foreach ((TeamName team, Label label) in _myraClockLabels)
+    {
+      label.Text = $"{UiText.GetTeamDisplayName(team).ToUpperInvariant()} {FormatClock(team)}";
+    }
   }
 }
