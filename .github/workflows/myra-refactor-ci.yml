@@ -7,16 +7,21 @@ on:
     branches: [master]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Apply Game1 integration
+        if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        run: python3 tools/apply_myra_refactor.py
       - name: Restore tools
         run: dotnet tool restore
       - name: Restore game
@@ -27,3 +32,13 @@ jobs:
         run: dotnet build MedivalChess.csproj --configuration Release --no-restore
       - name: Test
         run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore
+      - name: Commit integrated Game1
+        if: success() && github.event_name == 'push' && github.actor != 'github-actions[bot]'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Game1.cs
+          if ! git diff --cached --quiet; then
+            git commit -m "Integrate Myra UI into game loop"
+            git push origin HEAD:feature/myra-ui-refactor
+          fi
