@@ -946,7 +946,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int purchaseQuota = Math.Max(3, count / 3);
     foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is PurchaseAction && IsPlausiblePurchase(candidate))
       .GroupBy(candidate => ((PurchaseAction)candidate.Action).UnitType, StringComparer.Ordinal)
-      .Select(group => group.First())
+      .SelectMany(group => group.Take(2))
       .Take(purchaseQuota)) Add(candidate);
 
     foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is UseAbilityAction && IsPlausibleAbility(candidate)).Take(2)) Add(candidate);
