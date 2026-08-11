@@ -127,7 +127,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Peasant = new(
     PieceType.Peasant, PieceCategory.Melee, (1, Shape.Any), 5, 5, (1, 1), (1, 1), Shape.Straight, 10);
   public static readonly PieceDefinition Knight = new(
-    PieceType.Knight, PieceCategory.Melee, (4, Shape.Any), 20, 30, (1, 1), (1, 1), Shape.Any, 50);
+    PieceType.Knight, PieceCategory.Melee, (3, Shape.Straight), 20, 30, (1, 1), (1, 1), Shape.Any, 55);
   public static readonly PieceDefinition Crossbowman = new(
     PieceType.Crossbowman, PieceCategory.Ranged, (2, Shape.Any), 20, 15, (1, 1), (1, 3), Shape.Any, 50);
   public static readonly PieceDefinition Cavalier = new(
@@ -185,7 +185,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] All =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Chariot, Cannon,
+    Crossbowman, Cavalier, Chariot, Cannon,
     Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
@@ -194,7 +194,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] Encyclopedia =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Chariot, Cannon,
+    Crossbowman, Cavalier, Chariot, Cannon,
     Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
@@ -203,7 +203,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] Purchasable =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Chariot, Cannon,
+    Crossbowman, Cavalier, Chariot, Cannon,
     Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm
   ];
