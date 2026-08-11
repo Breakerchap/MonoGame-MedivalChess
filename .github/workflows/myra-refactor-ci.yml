@@ -18,7 +18,9 @@ jobs:
           ref: ${{ github.event_name == 'push' && github.ref_name || '' }}
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: |
+            8.0.x
+            9.0.x
       - name: Apply Game1 integration
         run: python3 tools/apply_myra_refactor.py
       - name: Restore tools
@@ -30,7 +32,45 @@ jobs:
       - name: Build game
         run: dotnet build MedivalChess.csproj --configuration Release --no-restore
       - name: Test
-        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore
+        id: tests
+        continue-on-error: true
+        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-restore --logger "trx;LogFileName=myra-tests.trx" --results-directory TestResults
+      - name: Report failed tests
+        if: steps.tests.outcome == 'failure'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          path = Path('TestResults/myra-tests.trx')
+          if not path.exists():
+              print('::error title=Tests failed::dotnet test failed before producing a TRX result file.')
+              raise SystemExit(1)
+
+          root = ET.parse(path).getroot()
+          namespace = root.tag.split('}')[0].strip('{') if root.tag.startswith('{') else ''
+          prefix = f'{{{namespace}}}' if namespace else ''
+
+          def escape(value: str) -> str:
+              return (value or '').replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+
+          failures = 0
+          for result in root.iter(f'{prefix}UnitTestResult'):
+              if result.attrib.get('outcome') != 'Failed':
+                  continue
+              failures += 1
+              name = result.attrib.get('testName', 'Unknown test')
+              output = result.find(f'{prefix}Output')
+              error = output.find(f'{prefix}ErrorInfo') if output is not None else None
+              message = error.findtext(f'{prefix}Message') if error is not None else 'Test failed.'
+              stack = error.findtext(f'{prefix}StackTrace') if error is not None else ''
+              details = message if not stack else f'{message}\n{stack}'
+              print(f'::error title={escape(name)}::{escape(details)}')
+
+          if failures == 0:
+              print('::error title=Tests failed::dotnet test returned failure, but no failed test result was found in the TRX file.')
+          raise SystemExit(1)
+          PY
       - name: Commit integrated Game1
         if: success() && github.event_name == 'push' && github.actor != 'github-actions[bot]'
         run: |
