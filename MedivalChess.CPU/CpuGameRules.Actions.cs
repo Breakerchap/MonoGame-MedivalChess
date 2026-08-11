@@ -83,6 +83,10 @@ public static partial class CpuGameRules
     };
     state.Pieces[attackerIndex] = attacker;
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    if (target is { Type: "Farm" })
+    {
+      target = FindUnitOnAttackedSquare(state.Pieces, attacker, action.TargetX, action.TargetY) ?? target;
+    }
     if (target is null)
     {
       DamageBarricade(state, attacker, (action.TargetX, action.TargetY));

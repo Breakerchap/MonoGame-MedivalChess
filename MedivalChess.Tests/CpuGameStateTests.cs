@@ -25,6 +25,38 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void AttackingAFarmSquareDamagesTheUnitBeforeTheFarm()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-farm", "Farm", NetworkTeam.Blue, 0, -1, 30),
+      new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-farm", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState afterAttack = attack.Apply(state);
+
+    Assert.DoesNotContain(afterAttack.Pieces, piece => piece.Id == "blue-peasant");
+    Assert.Equal(30, afterAttack.Pieces.Single(piece => piece.Id == "blue-farm").Health);
+  }
+
+  [Fact]
+  public void AttackingAnUncoveredFarmDamagesTheFarm()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-farm", "Farm", NetworkTeam.Blue, 0, -1, 30)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-farm", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState afterAttack = attack.Apply(state);
+
+    Assert.Equal(20, afterAttack.Pieces.Single(piece => piece.Id == "blue-farm").Health);
+  }
+
+  [Fact]
   public void CloneAndSimulatedMovement_LeaveTheAuthoritativeSnapshotUntouched()
   {
     CpuGameState original = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));

@@ -469,6 +469,13 @@ public sealed class MatchStore
       NetworkPiece? target = string.IsNullOrWhiteSpace(request.TargetId)
         ? null
         : foundMatch.Pieces.FirstOrDefault(piece => piece.Id == request.TargetId);
+      // Farms are pass-through structures. If an attack is addressed to a farm that
+      // shares its footprint with an enemy unit, resolve the attack to that unit first.
+      if (target is { Type: "Farm" } farm)
+      {
+        target = foundMatch.Pieces.FirstOrDefault(piece => piece.Team != attacker.Team &&
+          piece.AttachedToId is null && piece.Type != "Farm" && IsFarmCoveredByUnit(farm, piece)) ?? farm;
+      }
       bool attackingBarricade = target is null && request.TargetX is int barricadeX && request.TargetY is int barricadeY &&
         foundMatch.Barricades.ContainsKey((barricadeX, barricadeY));
       if (target is null && !attackingBarricade)
@@ -483,11 +490,6 @@ public sealed class MatchStore
           (target.Team == attacker.Team || target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
       {
         return new(false, "That attack is not available.", foundMatch.State());
-      }
-
-      if (target is { Type: "Farm" } && IsFarmCoveredByUnit(foundMatch, target))
-      {
-        return new(false, "Defeat the unit on that farm before attacking the farm itself.", foundMatch.State());
       }
 
       if (target is null && !CanUseActionSquare(attacker, targetPosition.x, targetPosition.y))
@@ -1164,12 +1166,12 @@ public sealed class MatchStore
     return !match.Pieces.Any(piece => FootprintsOverlap(piece, x, y, width, height));
   }
 
-  private static bool IsFarmCoveredByUnit(Match match, NetworkPiece farm)
+  private static bool IsFarmCoveredByUnit(NetworkPiece farm, NetworkPiece unit)
   {
-    if (!UnitRules.TryGet(farm.Type, out UnitRule farmRule)) return false;
-    return match.Pieces.Any(piece => piece.Id != farm.Id && piece.AttachedToId is null && piece.Type != "Farm" &&
-      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
-      UnitRules.FootprintsOverlap(farm.X, farm.Y, farmRule.Width, farmRule.Height, piece.X, piece.Y, rule.Width, rule.Height));
+    return UnitRules.TryGet(farm.Type, out UnitRule farmRule) &&
+      UnitRules.TryGet(unit.Type, out UnitRule unitRule) &&
+      UnitRules.FootprintsOverlap(farm.X, farm.Y, farmRule.Width, farmRule.Height,
+        unit.X, unit.Y, unitRule.Width, unitRule.Height);
   }
 
   private static bool TryGetLegalMovementPath(
