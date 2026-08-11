@@ -185,8 +185,8 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] All =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Bombard, Ox, Engineer, Ballista,
+    Crossbowman, Chariot, Cannon,
+    Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
   ];
@@ -194,8 +194,8 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] Encyclopedia =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Bombard, Ox, Engineer, Ballista,
+    Crossbowman, Chariot, Cannon,
+    Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm, King, Princess,
     Palace, Baron, Emissary
   ];
@@ -203,8 +203,8 @@ public static class PieceDefinitions
   public static readonly PieceDefinition[] Purchasable =
   [
     Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon, Spy,
-    Catapult, Bombard, Ox, Engineer, Ballista,
+    Crossbowman, Chariot, Cannon,
+    Catapult, Bombard, Ox, Engineer,
     Elephant, Guard, Mercenary, Farm
   ];
 
