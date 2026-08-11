@@ -1,6 +1,7 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using Myra;
+using Myra.Graphics2D;
 using Myra.Graphics2D.UI;
 using MedivalChess.Campaign;
 using MedivalChess.CPU;
@@ -29,7 +30,7 @@ internal sealed partial class Game1
 
   private bool UsesMyraUi(Screen screen) => screen is
     Screen.Title or Screen.OnlineLobby or Screen.OnlineJoin or Screen.OnlineWaiting or
-    Screen.OnlineRoyalSelection or Screen.Settings or Screen.Setup or Screen.Pause or
+    Screen.OnlineRoyalSelection or Screen.Settings or Screen.Setup or Screen.Playing or Screen.Pause or
     Screen.Encyclopedia or Screen.GameOver or Screen.CustomLevels or Screen.EditorDiscardConfirm;
 
   private void MarkMyraDirty() => _myraDirty = true;
@@ -73,11 +74,34 @@ internal sealed partial class Game1
   private void RenderMyraUi()
   {
     if (_myraDesktop is null) return;
+    if (_myraBuiltScreen != _screen ||
+        (_screen == Screen.Setup && _myraBuiltSetupStage != _setupStage) ||
+        _myraStatusSnapshot != GetMyraStatusSnapshot())
+    {
+      MarkMyraDirty();
+    }
     if (_myraDirty) RebuildMyraUi();
     _myraDesktop.Render();
   }
 
-  private string GetMyraStatusSnapshot() => $"{_screen}|{_onlineStatus}|{_onlineError}|{_onlineRoyalChoicePending}|{_bindingToChange}";
+  private string GetMyraStatusSnapshot()
+  {
+    string common = $"{_screen}|{_onlineStatus}|{_onlineError}|{_onlineRoyalChoicePending}|{_bindingToChange}";
+    if (_screen != Screen.Playing) return common;
+
+    Team? currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+    string selected = selectedPiece is null
+      ? "none"
+      : $"{selectedPiece.NetworkId}:{selectedPiece.CurrentHealth}:{selectedPiece.Team}:{selectedPiece.HasMovedThisTurn}:{selectedPiece.HasAttackedThisTurn}";
+    string initialBuy = _initialBuyPhase is null
+      ? "none"
+      : $"{_initialBuyPhase.CurrentTeam}:{_initialBuyPhase.PurchasesThisTurn}:{_initialBuyPhase.PurchasesPerTurn}:{_initialBuyPhase.IsFarmPlacementPhase}:{_initialBuyPhase.CanStopCurrentBuyer}";
+    string clocks = _chessTimerEnabled
+      ? string.Join(",", Team.ActiveTeams.Select(team => $"{team}:{FormatClock(team)}"))
+      : "off";
+
+    return $"{common}|turn:{Team.CurrentTurn}|money:{currentTeam?.Money}|actions:{currentTeam?.ActionPoints}|selected:{selected}|buy:{_isPurchaseMode}:{_selectedPurchaseIndex}:{_isPurchaseUnitListExpanded}|initial:{initialBuy}|engineer:{_selectedEngineerAbility}|clock:{clocks}|mode:{GetMyraModeScoreText()}|royal:{_royalAwaitingPlacement?.Identifier}|debug:{_debugTeamSwitchPending}";
+  }
 
   private void HandleMyraEscape()
   {
@@ -117,6 +141,7 @@ internal sealed partial class Game1
       Screen.OnlineRoyalSelection => BuildMyraOnlineRoyalSelection(),
       Screen.Settings => BuildMyraSettings(),
       Screen.Setup => BuildMyraSetup(),
+      Screen.Playing => BuildMyraPlayingHud(),
       Screen.Pause => BuildMyraPause(),
       Screen.Encyclopedia => BuildMyraEncyclopedia(),
       Screen.GameOver => BuildMyraGameOver(),
@@ -659,5 +684,304 @@ internal sealed partial class Game1
     content.Widgets.Add(MyraInfo($"HEALTH {royal.Health}    ATTACK {royal.Attack}    SIZE {royal.Size.x} x {royal.Size.y}"));
     content.Widgets.Add(MyraInfo($"MOVE {royal.Movement.range} {royal.Movement.shape}    RANGE {royal.AttackRange.Minimum}-{royal.AttackRange.Maximum} {royal.AttackPattern}"));
     if (!string.IsNullOrWhiteSpace(royal.AbilityDescription)) content.Widgets.Add(MyraInfo(royal.AbilityDescription, UiTheme.TextMuted));
+  }
+
+
+  private Widget BuildMyraPlayingHud()
+  {
+    Grid root = new()
+    {
+      HorizontalAlignment = HorizontalAlignment.Stretch,
+      VerticalAlignment = VerticalAlignment.Stretch
+    };
+
+    int maximumPanelHeight = Math.Max(320, GraphicsDevice.Viewport.Height - 32);
+
+    VerticalStackPanel left = new()
+    {
+      Width = 336,
+      Spacing = 8,
+      HorizontalAlignment = HorizontalAlignment.Center
+    };
+    Team? currentTeam = _teams.Find(team => team.TeamName == Team.CurrentTurn);
+    Color turnColour = UiTheme.GetTeamColour(Team.CurrentTurn);
+    left.Widgets.Add(MyraInfo($"{UiText.GetTeamDisplayName(Team.CurrentTurn).ToUpperInvariant()} TURN", turnColour));
+    if (currentTeam is not null)
+    {
+      left.Widgets.Add(MyraInfo($"GOLD  {currentTeam.Money}"));
+      if (Globals.ActionLimitsEnabled)
+      {
+        left.Widgets.Add(MyraInfo($"ACTIONS  {currentTeam.ActionPoints}/{currentTeam.ActionLimit}"));
+      }
+    }
+    left.Widgets.Add(MyraInfo(GetMyraModeScoreText(), UiTheme.GoldBright));
+
+    if (_initialBuyPhase is not null)
+    {
+      if (_initialBuyPhase.IsFarmPlacementPhase)
+      {
+        left.Widgets.Add(MyraInfo($"OPENING FARMS  {_initialBuyPhase.GetFarmsPlaced(Team.CurrentTurn)}/2", UiTheme.TextMuted));
+        left.Widgets.Add(MyraInfo("Select Farm, then click your territory to place it.", UiTheme.TextMuted));
+      }
+      else
+      {
+        left.Widgets.Add(MyraInfo($"BUY TURN  {_initialBuyPhase.PurchasesThisTurn}/{_initialBuyPhase.PurchasesPerTurn}", UiTheme.TextMuted));
+        left.Widgets.Add(MyraButton(
+          "STOP BUYING",
+          StopMyraInitialBuying,
+          _initialBuyPhase.CanStopCurrentBuyer && IsOnlineLocalTurn() && !IsCpuTurn(),
+          320
+        ));
+      }
+    }
+    else if (_royalAwaitingPlacement is not null)
+    {
+      left.Widgets.Add(MyraInfo($"PLACE {_royalAwaitingPlacement.DisplayName.ToUpperInvariant()}", UiTheme.GoldBright));
+      left.Widgets.Add(MyraInfo("Click a valid square in your territory.", UiTheme.TextMuted));
+    }
+    else
+    {
+      bool canEndTurn = currentTeam is not null && CanSkipCurrentTurn(currentTeam) &&
+        IsOnlineLocalTurn() && !IsCpuTurn();
+      left.Widgets.Add(MyraButton("END TURN", TrySkipCurrentTurn, canEndTurn, 320));
+    }
+
+    if (IsDebugOnlineMatch)
+    {
+      left.Widgets.Add(MyraButton(GetDebugTeamSwitchLabel(), () => _ = SwitchDebugTeamAsync(), !_debugTeamSwitchPending, 320));
+    }
+    if (_onlineClient is not null)
+    {
+      left.Widgets.Add(MyraInfo(_onlineStatus, UiTheme.TextMuted));
+    }
+    if (!string.IsNullOrWhiteSpace(_onlineError))
+    {
+      left.Widgets.Add(MyraInfo(_onlineError, UiTheme.Attack));
+    }
+
+    left.Widgets.Add(new HorizontalSeparator());
+    if (selectedPiece is null)
+    {
+      left.Widgets.Add(MyraInfo("NO PIECE SELECTED", UiTheme.TextMuted));
+      left.Widgets.Add(MyraInfo("Left-click a unit to inspect or move it.", UiTheme.TextMuted));
+    }
+    else
+    {
+      Piece inspected = selectedPiece;
+      left.Widgets.Add(MyraInfo(inspected.Definition.DisplayName.ToUpperInvariant(), UiTheme.GoldBright));
+      left.Widgets.Add(MyraInfo($"{UiText.GetTeamDisplayName(inspected.Team)}  •  HP {inspected.CurrentHealth}/{inspected.Definition.Health}"));
+      left.Widgets.Add(MyraInfo($"MOVE {inspected.Definition.Movement.range} {inspected.Definition.Movement.shape}  •  ATK {inspected.Definition.Attack}"));
+      left.Widgets.Add(MyraInfo($"RANGE {inspected.Definition.AttackRange.Minimum}-{inspected.Definition.AttackRange.Maximum} {inspected.Definition.AttackPattern}"));
+      left.Widgets.Add(MyraInfo(GetSelectedPieceControlHint(inspected), UiTheme.TextMuted));
+
+      if (inspected.Definition.Type == PieceType.Engineer)
+      {
+        Label engineerMode = MyraInfo($"ENGINEER: {_selectedEngineerAbility}", UiTheme.GoldBright);
+        engineerMode.Width = 180;
+        left.Widgets.Add(MyraRow(
+          MyraButton("<", () => CycleEngineerAbility(-1), width: 58),
+          engineerMode,
+          MyraButton(">", () => CycleEngineerAbility(1), width: 58)
+        ));
+      }
+      else if (inspected.Definition.Type == PieceType.Ox)
+      {
+        Piece? cargo = GetOxCargo(inspected);
+        if (cargo is not null)
+        {
+          left.Widgets.Add(MyraButton($"SELECT CARGO: {cargo.Definition.DisplayName.ToUpperInvariant()}", () => SelectPiece(cargo, true), width: 320));
+        }
+      }
+      else if (inspected.Definition.Type == PieceType.Guard && inspected.AttachedTo is not null)
+      {
+        left.Widgets.Add(MyraInfo($"PROTECTING: {inspected.AttachedTo.Definition.DisplayName.ToUpperInvariant()}", UiTheme.GoldBright));
+      }
+      else if (inspected.Definition.Type == PieceType.Mercenary)
+      {
+        left.Widgets.Add(MyraButton("FIRE MERCENARY", FireMyraSelectedMercenary, CanFireSelectedMercenary(), 320));
+      }
+    }
+
+    ScrollViewer leftScroll = new()
+    {
+      Content = left,
+      Width = 368,
+      Height = maximumPanelHeight,
+      HorizontalAlignment = HorizontalAlignment.Left,
+      VerticalAlignment = VerticalAlignment.Top,
+      Margin = new Thickness(16)
+    };
+    root.Widgets.Add(leftScroll);
+
+    if (_royalAwaitingPlacement is null)
+    {
+      VerticalStackPanel purchase = BuildMyraPurchaseHud();
+      ScrollViewer purchaseScroll = new()
+      {
+        Content = purchase,
+        Width = 390,
+        Height = maximumPanelHeight,
+        HorizontalAlignment = HorizontalAlignment.Right,
+        VerticalAlignment = VerticalAlignment.Top,
+        Margin = new Thickness(16)
+      };
+      root.Widgets.Add(purchaseScroll);
+    }
+
+    if (_chessTimerEnabled)
+    {
+      HorizontalStackPanel clocks = new()
+      {
+        Spacing = 14,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Top,
+        Margin = new Thickness(16)
+      };
+      foreach (TeamName team in Team.ActiveTeams)
+      {
+        clocks.Widgets.Add(MyraInfo($"{UiText.GetTeamDisplayName(team).ToUpperInvariant()} {FormatClock(team)}", UiTheme.GetTeamColour(team)));
+      }
+      root.Widgets.Add(clocks);
+    }
+
+    return root;
+  }
+
+  private VerticalStackPanel BuildMyraPurchaseHud()
+  {
+    VerticalStackPanel purchase = new()
+    {
+      Width = 352,
+      Spacing = 8,
+      HorizontalAlignment = HorizontalAlignment.Center
+    };
+    purchase.Widgets.Add(MyraInfo("PURCHASE", UiTheme.GoldBright));
+
+    IReadOnlyList<PieceDefinition> purchasable = GetPurchasablePieces();
+    if (purchasable.Count == 0)
+    {
+      purchase.Widgets.Add(MyraInfo("No units are available to buy.", UiTheme.TextMuted));
+      return purchase;
+    }
+
+    _selectedPurchaseIndex = Math.Clamp(_selectedPurchaseIndex, 0, purchasable.Count - 1);
+    PieceDefinition selected = purchasable[_selectedPurchaseIndex];
+    bool openingFarm = _initialBuyPhase?.IsFarmPlacementPhase == true && selected.Type == PieceType.Farm;
+    string price = openingFarm ? "FREE OPENING PLACEMENT" : $"{GetUnitPrice(selected)} GOLD";
+    purchase.Widgets.Add(MyraInfo(selected.DisplayName.ToUpperInvariant(), UiTheme.GoldBright));
+    purchase.Widgets.Add(MyraInfo(price));
+    purchase.Widgets.Add(MyraInfo($"HP {selected.Health}  •  ATK {selected.Attack}  •  MOVE {selected.Movement.range}"));
+    purchase.Widgets.Add(MyraRow(
+      MyraButton("<", () => CyclePurchaseSelection(-1), width: 68),
+      MyraButton(">", () => CyclePurchaseSelection(1), width: 68)
+    ));
+
+    if (_initialBuyPhase is null)
+    {
+      bool canToggle = IsOnlineLocalTurn() && !IsCpuTurn();
+      purchase.Widgets.Add(MyraButton(
+        _isPurchaseMode ? "CANCEL PLACEMENT" : "BUY / PLACE UNIT",
+        ToggleMyraPurchaseMode,
+        canToggle,
+        336
+      ));
+    }
+    else
+    {
+      purchase.Widgets.Add(MyraInfo("PLACEMENT MODE ACTIVE — CLICK THE BOARD", UiTheme.TextMuted));
+    }
+
+    purchase.Widgets.Add(MyraButton(
+      _isPurchaseUnitListExpanded ? "HIDE UNIT LIST" : "SHOW UNIT LIST",
+      () => _isPurchaseUnitListExpanded = !_isPurchaseUnitListExpanded,
+      width: 336
+    ));
+
+    if (_isPurchaseUnitListExpanded)
+    {
+      purchase.Widgets.Add(new HorizontalSeparator());
+      for (int index = 0; index < purchasable.Count; index++)
+      {
+        int purchaseIndex = index;
+        PieceDefinition definition = purchasable[purchaseIndex];
+        bool selectable = !(_initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type != PieceType.Farm) &&
+          !(_initialBuyPhase is not null && definition.Type == PieceType.Mercenary);
+        string marker = purchaseIndex == _selectedPurchaseIndex ? "✓ " : string.Empty;
+        string itemPrice = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm
+          ? "FREE"
+          : $"{GetUnitPrice(definition)}G";
+        purchase.Widgets.Add(MyraButton(
+          $"{marker}{definition.DisplayName.ToUpperInvariant()} — {itemPrice}",
+          () => TrySelectPurchaseIndex(purchaseIndex),
+          selectable,
+          336
+        ));
+      }
+    }
+
+    return purchase;
+  }
+
+  private void ToggleMyraPurchaseMode()
+  {
+    if (_initialBuyPhase is not null || _royalAwaitingPlacement is not null || !IsOnlineLocalTurn() || IsCpuTurn())
+    {
+      return;
+    }
+    _isPurchaseMode = !_isPurchaseMode;
+    selectedPiece = null;
+  }
+
+  private void StopMyraInitialBuying()
+  {
+    if (_initialBuyPhase is null || !_initialBuyPhase.CanStopCurrentBuyer || IsCpuTurn()) return;
+    if (_onlineClient is not null)
+    {
+      if (!IsOnlineLocalTurn())
+      {
+        _onlineError = "It is not your initial buy turn.";
+        return;
+      }
+      _ = SendOnlineStopInitialBuyingAsync();
+      return;
+    }
+
+    _initialBuyPhase.StopCurrentBuyer();
+    UpdateInitialBuyPhaseState();
+  }
+
+  private void FireMyraSelectedMercenary()
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Mercenary || !CanFireSelectedMercenary()) return;
+    Piece mercenary = selectedPiece;
+    bool fired = _onlineClient is null
+      ? TryUseSpecialAbility(mercenary, mercenary.Position, mercenary, Keyboard.GetState())
+      : TrySendOnlineSpecialAbility(mercenary, mercenary.Position, mercenary);
+    if (fired) selectedPiece = null;
+  }
+
+  private string GetMyraModeScoreText()
+  {
+    return _gameMode switch
+    {
+      GameMode.Conquest when _playerCount == 2 =>
+        $"CONQUEST  {UiText.GetTeamDisplayName(TeamName.Red)} {Math.Max(0, -_conquestScore)}/{_conquestWinScore}  •  {UiText.GetTeamDisplayName(TeamName.Blue)} {Math.Max(0, _conquestScore)}/{_conquestWinScore}",
+      GameMode.Conquest => "CONQUEST  " + string.Join("  •  ", Team.ActiveTeams.Select(team =>
+        $"{UiText.GetTeamDisplayName(team)} {_conquestScores.GetValueOrDefault(team)}/{_conquestWinScore}")),
+      GameMode.Dominion => "DOMINION  " + string.Join("  •  ", Team.ActiveTeams.Select(team =>
+        $"{UiText.GetTeamDisplayName(team)} {_modeScores.GetValueOrDefault(team)}/{_dominionWinScore}")),
+      GameMode.Plunder => "PLUNDER  " + string.Join("  •  ", Team.ActiveTeams.Select(team =>
+        $"{UiText.GetTeamDisplayName(team)} {_modeScores.GetValueOrDefault(team)}/{_plunderWinScore}")),
+      GameMode.Escort => "ESCORT — GET YOUR ROYAL TO THE ENEMY EDGE",
+      _ => "REGICIDE — DESTROY THE ENEMY ROYAL"
+    };
+  }
+
+  private bool IsPointerOverMyraPlayingHud(Point position)
+  {
+    if (_screen != Screen.Playing) return false;
+    if (GetStatusPanelBounds().Contains(position) || GetSelectedPiecePanelBounds().Contains(position)) return true;
+    if (_chessTimerEnabled && GetChessClockPanelBounds().Contains(position)) return true;
+    return _royalAwaitingPlacement is null && IsPointerOverPurchaseMenu(position);
   }
 }

@@ -492,22 +492,10 @@ internal sealed partial class Game1 : Game
       CyclePurchaseSelection(1);
     }
 
-    bool clickedPurchasePanel =
-      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
-    bool clickedInitialBuyStop =
-      wasLeftClick && HandleInitialBuyStopClick(ToUiPoint(mouse.Position));
-    bool clickedSkipTurn =
-      wasLeftClick && HandleSkipTurnClick(ToUiPoint(mouse.Position));
-    bool clickedDebugTeamSwitch =
-      wasLeftClick && HandleDebugTeamSwitchClick(ToUiPoint(mouse.Position));
-    bool clickedEngineerPanel =
-      wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
-    bool clickedOxCarryPanel =
-      wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
-    bool clickedMercenaryPanel =
-      wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
+    bool clickedMyraHud =
+      (wasLeftClick || wasRightClick) && IsPointerOverMyraPlayingHud(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedMyraHud && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -9347,7 +9335,7 @@ internal sealed partial class Game1 : Game
     _spriteBatch.End();
     _spriteBatch.Begin(transformMatrix: Matrix.CreateScale(_uiScale));
 
-    if (_screen == Screen.Playing)
+    if (_screen == Screen.Playing && !UsesMyraUi(_screen))
     {
       DrawStatusPanel();
       DrawSelectedPiecePanel();
