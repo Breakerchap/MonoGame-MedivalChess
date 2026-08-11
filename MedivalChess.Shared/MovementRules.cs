@@ -50,13 +50,18 @@ public static class MovementRules
           int nextCost = crossesRiver(current.Position, next)
             ? movementRangeAt(next)
             : current.Cost + (stepCost?.Invoke(current.Position, next) ?? landingCost(next));
-          if (nextCost > movementRangeAt(next) ||
+          bool isInitialStep = current.Path.Count == 0;
+          bool exceedsMovementRange = nextCost > movementRangeAt(next);
+          if ((exceedsMovementRange && !isInitialStep) ||
               (bestCosts.TryGetValue(next, out int bestCost) && bestCost <= nextCost)) continue;
 
           List<(int x, int y)> nextPath = [.. current.Path, next];
           bestCosts[next] = nextCost;
           if (canLand(next)) paths[next] = nextPath;
-          frontier.Enqueue(new MovementState(next, nextCost, nextPath));
+          if (!exceedsMovementRange)
+          {
+            frontier.Enqueue(new MovementState(next, nextCost, nextPath));
+          }
         }
       }
     }
@@ -97,7 +102,12 @@ public static class MovementRules
         cost = crossesRiver(previous, next)
           ? movementRangeAt(next)
           : cost + (stepCost?.Invoke(previous, next) ?? landingCost(next));
-        if (cost > movementRangeAt(next)) break;
+        bool isInitialStep = path.Count == 0;
+        if (cost > movementRangeAt(next))
+        {
+          if (isInitialStep && canLand(next)) paths[next] = [next];
+          break;
+        }
 
         path.Add(next);
         if (canLand(next)) paths[next] = [.. path];

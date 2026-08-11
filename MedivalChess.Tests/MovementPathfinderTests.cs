@@ -54,6 +54,23 @@ public class MovementPathfinderTests
   }
 
   [Fact]
+  public void OneMovementUnit_CanEnterAnAdjacentForest()
+  {
+    Piece peasant = new(PieceDefinitions.Peasant, (0, 0), TeamName.Red);
+
+    var paths = MovementPathfinder.FindPaths(
+      peasant,
+      _ => true,
+      _ => true,
+      position => position == (1, 0) ? 2 : 1,
+      (_, _) => false
+    );
+
+    Assert.Equal([(1, 0)], paths[(1, 0)]);
+    Assert.False(paths.ContainsKey((2, 0)));
+  }
+
+  [Fact]
   public void CrossingARiver_UsesTheRemainingMovementForThatPath()
   {
     Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
