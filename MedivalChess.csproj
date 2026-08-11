@@ -10,11 +10,16 @@
     <ApplicationIcon>Icon.ico</ApplicationIcon>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Be explicit here because this project sits above several nested projects. This also
+         protects local builds from parent MSBuild props that alter the SDK's normal bin/obj excludes. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);**/bin/**;**/obj/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <!-- The game project lives at the repository root. Keep sources owned by nested projects
        out of the game assembly, and consume the shared rules project normally instead. -->
   <ItemGroup>
+    <Compile Remove="**/bin/**/*.cs" />
+    <Compile Remove="**/obj/**/*.cs" />
     <Compile Remove="MedivalChess.Tests/**/*.cs" />
     <Compile Remove="MedivalChess.Server/**/*.cs" />
     <Compile Remove="MedivalChess.Shared/**/*.cs" />
