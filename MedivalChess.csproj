@@ -8,6 +8,8 @@
     <TieredCompilation>false</TieredCompilation>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
 
   <!-- The game project lives at the repository root, so SDK default globs would otherwise
@@ -35,6 +37,7 @@
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.*" />
     <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.*" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.*" />
     <PackageReference Include="Myra" Version="1.6.3" />
   </ItemGroup>
 
