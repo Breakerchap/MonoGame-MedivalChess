@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Threading;
 using MedivalChess.Shared;
 
 namespace MedivalChess.CPU;
@@ -154,8 +156,8 @@ public sealed class CpuThreatMapBuilder : ICpuThreatMapBuilder
 /// <summary>Per-decision cache for expensive, deterministic evaluation artefacts.</summary>
 public sealed class CpuEvaluationCache
 {
-  private readonly Dictionary<(ulong stateHash, NetworkTeam team), CpuThreatMap> _threatMaps = [];
-  private readonly Dictionary<CpuGameState, ulong> _stateHashes = [];
+  private readonly ConcurrentDictionary<(ulong stateHash, NetworkTeam team), Lazy<CpuThreatMap>> _threatMaps = new();
+  private readonly ConcurrentDictionary<CpuGameState, ulong> _stateHashes = new();
   private readonly GameStateHasher _hasher = new();
 
   public CpuThreatMap GetThreatMap(CpuGameState state, NetworkTeam attackingTeam, ICpuThreatMapBuilder builder)
@@ -163,21 +165,12 @@ public sealed class CpuEvaluationCache
     ArgumentNullException.ThrowIfNull(state);
     ArgumentNullException.ThrowIfNull(builder);
     (ulong stateHash, NetworkTeam team) key = (GetStateHash(state), attackingTeam);
-    if (!_threatMaps.TryGetValue(key, out CpuThreatMap? map))
-    {
-      map = builder.Build(state, attackingTeam);
-      _threatMaps[key] = map;
-    }
-    return map;
+    return _threatMaps.GetOrAdd(key, _ => new Lazy<CpuThreatMap>(
+      () => builder.Build(state, attackingTeam), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
   }
 
   private ulong GetStateHash(CpuGameState state)
   {
-    if (!_stateHashes.TryGetValue(state, out ulong hash))
-    {
-      hash = _hasher.ComputeSearchHash(state);
-      _stateHashes[state] = hash;
-    }
-    return hash;
+    return _stateHashes.GetOrAdd(state, _ => _hasher.ComputeSearchHash(state));
   }
 }

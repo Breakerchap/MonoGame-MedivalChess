@@ -30,6 +30,55 @@ internal sealed record EvaluatedSearchExpansion(
   EvaluationBreakdown Breakdown
 );
 
+internal sealed record SearchIterationResult(
+  List<SearchNode> Beam,
+  bool Completed,
+  ICpuGameAction? FallbackAction,
+  int RootLegalActionCount,
+  int PrincipalVariationPromotions,
+  int TacticalMacrosGenerated
+);
+
+/// <summary>
+/// Search-only compound action. It consumes two ordinary legal actions in one beam expansion,
+/// then is flattened back to those ordinary actions before a CpuTurnPlan leaves the CPU layer.
+/// </summary>
+public sealed class TacticalMacroAction : ICpuGameAction
+{
+  public TacticalMacroAction(NetworkTeam team, IReadOnlyList<ICpuGameAction> actions)
+  {
+    if (actions is null || actions.Count < 2) throw new ArgumentException("A tactical macro requires at least two actions.", nameof(actions));
+    if (actions.Any(action => action.Team != team)) throw new ArgumentException("Every macro action must belong to the same team.", nameof(actions));
+    Team = team;
+    Actions = actions.ToArray();
+  }
+
+  public NetworkTeam Team { get; }
+  public IReadOnlyList<ICpuGameAction> Actions { get; }
+  public CpuActionKind Kind => Actions[0].Kind;
+
+  public bool IsLegal(CpuGameState state)
+  {
+    CpuGameState current = state;
+    foreach (ICpuGameAction action in Actions)
+    {
+      if (current.IsFinished || current.CurrentTurn != Team || !action.IsLegal(current)) return false;
+      current = action.Apply(current);
+    }
+    return true;
+  }
+
+  public CpuGameState Apply(CpuGameState state)
+  {
+    if (!IsLegal(state)) throw new InvalidOperationException($"Illegal CPU tactical macro: {Describe()}");
+    CpuGameState current = state;
+    foreach (ICpuGameAction action in Actions) current = CpuGameRules.ApplyLegal(current, action);
+    return current;
+  }
+
+  public string Describe() => $"Macro[{string.Join(" -> ", Actions.Select(action => action.Describe()))}]";
+}
+
 public sealed class CpuDecisionReport
 {
   public string ProfileName { get; init; } = string.Empty;
@@ -43,6 +92,11 @@ public sealed class CpuDecisionReport
   public int NodesEvaluated { get; init; }
   public int DuplicateStatesRemoved { get; init; }
   public int EvaluationCacheHits { get; init; }
+  public int CandidateCacheHits { get; init; }
+  public int CompletedSearchDepth { get; init; }
+  public int IterativeDeepeningPasses { get; init; }
+  public int PrincipalVariationPromotions { get; init; }
+  public int TacticalMacrosGenerated { get; init; }
   public bool TimedOut { get; init; }
   public bool NodeBudgetReached { get; init; }
   public bool Cancelled { get; init; }
@@ -108,136 +162,61 @@ public sealed class CpuPlayer : ICpuPlayer
     int nodesEvaluated = 0;
     int duplicatesRemoved = 0;
     int evaluationCacheHits = 0;
+    int candidateCacheHits = 0;
+    int principalVariationPromotions = 0;
+    int tacticalMacrosGenerated = 0;
+    int iterativeDeepeningPasses = 0;
+    int completedSearchDepth = 0;
     bool timedOut = false;
     bool nodeBudgetReached = false;
     bool cancelled = cancellationToken.IsCancellationRequested;
     ICpuGameAction? fallbackAction = null;
     int rootLegalActionCount = 0;
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache = [];
+    Dictionary<(ulong stateHash, NetworkTeam team, int candidates, int promising, CpuPersonality personality), IReadOnlyList<ScoredAction>> candidateCache = [];
     Dictionary<ulong, EvaluationBreakdown> evaluatedStates = [];
     EvaluationBreakdown initialBreakdown = EvaluateCached(state, team, context, evaluatedStates, ref evaluationCacheHits);
-    List<SearchNode> beam = [new SearchNode(state, [], initialBreakdown.Total, initialBreakdown)];
+    SearchNode rootNode = new(state, [], initialBreakdown.Total, initialBreakdown);
+    List<SearchNode> beam = [rootNode];
     // Preparation is intentionally included in the time budget; when ranking begins, the search
     // records a legal root fallback before it expands any branch.
     int maximumActions = GetMaximumActionsToPlan(state, team);
-
     int totalDepth = maximumActions + Math.Max(0, settings.TacticalExtensionDepth);
-    for (int depth = 0; depth < totalDepth && !cancelled && !timedOut && !nodeBudgetReached; depth++)
+    IReadOnlyList<ICpuGameAction> principalVariation = [];
+
+    // True iterative deepening: restart from the root at depth 1, 2, 3, ... while reusing all
+    // deterministic per-state caches. Only a fully completed iteration replaces the current best
+    // beam, so a 1.4-second Hard search never loses a known-good result to a half-finished layer.
+    for (int depthLimit = 1; depthLimit <= totalDepth && !cancelled && !timedOut && !nodeBudgetReached; depthLimit++)
     {
-      List<SearchNode> expanded = [];
-      Dictionary<ulong, float> bestScoreByState = [];
-      List<PendingSearchExpansion> pending = [];
-      foreach (SearchNode node in beam)
-      {
-        if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
-        {
-          break;
-        }
-        if (node.State.IsFinished || node.State.CurrentTurn != team)
-        {
-          expanded.Add(node);
-          continue;
-        }
-
-        int placementLimit = GetPurchasePlacementLimit(settings, 16);
-        IReadOnlyList<ICpuGameAction> legal = GetSearchActions(
-          node.State,
-          team,
-          placementLimit,
-          searchActionCache
-        );
-        if (node.Actions.Count == 0)
-        {
-          rootLegalActionCount = legal.Count;
-        }
-        if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
-        {
-          break;
-        }
-        // Search actions have already passed the complete rule facade. Candidate selectors are
-        // an extension point, so retain the membership gate, but avoid recalculating movement
-        // paths and line-of-sight merely to prove the generated action legal a second time.
-        HashSet<ICpuGameAction> legalActionSet = [.. legal];
-        IReadOnlyList<ScoredAction> candidates = SelectSearchCandidates(
-          node.State, team, legal, settings, profile.Personality);
-        candidates = candidates.Where(candidate => legalActionSet.Contains(candidate.Action)).ToArray();
-        candidates = ApplyAttackAndReservePriorities(node.State, team, candidates);
-        if (depth >= maximumActions)
-        {
-          // Quiescence extension: once the ordinary horizon is reached, only continue forcing
-          // exchanges. This prevents the search from stopping halfway through an obvious attack
-          // sequence without ballooning into another full quiet-move layer.
-          candidates = candidates.Where(candidate => IsForcingAction(candidate.Action)).ToArray();
-        }
-        foreach (ScoredAction candidate in candidates)
-        {
-          // Keep the strongest legal root candidate as a safe fallback. Generation can
-          // occasionally use most of a very small budget. Capture it before the post-ranking
-          // time check so a live CPU turn cannot stall simply because candidate scoring consumed
-          // the final millisecond of a tiny budget.
-          if (node.Actions.Count == 0 && fallbackAction is null)
-          {
-            fallbackAction = candidate.Action;
-          }
-
-          if (ShouldStop(stopwatch, settings, nodesGenerated + pending.Count, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
-          {
-            break;
-          }
-          pending.Add(new PendingSearchExpansion(node, candidate));
-        }
-      }
-
-      int parallelism = GetParallelism(settings);
-      // A large beam previously ran as one indivisible Parallel.For call. On a busy board that
-      // could overrun the advertised time budget by an entire layer. Small ordered batches let
-      // the CPU finish a little in-flight work after the soft deadline, then stop before it
-      // starts another wave.
-      foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
-      {
-        if (ShouldStop(stopwatch, settings, nodesGenerated, cancellationToken, out timedOut, out nodeBudgetReached, out cancelled))
-        {
-          break;
-        }
-
-        IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
-          batch, team, profile, intents, context, evaluatedStates, parallelism, stopwatch, settings,
-          cancellationToken, ref evaluationCacheHits);
-        foreach (EvaluatedSearchExpansion branch in evaluated)
-        {
-          nodesGenerated++;
-          nodesEvaluated++;
-          SearchNode node = branch.Pending.Node;
-          ScoredAction candidate = branch.Pending.Candidate;
-          // Preserve tactical urgency across the turn. Pure material evaluation otherwise
-          // overvalues buying before taking an immediately available kill.
-          float accumulatedActionPriority = node.Score - node.Breakdown.Total;
-          // A completed match or campaign objective is decisive. Do not let accumulated
-          // convenience bonuses make a purchase-before-win line outrank the move that ends
-          // the mission immediately.
-          float score = branch.Result.IsFinished
-            ? branch.Breakdown.Total
-            : branch.Breakdown.Total + accumulatedActionPriority + candidate.Score;
-          ulong hash = _hasher.ComputeSearchHash(branch.Result);
-          if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
-          {
-            duplicatesRemoved++;
-            continue;
-          }
-          bestScoreByState[hash] = score;
-          expanded.Add(new SearchNode(branch.Result, [.. node.Actions, candidate.Action], score, branch.Breakdown));
-        }
-      }
-
-      if (expanded.Count == 0)
+      iterativeDeepeningPasses++;
+      SearchIterationResult iteration = RunSearchIteration(
+        rootNode, state, team, profile, context, intents, depthLimit, maximumActions, principalVariation,
+        stopwatch, cancellationToken, searchActionCache, candidateCache, evaluatedStates,
+        ref nodesGenerated, ref nodesEvaluated, ref duplicatesRemoved, ref evaluationCacheHits,
+        ref candidateCacheHits, ref timedOut, ref nodeBudgetReached, ref cancelled);
+      fallbackAction ??= iteration.FallbackAction;
+      rootLegalActionCount = Math.Max(rootLegalActionCount, iteration.RootLegalActionCount);
+      principalVariationPromotions += iteration.PrincipalVariationPromotions;
+      tacticalMacrosGenerated += iteration.TacticalMacrosGenerated;
+      if (!iteration.Completed)
       {
         break;
       }
-      beam = expanded
+
+      beam = iteration.Beam;
+      completedSearchDepth = depthLimit;
+      principalVariation = beam
         .OrderByDescending(node => node.Score)
         .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
-        .Take(Math.Max(1, settings.BeamWidth))
-        .ToList();
+        .First().Actions;
+
+      // Once every surviving line has already ended the turn/match there is nothing deeper to
+      // discover. Stop early rather than replaying the same terminal frontier.
+      if (beam.All(node => node.State.IsFinished || node.State.CurrentTurn != team))
+      {
+        break;
+      }
     }
 
     List<(SearchNode Node, float Score, float OpponentPenalty)> ranked = [];
@@ -252,7 +231,8 @@ public sealed class CpuPlayer : ICpuPlayer
       if (settings.OpponentActionsToPredict > 0 && node.State.Winner is null && node.State.CurrentTurn != team)
       {
         float afterOpponent = PredictOpponentResponse(node.State, team, profile, context, stopwatch, cancellationToken,
-          searchActionCache, evaluatedStates, ref evaluationCacheHits, ref nodesGenerated, ref nodesEvaluated,
+          searchActionCache, candidateCache, evaluatedStates, ref evaluationCacheHits, ref candidateCacheHits,
+          ref nodesGenerated, ref nodesEvaluated,
           ref timedOut, ref nodeBudgetReached, ref cancelled);
         opponentPenalty = Math.Max(0f, node.Score - afterOpponent);
         adjustedScore = afterOpponent;
@@ -295,12 +275,17 @@ public sealed class CpuPlayer : ICpuPlayer
       NodesEvaluated = nodesEvaluated,
       DuplicateStatesRemoved = duplicatesRemoved,
       EvaluationCacheHits = evaluationCacheHits,
+      CandidateCacheHits = candidateCacheHits,
+      CompletedSearchDepth = completedSearchDepth,
+      IterativeDeepeningPasses = iterativeDeepeningPasses,
+      PrincipalVariationPromotions = principalVariationPromotions,
+      TacticalMacrosGenerated = tacticalMacrosGenerated,
       TimedOut = timedOut,
       NodeBudgetReached = nodeBudgetReached,
       Cancelled = cancelled,
       TopChoices = choices
     };
-    IReadOnlyList<ICpuGameAction> chosenActions = chosen.Node.Actions;
+    IReadOnlyList<ICpuGameAction> chosenActions = ExpandSearchActions(chosen.Node.Actions);
     // Only an attack that ends the match or scenario is allowed to override the searched first
     // action. Ordinary unit kills remain highly valued candidates, but do not hijack a stronger
     // move/ability line after the beam has already compared them.
@@ -312,6 +297,277 @@ public sealed class CpuPlayer : ICpuPlayer
     }
     IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, chosenActions);
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
+  }
+
+  private SearchIterationResult RunSearchIteration(
+    SearchNode rootNode,
+    CpuGameState rootState,
+    NetworkTeam team,
+    CpuProfile profile,
+    EvaluationContext context,
+    IReadOnlyList<CpuIntent> intents,
+    int depthLimit,
+    int maximumActions,
+    IReadOnlyList<ICpuGameAction> principalVariation,
+    Stopwatch stopwatch,
+    CancellationToken cancellationToken,
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
+    Dictionary<(ulong stateHash, NetworkTeam team, int candidates, int promising, CpuPersonality personality), IReadOnlyList<ScoredAction>> candidateCache,
+    Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
+    ref int nodesGenerated,
+    ref int nodesEvaluated,
+    ref int duplicatesRemoved,
+    ref int evaluationCacheHits,
+    ref int candidateCacheHits,
+    ref bool timedOut,
+    ref bool nodeBudgetReached,
+    ref bool cancelled
+  )
+  {
+    List<SearchNode> beam = [rootNode];
+    ICpuGameAction? fallbackAction = null;
+    int rootLegalActionCount = 0;
+    int pvPromotions = 0;
+    int macrosGenerated = 0;
+
+    // At most depthLimit expansion waves are required because every candidate contributes at
+    // least one concrete action; a two-action macro simply reaches the requested depth sooner.
+    for (int wave = 0; wave < depthLimit; wave++)
+    {
+      if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+        out timedOut, out nodeBudgetReached, out cancelled))
+      {
+        return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+      }
+
+      List<SearchNode> expanded = [];
+      Dictionary<ulong, float> bestScoreByState = [];
+      List<PendingSearchExpansion> pending = [];
+      bool expandedAny = false;
+      foreach (SearchNode node in beam)
+      {
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken,
+          out timedOut, out nodeBudgetReached, out cancelled))
+        {
+          return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+        }
+        if (node.State.IsFinished || node.State.CurrentTurn != team || node.Actions.Count >= depthLimit)
+        {
+          expanded.Add(node);
+          continue;
+        }
+
+        int placementLimit = GetPurchasePlacementLimit(profile.Search, 16);
+        IReadOnlyList<ICpuGameAction> legal = GetSearchActions(node.State, team, placementLimit, searchActionCache);
+        if (node.Actions.Count == 0) rootLegalActionCount = legal.Count;
+        HashSet<ICpuGameAction> legalActionSet = [.. legal];
+        IReadOnlyList<ScoredAction> candidates = SelectSearchCandidatesCached(
+          node.State, team, legal, profile.Search, profile.Personality, candidateCache, ref candidateCacheHits);
+        candidates = candidates.Where(candidate => candidate.Action is TacticalMacroAction || legalActionSet.Contains(candidate.Action)).ToArray();
+        candidates = ApplyAttackAndReservePriorities(node.State, team, candidates);
+
+        // Build linked two-action tactics only from already-promising first actions. The macro is
+        // an optimisation, not new strategy: every component remains independently legal and the
+        // final plan is flattened back to those exact actions.
+        IReadOnlyList<ScoredAction> withMacros = AddTacticalMacroCandidates(
+          node.State, team, candidates, profile.Search, profile.Personality, searchActionCache, ref macrosGenerated);
+        if (node.Actions.Count >= maximumActions)
+        {
+          withMacros = withMacros.Where(candidate => IsForcingAction(candidate.Action)).ToArray();
+        }
+
+        withMacros = withMacros
+          .Where(candidate => node.Actions.Count + GetConcreteActionCount(candidate.Action) <= depthLimit)
+          .ToArray();
+        if (withMacros.Count == 0)
+        {
+          expanded.Add(node);
+          continue;
+        }
+
+        // Principal-variation reuse: when this node follows the previous completed best line,
+        // search its known continuation first. This improves ordering without forcing that line.
+        if (IsPrincipalVariationPrefix(node.Actions, principalVariation))
+        {
+          int pvIndex = node.Actions.Count;
+          ScoredAction? promoted = withMacros.FirstOrDefault(candidate => MatchesPrincipalVariation(candidate.Action, principalVariation, pvIndex));
+          if (promoted is not null && !ReferenceEquals(promoted, withMacros[0]))
+          {
+            withMacros = [promoted, .. withMacros.Where(candidate => !Equals(candidate.Action, promoted.Action))];
+            pvPromotions++;
+          }
+        }
+
+        foreach (ScoredAction candidate in withMacros)
+        {
+          IReadOnlyList<ICpuGameAction> concrete = GetConcreteActions(candidate.Action);
+          if (node.Actions.Count == 0 && fallbackAction is null) fallbackAction = concrete[0];
+          if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken,
+            out timedOut, out nodeBudgetReached, out cancelled))
+          {
+            return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+          }
+          pending.Add(new PendingSearchExpansion(node, candidate));
+          expandedAny = true;
+        }
+      }
+
+      int parallelism = GetParallelism(profile.Search);
+      foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
+      {
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
+          out timedOut, out nodeBudgetReached, out cancelled))
+        {
+          return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+        }
+        IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
+          batch, team, profile, intents, context, evaluatedStates, parallelism, stopwatch, profile.Search,
+          cancellationToken, ref evaluationCacheHits);
+        foreach (EvaluatedSearchExpansion branch in evaluated)
+        {
+          nodesGenerated++;
+          nodesEvaluated++;
+          SearchNode parent = branch.Pending.Node;
+          ScoredAction candidate = branch.Pending.Candidate;
+          float accumulatedActionPriority = parent.Score - parent.Breakdown.Total;
+          float score = branch.Result.IsFinished
+            ? branch.Breakdown.Total
+            : branch.Breakdown.Total + accumulatedActionPriority + candidate.Score;
+          ulong hash = _hasher.ComputeSearchHash(branch.Result);
+          if (bestScoreByState.TryGetValue(hash, out float existingScore) && existingScore >= score)
+          {
+            duplicatesRemoved++;
+            continue;
+          }
+          bestScoreByState[hash] = score;
+          expanded.Add(new SearchNode(
+            branch.Result,
+            [.. parent.Actions, .. GetConcreteActions(candidate.Action)],
+            score,
+            branch.Breakdown));
+        }
+      }
+
+      if (expanded.Count == 0)
+      {
+        break;
+      }
+      beam = expanded
+        .OrderByDescending(node => node.Score)
+        .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
+        .Take(Math.Max(1, profile.Search.BeamWidth))
+        .ToList();
+      if (!expandedAny || beam.All(node => node.State.IsFinished || node.State.CurrentTurn != team || node.Actions.Count >= depthLimit))
+      {
+        break;
+      }
+    }
+
+    return new SearchIterationResult(beam, true, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
+  }
+
+  private IReadOnlyList<ScoredAction> SelectSearchCandidatesCached(
+    CpuGameState state,
+    NetworkTeam team,
+    IReadOnlyList<ICpuGameAction> legal,
+    CpuSearchSettings settings,
+    CpuPersonality personality,
+    Dictionary<(ulong stateHash, NetworkTeam team, int candidates, int promising, CpuPersonality personality), IReadOnlyList<ScoredAction>> cache,
+    ref int cacheHits
+  )
+  {
+    var key = (_hasher.ComputeSearchHash(state), team, settings.CandidatesPerNode, settings.PromisingCandidatesPerNode, personality);
+    if (cache.TryGetValue(key, out IReadOnlyList<ScoredAction>? cached))
+    {
+      cacheHits++;
+      return cached;
+    }
+    IReadOnlyList<ScoredAction> selected = SelectSearchCandidates(state, team, legal, settings, personality);
+    cache[key] = selected;
+    return selected;
+  }
+
+  private IReadOnlyList<ScoredAction> AddTacticalMacroCandidates(
+    CpuGameState state,
+    NetworkTeam team,
+    IReadOnlyList<ScoredAction> candidates,
+    CpuSearchSettings settings,
+    CpuPersonality personality,
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
+    ref int macrosGenerated
+  )
+  {
+    if (candidates.Count == 0 || (Globals.ActionLimitsEnabled && state.ActionsRemaining < 2)) return candidates;
+    int limit = Math.Max(1, Math.Min(settings.CandidatesPerNode, settings.PromisingCandidatesPerNode));
+    List<ScoredAction> macros = [];
+    foreach (ScoredAction first in candidates
+      .Where(candidate => candidate.Action is MoveAction || candidate.Action is UseAbilityAction { Ability: "Mark" })
+      .Take(6))
+    {
+      CpuGameState afterFirst = CpuGameRules.ApplyLegal(state, first.Action);
+      if (afterFirst.IsFinished || afterFirst.CurrentTurn != team) continue;
+      IReadOnlyList<ICpuGameAction> followLegal = GetSearchActions(
+        afterFirst, team, GetPurchasePlacementLimit(settings, 8), searchActionCache);
+      ICpuGameAction[] linked = followLegal.Where(action => IsLinkedTacticalFollowUp(state, first.Action, action)).ToArray();
+      if (linked.Length == 0) continue;
+      IReadOnlyList<ScoredAction> followCandidates = _candidateSelector.SelectCandidates(afterFirst, team, linked, settings, personality);
+      foreach (ScoredAction follow in followCandidates.Take(2))
+      {
+        TacticalMacroAction macro = new(team, [first.Action, follow.Action]);
+        float synergy = (first.Action, follow.Action) switch
+        {
+          (MoveAction, AttackAction) => 34f,
+          (MoveAction, UseAbilityAction { Ability: "Attach" }) => 24f,
+          (UseAbilityAction { Ability: "Mark" }, AttackAction) => 38f,
+          _ => 12f
+        };
+        macros.Add(new ScoredAction(macro, first.Score + follow.Score + synergy, "Linked tactical action pair"));
+        macrosGenerated++;
+      }
+    }
+
+    if (macros.Count == 0) return candidates;
+    return candidates.Concat(macros)
+      .OrderByDescending(candidate => candidate.Score)
+      .ThenBy(candidate => candidate.Action.Describe(), StringComparer.Ordinal)
+      .Take(limit)
+      .ToArray();
+  }
+
+  private static bool IsLinkedTacticalFollowUp(CpuGameState before, ICpuGameAction first, ICpuGameAction follow) => (first, follow) switch
+  {
+    (MoveAction move, AttackAction attack) => attack.AttackerId == move.PieceId,
+    (MoveAction move, UseAbilityAction { Ability: "Attach" } ability) =>
+      ability.ActorId == move.PieceId && before.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId)?.Type == "Guard",
+    (UseAbilityAction { Ability: "Mark", TargetPieceId: not null } mark, AttackAction attack) =>
+      attack.TargetPieceId == mark.TargetPieceId && attack.AttackerId != mark.ActorId,
+    _ => false
+  };
+
+  private static CpuGameState ApplySearchAction(CpuGameState state, ICpuGameAction action) =>
+    action is TacticalMacroAction macro ? macro.Apply(state) : CpuGameRules.ApplyLegal(state, action);
+
+  private static IReadOnlyList<ICpuGameAction> GetConcreteActions(ICpuGameAction action) =>
+    action is TacticalMacroAction macro ? macro.Actions : [action];
+
+  private static IReadOnlyList<ICpuGameAction> ExpandSearchActions(IEnumerable<ICpuGameAction> actions) =>
+    actions.SelectMany(GetConcreteActions).ToArray();
+
+  private static int GetConcreteActionCount(ICpuGameAction action) =>
+    action is TacticalMacroAction macro ? macro.Actions.Count : 1;
+
+  private static bool IsPrincipalVariationPrefix(IReadOnlyList<ICpuGameAction> actions, IReadOnlyList<ICpuGameAction> pv) =>
+    actions.Count <= pv.Count && actions.Select((action, index) => Equals(action, pv[index])).All(equal => equal);
+
+  private static bool MatchesPrincipalVariation(ICpuGameAction action, IReadOnlyList<ICpuGameAction> pv, int index)
+  {
+    IReadOnlyList<ICpuGameAction> concrete = GetConcreteActions(action);
+    if (index + concrete.Count > pv.Count) return false;
+    for (int offset = 0; offset < concrete.Count; offset++)
+    {
+      if (!Equals(concrete[offset], pv[index + offset])) return false;
+    }
+    return true;
   }
 
   private IReadOnlyList<ScoredAction> SelectSearchCandidates(
@@ -631,8 +887,10 @@ public sealed class CpuPlayer : ICpuPlayer
     Stopwatch stopwatch,
     CancellationToken cancellationToken,
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
+    Dictionary<(ulong stateHash, NetworkTeam team, int candidates, int promising, CpuPersonality personality), IReadOnlyList<ScoredAction>> candidateCache,
     Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
     ref int evaluationCacheHits,
+    ref int candidateCacheHits,
     ref int nodesGenerated,
     ref int nodesEvaluated,
     ref bool timedOut,
@@ -690,8 +948,12 @@ public sealed class CpuPlayer : ICpuPlayer
           searchActionCache
         );
         HashSet<ICpuGameAction> legalActionSet = [.. legal];
-        IReadOnlyList<ScoredAction> candidates = SelectSearchCandidates(
-          node.State, opponent, legal, opponentSettings, CpuPersonality.Aggressive);
+        IReadOnlyList<ScoredAction> candidates = SelectSearchCandidatesCached(
+          node.State, opponent, legal, opponentSettings, CpuPersonality.Aggressive, candidateCache, ref candidateCacheHits);
+        int opponentMacros = 0;
+        candidates = AddTacticalMacroCandidates(
+          node.State, opponent, candidates, opponentSettings, CpuPersonality.Aggressive, searchActionCache,
+          ref opponentMacros);
         foreach (ScoredAction candidate in candidates)
         {
           if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
@@ -701,12 +963,12 @@ public sealed class CpuPlayer : ICpuPlayer
           }
 
           // Keep extension-point candidates constrained to the action generator's legal set.
-          if (!legalActionSet.Contains(candidate.Action))
+          if (candidate.Action is not TacticalMacroAction && !legalActionSet.Contains(candidate.Action))
           {
             continue;
           }
 
-          CpuGameState result = CpuGameRules.ApplyLegal(node.State, candidate.Action);
+          CpuGameState result = ApplySearchAction(node.State, candidate.Action);
           nodesGenerated++;
           EvaluationBreakdown breakdown = EvaluateCached(result, perspective, context, evaluatedStates, ref evaluationCacheHits);
           nodesEvaluated++;
@@ -718,7 +980,7 @@ public sealed class CpuPlayer : ICpuPlayer
             continue;
           }
           worstScoreByState[hash] = breakdown.Total;
-          expanded.Add(new SearchNode(result, [.. node.Actions, candidate.Action], breakdown.Total, breakdown));
+          expanded.Add(new SearchNode(result, [.. node.Actions, .. GetConcreteActions(candidate.Action)], breakdown.Total, breakdown));
         }
       }
 
@@ -808,7 +1070,7 @@ public sealed class CpuPlayer : ICpuPlayer
         {
           break;
         }
-        CpuGameState result = CpuGameRules.ApplyLegal(branch.Node.State, branch.Candidate.Action);
+        CpuGameState result = ApplySearchAction(branch.Node.State, branch.Candidate.Action);
         EvaluationBreakdown breakdown = EvaluateCached(result, team, sequentialContext, evaluatedStates, ref cacheHits);
         sequential.Add(new EvaluatedSearchExpansion(branch, result, breakdown));
       }
@@ -816,7 +1078,7 @@ public sealed class CpuPlayer : ICpuPlayer
     }
 
     EvaluatedSearchExpansion?[] parallel = new EvaluatedSearchExpansion[pending.Count];
-    using ThreadLocal<EvaluationContext> workerContexts = new(() => new EvaluationContext(profile, intents, new CpuEvaluationCache()));
+    using ThreadLocal<EvaluationContext> workerContexts = new(() => new EvaluationContext(profile, intents, sequentialContext.Cache));
     Parallel.For(0, pending.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
     {
       if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
@@ -824,7 +1086,7 @@ public sealed class CpuPlayer : ICpuPlayer
         return;
       }
       PendingSearchExpansion branch = pending[index];
-      CpuGameState result = CpuGameRules.ApplyLegal(branch.Node.State, branch.Candidate.Action);
+      CpuGameState result = ApplySearchAction(branch.Node.State, branch.Candidate.Action);
       // Each worker owns its cache. The main cache uses Dictionary and intentionally stays on
       // the coordinator thread; this avoids locks in its hottest lookup path.
       EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, team, workerContexts.Value!);
@@ -931,9 +1193,12 @@ public sealed class CpuPlayer : ICpuPlayer
     return evaluation;
   }
 
-  private static bool IsForcingAction(ICpuGameAction action) => action is AttackAction or UseAbilityAction
+  private static bool IsForcingAction(ICpuGameAction action) => action switch
   {
-    Ability: "PickUpTreasure"
+    TacticalMacroAction macro => macro.Actions.Any(IsForcingAction),
+    AttackAction => true,
+    UseAbilityAction { Ability: "PickUpTreasure" } => true,
+    _ => false
   };
 
   private static string DescribeActions(IEnumerable<ICpuGameAction> actions) => string.Join(" | ", actions.Select(action => action.Describe()));
