@@ -85,6 +85,40 @@ public sealed class CpuPlanningEfficiencyTests
     Assert.Equal(search.Length, search.Select(action => (action.X, action.Y)).Distinct().Count());
   }
 
+  [Fact]
+  public void FarmPlacement_HeavilyPrefersRearTerritory()
+  {
+    CpuGameState state = CreateFarmState(
+      money: 500,
+      Piece("red", "Soldier", NetworkTeam.Red, 0, 0),
+      Piece("blue", "Soldier", NetworkTeam.Blue, 8, 8));
+    CpuActionGenerator generator = new();
+    PurchaseAction[] farms = generator.GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<PurchaseAction>()
+      .Where(action => action.UnitType == "Farm")
+      .ToArray();
+    Assert.NotEmpty(farms);
+
+    (int x, int y) forward = TeamRules.GetForwardDirection(NetworkTeam.Red);
+    int Projection(PurchaseAction action) => action.X * forward.x + action.Y * forward.y;
+    PurchaseAction rear = farms.OrderBy(Projection).First();
+    PurchaseAction front = farms.OrderByDescending(Projection).First();
+    Assert.True(Projection(rear) < Projection(front));
+
+    CpuSearchSettings settings = new()
+    {
+      CandidatesPerNode = 4,
+      PromisingCandidatesPerNode = 4,
+      MaximumPurchasePlacementCandidates = 12
+    };
+    IReadOnlyList<ScoredAction> scored = new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red, [rear, front], settings, CpuPersonality.Balanced);
+    float rearScore = scored.Single(candidate => Equals(candidate.Action, rear)).Score;
+    float frontScore = scored.Single(candidate => Equals(candidate.Action, front)).Score;
+
+    Assert.True(rearScore >= frontScore + 20f, $"rear={rearScore}, front={frontScore}");
+  }
+
   private static NetworkPiece Piece(string id, string type, NetworkTeam team, int x, int y)
   {
     UnitRule rule = UnitRules.GetRequired(type);
@@ -95,6 +129,21 @@ public sealed class CpuPlanningEfficiencyTests
   {
     NetworkMatchConfiguration configuration = new(
       "Small", "Light", "Light", "Conquest", 11821, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: false);
+    return CreateState(configuration, money, pieces);
+  }
+
+  private static CpuGameState CreateFarmState(int money, params NetworkPiece[] pieces)
+  {
+    NetworkMatchConfiguration configuration = new(
+      "Small", "Light", "Light", "Conquest", 11821, 200, 0f, 0f, 2, 1, 15, FarmsEnabled: true);
+    return CreateState(configuration, money, pieces);
+  }
+
+  private static CpuGameState CreateState(
+    NetworkMatchConfiguration configuration,
+    int money,
+    NetworkPiece[] pieces)
+  {
     return new CpuGameState(
       configuration,
       pieces,
