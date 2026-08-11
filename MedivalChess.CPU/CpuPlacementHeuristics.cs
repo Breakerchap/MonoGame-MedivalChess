@@ -42,10 +42,15 @@ internal static class CpuPlacementHeuristics
     (int x, int y) forward = TeamRules.GetForwardDirection(team);
     int positionProjection = x * forward.x + y * forward.y;
     int rearTerritoryDepth = Math.Max(0, furthestForwardProjection - positionProjection);
-    // Farms are long-lived income assets, so safe home territory matters more than it does for a
-    // forward combat deployment. Keep forest cover valuable, but reward a deeper placement more
-    // strongly and over a wider part of the home zone than the original shallow bonus did.
-    return forestSquares * 7f + Math.Min(8, rearTerritoryDepth) * 3f;
+
+    // Farms are long-lived income assets rather than frontline pieces. Rear depth intentionally
+    // dominates every ordinary placement consideration: moving a farm just a couple of rows back
+    // should usually matter more than gaining perfect forest cover. Very deep sites get a small
+    // additional premium so the CPU naturally fills the safest backline before creeping forward.
+    float rearSafety = Math.Min(12, rearTerritoryDepth) * 10f +
+      Math.Max(0, rearTerritoryDepth - 4) * 3f;
+    float cover = forestSquares * 4f;
+    return rearSafety + cover;
   }
 
   internal static bool ProtectsFriendlyFarm(CpuGameState state, NetworkTeam team, (int x, int y) position) => state.Pieces.Any(piece =>
