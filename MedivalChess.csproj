@@ -12,12 +12,16 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <!-- The game project lives at the repository root, so SDK default globs would otherwise
-       compile source files belonging to the nested test/server/tool projects into the game. -->
+  <!-- The game project lives at the repository root. Keep sources owned by nested projects
+       out of the game assembly, and consume the shared rules project normally instead. -->
   <ItemGroup>
     <Compile Remove="MedivalChess.Tests/**/*.cs" />
     <Compile Remove="MedivalChess.Server/**/*.cs" />
+    <Compile Remove="MedivalChess.Shared/**/*.cs" />
     <Compile Remove="TerrainPainter/**/*.cs" />
+    <Compile Remove="Globals.cs" />
+    <Compile Remove="GameBoard/Board.cs" />
+    <Compile Remove="GameBoard/BattlefieldTerrain.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,6 +36,10 @@
     <EmbeddedResource Include="Icon.bmp">
       <LogicalName>Icon.bmp</LogicalName>
     </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="MedivalChess.Shared/MedivalChess.Shared.csproj" />
   </ItemGroup>
 
   <ItemGroup>
