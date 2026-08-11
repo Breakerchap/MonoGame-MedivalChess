@@ -9,6 +9,15 @@ internal sealed partial class Game1
 {
   private bool _myraThemeInitialised;
 
+  protected override void BeginRun()
+  {
+    // Initialize() has completed by this point, which means LoadContent() has run
+    // and InitializeMyraUi() has already assigned MyraEnvironment.Game.
+    InitialiseMyraTheme();
+    MarkMyraDirty();
+    base.BeginRun();
+  }
+
   private void InitialiseMyraTheme()
   {
     if (_myraThemeInitialised) return;
