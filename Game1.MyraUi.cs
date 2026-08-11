@@ -68,7 +68,6 @@ internal sealed partial class Game1
     }
 
     if (_myraDirty) RebuildMyraUi();
-    _myraDesktop.UpdateInput();
   }
 
   private void RenderMyraUi()
