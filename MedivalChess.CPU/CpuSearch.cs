@@ -300,8 +300,43 @@ public sealed class CpuPlayer : ICpuPlayer
       Cancelled = cancelled,
       TopChoices = choices
     };
-    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, profile, chosen.Node.Actions);
+    IReadOnlyList<ICpuGameAction> chosenActions = chosen.Node.Actions;
+    // A completed kill is a hard tactical fact, not a heuristic preference. Under a tight
+    // deadline a deeper branch can otherwise put a nonlethal attack first because its later
+    // material line looks slightly better. Ensure the final legal plan starts with an available
+    // lethal attack; VerifyActionSequence will discard any now-illegal follow-up actions.
+    AttackAction? immediateLethal = GetImmediateLethalAttack(state, team, settings, searchActionCache);
+    if (immediateLethal is not null &&
+        (chosenActions.Count == 0 || !Equals(chosenActions[0], immediateLethal)))
+    {
+      chosenActions = [immediateLethal, .. chosenActions];
+    }
+    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, profile, chosenActions);
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
+  }
+
+  private AttackAction? GetImmediateLethalAttack(
+    CpuGameState state,
+    NetworkTeam team,
+    CpuSearchSettings settings,
+    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache
+  )
+  {
+    foreach (AttackAction attack in GetSearchActions(
+      state, team, GetPurchasePlacementLimit(settings, 16), searchActionCache).OfType<AttackAction>())
+    {
+      if (attack.TargetPieceId is null || !attack.IsLegal(state))
+      {
+        continue;
+      }
+
+      CpuGameState result = CpuGameRules.ApplyLegal(state, attack);
+      if (!result.Pieces.Any(piece => piece.Id == attack.TargetPieceId))
+      {
+        return attack;
+      }
+    }
+    return null;
   }
 
   private static int GetMaximumActionsToPlan(CpuGameState state, NetworkTeam team)

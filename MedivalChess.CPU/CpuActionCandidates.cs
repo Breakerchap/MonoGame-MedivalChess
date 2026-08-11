@@ -302,6 +302,23 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
       return candidate;
     }
 
+    // In an unlimited-action turn a move that opens a legal attack is a forcing pair: the
+    // verifier will resolve that attack before the opponent gets a turn. Treating the first
+    // half as an isolated blunder incorrectly pruned move-then-attack lines (including royal
+    // kills) before the search could see their second action.
+    bool createsForcingAttack = !Globals.ActionLimitsEnabled &&
+      result.CurrentTurn == team &&
+      result.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral &&
+          piece.AttachedToId is null)
+        .Any(target => CpuGameRules.CanDirectlyAttack(result, exposedPiece, target) &&
+          (UnitRules.GetRequired(target.Type).Category == RuleCategory.Royal ||
+           target.Type == "Mercenary" ||
+           CpuStrategicHeuristics.GetMatchupScore(result, exposedPiece, target) > 0f));
+    if (createsForcingAttack)
+    {
+      return candidate with { Reason = $"{candidate.Reason}; preserves a forcing attack" };
+    }
+
     CpuTacticalSafety.Assessment assessment = CpuTacticalSafety.Assess(result, team, exposedPiece);
     float penalty = CpuTacticalSafety.GetActionRiskPenalty(result, exposedPiece, assessment);
     if (penalty <= 0f)
@@ -312,7 +329,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     string danger = assessment.IsDirectlyLethal
       ? "avoids an immediate kill"
       : assessment.CanBeKilledAfterAnEnemyMove
-        ? "avoids a move-and-attack kill"
+        ? "avoids an immediate kill after an enemy move-and-attack"
         : "reduces enemy attack exposure";
     return candidate with { Score = candidate.Score - penalty, Reason = $"{candidate.Reason}; {danger}" };
   }
@@ -825,8 +842,11 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     // the tactical diversity required by a very small beam.
     foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Score >= 900f).Take(2)) Add(candidate);
     Add(ranked.FirstOrDefault(candidate => candidate.Action is AttackAction));
-    Add(ranked.FirstOrDefault(candidate => candidate.Action is MoveAction && IsPlausibleMove(candidate)));
-    Add(ranked.FirstOrDefault(candidate => candidate.Action is PurchaseAction && IsPlausiblePurchase(candidate)));
+    // Preserve the action family even when the safety model gives every member a negative
+    // score. A narrow beam must still be able to compare an attack, a move, and a purchase;
+    // otherwise one heavily penalised family disappears before tactical search can recover it.
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is MoveAction));
+    Add(ranked.FirstOrDefault(candidate => candidate.Action is PurchaseAction));
     Add(ranked.FirstOrDefault(candidate => candidate.Action is UseAbilityAction && IsPlausibleAbility(candidate)));
 
     int attackQuota = Math.Max(3, count / 2);
