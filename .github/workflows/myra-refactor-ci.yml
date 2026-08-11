@@ -1,0 +1,27 @@
+name: Myra refactor CI
+
+on:
+  push:
+    branches: [feature/myra-ui-refactor]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore tools
+        run: dotnet tool restore
+      - name: Restore
+        run: dotnet restore MedivalChess.sln
+      - name: Build
+        run: dotnet build MedivalChess.sln --configuration Release --no-restore
+      - name: Test
+        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj --configuration Release --no-build
