@@ -9345,7 +9345,7 @@ internal sealed partial class Game1 : Game
       }
       DrawChessClockPanel();
     }
-    else
+    else if (_screen != Screen.Playing)
     {
       Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
       _spriteBatch.Draw(_pixel, viewport, new Color(5, 9, 14, 176));

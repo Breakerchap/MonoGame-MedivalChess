@@ -806,7 +806,7 @@ internal sealed partial class Game1
     {
       Content = left,
       Width = 368,
-      Height = maximumPanelHeight,
+      MaxHeight = maximumPanelHeight,
       HorizontalAlignment = HorizontalAlignment.Left,
       VerticalAlignment = VerticalAlignment.Top,
       Margin = new Thickness(16)
@@ -820,7 +820,7 @@ internal sealed partial class Game1
       {
         Content = purchase,
         Width = 390,
-        Height = maximumPanelHeight,
+        MaxHeight = maximumPanelHeight,
         HorizontalAlignment = HorizontalAlignment.Right,
         VerticalAlignment = VerticalAlignment.Top,
         Margin = new Thickness(16)
