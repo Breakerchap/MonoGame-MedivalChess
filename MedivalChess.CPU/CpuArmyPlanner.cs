@@ -108,6 +108,19 @@ internal sealed class CpuArmyPlanner
     float duplicatePenalty = GetDuplicatePenalty(rule, owned, isPriorityCounter);
     score -= duplicatePenalty;
 
+    if (rule.Type is "Defender" or "Peasant")
+    {
+      int screenCount = _friendly.Count(piece => piece.Type is "Defender" or "Peasant");
+      int combatCount = _friendly.Count(piece => UnitRules.TryGet(piece.Type, out UnitRule friendlyRule) &&
+        friendlyRule.Category != RuleCategory.Royal && friendlyRule.Type != "Farm" && friendlyRule.Attack > 0);
+      int softScreenCap = Math.Max(2, (combatCount + 1) / 2);
+      if (screenCount >= softScreenCap)
+      {
+        float saturationPenalty = 26f + Math.Max(0, screenCount - softScreenCap) * 18f;
+        score -= saturationPenalty * (isPriorityCounter ? 0.45f : 1f);
+      }
+    }
+
     if (!HasBattlefieldRole(rule, action))
     {
       // Expensive artillery or specialist pieces without a reachable target, threatened asset,
@@ -216,6 +229,8 @@ internal sealed class CpuArmyPlanner
   {
     if (owned == 0) return 0f;
     float basePenalty = rule.Cost >= 45 ? 19f : rule.Cost >= 30 ? 13f : 9f;
+    if (rule.Type == "Peasant") basePenalty += 10f;
+    else if (rule.Type == "Defender") basePenalty += 6f;
     if (rule.Category is RuleCategory.Mechanical or RuleCategory.Intelligence or RuleCategory.Transport)
     {
       basePenalty += 8f;

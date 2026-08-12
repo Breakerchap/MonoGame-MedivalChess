@@ -7,33 +7,30 @@ namespace MedivalChess.Tests;
 public sealed class CpuPlanningEfficiencyTests
 {
   [Fact]
-  public void UnlimitedTurn_ReplansAfterCommittingAShortSegment()
+  public void UnlimitedTurn_ImmediateAttackHappensBeforePurchase()
   {
     bool previous = Globals.ActionLimitsEnabled;
     Globals.ActionLimitsEnabled = false;
     try
     {
       CpuGameState state = CreateState(
-        money: 0,
+        money: 500,
         Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0),
-        Piece("red-knight", "Knight", NetworkTeam.Red, 0, 2),
-        Piece("blue-soldier", "Soldier", NetworkTeam.Blue, 6, 0),
-        Piece("blue-defender", "Defender", NetworkTeam.Blue, 6, 2));
+        Piece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 1));
       CpuProfile profile = new()
       {
-        Name = "Receding horizon test",
+        Name = "Combat before shopping test",
         Difficulty = CpuDifficultyLevel.Hard,
         Search = new CpuSearchSettings
         {
-          BeamWidth = 6,
-          CandidatesPerNode = 8,
-          PromisingCandidatesPerNode = 8,
-          OpponentBeamWidth = 2,
+          BeamWidth = 8,
+          CandidatesPerNode = 12,
+          PromisingCandidatesPerNode = 10,
           OpponentActionsToPredict = 0,
-          TacticalExtensionDepth = 2,
-          MaxSearchNodes = 50_000,
+          TacticalExtensionDepth = 1,
+          MaxSearchNodes = 8_000,
           MaximumPurchasePlacementCandidates = 12,
-          MaxSearchMilliseconds = 1_200,
+          MaxSearchMilliseconds = 700,
           MaxParallelism = 1,
           Randomness = 0f
         },
@@ -44,16 +41,69 @@ public sealed class CpuPlanningEfficiencyTests
 
       CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
 
-      Assert.True(plan.Report.RecedingHorizonReplans >= 1, $"replans={plan.Report.RecedingHorizonReplans}");
-      Assert.True(plan.Report.RecedingHorizonActionsCommitted >= 1,
-        $"committed={plan.Report.RecedingHorizonActionsCommitted}");
-      CpuGameState current = state;
-      foreach (ICpuGameAction action in plan.Actions)
+      AttackAction first = Assert.IsType<AttackAction>(plan.Actions.First());
+      Assert.Equal("red-soldier", first.AttackerId);
+      Assert.Equal("blue-peasant", first.TargetPieceId);
+    }
+    finally
+    {
+      Globals.ActionLimitsEnabled = previous;
+    }
+  }
+
+  [Theory]
+  [InlineData("Conquest")]
+  [InlineData("Regicide")]
+  public void ThreatenedKing_RespondsToAdjacentKnightBeforeShopping(string gameMode)
+  {
+    bool previous = Globals.ActionLimitsEnabled;
+    Globals.ActionLimitsEnabled = false;
+    try
+    {
+      NetworkMatchConfiguration configuration = new(
+        "Small", "Light", "Light", gameMode, 7719, 500, 0f, 0f, 2, 1, 15, FarmsEnabled: false);
+      CpuGameState state = new(
+        configuration,
+        [
+          Piece("red-king", "King", NetworkTeam.Red, 0, 0),
+          Piece("blue-knight", "Knight", NetworkTeam.Blue, 0, 1),
+          Piece("blue-king", "King", NetworkTeam.Blue, 0, -6)
+        ],
+        [
+          new CpuTeamState(NetworkTeam.Red, 500, MatchRules.ActionsPerTurn),
+          new CpuTeamState(NetworkTeam.Blue, 500, MatchRules.ActionsPerTurn)
+        ],
+        NetworkTeam.Red,
+        terrain: new BattlefieldTerrain());
+      CpuProfile profile = new()
       {
-        Assert.True(action.IsLegal(current), action.Describe());
-        current = action.Apply(current);
-        if (current.IsFinished) break;
-      }
+        Name = "Royal response test",
+        Difficulty = CpuDifficultyLevel.Hard,
+        Search = new CpuSearchSettings
+        {
+          BeamWidth = 10,
+          CandidatesPerNode = 14,
+          PromisingCandidatesPerNode = 12,
+          OpponentActionsToPredict = 0,
+          TacticalExtensionDepth = 1,
+          MaxSearchNodes = 12_000,
+          MaximumPurchasePlacementCandidates = 12,
+          MaxSearchMilliseconds = 800,
+          MaxParallelism = 1,
+          Randomness = 0f
+        },
+        TopChoicesForRandomSelection = 1,
+        MistakeChance = 0f,
+        StrategyVariationChance = 0f
+      };
+
+      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+      ICpuGameAction first = Assert.IsAssignableFrom<ICpuGameAction>(plan.Actions.First());
+
+      Assert.False(first is PurchaseAction, string.Join(" | ", plan.Actions.Select(action => action.Describe())));
+      Assert.True(first is AttackAction { AttackerId: "red-king", TargetPieceId: "blue-knight" } or
+        MoveAction { PieceId: "red-king" },
+        string.Join(" | ", plan.Actions.Select(action => action.Describe())));
     }
     finally
     {

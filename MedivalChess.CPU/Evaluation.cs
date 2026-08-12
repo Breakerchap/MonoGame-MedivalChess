@@ -263,12 +263,15 @@ public sealed class MaterialEvaluation : IEvaluationTerm
       return 0f;
     }
 
-    // Board presence is deliberately flat for normal pieces. Price belongs in the tactical
-    // reward for destroying or damaging a target, rather than making the CPU hoard expensive
-    // units simply because they cost more.
     if (rule.Category != RuleCategory.Royal)
     {
-      return 20f;
+      // Board value follows replacement cost, but on a compressed curve so a premium specialist
+      // is worth protecting without becoming five times as important as a cheap screen. This also
+      // prevents the purchase evaluator from treating a 10-gold Peasant and a 55-gold Knight as
+      // identical material while simultaneously charging the full difference in cash.
+      if (rule.Type == "Farm") return 30f;
+      float cost = Math.Max(0f, rule.Cost);
+      return 18f + Math.Min(cost, 40f) * 1.35f + Math.Max(0f, cost - 40f) * 0.70f;
     }
 
     // In non-Regicide modes a royal is deliberately worth no more than another board unit,
@@ -826,7 +829,9 @@ public sealed class EconomyEvaluation : IEvaluationTerm
       float survival = threats.Any(threat => threat.IsLethal) ? 0.2f : threats.Length == 0 ? 1f : 0.65f;
       forecast += income * 3f * survival;
     }
-    return money + forecast;
+    // Gold is optionality, not board control. Valuing it one-for-one made cheap units exploit
+    // the evaluator because an expensive purchase lost far more cash score than it gained material.
+    return money * 0.5f + forecast;
   }
 }
 
@@ -939,7 +944,7 @@ public sealed class AssetSafetyEvaluation : IEvaluationTerm
 
       int forestSquares = OccupiedSquares(piece, rule).Count(state.Terrain.IsForest);
       float importance = rule.Type == "Farm" ? 4f : rule.Category == RuleCategory.Royal
-        ? 0.35f + CpuObjectiveRules.GetRoyalSafetyImportance(state) * 2.15f
+        ? 0.8f + CpuObjectiveRules.GetRoyalSafetyImportance(state) * 1.7f
         : 0.35f;
       float assetScore = forestSquares * importance * 3f;
       foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != piece.Team))

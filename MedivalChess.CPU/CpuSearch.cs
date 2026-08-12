@@ -162,8 +162,6 @@ public sealed class CpuDecisionReport
   public int IterativeDeepeningPasses { get; init; }
   public int PrincipalVariationPromotions { get; init; }
   public int TacticalMacrosGenerated { get; init; }
-  public int RecedingHorizonReplans { get; init; }
-  public int RecedingHorizonActionsCommitted { get; init; }
   public bool TimedOut { get; init; }
   public bool NodeBudgetReached { get; init; }
   public bool Cancelled { get; init; }
@@ -245,21 +243,10 @@ public sealed class CpuPlayer : ICpuPlayer
     EvaluationBreakdown initialBreakdown = EvaluateCached(state, team, context, evaluatedStates, ref evaluationCacheHits);
     SearchNode rootNode = new(state, [], initialBreakdown.Total, initialBreakdown);
     List<SearchNode> beam = [rootNode];
-    int recedingHorizonReplans = 0;
-    int recedingHorizonActionsCommitted = 0;
     // Preparation is intentionally included in the time budget; when ranking begins, the search
     // records a legal root fallback before it expands any branch.
     int maximumActions = GetMaximumActionsToPlan(state, team);
-    // Unlimited turns can contain dozens of concrete actions. Search a strong local horizon and
-    // then re-plan after committing the first linked pair in simulation instead of spending the
-    // entire budget extending one brittle turn-long line.
-    int totalDepth = Globals.ActionLimitsEnabled
-      ? maximumActions + Math.Max(0, settings.TacticalExtensionDepth)
-      : Math.Min(4, maximumActions);
-    int recedingPlanningDeadline = GetRecedingPlanningDeadline(settings);
-    int primarySearchDeadline = Globals.ActionLimitsEnabled
-      ? Math.Max(1, settings.MaxSearchMilliseconds)
-      : GetNextRecedingSegmentDeadline(stopwatch, settings, recedingPlanningDeadline, 0);
+    int totalDepth = maximumActions + Math.Max(0, settings.TacticalExtensionDepth);
     IReadOnlyList<ICpuGameAction> principalVariation = [];
 
     // True iterative deepening: restart from the root at depth 1, 2, 3, ... while reusing all
@@ -270,7 +257,7 @@ public sealed class CpuPlayer : ICpuPlayer
       iterativeDeepeningPasses++;
       SearchIterationResult iteration = RunSearchIteration(
         rootNode, state, team, profile, context, intents, depthLimit, maximumActions, principalVariation,
-        primarySearchDeadline, stopwatch, cancellationToken, searchActionCache, candidateCache, evaluatedStates,
+        stopwatch, cancellationToken, searchActionCache, candidateCache, evaluatedStates,
         ref nodesGenerated, ref nodesEvaluated, ref duplicatesRemoved, ref evaluationCacheHits,
         ref candidateCacheHits, ref timedOut, ref nodeBudgetReached, ref cancelled);
       fallbackAction ??= iteration.FallbackAction;
@@ -295,19 +282,6 @@ public sealed class CpuPlayer : ICpuPlayer
       {
         break;
       }
-    }
-
-    if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && !cancelled && !nodeBudgetReached &&
-        beam.Any(node => node.Actions.Count > 0) && stopwatch.ElapsedMilliseconds < recedingPlanningDeadline)
-    {
-      beam = ContinueRecedingHorizon(
-        state, team, profile, context, intents, beam, recedingPlanningDeadline,
-        stopwatch, cancellationToken, searchActionCache, candidateCache, evaluatedStates,
-        ref nodesGenerated, ref nodesEvaluated, ref duplicatesRemoved, ref evaluationCacheHits,
-        ref candidateCacheHits, ref iterativeDeepeningPasses, ref completedSearchDepth,
-        ref principalVariationPromotions, ref tacticalMacrosGenerated,
-        ref timedOut, ref nodeBudgetReached, ref cancelled,
-        out recedingHorizonReplans, out recedingHorizonActionsCommitted);
     }
 
     List<(SearchNode Node, float Score, float OpponentPenalty)> ranked = [];
@@ -378,8 +352,6 @@ public sealed class CpuPlayer : ICpuPlayer
       IterativeDeepeningPasses = iterativeDeepeningPasses,
       PrincipalVariationPromotions = principalVariationPromotions,
       TacticalMacrosGenerated = tacticalMacrosGenerated,
-      RecedingHorizonReplans = recedingHorizonReplans,
-      RecedingHorizonActionsCommitted = recedingHorizonActionsCommitted,
       TimedOut = timedOut,
       NodeBudgetReached = nodeBudgetReached,
       Cancelled = cancelled,
@@ -409,7 +381,6 @@ public sealed class CpuPlayer : ICpuPlayer
     int depthLimit,
     int maximumActions,
     IReadOnlyList<ICpuGameAction> principalVariation,
-    int softDeadlineMilliseconds,
     Stopwatch stopwatch,
     CancellationToken cancellationToken,
     Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
@@ -435,7 +406,7 @@ public sealed class CpuPlayer : ICpuPlayer
     // least one concrete action; a two-action macro simply reaches the requested depth sooner.
     for (int wave = 0; wave < depthLimit; wave++)
     {
-      if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken, softDeadlineMilliseconds,
+      if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
         out timedOut, out nodeBudgetReached, out cancelled))
       {
         return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
@@ -447,7 +418,7 @@ public sealed class CpuPlayer : ICpuPlayer
       bool expandedAny = false;
       foreach (SearchNode node in beam)
       {
-        if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken, softDeadlineMilliseconds,
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken,
           out timedOut, out nodeBudgetReached, out cancelled))
         {
           return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
@@ -503,7 +474,7 @@ public sealed class CpuPlayer : ICpuPlayer
         {
           IReadOnlyList<ICpuGameAction> concrete = GetConcreteActions(candidate.Action);
           if (node.Actions.Count == 0 && fallbackAction is null) fallbackAction = concrete[0];
-          if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken, softDeadlineMilliseconds,
+          if (ShouldStop(stopwatch, profile.Search, nodesGenerated + pending.Count, cancellationToken,
             out timedOut, out nodeBudgetReached, out cancelled))
           {
             return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
@@ -516,14 +487,14 @@ public sealed class CpuPlayer : ICpuPlayer
       int parallelism = GetParallelism(profile.Search);
       foreach (PendingSearchExpansion[] batch in pending.Chunk(GetEvaluationBatchSize(parallelism)))
       {
-        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken, softDeadlineMilliseconds,
+        if (ShouldStop(stopwatch, profile.Search, nodesGenerated, cancellationToken,
           out timedOut, out nodeBudgetReached, out cancelled))
         {
           return new SearchIterationResult(beam, false, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
         }
         IReadOnlyList<EvaluatedSearchExpansion> evaluated = EvaluatePendingBranches(
           batch, team, profile, intents, context, evaluatedStates, parallelism, stopwatch, profile.Search,
-          softDeadlineMilliseconds, cancellationToken, ref evaluationCacheHits);
+          cancellationToken, ref evaluationCacheHits);
         if (evaluated.Count < batch.Length)
         {
           cancelled = cancellationToken.IsCancellationRequested;
@@ -571,186 +542,6 @@ public sealed class CpuPlayer : ICpuPlayer
     }
 
     return new SearchIterationResult(beam, true, fallbackAction, rootLegalActionCount, pvPromotions, macrosGenerated);
-  }
-
-  private List<SearchNode> ContinueRecedingHorizon(
-    CpuGameState initialState,
-    NetworkTeam team,
-    CpuProfile profile,
-    EvaluationContext context,
-    IReadOnlyList<CpuIntent> intents,
-    IReadOnlyList<SearchNode> initialBeam,
-    int planningDeadlineMilliseconds,
-    Stopwatch stopwatch,
-    CancellationToken cancellationToken,
-    Dictionary<(ulong stateHash, NetworkTeam team, int placementLimit), IReadOnlyList<ICpuGameAction>> searchActionCache,
-    Dictionary<(ulong stateHash, NetworkTeam team, int candidates, int promising, CpuPersonality personality), IReadOnlyList<ScoredAction>> candidateCache,
-    Dictionary<ulong, EvaluationBreakdown> evaluatedStates,
-    ref int nodesGenerated,
-    ref int nodesEvaluated,
-    ref int duplicatesRemoved,
-    ref int evaluationCacheHits,
-    ref int candidateCacheHits,
-    ref int iterativeDeepeningPasses,
-    ref int completedSearchDepth,
-    ref int principalVariationPromotions,
-    ref int tacticalMacrosGenerated,
-    ref bool timedOut,
-    ref bool nodeBudgetReached,
-    ref bool cancelled,
-    out int replans,
-    out int actionsCommitted
-  )
-  {
-    const int segmentDepth = 4;
-    const int commitPerSegment = 2;
-    const int maximumSegments = 8;
-    replans = 0;
-    actionsCommitted = 0;
-
-    List<ICpuGameAction> committed = [];
-    CpuGameState current = initialState;
-    IReadOnlyList<ICpuGameAction> carryTail = [];
-    SearchNode? segmentBest = initialBeam
-      .Where(node => node.Actions.Count > 0)
-      .OrderByDescending(node => node.Score)
-      .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
-      .FirstOrDefault();
-    int segmentIndex = 0;
-
-    while (segmentBest is not null && segmentIndex < maximumSegments &&
-           !current.IsFinished && current.CurrentTurn == team &&
-           !cancelled && !nodeBudgetReached)
-    {
-      int actuallyCommitted = 0;
-      foreach (ICpuGameAction action in segmentBest.Actions.Take(commitPerSegment))
-      {
-        if (current.IsFinished || current.CurrentTurn != team || !action.IsLegal(current))
-        {
-          break;
-        }
-        committed.Add(action);
-        current = CpuGameRules.ApplyLegal(current, action);
-        actuallyCommitted++;
-        actionsCommitted++;
-        if (current.IsFinished || current.CurrentTurn != team)
-        {
-          break;
-        }
-      }
-
-      carryTail = segmentBest.Actions.Skip(actuallyCommitted).ToArray();
-      if (actuallyCommitted == 0 || current.IsFinished || current.CurrentTurn != team ||
-          stopwatch.ElapsedMilliseconds >= planningDeadlineMilliseconds)
-      {
-        break;
-      }
-
-      segmentIndex++;
-      replans++;
-      int segmentDeadline = GetNextRecedingSegmentDeadline(
-        stopwatch, profile.Search, planningDeadlineMilliseconds, segmentIndex);
-      if (stopwatch.ElapsedMilliseconds >= segmentDeadline)
-      {
-        break;
-      }
-
-      EvaluationBreakdown rootBreakdown = EvaluateCached(
-        current, team, context, evaluatedStates, ref evaluationCacheHits);
-      SearchNode root = new(current, [], rootBreakdown.Total, rootBreakdown);
-      List<SearchNode> segmentBeam = [root];
-      IReadOnlyList<ICpuGameAction> principalVariation = carryTail;
-      int maximumActions = GetMaximumActionsToPlan(current, team);
-      int depthCap = Math.Min(segmentDepth, maximumActions);
-      bool completedAnyDepth = false;
-
-      for (int depthLimit = 1; depthLimit <= depthCap && !cancelled && !nodeBudgetReached &&
-           stopwatch.ElapsedMilliseconds < segmentDeadline; depthLimit++)
-      {
-        iterativeDeepeningPasses++;
-        SearchIterationResult iteration = RunSearchIteration(
-          root, current, team, profile, context, intents, depthLimit, maximumActions, principalVariation,
-          segmentDeadline, stopwatch, cancellationToken, searchActionCache, candidateCache, evaluatedStates,
-          ref nodesGenerated, ref nodesEvaluated, ref duplicatesRemoved, ref evaluationCacheHits,
-          ref candidateCacheHits, ref timedOut, ref nodeBudgetReached, ref cancelled);
-        principalVariationPromotions += iteration.PrincipalVariationPromotions;
-        tacticalMacrosGenerated += iteration.TacticalMacrosGenerated;
-        if (!iteration.Completed)
-        {
-          break;
-        }
-
-        completedAnyDepth = true;
-        segmentBeam = iteration.Beam;
-        completedSearchDepth = Math.Max(completedSearchDepth, depthLimit);
-        SearchNode bestCompleted = segmentBeam
-          .OrderByDescending(node => node.Score)
-          .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
-          .First();
-        principalVariation = bestCompleted.Actions;
-        if (segmentBeam.All(node => node.State.IsFinished || node.State.CurrentTurn != team))
-        {
-          break;
-        }
-      }
-
-      if (!completedAnyDepth)
-      {
-        break;
-      }
-
-      segmentBest = segmentBeam
-        .Where(node => node.Actions.Count > 0)
-        .OrderByDescending(node => node.Score)
-        .ThenBy(node => DescribeActions(node.Actions), StringComparer.Ordinal)
-        .FirstOrDefault();
-    }
-
-    // Keep the uncommitted tail of the last completed local search as a safe continuation when
-    // the shared turn budget expires. It was searched from the exact state reached by the
-    // committed prefix, so this is stronger than inventing extra actions in the verifier.
-    foreach (ICpuGameAction action in carryTail)
-    {
-      if (current.IsFinished || current.CurrentTurn != team || !action.IsLegal(current))
-      {
-        break;
-      }
-      committed.Add(action);
-      current = CpuGameRules.ApplyLegal(current, action);
-    }
-
-    EvaluationBreakdown finalBreakdown = EvaluateCached(
-      current, team, context, evaluatedStates, ref evaluationCacheHits);
-    return [new SearchNode(current, committed, finalBreakdown.Total, finalBreakdown)];
-  }
-
-  private static int GetRecedingPlanningDeadline(CpuSearchSettings settings)
-  {
-    int total = Math.Max(1, settings.MaxSearchMilliseconds);
-    int reserve = Math.Clamp(total / 10, 20, 160);
-    return Math.Max(1, total - reserve);
-  }
-
-  private static int GetNextRecedingSegmentDeadline(
-    Stopwatch stopwatch,
-    CpuSearchSettings settings,
-    int planningDeadlineMilliseconds,
-    int segmentIndex
-  )
-  {
-    int elapsed = (int)Math.Min(int.MaxValue, stopwatch.ElapsedMilliseconds);
-    int remaining = Math.Max(0, planningDeadlineMilliseconds - elapsed);
-    if (remaining <= 0)
-    {
-      return elapsed;
-    }
-
-    double fraction = segmentIndex == 0 ? 0.34 : 0.45;
-    int desired = Math.Max(1, (int)Math.Ceiling(remaining * fraction));
-    int minimumSlice = Math.Clamp(Math.Max(1, settings.MaxSearchMilliseconds) / 14, 30, 140);
-    int maximumSlice = Math.Clamp(Math.Max(1, settings.MaxSearchMilliseconds) / 3, 80, 500);
-    int slice = Math.Min(remaining, Math.Max(Math.Min(minimumSlice, remaining), Math.Min(maximumSlice, desired)));
-    return Math.Min(planningDeadlineMilliseconds, elapsed + Math.Max(1, slice));
   }
 
   private IReadOnlyList<ScoredAction> SelectSearchCandidatesCached(
@@ -969,6 +760,24 @@ public sealed class CpuPlayer : ICpuPlayer
       return immediateWins;
     }
 
+    if (!Globals.ActionLimitsEnabled)
+    {
+      bool immediateCombat = candidates.Any(candidate => candidate.Action is AttackAction);
+      bool royalEmergency = IsRoyalUnderDirectThreat(state, team);
+      if (immediateCombat || royalEmergency)
+      {
+        ScoredAction[] boardResponses = candidates
+          .Where(candidate => candidate.Action is AttackAction or MoveAction or UseAbilityAction)
+          .ToArray();
+        if (boardResponses.Length > 0)
+        {
+          // Purchases cannot act this turn and therefore cannot improve an immediate exchange.
+          // Resolve the fight / royal emergency first, then reconsider spending from the resulting state.
+          return boardResponses;
+        }
+      }
+    }
+
     ScoredAction[] nearbyNeutralHires = candidates.Where(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" } purchase &&
       IsFullHealthNeutralMercenaryAt(state, purchase.X, purchase.Y) &&
       candidates.Any(other => other.Action is PurchaseAction regular && regular.UnitType != "Mercenary" &&
@@ -1023,6 +832,12 @@ public sealed class CpuPlayer : ICpuPlayer
 
     return candidates;
   }
+
+  private static bool IsRoyalUnderDirectThreat(CpuGameState state, NetworkTeam team) => state.Pieces
+    .Where(piece => piece.Team == team && piece.AttachedToId is null &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category == RuleCategory.Royal)
+    .Any(royal => state.Pieces.Any(enemy => enemy.Team != team && enemy.Team != NetworkTeam.Neutral &&
+      enemy.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, enemy, royal)));
 
   private static bool IsFullHealthNeutralMercenaryAt(CpuGameState state, int x, int y) => state.Pieces.Any(piece =>
     piece.Type == "Mercenary" && piece.Team == NetworkTeam.Neutral && piece.X == x && piece.Y == y &&
@@ -1337,7 +1152,6 @@ public sealed class CpuPlayer : ICpuPlayer
     int parallelism,
     Stopwatch stopwatch,
     CpuSearchSettings settings,
-    int softDeadlineMilliseconds,
     CancellationToken cancellationToken,
     ref int cacheHits
   )
@@ -1352,7 +1166,7 @@ public sealed class CpuPlayer : ICpuPlayer
       List<EvaluatedSearchExpansion> sequential = new(pending.Count);
       foreach (PendingSearchExpansion branch in pending)
       {
-        if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken, softDeadlineMilliseconds))
+        if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
         {
           break;
         }
@@ -1367,7 +1181,7 @@ public sealed class CpuPlayer : ICpuPlayer
     using ThreadLocal<EvaluationContext> workerContexts = new(() => new EvaluationContext(profile, intents, sequentialContext.Cache));
     Parallel.For(0, pending.Count, new ParallelOptions { MaxDegreeOfParallelism = parallelism }, index =>
     {
-      if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken, softDeadlineMilliseconds))
+      if (ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
       {
         return;
       }
@@ -1376,7 +1190,7 @@ public sealed class CpuPlayer : ICpuPlayer
       // Each worker owns its cache. The main cache uses Dictionary and intentionally stays on
       // the coordinator thread; this avoids locks in its hottest lookup path.
       EvaluationBreakdown breakdown = _evaluator.EvaluateWithBreakdown(result, team, workerContexts.Value!);
-      if (!ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken, softDeadlineMilliseconds))
+      if (!ShouldAbortBranchEvaluation(stopwatch, settings, cancellationToken))
       {
         parallel[index] = new EvaluatedSearchExpansion(branch, result, breakdown);
       }
@@ -1393,10 +1207,9 @@ public sealed class CpuPlayer : ICpuPlayer
   private static bool ShouldAbortBranchEvaluation(
     Stopwatch stopwatch,
     CpuSearchSettings settings,
-    CancellationToken cancellationToken,
-    int softDeadlineMilliseconds
+    CancellationToken cancellationToken
   ) => cancellationToken.IsCancellationRequested ||
-    stopwatch.ElapsedMilliseconds >= GetHardDeadlineMilliseconds(settings, softDeadlineMilliseconds);
+    stopwatch.ElapsedMilliseconds >= GetHardDeadlineMilliseconds(settings);
 
   /// <summary>
   /// The advertised limit is a soft search deadline: no new branch wave begins after it.
@@ -1404,15 +1217,11 @@ public sealed class CpuPlayer : ICpuPlayer
   /// the CPU can return its best completed line instead of discarding useful work at the exact
   /// millisecond boundary. This is intentionally short even for Best to keep the UI responsive.
   /// </summary>
-  private static int GetHardDeadlineMilliseconds(CpuSearchSettings settings) =>
-    GetHardDeadlineMilliseconds(settings, Math.Max(1, settings.MaxSearchMilliseconds));
-
-  private static int GetHardDeadlineMilliseconds(CpuSearchSettings settings, int requestedSoftDeadline)
+  private static int GetHardDeadlineMilliseconds(CpuSearchSettings settings)
   {
-    int globalSoftDeadline = Math.Max(1, settings.MaxSearchMilliseconds);
-    int softDeadline = Math.Clamp(requestedSoftDeadline, 1, globalSoftDeadline);
-    int grace = Math.Clamp(globalSoftDeadline / 25, 12, 80);
-    return Math.Min(globalSoftDeadline + grace, softDeadline + grace);
+    int softDeadline = Math.Max(1, settings.MaxSearchMilliseconds);
+    int grace = Math.Clamp(softDeadline / 25, 12, 80);
+    return softDeadline + grace;
   }
 
   private static bool ShouldStop(
@@ -1423,27 +1232,12 @@ public sealed class CpuPlayer : ICpuPlayer
     out bool timedOut,
     out bool nodeBudgetReached,
     out bool cancelled
-  ) => ShouldStop(
-    stopwatch, settings, nodesGenerated, cancellationToken, Math.Max(1, settings.MaxSearchMilliseconds),
-    out timedOut, out nodeBudgetReached, out cancelled);
-
-  private static bool ShouldStop(
-    Stopwatch stopwatch,
-    CpuSearchSettings settings,
-    int nodesGenerated,
-    CancellationToken cancellationToken,
-    int softDeadlineMilliseconds,
-    out bool timedOut,
-    out bool nodeBudgetReached,
-    out bool cancelled
   )
   {
     cancelled = cancellationToken.IsCancellationRequested;
-    int globalDeadline = Math.Max(1, settings.MaxSearchMilliseconds);
-    timedOut = stopwatch.ElapsedMilliseconds >= globalDeadline;
-    bool localDeadlineReached = stopwatch.ElapsedMilliseconds >= Math.Clamp(softDeadlineMilliseconds, 1, globalDeadline);
+    timedOut = stopwatch.ElapsedMilliseconds >= Math.Max(1, settings.MaxSearchMilliseconds);
     nodeBudgetReached = nodesGenerated >= Math.Max(1, settings.MaxSearchNodes);
-    return cancelled || timedOut || localDeadlineReached || nodeBudgetReached;
+    return cancelled || timedOut || nodeBudgetReached;
   }
 
   private static (SearchNode Node, float Score, float OpponentPenalty) ChooseRanked(
