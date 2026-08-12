@@ -142,6 +142,9 @@ internal sealed class Game1 : Game
   private readonly GraphicsDeviceManager _graphics;
   private SpriteBatch _spriteBatch;
   private Texture2D _pixel;
+  private RenderTarget2D _staticBattlefield;
+  private int _staticBattlefieldStamp;
+  private bool _staticBattlefieldDirty = true;
   private SpriteFont _pieceLabelFont;
   private UiRenderer _ui;
   private Board _board;
@@ -149,6 +152,15 @@ internal sealed class Game1 : Game
   private readonly PieceSetup pieceSetup = new();
   private List<Team> _teams = [];
   private Piece selectedPiece;
+  private Piece _cachedSelectedPiece;
+  private Dictionary<(int x, int y), List<(int x, int y)>> _cachedSelectedMovementPaths = [];
+  private HashSet<(int x, int y)> _cachedSelectedMovementSquares = [];
+  private HashSet<(int x, int y)> _cachedSelectedAttackSquares = [];
+  private readonly Dictionary<Piece, (bool CanMove, bool CanAttack)> _cachedUnitActions = [];
+  private TeamName? _cachedActionTeam;
+  private int _gameplayRenderCacheStamp;
+  private bool _gameplayRenderCacheDirty = true;
+  private Rectangle _visibleWorldBounds;
   private MovementAnimation _movementAnimation;
   // Roads are owned improvements: only their owner receives the movement benefit.
   // Neutral roads are reserved for campaign-authored map features and are usable by everyone.
@@ -437,6 +449,7 @@ internal sealed class Game1 : Game
     if (_movementAnimation != null)
     {
       UpdateMovementAnimation(deltaTime);
+      RefreshGameplayRenderCache();
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -451,6 +464,7 @@ internal sealed class Game1 : Game
       }
 
       UpdateCpuTurn(deltaTime);
+      RefreshGameplayRenderCache();
       _previousMouseState = mouse;
       _previousKeyboardState = keyboard;
       base.Update(gameTime);
@@ -697,6 +711,8 @@ internal sealed class Game1 : Game
 
     _previousMouseState = mouse;
     _previousKeyboardState = keyboard;
+
+    RefreshGameplayRenderCache();
 
     base.Update(gameTime);
   }
@@ -2636,6 +2652,7 @@ internal sealed class Game1 : Game
         piece.MarkedTarget = markedTarget;
       }
     }
+    pieceSetup.RefreshOccupancy();
   }
 
   private void ApplyOnlineImprovements(IReadOnlyList<NetworkImprovement> improvements)
@@ -2939,7 +2956,9 @@ internal sealed class Game1 : Game
       return false;
     }
 
-    Dictionary<(int x, int y), List<(int x, int y)>> paths = GetMovementPaths(piece);
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = piece == _cachedSelectedPiece
+      ? _cachedSelectedMovementPaths
+      : GetMovementPaths(piece);
     if (paths.TryGetValue(clickedSquare, out path))
     {
       return true;
@@ -3137,29 +3156,10 @@ internal sealed class Game1 : Game
     return _riverBridges.Contains(TileEdge.Between(first, second));
   }
 
-  private HashSet<(int x, int y)> GetValidMovementHighlightSquares(Piece piece)
-  {
-    HashSet<(int x, int y)> highlightedSquares = [];
-    if (!CanMoveThisTurn(piece))
-    {
-      return highlightedSquares;
-    }
-
-    foreach ((int x, int y) destination in GetMovementPaths(piece).Keys)
-    {
-      for (int footprintY = 0; footprintY < piece.Definition.Size.y; footprintY++)
-      {
-        for (int footprintX = 0; footprintX < piece.Definition.Size.x; footprintX++)
-        {
-          highlightedSquares.Add((destination.x + footprintX, destination.y + footprintY));
-        }
-      }
-    }
-
-    return highlightedSquares;
-  }
-
-  private HashSet<(int x, int y)> GetValidAttackHighlightSquares(Piece piece)
+  private HashSet<(int x, int y)> GetValidAttackHighlightSquares(
+    Piece piece,
+    Dictionary<(int x, int y), List<(int x, int y)>> movementPaths = null
+  )
   {
     HashSet<(int x, int y)> highlightedSquares = [];
     bool engineerDemolition = piece.Definition.Type == PieceType.Engineer &&
@@ -3191,7 +3191,7 @@ internal sealed class Game1 : Game
 
     if (piece.Definition.Type == PieceType.Elephant)
     {
-      Dictionary<(int x, int y), List<(int x, int y)>> movementPaths = GetMovementPaths(piece);
+      movementPaths ??= GetMovementPaths(piece);
       foreach (Piece target in pieceSetup.Pieces)
       {
         if (target == piece || target.AttachedTo != null || target.Team == piece.Team)
@@ -3251,26 +3251,17 @@ internal sealed class Game1 : Game
   }
 
   private Piece GetUnattachedPieceAt((int x, int y) position, TeamName team) =>
-    pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.Team == team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
-    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.Team == team && piece.AttachedTo is null && piece.Occupies(position));
+    pieceSetup.GetUnattachedPieceAt(position, team);
 
   private Piece GetUnattachedPieceAt((int x, int y) position) =>
-    pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
-    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.AttachedTo is null && piece.Occupies(position));
+    pieceSetup.GetUnattachedPieceAt(position);
 
   private Piece GetUnattachedHostilePieceAt((int x, int y) position, TeamName team) =>
-    pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.Team != team && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
-    ?? pieceSetup.Pieces.FirstOrDefault(piece =>
-      piece.Team != team && piece.AttachedTo is null && piece.Occupies(position));
+    pieceSetup.GetUnattachedHostilePieceAt(position, team);
 
-  private bool HasAvailableAttack(Piece piece)
+  private bool HasAvailableAttack(Piece piece, IEnumerable<(int x, int y)> targets)
   {
-    foreach ((int x, int y) targetPosition in GetValidAttackHighlightSquares(piece))
+    foreach ((int x, int y) targetPosition in targets)
     {
       if (piece.Definition.Type is PieceType.Elephant or PieceType.Engineer ||
           _barricades.ContainsKey(targetPosition) ||
@@ -3287,17 +3278,18 @@ internal sealed class Game1 : Game
   private void DrawAvailableUnitHighlights(int cellSize)
   {
     if (_screen != Screen.Playing || _initialBuyPhase is not null || _royalAwaitingPlacement is not null ||
-        _movementAnimation is not null || !IsOnlineLocalTurn())
+        _movementAnimation is not null || !IsOnlineLocalTurn() || IsCpuTurn() ||
+        _cachedActionTeam != Team.CurrentTurn)
     {
       return;
     }
 
-    foreach (Piece piece in pieceSetup.Pieces.Where(piece =>
-      piece.Team == Team.CurrentTurn && piece.AttachedTo is null))
+    foreach ((Piece piece, (bool CanMove, bool CanAttack) actions) in _cachedUnitActions)
     {
       Rectangle bounds = GetPieceWorldBounds(piece, cellSize);
-      bool canMove = CanMoveThisTurn(piece) && GetMovementPaths(piece).Count > 0;
-      bool canAttack = HasAvailableAttack(piece);
+      if (!IsVisibleWorldBounds(bounds)) continue;
+      bool canMove = actions.CanMove;
+      bool canAttack = actions.CanAttack;
 
       if (canMove && piece != selectedPiece)
       {
@@ -3313,6 +3305,82 @@ internal sealed class Game1 : Game
     }
   }
 
+  // Highlight/path generation is deliberately kept out of Draw. The stamp catches
+  // every state that can affect legal movement or attacks, including online snapshots.
+  private void RefreshGameplayRenderCache()
+  {
+    int stamp = GetGameplayRenderCacheStamp();
+    if (!_gameplayRenderCacheDirty && stamp == _gameplayRenderCacheStamp) return;
+
+    _gameplayRenderCacheDirty = false;
+    _gameplayRenderCacheStamp = stamp;
+    _cachedSelectedPiece = null;
+    _cachedSelectedMovementPaths = [];
+    _cachedSelectedMovementSquares = [];
+    _cachedSelectedAttackSquares = [];
+    _cachedUnitActions.Clear();
+    _cachedActionTeam = null;
+
+    // CPU and remote turns never need local action affordances. This keeps rendering
+    // work from contending with CPU planning and avoids showing unusable overlays.
+    if (_screen != Screen.Playing || IsCpuTurn() || !IsOnlineLocalTurn() ||
+        _initialBuyPhase is not null || _royalAwaitingPlacement is not null ||
+        _movementAnimation is not null) return;
+
+    foreach (Piece piece in pieceSetup.Pieces.Where(piece =>
+      piece.Team == Team.CurrentTurn && piece.AttachedTo is null))
+    {
+      Dictionary<(int x, int y), List<(int x, int y)>> paths = CanMoveThisTurn(piece)
+        ? GetMovementPaths(piece)
+        : [];
+      HashSet<(int x, int y)> attacks = GetValidAttackHighlightSquares(piece, paths);
+      _cachedUnitActions[piece] = (paths.Count > 0, HasAvailableAttack(piece, attacks));
+
+      if (piece == selectedPiece && CanActWithPiece(piece))
+      {
+        _cachedSelectedPiece = piece;
+        _cachedSelectedMovementPaths = paths;
+        _cachedSelectedMovementSquares = GetMovementHighlightSquares(piece, paths.Keys);
+        _cachedSelectedAttackSquares = attacks;
+      }
+    }
+    _cachedActionTeam = Team.CurrentTurn;
+  }
+
+  private int GetGameplayRenderCacheStamp()
+  {
+    HashCode hash = new();
+    hash.Add((int)_screen); hash.Add((int)Team.CurrentTurn); hash.Add(selectedPiece);
+    hash.Add((int)_selectedEngineerAbility); hash.Add(_initialBuyPhase is not null);
+    hash.Add(_royalAwaitingPlacement is not null); hash.Add(_movementAnimation is not null);
+    hash.Add(_board); hash.Add(_terrain); hash.Add((int)_gameMode); hash.Add(_playerCount);
+    hash.Add(_treasurePosition); hash.Add(_treasureCarrierId);
+    foreach (Piece piece in pieceSetup.Pieces)
+    {
+      hash.Add(piece); hash.Add(piece.Position); hash.Add((int)piece.Team);
+      hash.Add(piece.AttachedTo); hash.Add((int)piece.AttachmentKind);
+      hash.Add(piece.CurrentHealth); hash.Add(piece.HasMovedThisTurn); hash.Add(piece.HasAttackedThisTurn);
+      hash.Add(piece.CavalierFollowUpMoveAvailable); hash.Add(piece.EngineerBuildsThisTurn);
+      hash.Add(piece.MarkedTarget);
+    }
+    foreach (var road in _roads) hash.Add(road);
+    foreach (var barricade in _barricades) hash.Add(barricade);
+    foreach (var mine in _mines) hash.Add(mine);
+    foreach (var bridge in _riverBridges) hash.Add(bridge);
+    foreach (var lakeTile in _restoredLakeTiles) hash.Add(lakeTile);
+    return hash.ToHashCode();
+  }
+
+  private static HashSet<(int x, int y)> GetMovementHighlightSquares(
+    Piece piece, IEnumerable<(int x, int y)> destinations)
+  {
+    HashSet<(int x, int y)> squares = [];
+    foreach ((int x, int y) destination in destinations)
+    for (int y = 0; y < piece.Definition.Size.y; y++)
+    for (int x = 0; x < piece.Definition.Size.x; x++) squares.Add((destination.x + x, destination.y + y));
+    return squares;
+  }
+
   private void SelectPiece(Piece piece, bool allowAttachedPiece = false)
   {
     if (piece.AttachedTo != null && !allowAttachedPiece)
@@ -3321,6 +3389,7 @@ internal sealed class Game1 : Game
     }
 
     selectedPiece = piece;
+    _gameplayRenderCacheDirty = true;
     Console.WriteLine($"Selected {selectedPiece.Team} {selectedPiece.Definition.Type}.");
   }
 
@@ -4614,6 +4683,7 @@ internal sealed class Game1 : Game
       if (!pieceSetup.Pieces.Contains(target) || spy.AttachedTo is not null) continue;
       Rectangle spyBounds = GetPieceWorldBounds(spy, cellSize);
       Rectangle targetBounds = GetPieceWorldBounds(target, cellSize);
+      if (!IsVisibleWorldBounds(Rectangle.Union(spyBounds, targetBounds))) continue;
       DrawWorldLine(
         new Vector2(spyBounds.Center.X, spyBounds.Center.Y),
         new Vector2(targetBounds.Center.X, targetBounds.Center.Y),
@@ -4633,6 +4703,21 @@ internal sealed class Game1 : Game
   {
     foreach (PlanningMark mark in _planningMarks)
     {
+      Rectangle startBounds = new(
+        (mark.Start.x - _board.MinX) * cellSize,
+        (mark.Start.y - _board.MinY) * cellSize,
+        cellSize,
+        cellSize
+      );
+      Rectangle markBounds = mark.End.HasValue
+        ? Rectangle.Union(startBounds, new Rectangle(
+          (mark.End.Value.x - _board.MinX) * cellSize,
+          (mark.End.Value.y - _board.MinY) * cellSize,
+          cellSize,
+          cellSize
+        ))
+        : startBounds;
+      if (!IsVisibleWorldBounds(markBounds)) continue;
       DrawPlanningMark(mark.Start, mark.End, mark.Path, cellSize, UiTheme.GoldBright, 0.136f);
     }
 
@@ -4697,6 +4782,7 @@ internal sealed class Game1 : Game
     {
       if (piece.AttachedTo != null)
       {
+        if (!IsVisibleWorldBounds(GetAttachmentBadgeWorldBounds(piece, cellSize))) continue;
         Rectangle badgeBounds = GetScreenBounds(GetAttachmentBadgeWorldBounds(piece, cellSize), cameraTransform);
         DrawRotatedWorldText(
           UiText.BuildPieceLabel(piece.Definition),
@@ -4729,6 +4815,7 @@ internal sealed class Game1 : Game
       }
 
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
+      if (!IsVisibleWorldBounds(pieceBounds)) continue;
       Rectangle screenBounds = GetScreenBounds(pieceBounds, cameraTransform);
       Vector2 screenCenter = new(screenBounds.Center.X, screenBounds.Center.Y);
       DrawRotatedWorldText(
@@ -5010,6 +5097,97 @@ internal sealed class Game1 : Game
       * GetBoardRotationTransform()
       * Matrix.CreateScale(_zoom)
       * Matrix.CreateTranslation(screenCentre.X, screenCentre.Y, 0);
+  }
+
+  private Rectangle GetVisibleWorldBounds(Matrix cameraTransform, int margin = 96)
+  {
+    Matrix inverse = Matrix.Invert(cameraTransform);
+    Viewport viewport = GraphicsDevice.Viewport;
+    Vector2[] corners =
+    [
+      Vector2.Transform(Vector2.Zero, inverse),
+      Vector2.Transform(new Vector2(viewport.Width, 0), inverse),
+      Vector2.Transform(new Vector2(0, viewport.Height), inverse),
+      Vector2.Transform(new Vector2(viewport.Width, viewport.Height), inverse)
+    ];
+    float left = corners.Min(point => point.X) - margin;
+    float right = corners.Max(point => point.X) + margin;
+    float top = corners.Min(point => point.Y) - margin;
+    float bottom = corners.Max(point => point.Y) + margin;
+    return new Rectangle(
+      (int)MathF.Floor(left), (int)MathF.Floor(top),
+      Math.Max(1, (int)MathF.Ceiling(right - left)), Math.Max(1, (int)MathF.Ceiling(bottom - top))
+    );
+  }
+
+  private bool IsVisibleWorldBounds(Rectangle bounds) => _visibleWorldBounds.Intersects(bounds);
+
+  private void EnsureStaticBattlefield()
+  {
+    int stamp = HashCode.Combine(_board, _terrain, _gameMode, _playerCount, _campaignTerritories);
+    if (!_staticBattlefieldDirty && _staticBattlefield is not null && !_staticBattlefield.IsDisposed &&
+        stamp == _staticBattlefieldStamp) return;
+
+    _staticBattlefield?.Dispose();
+    _staticBattlefieldStamp = stamp;
+    _staticBattlefieldDirty = false;
+    _staticBattlefield = new RenderTarget2D(
+      GraphicsDevice,
+      _board.BoardArray.GetLength(1) * 64,
+      _board.BoardArray.GetLength(0) * 64,
+      false,
+      SurfaceFormat.Color,
+      DepthFormat.None
+    );
+
+    GraphicsDevice.SetRenderTarget(_staticBattlefield);
+    GraphicsDevice.Clear(Color.Transparent);
+    _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
+    for (int y = 0; y < _board.BoardArray.GetLength(0); y++)
+    for (int x = 0; x < _board.BoardArray.GetLength(1); x++)
+    {
+      if (_board.BoardArray[y, x] != 1) continue;
+      var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
+      Rectangle cellBounds = new(x * 64, y * 64, 64, 64);
+      Color baseCellColour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
+      TeamName? squareOwner = GetSquareOwner(boardPosition);
+      Color territoryColour = squareOwner.HasValue ? UiTheme.GetTeamColour(squareOwner.Value) : UiTheme.NoMansLand;
+      DrawWorldRectangle(cellBounds, Color.Lerp(baseCellColour, territoryColour, territoryTintAmount), 0f);
+
+      if (_gameMode == GameMode.Conquest && IsConquestSquare(boardPosition))
+      {
+        DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0f);
+        DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0f);
+      }
+      else if (_gameMode == GameMode.Dominion && MatchRules.GetDominionControlPoints(_board).Contains(boardPosition))
+      {
+        Rectangle objective = new(cellBounds.Center.X - 13, cellBounds.Center.Y - 13, 26, 26);
+        DrawWorldRectangle(objective, new Color(218, 180, 91, 150), 0f);
+        DrawWorldOutline(objective, UiTheme.GoldBright, 0f);
+      }
+
+      if (_terrain.IsLake(boardPosition))
+      {
+        DrawWorldRectangle(cellBounds, UiTheme.Lake, 0f);
+        DrawWorldRectangle(new Rectangle(cellBounds.X + 11, cellBounds.Y + 14, cellBounds.Width - 28, 3), UiTheme.LakeHighlight, 0f);
+        DrawWorldRectangle(new Rectangle(cellBounds.X + 24, cellBounds.Y + 35, cellBounds.Width - 34, 3), UiTheme.LakeHighlight, 0f);
+      }
+      else if (_terrain.IsForest(boardPosition))
+      {
+        DrawWorldRectangle(cellBounds, UiTheme.Forest, 0f);
+        DrawWorldRectangle(new Rectangle(cellBounds.X + 12, cellBounds.Y + 10, 14, 24), UiTheme.ForestDark, 0f);
+        DrawWorldRectangle(new Rectangle(cellBounds.Right - 26, cellBounds.Bottom - 34, 14, 24), UiTheme.ForestDark, 0f);
+      }
+
+      var rightPosition = (x: boardPosition.x + 1, y: boardPosition.y);
+      var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
+      if (_terrain.HasRiverBetween(boardPosition, rightPosition))
+        DrawWorldRectangle(new Rectangle(cellBounds.Right - 3, cellBounds.Y, 6, cellBounds.Height), UiTheme.River, 0f);
+      if (_terrain.HasRiverBetween(boardPosition, belowPosition))
+        DrawWorldRectangle(new Rectangle(cellBounds.X, cellBounds.Bottom - 3, cellBounds.Width, 6), UiTheme.River, 0f);
+    }
+    _spriteBatch.End();
+    GraphicsDevice.SetRenderTarget(null);
   }
 
   private Matrix GetBoardRotationTransform()
@@ -9075,18 +9253,31 @@ internal sealed class Game1 : Game
     }
 
     Matrix cameraTransform = CreateCameraTransform();
+    _visibleWorldBounds = GetVisibleWorldBounds(cameraTransform);
+    EnsureStaticBattlefield();
 
     _spriteBatch.Begin(SpriteSortMode.FrontToBack, transformMatrix: cameraTransform);
 
     /* Build Board */
     var BoardArray = _board.BoardArray;
     int cellSize = 64;
-    HashSet<(int x, int y)> validMovementSquares = selectedPiece == null
-      ? []
-      : GetValidMovementHighlightSquares(selectedPiece);
-    HashSet<(int x, int y)> validAttackSquares = selectedPiece == null
-      ? []
-      : GetValidAttackHighlightSquares(selectedPiece);
+    bool hasControllableSelectedCache = selectedPiece is not null &&
+      selectedPiece == _cachedSelectedPiece && CanActWithPiece(selectedPiece);
+    HashSet<(int x, int y)> validMovementSquares = hasControllableSelectedCache
+      ? _cachedSelectedMovementSquares
+      : [];
+    HashSet<(int x, int y)> validAttackSquares = hasControllableSelectedCache
+      ? _cachedSelectedAttackSquares
+      : [];
+
+    Rectangle cachedSource = Rectangle.Intersect(
+      _visibleWorldBounds,
+      new Rectangle(0, 0, _staticBattlefield.Width, _staticBattlefield.Height)
+    );
+    if (!cachedSource.IsEmpty)
+    {
+      _spriteBatch.Draw(_staticBattlefield, cachedSource, cachedSource, Color.White, 0f, Vector2.Zero, SpriteEffects.None, 0.1f);
+    }
 
     for (int y = 0; y < BoardArray.GetLength(0); y++)
     {
@@ -9095,65 +9286,10 @@ internal sealed class Game1 : Game
         if (BoardArray[y, x] == 1)
         {
           var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
+          Rectangle cellBounds = new(x * cellSize, y * cellSize, cellSize, cellSize);
+          if (!IsVisibleWorldBounds(cellBounds)) continue;
           bool isValidMove = validMovementSquares.Contains(boardPosition);
           bool isValidAttack = validAttackSquares.Contains(boardPosition);
-
-          Color baseCellColour =
-            (x + y) % 2 == 0
-            ? UiTheme.DarkBoardCell
-            : UiTheme.LightBoardCell;
-          TeamName? squareOwner = GetSquareOwner(boardPosition);
-          Color territoryColour = squareOwner.HasValue
-            ? UiTheme.GetTeamColour(squareOwner.Value)
-            : UiTheme.NoMansLand;
-
-          Rectangle cellBounds = new(x * cellSize, y * cellSize, cellSize, cellSize);
-          DrawWorldRectangle(
-            cellBounds,
-            Color.Lerp(baseCellColour, territoryColour, territoryTintAmount),
-            0.1f
-          );
-
-          if (_gameMode == GameMode.Conquest && IsConquestSquare(boardPosition))
-          {
-            DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0.101f);
-            DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0.102f);
-          }
-          else if (_gameMode == GameMode.Dominion && MatchRules.GetDominionControlPoints(_board).Contains(boardPosition))
-          {
-            Rectangle objective = new(cellBounds.Center.X - 13, cellBounds.Center.Y - 13, 26, 26);
-            DrawWorldRectangle(objective, new Color(218, 180, 91, 150), 0.108f);
-            DrawWorldOutline(objective, UiTheme.GoldBright, 0.109f);
-          }
-
-          if (_terrain.IsLake(boardPosition))
-          {
-            DrawWorldRectangle(cellBounds, UiTheme.Lake, 0.101f);
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.X + 11, cellBounds.Y + 14, cellBounds.Width - 28, 3),
-              UiTheme.LakeHighlight,
-              0.102f
-            );
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.X + 24, cellBounds.Y + 35, cellBounds.Width - 34, 3),
-              UiTheme.LakeHighlight,
-              0.102f
-            );
-          }
-          else if (_terrain.IsForest(boardPosition))
-          {
-            DrawWorldRectangle(cellBounds, UiTheme.Forest, 0.101f);
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.X + 12, cellBounds.Y + 10, 14, 24),
-              UiTheme.ForestDark,
-              0.102f
-            );
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.Right - 26, cellBounds.Bottom - 34, 14, 24),
-              UiTheme.ForestDark,
-              0.102f
-            );
-          }
 
           if (_restoredLakeTiles.Contains(boardPosition))
           {
@@ -9168,11 +9304,6 @@ internal sealed class Game1 : Game
           var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
           if (_terrain.HasRiverBetween(boardPosition, rightPosition))
           {
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.Right - 3, cellBounds.Y, 6, cellBounds.Height),
-              UiTheme.River,
-              0.105f
-            );
             if (HasRiverBridgeBetween(boardPosition, rightPosition))
             {
               DrawWorldRectangle(
@@ -9185,11 +9316,6 @@ internal sealed class Game1 : Game
 
           if (_terrain.HasRiverBetween(boardPosition, belowPosition))
           {
-            DrawWorldRectangle(
-              new Rectangle(cellBounds.X, cellBounds.Bottom - 3, cellBounds.Width, 6),
-              UiTheme.River,
-              0.105f
-            );
             if (HasRiverBridgeBetween(boardPosition, belowPosition))
             {
               DrawWorldRectangle(
@@ -9278,7 +9404,7 @@ internal sealed class Game1 : Game
     DrawPurchasePlacementPreview(cellSize);
     DrawRoyalPlacementPreview(cellSize);
 
-    if (selectedPiece != null)
+    if (selectedPiece != null && IsVisibleWorldBounds(GetPieceWorldBounds(selectedPiece, cellSize)))
     {
       DrawWorldOutline(GetPieceWorldBounds(selectedPiece, cellSize), UiTheme.SelectionOutline, 0.134f);
     }
@@ -9290,6 +9416,7 @@ internal sealed class Game1 : Game
       .OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
     {
       Rectangle pieceBounds = GetPieceWorldBounds(piece, cellSize);
+      if (!IsVisibleWorldBounds(pieceBounds)) continue;
       Color colour = UiTheme.GetTeamColour(piece.Team);
       float pieceDepth = piece.Definition.Type == PieceType.Farm ? 0.108f : 0.12f;
 
@@ -9323,6 +9450,7 @@ internal sealed class Game1 : Game
     foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo != null))
     {
       Rectangle badge = GetAttachmentBadgeWorldBounds(attachment, cellSize);
+      if (!IsVisibleWorldBounds(badge)) continue;
       Color outline = attachment.AttachmentKind == AttachmentKind.Guard ? UiTheme.Gold : UiTheme.TextPrimary;
       DrawWorldRectangle(badge, UiTheme.GetTeamColour(attachment.Team), 0.125f);
       DrawWorldOutline(badge, outline, 0.126f);

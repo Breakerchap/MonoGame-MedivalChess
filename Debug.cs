@@ -8,6 +8,10 @@ using MedivalChess.Shared;
 internal sealed class PieceSetup
 {
   private readonly List<Piece> _pieces = new();
+  // A square can temporarily contain a farm and a unit, or an attached unit and
+  // its host. Keep the small local list so GetPieceAt preserves its historical
+  // priority rules without repeatedly scanning the entire army.
+  private readonly Dictionary<(int x, int y), List<Piece>> _occupants = [];
 
   internal IReadOnlyList<Piece> Pieces => _pieces;
 
@@ -17,11 +21,20 @@ internal sealed class PieceSetup
 
   internal Piece GetPieceAt((int x, int y) position)
   {
-    return _pieces.Find(piece => piece.AttachedTo == null && piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
-      ?? _pieces.Find(piece => piece.Definition.Type != PieceType.Farm && piece.Occupies(position))
-      ?? _pieces.Find(piece => piece.AttachedTo == null && piece.Occupies(position))
-      ?? _pieces.Find(piece => piece.Occupies(position));
+    return FindOccupant(position, piece => piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm)
+      ?? FindOccupant(position, piece => piece.Definition.Type != PieceType.Farm)
+      ?? FindOccupant(position, piece => piece.AttachedTo is null)
+      ?? FindOccupant(position, _ => true);
   }
+
+  internal Piece GetUnattachedPieceAt((int x, int y) position, TeamName? team = null) =>
+    FindOccupant(position, piece => piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm &&
+      (!team.HasValue || piece.Team == team.Value))
+    ?? FindOccupant(position, piece => piece.AttachedTo is null && (!team.HasValue || piece.Team == team.Value));
+
+  internal Piece GetUnattachedHostilePieceAt((int x, int y) position, TeamName team) =>
+    FindOccupant(position, piece => piece.AttachedTo is null && piece.Team != team && piece.Definition.Type != PieceType.Farm)
+    ?? FindOccupant(position, piece => piece.AttachedTo is null && piece.Team != team);
 
   internal bool IsFootprintClear(
     PieceDefinition definition,
@@ -67,17 +80,21 @@ internal sealed class PieceSetup
       }
     }
 
-    return _pieces.Remove(piece);
+    bool removed = _pieces.Remove(piece);
+    if (removed) RebuildOccupancy();
+    return removed;
   }
 
   internal void AddPiece(Piece piece)
   {
     _pieces.Add(piece);
+    AddToOccupancy(piece);
   }
 
   internal void ClearPieces()
   {
     _pieces.Clear();
+    _occupants.Clear();
   }
 
   internal void MovePiece(Piece piece, (int x, int y) destination)
@@ -90,6 +107,7 @@ internal sealed class PieceSetup
       attachedPiece.Position = destination;
       attachedPiece.HasMovedThisTurn = true;
     }
+    RebuildOccupancy();
   }
 
   internal bool Attach(Piece attachment, Piece host, AttachmentKind kind)
@@ -117,7 +135,7 @@ internal sealed class PieceSetup
     attachment.AttachedTo = host;
     attachment.AttachmentKind = kind;
     attachment.Position = host.Position;
-
+    RebuildOccupancy();
     return true;
   }
 
@@ -125,6 +143,7 @@ internal sealed class PieceSetup
   {
     piece.AttachedTo = null;
     piece.AttachmentKind = AttachmentKind.None;
+    RebuildOccupancy();
   }
 
   internal Piece GetAttachedPiece(Piece host, AttachmentKind kind)
@@ -149,6 +168,36 @@ internal sealed class PieceSetup
     }
 
     _pieces[index] = replacement;
+    RebuildOccupancy();
+  }
+
+  // Network snapshots set attachment metadata in a second pass after all units exist.
+  internal void RefreshOccupancy() => RebuildOccupancy();
+
+  private Piece FindOccupant((int x, int y) position, System.Predicate<Piece> predicate)
+  {
+    return _occupants.TryGetValue(position, out List<Piece> occupants)
+      ? occupants.Find(predicate)
+      : null;
+  }
+
+  private void AddToOccupancy(Piece piece)
+  {
+    foreach ((int x, int y) square in piece.OccupiedSquares())
+    {
+      if (!_occupants.TryGetValue(square, out List<Piece> occupants))
+      {
+        occupants = [];
+        _occupants[square] = occupants;
+      }
+      occupants.Add(piece);
+    }
+  }
+
+  private void RebuildOccupancy()
+  {
+    _occupants.Clear();
+    foreach (Piece piece in _pieces) AddToOccupancy(piece);
   }
 
   internal List<Team> CreateTeams(int playerCount = 2)
