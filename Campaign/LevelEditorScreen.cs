@@ -510,7 +510,13 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.TeamUnitNext, ">", UiButtonTone.Neutral);
     _ui.CenterTextFitted(palette.DisplayName.ToUpperInvariant(), layout.TeamUnitLabel, UiTheme.TextPrimary, 0.62f, 0.45f, 2);
     _ui.Button(layout.TeamUnitToggle, disabled ? "UNIT DISABLED" : "UNIT ALLOWED", disabled ? UiButtonTone.Danger : UiButtonTone.Primary, false, 0.61f);
-    _ui.TextWrapped("Team-level buying and available-unit lists override this global rule. Disable abilities or a unit here to create hard campaign restrictions.", layout.RulesHelp, UiTheme.TextMuted, 0.62f);
+    _ui.TextFitted("ALLOWED PACKS", new Vector2(layout.RulesHelp.X, layout.RulesHelp.Y), layout.RulesHelp.Width, UiTheme.GoldBright, 0.58f, 0.40f);
+    IReadOnlySet<Pack> allowedPacks = PackRules.GetAllowedPacks(rules.AllowedPacks);
+    foreach ((Pack pack, Rectangle bounds) in GetRestrictionPackButtons(layout))
+    {
+      bool allowed = allowedPacks.Contains(pack);
+      _ui.Button(bounds, pack.ToString().ToUpperInvariant(), allowed ? UiButtonTone.Primary : UiButtonTone.Neutral, allowed, 0.48f);
+    }
   }
 
   private void DrawUnitStatSettings(EditorLayout layout)
@@ -950,7 +956,29 @@ internal sealed class LevelEditorScreen
     {
       IReadOnlyList<(string identifier, PieceDefinition definition)> buyPalette = GetPurchasableUnitPalette();
       string type = buyPalette[_restrictionUnitIndex % buyPalette.Count].identifier;
-      State.UpdateScenario(_ => ToggleUnit(State.Level.Restrictions.DisabledUnitTypes, type));
+      State.UpdateRestrictions(rules => ToggleUnit(rules.DisabledUnitTypes, type));
+      return true;
+    }
+    foreach ((Pack pack, Rectangle bounds) in GetRestrictionPackButtons(layout))
+    {
+      if (!bounds.Contains(point)) continue;
+      IReadOnlySet<Pack> allowed = PackRules.GetAllowedPacks(State.Level.Restrictions.AllowedPacks);
+      if (allowed.Contains(pack) && allowed.Count <= 1)
+      {
+        _status = "A level must keep at least one unit pack enabled.";
+        return true;
+      }
+      State.UpdateRestrictions(rules =>
+      {
+        HashSet<Pack> updated = PackRules.GetAllowedPacks(rules.AllowedPacks).ToHashSet();
+        if (!updated.Add(pack)) updated.Remove(pack);
+        rules.AllowedPacks = PackRules.All.Where(updated.Contains).Select(value => value.ToString()).ToList();
+      });
+      _unitPaletteIndex = 0;
+      _restrictionUnitIndex = 0;
+      _unitCataloguePage = 0;
+      _expandedCatalogueUnitId = null;
+      _status = $"{pack} pack {(PackRules.GetAllowedPacks(State.Level.Restrictions.AllowedPacks).Contains(pack) ? "enabled" : "disabled")}.";
       return true;
     }
     return false;
@@ -1322,6 +1350,26 @@ internal sealed class LevelEditorScreen
     _settingsTeam = teams[(current + direction + teams.Length) % teams.Length];
   }
 
+  private static IReadOnlyList<(Pack pack, Rectangle bounds)> GetRestrictionPackButtons(EditorLayout layout)
+  {
+    IReadOnlyList<Pack> packs = PackRules.All;
+    Rectangle area = layout.RulesHelp;
+    const int columns = 4;
+    const int gap = 3;
+    int top = area.Y + 17;
+    int availableHeight = Math.Max(20, area.Bottom - top);
+    int rowHeight = Math.Max(18, (availableHeight - gap) / 2);
+    int width = Math.Max(24, (area.Width - gap * (columns - 1)) / columns);
+    List<(Pack pack, Rectangle bounds)> result = [];
+    for (int index = 0; index < packs.Count; index++)
+    {
+      int row = index / columns;
+      int column = index % columns;
+      result.Add((packs[index], new Rectangle(area.X + column * (width + gap), top + row * (rowHeight + gap), width, rowHeight)));
+    }
+    return result;
+  }
+
   private void CycleRestrictionUnit(int direction)
   {
     _restrictionUnitIndex = (_restrictionUnitIndex + direction + UnitRules.Purchasable.Count) % UnitRules.Purchasable.Count;
@@ -1335,8 +1383,10 @@ internal sealed class LevelEditorScreen
   private IReadOnlyList<UnitCatalogueEntry> GetUnitCatalogue()
   {
     List<UnitCatalogueEntry> catalogue = [];
+    IReadOnlySet<Pack> allowedPacks = PackRules.GetAllowedPacks(State.Level.Restrictions.AllowedPacks);
     foreach (PieceDefinition native in PieceDefinitions.All)
     {
+      if (!allowedPacks.Contains(native.Pack)) continue;
       if (!CampaignUnitResolver.TryResolve(State.Level, native.Identifier, null, out PieceDefinition definition)) continue;
       CampaignUnitTemplateOverrideDefinition? unitOverride = State.Level.UnitOverrides.FirstOrDefault(entry => entry.UnitType == native.Identifier);
       catalogue.Add(new UnitCatalogueEntry(

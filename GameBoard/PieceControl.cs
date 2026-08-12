@@ -12,6 +12,10 @@ internal static class Actions
     return piece.Definition.Movement.shape switch
     {
       Shape.Straight or Shape.Line => ShapeFuncs.OrthogonalStepDirections(),
+      Shape.Diagonal => ShapeFuncs.DiagonalStepDirections(),
+      Shape.LineOrDiagonal => ShapeFuncs.AllLineStepDirections(),
+      Shape.ChessKnight => ShapeFuncs.ChessKnightShape(),
+      Shape.ForwardLine => ShapeFuncs.ForwardShape(piece.Team, 1, false),
       Shape.Any =>
       [
         (1, 0), (-1, 0), (0, 1), (0, -1),
@@ -84,6 +88,10 @@ internal static class Actions
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
     Shape.Line => RuleShape.Line,
+    Shape.Diagonal => RuleShape.Diagonal,
+    Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
+    Shape.ChessKnight => RuleShape.ChessKnight,
+    Shape.ForwardLine => RuleShape.ForwardLine,
     Shape.Forward => RuleShape.Forward,
     Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
@@ -93,7 +101,9 @@ internal static class Actions
 
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
-    var action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
+    (int range, Shape shape) action = isMoving
+      ? (piece.Definition.Movement.range, piece.Definition.Movement.shape)
+      : piece.Definition.AttackShape;
     List<(int x, int y)> squares;
 
     switch (action.shape)
@@ -108,6 +118,22 @@ internal static class Actions
 
       case Shape.Any:
         squares = ShapeFuncs.AnyShape(action.range);
+        break;
+
+      case Shape.Diagonal:
+        squares = ShapeFuncs.DiagonalShape(action.range);
+        break;
+
+      case Shape.LineOrDiagonal:
+        squares = ShapeFuncs.LineOrDiagonalShape(action.range);
+        break;
+
+      case Shape.ChessKnight:
+        squares = ShapeFuncs.ChessKnightShape();
+        break;
+
+      case Shape.ForwardLine:
+        squares = ShapeFuncs.ForwardShape(piece.Team, action.range, false);
         break;
 
       case Shape.Forward:
@@ -138,9 +164,10 @@ internal static class Actions
         return [];
     }
 
-    if (!isMoving && piece.Definition.MinimumAttackRange > 0)
+    int minimumRange = isMoving ? piece.Definition.Movement.Minimum : piece.Definition.MinimumAttackRange;
+    if (minimumRange > 0)
     {
-      squares.RemoveAll(square => ShapeFuncs.Distance(action.shape, square) < piece.Definition.MinimumAttackRange);
+      squares.RemoveAll(square => ShapeFuncs.Distance(action.shape, square) < minimumRange);
     }
 
     return squares;
@@ -192,6 +219,16 @@ internal static class ShapeFuncs
     return [(1, 0), (-1, 0), (0, 1), (0, -1)];
   }
 
+  internal static List<(int x, int y)> DiagonalStepDirections()
+  {
+    return [(1, 1), (1, -1), (-1, 1), (-1, -1)];
+  }
+
+  internal static List<(int x, int y)> AllLineStepDirections()
+  {
+    return [.. OrthogonalStepDirections(), .. DiagonalStepDirections()];
+  }
+
   internal static List<(int x, int y)> StraightShape(int range)
   {
     List<(int x, int y)> validSquares = new();
@@ -224,6 +261,28 @@ internal static class ShapeFuncs
     return validSquares;
   }
 
+  internal static List<(int x, int y)> DiagonalShape(int range)
+  {
+    List<(int x, int y)> validSquares = [];
+    for (int distance = 1; distance <= range; distance++)
+    {
+      validSquares.Add((distance, distance));
+      validSquares.Add((distance, -distance));
+      validSquares.Add((-distance, distance));
+      validSquares.Add((-distance, -distance));
+    }
+    return validSquares;
+  }
+
+  internal static List<(int x, int y)> LineOrDiagonalShape(int range) =>
+    [.. LineShape(range), .. DiagonalShape(range)];
+
+  internal static List<(int x, int y)> ChessKnightShape() =>
+  [
+    (2, 1), (2, -1), (-2, 1), (-2, -1),
+    (1, 2), (1, -2), (-1, 2), (-1, -2)
+  ];
+
   internal static List<(int x, int y)> ForwardShape(TeamName team, int range, bool includeDiagonals)
   {
     List<(int x, int y)> validSquares = new();
@@ -252,7 +311,7 @@ internal static class ShapeFuncs
 
   internal static int Distance(Shape shape, (int x, int y) offset)
   {
-    return shape == Shape.Straight
+    return shape is Shape.Straight or Shape.ChessKnight
       ? Math.Abs(offset.x) + Math.Abs(offset.y)
       : Math.Max(Math.Abs(offset.x), Math.Abs(offset.y));
   }

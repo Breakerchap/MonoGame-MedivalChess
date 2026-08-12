@@ -570,6 +570,12 @@ public sealed class LevelEditorState
     Change("Update scenario", level => update(level.Scenario));
   }
 
+  public void UpdateRestrictions(Action<CampaignRestrictionsDefinition> update)
+  {
+    ArgumentNullException.ThrowIfNull(update);
+    Change("Update restrictions", level => update(level.Restrictions));
+  }
+
   public CampaignObjectiveDefinition AddObjective(bool defeatCondition, CampaignObjectiveType type, NetworkTeam? team)
   {
     CampaignObjectiveDefinition objective = new()

@@ -19,7 +19,12 @@ public static class MovementRules
     movementRangeAt ??= _ => unit.MoveRange;
     int maximumRange = maximumMovementRange ?? unit.MoveRange;
 
-    if (unit.MovePattern == RuleShape.Line)
+    if (unit.MovePattern == RuleShape.ChessKnight)
+    {
+      return FindChessKnightPaths(unit, origin, canLand, landingCost, movementRangeAt, maximumRange);
+    }
+
+    if (unit.MovePattern is RuleShape.Line or RuleShape.Diagonal or RuleShape.LineOrDiagonal)
     {
       return FindLinePaths(
         unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver,
@@ -57,7 +62,7 @@ public static class MovementRules
 
           List<(int x, int y)> nextPath = [.. current.Path, next];
           bestCosts[next] = nextCost;
-          if (canLand(next)) paths[next] = nextPath;
+          if (nextPath.Count >= unit.MinimumMoveRange && canLand(next)) paths[next] = nextPath;
           if (!exceedsMovementRange)
           {
             frontier.Enqueue(new MovementState(next, nextCost, nextPath));
@@ -66,6 +71,34 @@ public static class MovementRules
       }
     }
 
+    return paths;
+  }
+
+  private static Dictionary<(int x, int y), List<(int x, int y)>> FindChessKnightPaths(
+    UnitRule unit,
+    (int x, int y) origin,
+    Func<(int x, int y), bool> canLand,
+    Func<(int x, int y), int> landingCost,
+    Func<(int x, int y), int>? movementRangeAt,
+    int maximumMovementRange
+  )
+  {
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
+    (int x, int y)[] offsets =
+    [
+      (2, 1), (2, -1), (-2, 1), (-2, -1),
+      (1, 2), (1, -2), (-1, 2), (-1, -2)
+    ];
+    foreach ((int x, int y) offset in offsets)
+    {
+      (int x, int y) next = (origin.x + offset.x, origin.y + offset.y);
+      int availableRange = movementRangeAt?.Invoke(next) ?? unit.MoveRange;
+      if (maximumMovementRange < 3 || availableRange < 3 || landingCost(next) > availableRange || !canLand(next))
+      {
+        continue;
+      }
+      paths[next] = [next];
+    }
     return paths;
   }
 
@@ -110,7 +143,7 @@ public static class MovementRules
         }
 
         path.Add(next);
-        if (canLand(next)) paths[next] = [.. path];
+        if (distance >= unit.MinimumMoveRange && canLand(next)) paths[next] = [.. path];
         previous = next;
       }
     }
@@ -130,8 +163,10 @@ public static class MovementRules
   {
     RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
     RuleShape.Line => [(1, 0), (-1, 0), (0, 1), (0, -1)],
+    RuleShape.Diagonal => [(1, 1), (1, -1), (-1, 1), (-1, -1)],
+    RuleShape.LineOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     RuleShape.Any => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
+    RuleShape.Forward or RuleShape.ForwardLine => [TeamRules.GetForwardDirection(team)],
     RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),
     RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     _ => []

@@ -208,6 +208,7 @@ public static partial class CpuGameRules
   private static bool IsLegalPurchase(CpuGameState state, PurchaseAction action)
   {
     if (!UnitRules.TryGet(action.UnitType, out UnitRule rule) || !UnitRules.Purchasable.Contains(rule) ||
+        !PackRules.IsAllowed(action.UnitType, state.Configuration.AllowedPacks) ||
         (rule.Type == "Farm" && !state.Configuration.FarmsEnabled))
     {
       return false;

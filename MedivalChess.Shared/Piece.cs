@@ -122,6 +122,62 @@ public enum Pack
   Chess
 }
 
+public enum PieceCategory
+{
+  Melee,
+  Ranged,
+  Intelligence,
+  Mechanical,
+  Structure,
+  Transport,
+  Royal
+}
+
+/// <summary>Inclusive movement distance range with legacy range/shape accessors.</summary>
+public readonly record struct MovementDefinition
+{
+  public int Minimum { get; }
+  public int Maximum { get; }
+  public Shape Shape { get; }
+
+  // Existing gameplay, CPU, and editor code historically consumed Movement.range/shape.
+  public int range => Maximum;
+  public Shape shape => Shape;
+  public int minRange => Minimum;
+  public int maxRange => Maximum;
+
+  public MovementDefinition(int minimum, int maximum, Shape shape)
+  {
+    if (minimum < 0)
+    {
+      throw new ArgumentOutOfRangeException(nameof(minimum), "Movement range cannot be negative.");
+    }
+    if (maximum < minimum)
+    {
+      throw new ArgumentOutOfRangeException(nameof(maximum), "Movement maximum must be at least its minimum.");
+    }
+
+    Minimum = minimum;
+    Maximum = maximum;
+    Shape = shape;
+  }
+
+  public static implicit operator MovementDefinition((int range, Shape shape) movement) =>
+    new(movement.range == 0 ? 0 : 1, movement.range, movement.shape);
+
+  public static implicit operator MovementDefinition(((int minRange, int maxRange) range, Shape shape) movement) =>
+    new(movement.range.minRange, movement.range.maxRange, movement.shape);
+
+  public static implicit operator (int range, Shape shape)(MovementDefinition movement) =>
+    (movement.Maximum, movement.Shape);
+
+  public void Deconstruct(out int range, out Shape shape)
+  {
+    range = Maximum;
+    shape = Shape;
+  }
+}
+
 /// <summary>Authoritative game-facing unit definition. All unit stats are declared in <see cref="PieceDefinitions"/>.</summary>
 public sealed class PieceDefinition
 {
@@ -138,7 +194,9 @@ public sealed class PieceDefinition
 
   public Pack Pack { get; }
 
-  public ((int minRange, int maxRange), Shape shape) Movement { get; }
+  public PieceCategory Category { get; }
+
+  public MovementDefinition Movement { get; }
 
   public int Attack { get; }
 
@@ -173,21 +231,115 @@ public sealed class PieceDefinition
     string abilityDescription = "",
     string? identifier = null,
     string? displayName = null
+  ) : this(
+    type,
+    GetDefaultCategory(type),
+    pack,
+    movement,
+    attack,
+    health,
+    size,
+    attackRange,
+    attackPattern,
+    cost,
+    abilityDescription,
+    identifier,
+    displayName,
+    abbreviation
+  )
+  {
+  }
+
+  /// <summary>Compatibility constructor for existing gameplay and campaign code.</summary>
+  public PieceDefinition(
+    PieceType type,
+    PieceCategory category,
+    (int range, Shape shape) movement,
+    int attack,
+    int health,
+    (int x, int y) size,
+    AttackRange attackRange,
+    Shape attackPattern,
+    int cost,
+    string abilityDescription = "",
+    string? identifier = null,
+    string? displayName = null,
+    string? abbreviation = null
+  ) : this(
+    type,
+    category,
+    GetDefaultPack(type),
+    movement,
+    attack,
+    health,
+    size,
+    attackRange,
+    attackPattern,
+    cost,
+    abilityDescription,
+    identifier,
+    displayName,
+    abbreviation
+  )
+  {
+  }
+
+  /// <summary>Compatibility overload that preserves a movement minimum when cloning a definition.</summary>
+  public PieceDefinition(
+    PieceType type,
+    PieceCategory category,
+    MovementDefinition movement,
+    int attack,
+    int health,
+    (int x, int y) size,
+    AttackRange attackRange,
+    Shape attackPattern,
+    int cost,
+    string abilityDescription = "",
+    string? identifier = null,
+    string? displayName = null,
+    string? abbreviation = null
+  ) : this(
+    type,
+    category,
+    GetDefaultPack(type),
+    movement,
+    attack,
+    health,
+    size,
+    attackRange,
+    attackPattern,
+    cost,
+    abilityDescription,
+    identifier,
+    displayName,
+    abbreviation
+  )
+  {
+  }
+
+  public PieceDefinition(
+    PieceType type,
+    PieceCategory category,
+    Pack pack,
+    MovementDefinition movement,
+    int attack,
+    int health,
+    (int x, int y) size,
+    AttackRange attackRange,
+    Shape attackPattern,
+    int cost,
+    string abilityDescription = "",
+    string? identifier = null,
+    string? displayName = null,
+    string? abbreviation = null
   )
   {
     Type = type;
-    Identifier = string.IsNullOrWhiteSpace(identifier)
-      ? type.ToString()
-      : identifier;
-
-    DisplayName = string.IsNullOrWhiteSpace(displayName)
-      ? type.ToString()
-      : displayName;
-
-    Abbreviation = string.IsNullOrWhiteSpace(abbreviation)
-      ? null
-      : abbreviation;
-
+    Identifier = string.IsNullOrWhiteSpace(identifier) ? type.ToString() : identifier;
+    DisplayName = string.IsNullOrWhiteSpace(displayName) ? type.ToString() : displayName;
+    Abbreviation = string.IsNullOrWhiteSpace(abbreviation) ? null : abbreviation;
+    Category = category;
     Pack = pack;
     Movement = movement;
     Attack = attack;
@@ -198,6 +350,35 @@ public sealed class PieceDefinition
     Cost = cost;
     AbilityDescription = abilityDescription;
   }
+
+  private static PieceCategory GetDefaultCategory(PieceType type) => type switch
+  {
+    PieceType.Archer or PieceType.Crossbowman or PieceType.Bombard or
+      PieceType.Ninja or PieceType.Dragon or PieceType.Wizard => PieceCategory.Ranged,
+    PieceType.Cannon or PieceType.Catapult or PieceType.Ballista => PieceCategory.Mechanical,
+    PieceType.Spy or PieceType.Engineer => PieceCategory.Intelligence,
+    PieceType.Ox => PieceCategory.Transport,
+    PieceType.Farm => PieceCategory.Structure,
+    PieceType.King or PieceType.Princess or PieceType.Palace or PieceType.Baron or PieceType.Emissary or
+      PieceType.Emperor or PieceType.TerracottaWarrior or PieceType.GoblinRoyalty or PieceType.Phantom or
+      PieceType.Zeus or PieceType.ChessKing => PieceCategory.Royal,
+    _ => PieceCategory.Melee
+  };
+
+  private static Pack GetDefaultPack(PieceType type) => type switch
+  {
+    PieceType.Elephant or PieceType.Ox or PieceType.Ninja or PieceType.Samurai or
+      PieceType.Emperor or PieceType.TerracottaWarrior => Pack.Dynasty,
+    PieceType.Dragon or PieceType.GoblinRoyalty or PieceType.Adventurer or
+      PieceType.Wizard or PieceType.Dragonborn => Pack.Fantasy,
+    PieceType.Skeleton or PieceType.Zombie or PieceType.Flesh or PieceType.Ghoul or PieceType.Phantom => Pack.Undead,
+    PieceType.Chariot or PieceType.Ballista or PieceType.Zeus or PieceType.Heracles or
+      PieceType.Hermes or PieceType.Ares or PieceType.Chimera or PieceType.Pegasus => Pack.Greek,
+    PieceType.Spy or PieceType.Engineer or PieceType.Mercenary => Pack.Modern,
+    PieceType.Pawn or PieceType.ChessKnight or PieceType.Bishop or PieceType.Rook or
+      PieceType.Queen or PieceType.ChessKing => Pack.Chess,
+    _ => Pack.Base
+  };
 }
 
 /// <summary>
@@ -217,7 +398,7 @@ public static class PieceDefinitions
     PieceType.Soldier,
     "Sol",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     15,
     (1, 1),
@@ -230,7 +411,7 @@ public static class PieceDefinitions
     PieceType.Defender,
     "Def",
     Pack.Base,
-    ((2, 2), Shape.Any),
+    ((1, 2), Shape.Any),
     5,
     25,
     (1, 1),
@@ -243,7 +424,7 @@ public static class PieceDefinitions
     PieceType.Archer,
     "Arc",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     10,
     (1, 1),
@@ -269,7 +450,7 @@ public static class PieceDefinitions
     PieceType.Knight,
     "Knt",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     20,
     30,
     (1, 1),
@@ -282,7 +463,7 @@ public static class PieceDefinitions
     PieceType.Crossbowman,
     "Cbo",
     Pack.Base,
-    ((2, 2), Shape.Any),
+    ((1, 2), Shape.Any),
     20,
     15,
     (1, 1),
@@ -295,7 +476,7 @@ public static class PieceDefinitions
     PieceType.Cavalier,
     "Cav",
     Pack.Base,
-    ((4, 4), Shape.Any),
+    ((1, 4), Shape.Any),
     15,
     20,
     (1, 1),
@@ -309,7 +490,7 @@ public static class PieceDefinitions
     PieceType.Cannon,
     "Cn",
     Pack.Base,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     30,
     15,
     (1, 2),
@@ -336,7 +517,7 @@ public static class PieceDefinitions
     PieceType.Bombard,
     "Bom",
     Pack.Base,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     15,
     15,
     (1, 1),
@@ -350,7 +531,7 @@ public static class PieceDefinitions
     PieceType.Guard,
     "Grd",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     25,
     (1, 1),
@@ -391,7 +572,7 @@ public static class PieceDefinitions
     PieceType.Princess,
     "PRI",
     Pack.Base,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     10,
     70,
     (1, 1),
@@ -419,7 +600,7 @@ public static class PieceDefinitions
     PieceType.Baron,
     "BAR",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     80,
     (1, 1),
@@ -433,7 +614,7 @@ public static class PieceDefinitions
     PieceType.Emissary,
     "EMI",
     Pack.Base,
-    ((4, 4), Shape.Any),
+    ((1, 4), Shape.Any),
     5,
     70,
     (1, 1),
@@ -451,7 +632,7 @@ public static class PieceDefinitions
     PieceType.Elephant,
     "Ele",
     Pack.Dynasty,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     60,
     (2, 2),
@@ -465,7 +646,7 @@ public static class PieceDefinitions
     PieceType.Ox,
     "Ox",
     Pack.Dynasty,
-    ((4, 4), Shape.Any),
+    ((1, 4), Shape.Any),
     5,
     25,
     (1, 1),
@@ -479,7 +660,7 @@ public static class PieceDefinitions
     PieceType.Ninja,
     "Nj",
     Pack.Dynasty,
-    ((4, 4), Shape.Straight),
+    ((1, 4), Shape.Straight),
     5,
     10,
     (1, 1),
@@ -493,7 +674,7 @@ public static class PieceDefinitions
     PieceType.Samurai,
     "Sam",
     Pack.Dynasty,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     15,
     15,
     (1, 1),
@@ -507,7 +688,7 @@ public static class PieceDefinitions
     PieceType.Emperor,
     "EP",
     Pack.Dynasty,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     5,
     60,
     (1, 1),
@@ -540,7 +721,7 @@ public static class PieceDefinitions
     PieceType.Dragon,
     "Dra",
     Pack.Fantasy,
-    ((5, 5), Shape.Straight),
+    ((1, 5), Shape.Straight),
     20,
     60,
     (2, 3),
@@ -554,7 +735,7 @@ public static class PieceDefinitions
     PieceType.GoblinRoyalty,
     "GK/GQ/GP/GP",
     Pack.Fantasy,
-    ((2, 2), Shape.Any),
+    ((1, 2), Shape.Any),
     5,
     20,
     (1, 1),
@@ -569,7 +750,7 @@ public static class PieceDefinitions
     PieceType.Adventurer,
     "Adv",
     Pack.Fantasy,
-    ((3, 3), Shape.Straight),
+    ((1, 3), Shape.Straight),
     10,
     20,
     (1, 1),
@@ -596,7 +777,7 @@ public static class PieceDefinitions
     PieceType.Dragonborn,
     "Dgb",
     Pack.Fantasy,
-    ((2, 2), Shape.Any),
+    ((1, 2), Shape.Any),
     20,
     20,
     (1, 1),
@@ -614,7 +795,7 @@ public static class PieceDefinitions
     PieceType.Skeleton,
     "Ske",
     Pack.Undead,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     10,
     10,
     (1, 1),
@@ -659,7 +840,7 @@ public static class PieceDefinitions
    *   PieceType.Ghoul,
    *   "Gou",
    *   Pack.Undead,
-   *   ((2, 2), Shape.Any),
+   *   ((1, 2), Shape.Any),
    *   15,
    *   ???,
    *   (1, 1),
@@ -692,7 +873,7 @@ public static class PieceDefinitions
     PieceType.Chariot,
     "Cha",
     Pack.Greek,
-    ((5, 5), Shape.Line),
+    ((1, 5), Shape.Line),
     15,
     25,
     (1, 1),
@@ -719,7 +900,7 @@ public static class PieceDefinitions
     PieceType.Zeus,
     "ZEU",
     Pack.Greek,
-    ((2, 2), Shape.Any),
+    ((1, 2), Shape.Any),
     15,
     75,
     (1, 1),
@@ -733,7 +914,7 @@ public static class PieceDefinitions
     PieceType.Heracles,
     "Hcl",
     Pack.Greek,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     10,
     15,
     (1, 1),
@@ -746,7 +927,7 @@ public static class PieceDefinitions
     PieceType.Hermes,
     "Hem",
     Pack.Greek,
-    ((4, 4), Shape.Any),
+    ((1, 4), Shape.Any),
     10,
     15,
     (1, 1),
@@ -759,7 +940,7 @@ public static class PieceDefinitions
     PieceType.Ares,
     "Are",
     Pack.Greek,
-    ((2, 2), Shape.Straight),
+    ((1, 2), Shape.Straight),
     30,
     10,
     (1, 1),
@@ -772,7 +953,7 @@ public static class PieceDefinitions
     PieceType.Chimera,
     "Chi",
     Pack.Greek,
-    ((3, 3), Shape.Any),
+    ((1, 3), Shape.Any),
     15,
     35,
     (1, 2),
@@ -784,7 +965,7 @@ public static class PieceDefinitions
 
   public static readonly PieceDefinition Pegasus = new(
     PieceType.Pegasus,
-    "Peg",
+    "",
     Pack.Greek,
     ((2, 4), Shape.Straight),
     10,
@@ -803,7 +984,7 @@ public static class PieceDefinitions
     PieceType.Spy,
     "Spy",
     Pack.Modern,
-    ((5, 5), Shape.Any),
+    ((1, 5), Shape.Any),
     0,
     15,
     (1, 1),
@@ -817,7 +998,7 @@ public static class PieceDefinitions
     PieceType.Engineer,
     "Eng",
     Pack.Modern,
-    ((3, 3), Shape.Any),
+    ((1, 3), Shape.Any),
     0,
     20,
     (1, 1),
@@ -831,7 +1012,7 @@ public static class PieceDefinitions
     PieceType.Mercenary,
     "Mrc",
     Pack.Modern,
-    ((3, 3), Shape.Any),
+    ((1, 3), Shape.Any),
     15,
     20,
     (1, 1),
@@ -854,12 +1035,12 @@ public static class PieceDefinitions
     PieceType.Pawn,
     "Pwn",
     Pack.Chess,
-    ((2, 2), Shape.Forward),
+    ((1, 2), Shape.Forward),
     60,
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
   );
@@ -868,12 +1049,12 @@ public static class PieceDefinitions
     PieceType.ChessKnight,
     "KnC",
     Pack.Chess,
-    ((3, 3), Shape.ChessKnight),
+    ((1, 3), Shape.ChessKnight),
     60,
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement.",
     displayName: "Chess Knight"
@@ -883,12 +1064,12 @@ public static class PieceDefinitions
     PieceType.Bishop,
     "Bsh",
     Pack.Chess,
-    ((8, 8), Shape.Diagonal),
+    ((1, 8), Shape.Diagonal),
     60,
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
   );
@@ -897,12 +1078,12 @@ public static class PieceDefinitions
     PieceType.Rook,
     "Rok",
     Pack.Chess,
-    ((8, 8), Shape.Line),
+    ((1, 8), Shape.Line),
     60,
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
   );
@@ -911,12 +1092,12 @@ public static class PieceDefinitions
     PieceType.Queen,
     "Qun",
     Pack.Chess,
-    ((8, 8), Shape.LineOrDiagonal),
+    ((1, 8), Shape.LineOrDiagonal),
     60,
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
   );
@@ -930,7 +1111,7 @@ public static class PieceDefinitions
     5,
     (1, 1),
     (0, 0),
-    Shape.MoveOnEnemy,
+    Shape.None,
     0,
     "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement.",
     displayName: "Chess King"
@@ -1076,7 +1257,6 @@ public static class PieceDefinitions
 
     // Dynasty
     Emperor,
-    TerracottaWarrior,
 
     // Fantasy
     GoblinRoyalty,
