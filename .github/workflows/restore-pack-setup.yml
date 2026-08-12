@@ -27,14 +27,11 @@ jobs:
         run: |
           set -euo pipefail
 
-          # The feature branch accidentally inherited the later master revert. Restore the
-          # pack-specific files from the tested implementation commit without rewriting history.
+          # Reapply the pack-specific files that were removed when the feature branch
+          # accidentally inherited the master revert. This preserves all commits/history.
           git checkout a9e8ba2abbc80e5b7a11db4d54e2ddb433a827d7 -- \
             Game1.cs \
-            Campaign/LevelEditorScreen.cs \
-            Campaign/LevelEditorState.cs \
             MedivalChess.Shared/CampaignLevelDefinition.cs \
-            MedivalChess.Shared/CampaignLevelValidator.cs \
             MedivalChess.Shared/NetworkMessages.cs \
             MedivalChess.Shared/PackRules.cs \
             MedivalChess.Server/MatchHub.cs \
@@ -45,79 +42,22 @@ jobs:
           python - <<'PY'
           from pathlib import Path
 
-          game_path = Path('Game1.cs')
-          game = game_path.read_text(encoding='utf-8')
+          path = Path('Game1.cs')
+          text = path.read_text(encoding='utf-8')
 
-          # New matches should start with only the main/base pack enabled.
-          game = game.replace(
-            '  private readonly HashSet<Pack> _allowedPacks = [.. PackRules.All];',
-            '  private readonly HashSet<Pack> _allowedPacks = [Pack.Base];',
-            1
-          )
-          game = game.replace(
-            '    _allowedPacks.Clear();\n    _allowedPacks.UnionWith(PackRules.All);\n    SetPlayerCount(2);',
-            '    _allowedPacks.Clear();\n    _allowedPacks.Add(Pack.Base);\n    SetPlayerCount(2);',
-            1
-          )
+          old = '  private readonly HashSet<Pack> _allowedPacks = [.. PackRules.All];'
+          new = '  private readonly HashSet<Pack> _allowedPacks = [Pack.Base];'
+          if old not in text:
+            raise RuntimeError('Allowed-pack field not found')
+          text = text.replace(old, new, 1)
 
-          # Campaign fallback must respect pack restrictions too.
-          old = '''  private PieceDefinition GetCampaignStartingRoyal(TeamName team)
-          {
-            string chosenRoyal = _campaignTestDefinition?.Teams
-              .FirstOrDefault(candidate => candidate.Team == team.ToNetworkTeam())?.ChosenRoyal;
-            if (Enum.TryParse(chosenRoyal, ignoreCase: false, out PieceType type))
-            {
-              PieceDefinition configured = GetAllowedRoyals().FirstOrDefault(candidate => candidate.Type == type);
-              if (configured is not null && !(_gameMode == GameMode.Escort && configured.Type == PieceType.Palace)) return configured;
-            }
-            return PieceDefinitions.King;
-          }'''
-          new = '''  private PieceDefinition GetCampaignStartingRoyal(TeamName team)
-          {
-            PieceDefinition[] allowedRoyals = GetAllowedRoyals()
-              .Where(candidate => _gameMode != GameMode.Escort || candidate.Type != PieceType.Palace)
-              .ToArray();
-            string chosenRoyal = _campaignTestDefinition?.Teams
-              .FirstOrDefault(candidate => candidate.Team == team.ToNetworkTeam())?.ChosenRoyal;
-            if (Enum.TryParse(chosenRoyal, ignoreCase: false, out PieceType type))
-            {
-              PieceDefinition configured = allowedRoyals.FirstOrDefault(candidate => candidate.Type == type);
-              if (configured is not null) return configured;
-            }
-            return allowedRoyals.FirstOrDefault() ?? PieceDefinitions.King;
-          }'''
-          if old not in game:
-            raise RuntimeError('Campaign royal fallback block not found')
-          game = game.replace(old, new, 1)
-          game_path.write_text(game, encoding='utf-8')
+          old = '    _allowedPacks.Clear();\n    _allowedPacks.UnionWith(PackRules.All);\n    SetPlayerCount(2);'
+          new = '    _allowedPacks.Clear();\n    _allowedPacks.Add(Pack.Base);\n    SetPlayerCount(2);'
+          if old not in text:
+            raise RuntimeError('Match setup pack reset not found')
+          text = text.replace(old, new, 1)
 
-          # Keep the current PieceDefinition compatibility work, but restore campaign purchase
-          # filtering that was lost with the master revert.
-          resolver_path = Path('MedivalChess.Shared/CampaignUnitResolver.cs')
-          resolver = resolver_path.read_text(encoding='utf-8')
-          old = '''  public static IReadOnlyList<string> GetPurchasableIdentifiers(CampaignLevelDefinition level) =>
-            PieceDefinitions.Purchasable.Where(definition => !((level.UnitOverrides ?? [])
-                .FirstOrDefault(template => string.Equals(template.UnitType, definition.Identifier, StringComparison.Ordinal))?.Purchasable == false))
-              .Select(definition => definition.Identifier)
-              .Concat((level.CustomUnits ?? []).Where(unit => unit.Purchasable).Select(unit => unit.Id))
-              .Distinct(StringComparer.Ordinal)
-              .ToArray();'''
-          new = '''  public static IReadOnlyList<string> GetPurchasableIdentifiers(CampaignLevelDefinition level)
-          {
-            IReadOnlySet<Pack> allowedPacks = PackRules.GetAllowedPacks(level.Restrictions.AllowedPacks);
-            return PieceDefinitions.Purchasable
-              .Where(definition => allowedPacks.Contains(definition.Pack))
-              .Where(definition => !((level.UnitOverrides ?? [])
-                .FirstOrDefault(template => string.Equals(template.UnitType, definition.Identifier, StringComparison.Ordinal))?.Purchasable == false))
-              .Select(definition => definition.Identifier)
-              .Concat((level.CustomUnits ?? []).Where(unit => unit.Purchasable).Select(unit => unit.Id))
-              .Distinct(StringComparer.Ordinal)
-              .ToArray();
-          }'''
-          if old not in resolver:
-            raise RuntimeError('Campaign purchasable block not found')
-          resolver = resolver.replace(old, new, 1)
-          resolver_path.write_text(resolver, encoding='utf-8')
+          path.write_text(text, encoding='utf-8')
           PY
 
       - name: Build production projects
@@ -134,15 +74,15 @@ jobs:
           grep -F 'SetupStage.Packs' Game1.cs
           grep -F 'AllowedPacks' MedivalChess.Shared/NetworkMessages.cs
           grep -F 'PackRules.IsAllowed' MedivalChess.Server/MatchHub.cs
+          grep -F 'PackRules.IsAllowed' MedivalChess.CPU/CpuActionGenerator.cs
 
       - name: Commit tested changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Game1.cs Campaign/LevelEditorScreen.cs Campaign/LevelEditorState.cs \
-            MedivalChess.Shared/CampaignLevelDefinition.cs MedivalChess.Shared/CampaignLevelValidator.cs \
-            MedivalChess.Shared/CampaignUnitResolver.cs MedivalChess.Shared/NetworkMessages.cs \
-            MedivalChess.Shared/PackRules.cs MedivalChess.Server/MatchHub.cs \
-            MedivalChess.CPU/CpuActionGenerator.cs MedivalChess.CPU/CpuArmyPlanner.cs MedivalChess.CPU/CpuGameRules.cs
+          git add Game1.cs MedivalChess.Shared/CampaignLevelDefinition.cs \
+            MedivalChess.Shared/NetworkMessages.cs MedivalChess.Shared/PackRules.cs \
+            MedivalChess.Server/MatchHub.cs MedivalChess.CPU/CpuActionGenerator.cs \
+            MedivalChess.CPU/CpuArmyPlanner.cs MedivalChess.CPU/CpuGameRules.cs
           git commit -m "feat: choose allowed packs during setup"
           git push origin HEAD:feature/new-unit-packs
