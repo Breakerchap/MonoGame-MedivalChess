@@ -1,0 +1,21 @@
+name: CPU adversarial playtest
+
+on:
+  push:
+    branches:
+      - cpu-search-behaviour-fixes
+
+jobs:
+  playtest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cpu-search-behaviour-fixes
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Generate playtest harness
+        run: python tools/run_cpu_playtest.py
+      - name: Run adversarial playtest
+        run: dotnet run --project CpuPlaytestTemp/CpuPlaytestTemp.csproj --configuration Release
