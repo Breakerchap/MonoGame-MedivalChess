@@ -14,8 +14,10 @@ public static class AbilityRules
     Math.Max(Math.Abs(unitPosition.x - emissaryPosition.x), Math.Abs(unitPosition.y - emissaryPosition.y)) == 1;
 
   /// <summary>
-  /// Determines whether a move closes the taxicab gap between a unit's footprint and a Palace's
-  /// footprint. Palace-supported moves gain one range and ignore terrain.
+  /// Determines whether a destination qualifies for the Palace's +1 movement allowance by closing
+  /// the taxicab gap between the moving unit's footprint and the Palace's footprint. Pathfinding
+  /// checks terrain one board step at a time, so single-step probes are deliberately not marked as
+  /// Palace-assisted; the bonus extends range without making those steps terrain-immune.
   /// </summary>
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
@@ -23,8 +25,13 @@ public static class AbilityRules
     (int x, int y) to,
     UnitRule palace,
     (int x, int y) palacePosition
-  ) => FootprintDistance(movingUnit, to, palace, palacePosition) <
-       FootprintDistance(movingUnit, from, palace, palacePosition);
+  )
+  {
+    int movementSteps = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
+    return movementSteps > 1 &&
+      FootprintDistance(movingUnit, to, palace, palacePosition) <
+      FootprintDistance(movingUnit, from, palace, palacePosition);
+  }
 
   private static int FootprintDistance(
     UnitRule first,

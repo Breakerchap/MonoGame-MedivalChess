@@ -48,7 +48,7 @@ public static class MovementRules
           if (!canTravelThrough(current.Position, next)) continue;
 
           int nextCost = crossesRiver(current.Position, next)
-            ? movementRangeAt(next)
+            ? GetRiverCrossingCost(current.Cost, unit.MoveRange)
             : current.Cost + (stepCost?.Invoke(current.Position, next) ?? landingCost(next));
           bool isInitialStep = current.Path.Count == 0;
           bool exceedsMovementRange = nextCost > movementRangeAt(next);
@@ -100,7 +100,7 @@ public static class MovementRules
         if (!canTravelThrough(previous, next)) break;
 
         cost = crossesRiver(previous, next)
-          ? movementRangeAt(next)
+          ? GetRiverCrossingCost(cost, unit.MoveRange)
           : cost + (stepCost?.Invoke(previous, next) ?? landingCost(next));
         bool isInitialStep = path.Count == 0;
         if (cost > movementRangeAt(next))
@@ -117,6 +117,14 @@ public static class MovementRules
 
     return paths;
   }
+
+  /// <summary>
+  /// Crossing a river consumes at least the unit's normal movement allowance, but it must never
+  /// reduce movement already spent. This lets a genuine range bonus provide only its extra movement
+  /// instead of allowing successive river crossings to keep resetting the path cost forever.
+  /// </summary>
+  private static int GetRiverCrossingCost(int currentCost, int baseMovementRange) =>
+    Math.Max(currentCost + 1, baseMovementRange);
 
   public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
   {
