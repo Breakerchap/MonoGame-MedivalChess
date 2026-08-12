@@ -686,7 +686,6 @@ public sealed class MatchStore
       }
 
       if (!RoyalTypes.Contains(request.RoyalType) ||
-          !PackRules.IsAllowed(request.RoyalType, foundMatch.Configuration.AllowedPacks) ||
           (foundMatch.Configuration.GameMode == "Escort" && request.RoyalType == "Palace"))
       {
         return new(false, "That royal is not available for this match.", foundMatch.State());
@@ -1054,17 +1053,9 @@ public sealed class MatchStore
       return false;
     }
 
-    if (!PackRules.TryNormaliseAllowedPacks(configuration.AllowedPacks, out string[] allowedPacks))
-    {
-      error = "Choose at least one recognised unit pack.";
-      return false;
-    }
-
     sanitized = configuration with
     {
-      PresetId = string.IsNullOrWhiteSpace(configuration.PresetId) ? null : configuration.PresetId.Trim(),
-      AllowedPacks = allowedPacks,
-      FarmsEnabled = configuration.FarmsEnabled && allowedPacks.Contains(Pack.Base.ToString(), StringComparer.Ordinal)
+      PresetId = string.IsNullOrWhiteSpace(configuration.PresetId) ? null : configuration.PresetId.Trim()
     };
     return true;
   }
@@ -1088,7 +1079,6 @@ public sealed class MatchStore
   {
     if (!UnitRules.TryGet(type, out UnitRule rule) ||
         !UnitRules.Purchasable.Contains(rule) ||
-        !PackRules.IsAllowed(type, match.Configuration.AllowedPacks) ||
         (rule.Type == "Mercenary" && !includeMercenary) ||
         (rule.Type == "Farm" && !match.Configuration.FarmsEnabled))
     {

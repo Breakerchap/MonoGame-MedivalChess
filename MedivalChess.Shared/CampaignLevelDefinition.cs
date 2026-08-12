@@ -270,7 +270,6 @@ public sealed class CampaignUnitDefinition
 /// <summary>Optional overrides applied to a standard or custom unit. Each nullable field is an on/off stat switch.</summary>
 public sealed class CampaignUnitStatOverrides
 {
-  public int? MinimumMoveRange { get; set; }
   public int? MoveRange { get; set; }
   public Shape? MovePattern { get; set; }
   public int? Attack { get; set; }
@@ -424,7 +423,6 @@ public sealed class CampaignRestrictionsDefinition
 {
   public bool PurchasesEnabled { get; set; } = true;
   public bool AbilitiesEnabled { get; set; } = true;
-  public List<string> AllowedPacks { get; set; } = [.. PackRules.AllNames];
   /// <summary>Empty means use the team's available unit list.</summary>
   public List<string> AllowedUnitTypes { get; set; } = [];
   public List<string> DisabledUnitTypes { get; set; } = [];

@@ -10,10 +10,6 @@ public enum RuleShape
   Any,
   Straight,
   Line,
-  Diagonal,
-  LineOrDiagonal,
-  ChessKnight,
-  ForwardLine,
   Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
@@ -45,8 +41,7 @@ public sealed record UnitRule(
   RuleShape AttackPattern,
   int Cost,
   int MinimumAttackRange = 1,
-  string AbilityDescription = "",
-  int MinimumMoveRange = 1
+  string AbilityDescription = ""
 )
 {
   public AttackRange AllowedAttackRange => new(MinimumAttackRange, AttackRange);
@@ -68,20 +63,17 @@ public static class UnitRules
       ToRuleShape(definition.AttackPattern),
       definition.Cost,
       definition.AttackRange.Minimum,
-      definition.AbilityDescription,
-      definition.Movement.Minimum
+      definition.AbilityDescription
     ))
     .ToArray();
 
   private static readonly Dictionary<string, UnitRule> ByType = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
 
   public static IReadOnlyList<UnitRule> All => Rules;
-  public static IReadOnlyList<UnitRule> Purchasable { get; } = PieceDefinitions.Purchasable
-    .Select(definition => ByType[definition.Identifier])
-    .ToArray();
-  public static IReadOnlyList<UnitRule> Royals { get; } = PieceDefinitions.Royals
-    .Select(definition => ByType[definition.Identifier])
-    .ToArray();
+  public static IReadOnlyList<UnitRule> Purchasable { get; } = Rules.Where(rule =>
+    rule.Category != RuleCategory.Royal
+  ).ToArray();
+  public static IReadOnlyList<UnitRule> Royals { get; } = Rules.Where(rule => rule.Category == RuleCategory.Royal).ToArray();
 
   public static bool TryGet(string type, out UnitRule rule) => ByType.TryGetValue(type, out rule!);
   public static UnitRule GetRequired(string type) => TryGet(type, out UnitRule rule)
@@ -109,8 +101,7 @@ public static class UnitRules
       ToRuleShape(definition.AttackPattern),
       definition.Cost,
       definition.AttackRange.Minimum,
-      definition.AbilityDescription,
-      definition.Movement.Minimum
+      definition.AbilityDescription
     );
   }
 
@@ -119,10 +110,6 @@ public static class UnitRules
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
     Shape.Line => RuleShape.Line,
-    Shape.Diagonal => RuleShape.Diagonal,
-    Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
-    Shape.ChessKnight => RuleShape.ChessKnight,
-    Shape.ForwardLine => RuleShape.ForwardLine,
     Shape.Forward => RuleShape.Forward,
     Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
@@ -144,21 +131,13 @@ public static class UnitRules
 
     int chessboardDistance = Math.Max(dx, dy);
     int taxicabDistance = dx + dy;
-    int distance = rule.MovePattern is RuleShape.Straight or RuleShape.ChessKnight
-      ? taxicabDistance
-      : chessboardDistance;
-    if (distance < rule.MinimumMoveRange || distance > rule.MoveRange) return false;
-
     return rule.MovePattern switch
     {
-      RuleShape.Straight => true,
-      RuleShape.Line => dx == 0 || dy == 0,
-      RuleShape.Diagonal => dx == dy,
-      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || dx == dy,
-      RuleShape.ChessKnight => chessboardDistance == 2 && taxicabDistance == 3,
-      RuleShape.Any => true,
+      RuleShape.Straight => taxicabDistance <= rule.MoveRange,
+      RuleShape.Line => (dx == 0 || dy == 0) && chessboardDistance <= rule.MoveRange,
+      RuleShape.Any => chessboardDistance <= rule.MoveRange,
       RuleShape.None => false,
-      _ => true
+      _ => chessboardDistance <= rule.MoveRange
     };
   }
 
@@ -209,10 +188,6 @@ public static class UnitRules
       RuleShape.Any => true,
       RuleShape.Straight => true,
       RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
-      RuleShape.Diagonal => Math.Abs(dx) == Math.Abs(dy),
-      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || Math.Abs(dx) == Math.Abs(dy),
-      RuleShape.ChessKnight => chessboardDistance == 2 && taxicabDistance == 3,
-      RuleShape.ForwardLine => IsForwardOffset(team, dx, dy, distance),
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
       _ => false

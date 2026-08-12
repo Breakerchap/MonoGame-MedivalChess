@@ -1,4 +1,4 @@
-using Microsoft.Xna.Framework;
+﻿using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using MedivalChess.Campaign;
@@ -64,7 +64,6 @@ internal sealed class Game1 : Game
   private enum SetupStage
   {
     Mode,
-    Packs,
     Battlefield,
     Economy,
     ModeSettings,
@@ -197,7 +196,6 @@ internal sealed class Game1 : Game
   private int _selectedRoyalIndex;
   private PieceDefinition _royalAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
-  private readonly HashSet<Pack> _allowedPacks = [.. PackRules.All];
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
@@ -1097,7 +1095,7 @@ internal sealed class Game1 : Game
     }
     else
     {
-      definitions = PieceDefinitions.Purchasable.Where(definition => _allowedPacks.Contains(definition.Pack));
+      definitions = PieceDefinitions.Purchasable;
     }
 
     return _farmsEnabled
@@ -2352,7 +2350,7 @@ internal sealed class Game1 : Game
     _onlineRoyalChoicePending = true;
     try
     {
-      PieceDefinition royal = GetAllowedRoyals()[_selectedRoyalIndex];
+      PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
       ActionResult result = await _onlineClient.ChooseRoyalAsync(royal.Type.ToString(), position.x, position.y);
       if (!result.Accepted)
       {
@@ -2549,8 +2547,6 @@ internal sealed class Game1 : Game
     _terrainSource = terrainSource;
     _selectedTerrainPresetId = configuration.PresetId;
     _selectedTerrainPresetName = null;
-    _allowedPacks.Clear();
-    _allowedPacks.UnionWith(PackRules.GetAllowedPacks(configuration.AllowedPacks));
     _gameMode = gameMode;
     _startingCash = configuration.StartingCash;
     _killerRefundMultiplier = configuration.KillerRefundMultiplier;
@@ -6143,7 +6139,7 @@ internal sealed class Game1 : Game
   private void PlaceCpuRoyal(TeamName teamName)
   {
     CpuProfile profile = _cpuProfiles[teamName];
-    PieceDefinition[] eligibleRoyals = GetAllowedRoyals()
+    PieceDefinition[] eligibleRoyals = PieceDefinitions.Royals
       .Where(royal => _gameMode != GameMode.Escort || royal.Type != PieceType.Palace)
       .ToArray();
     Random random = new(profile.RandomSeed ^ _terrainSeed ^ ((int)teamName * 7919));
@@ -6271,8 +6267,6 @@ internal sealed class Game1 : Game
     ClearPlanningMarks();
     _cpuMatchVariationSeed = Random.Shared.Next();
     _screen = Screen.Setup;
-    _allowedPacks.Clear();
-    _allowedPacks.UnionWith(PackRules.All);
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
     _royalAwaitingPlacement = null;
@@ -6374,8 +6368,7 @@ internal sealed class Game1 : Game
       _chessTimerSeconds,
       _chessTimerIncrementSeconds,
       _terrainSource.ToString(),
-      _selectedTerrainPresetId,
-      _allowedPacks.Select(pack => pack.ToString()).ToArray()
+      _selectedTerrainPresetId
     );
   }
 
@@ -6614,12 +6607,12 @@ internal sealed class Game1 : Game
         else if (GetSetupPreviousButtonBounds().Contains(mousePosition))
         {
           _selectedRoyalIndex =
-            (_selectedRoyalIndex - 1 + GetAllowedRoyals().Length) % GetAllowedRoyals().Length;
+            (_selectedRoyalIndex - 1 + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
         }
         else if (GetSetupNextButtonBounds().Contains(mousePosition))
         {
           _selectedRoyalIndex =
-            (_selectedRoyalIndex + 1) % GetAllowedRoyals().Length;
+            (_selectedRoyalIndex + 1) % PieceDefinitions.Royals.Length;
         }
         else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
         {
@@ -6768,24 +6761,8 @@ internal sealed class Game1 : Game
             }
             else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
             {
-              _setupStage = SetupStage.Packs;
+              _setupStage = SetupStage.Battlefield;
             }
-          }
-        }
-        else if (_setupStage == SetupStage.Packs)
-        {
-          bool handledPack = false;
-          foreach (Pack pack in PackRules.All)
-          {
-            if (!GetSetupPackButtonBounds(pack).Contains(mousePosition)) continue;
-            ToggleSetupPack(pack);
-            handledPack = true;
-            break;
-          }
-          if (!handledPack && GetSetupConfirmButtonBounds().Contains(mousePosition) && GetAllowedRoyals().Length > 0)
-          {
-            _selectedRoyalIndex = 0;
-            _setupStage = SetupStage.Battlefield;
           }
         }
         else if (_setupStage == SetupStage.Battlefield)
@@ -7080,7 +7057,7 @@ internal sealed class Game1 : Game
         }
         else if (GetSetupConfirmButtonBounds().Contains(mousePosition))
         {
-          PieceDefinition royal = GetAllowedRoyals()[_selectedRoyalIndex];
+          PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
           if (_gameMode == GameMode.Escort && royal.Type == PieceType.Palace)
           {
             _selectedRoyalIndex = GetNextSelectableRoyalIndex(_selectedRoyalIndex, 1);
@@ -7142,7 +7119,7 @@ internal sealed class Game1 : Game
     }
 
     _setupTeam = localTeam.ToTeamName();
-    _royalAwaitingPlacement = GetAllowedRoyals()[_selectedRoyalIndex];
+    _royalAwaitingPlacement = PieceDefinitions.Royals[_selectedRoyalIndex];
     selectedPiece = null;
     _isPurchaseMode = false;
     _onlineStatus = "CHOOSE YOUR ROYAL'S STARTING SQUARE";
@@ -7260,10 +7237,10 @@ internal sealed class Game1 : Game
 
   private int GetNextSelectableRoyalIndex(int currentIndex, int direction)
   {
-    for (int offset = 1; offset <= GetAllowedRoyals().Length; offset++)
+    for (int offset = 1; offset <= PieceDefinitions.Royals.Length; offset++)
     {
-      int index = (currentIndex + direction * offset + GetAllowedRoyals().Length) % GetAllowedRoyals().Length;
-      if (_gameMode != GameMode.Escort || GetAllowedRoyals()[index].Type != PieceType.Palace)
+      int index = (currentIndex + direction * offset + PieceDefinitions.Royals.Length) % PieceDefinitions.Royals.Length;
+      if (_gameMode != GameMode.Escort || PieceDefinitions.Royals[index].Type != PieceType.Palace)
       {
         return index;
       }
@@ -7279,11 +7256,8 @@ internal sealed class Game1 : Game
       case SetupStage.Mode:
         ReturnToTitle();
         break;
-      case SetupStage.Packs:
-        _setupStage = SetupStage.Mode;
-        break;
       case SetupStage.Battlefield:
-        _setupStage = SetupStage.Packs;
+        _setupStage = SetupStage.Mode;
         break;
       case SetupStage.Economy:
         _setupStage = SetupStage.Battlefield;
@@ -7380,8 +7354,8 @@ internal sealed class Game1 : Game
 
   private void DrawSetupProgress(Rectangle content)
   {
-    SetupStage[] stages = [SetupStage.Mode, SetupStage.Packs, SetupStage.Battlefield, SetupStage.Economy, SetupStage.ModeSettings, SetupStage.RoyalSelection];
-    string[] labels = ["MODE", "PACKS", "MAP", "ECONOMY", "RULES", "ROYAL"];
+    SetupStage[] stages = [SetupStage.Mode, SetupStage.Battlefield, SetupStage.Economy, SetupStage.ModeSettings, SetupStage.RoyalSelection];
+    string[] labels = ["MODE", "MAP", "ECONOMY", "RULES", "ROYAL"];
     Rectangle row = new(content.X, content.Y + 62, content.Width, 18);
     int currentIndex = Array.IndexOf(stages, _setupStage);
 
@@ -7529,8 +7503,6 @@ internal sealed class Game1 : Game
     _cameraPosition = Vector2.Zero;
     _zoom = 1f;
     _campaignTestDefinition = CampaignLevelCloner.Clone(snapshot.Level);
-    _allowedPacks.Clear();
-    _allowedPacks.UnionWith(PackRules.GetAllowedPacks(_campaignTestDefinition.Restrictions.AllowedPacks));
     _campaignCompletedRounds = 0;
     _campaignTestPlay = true;
     _screen = Screen.Playing;
@@ -7619,7 +7591,7 @@ internal sealed class Game1 : Game
       .FirstOrDefault(candidate => candidate.Team == team.ToNetworkTeam())?.ChosenRoyal;
     if (Enum.TryParse(chosenRoyal, ignoreCase: false, out PieceType type))
     {
-      PieceDefinition configured = GetAllowedRoyals().FirstOrDefault(candidate => candidate.Type == type);
+      PieceDefinition configured = PieceDefinitions.Royals.FirstOrDefault(candidate => candidate.Type == type);
       if (configured is not null && !(_gameMode == GameMode.Escort && configured.Type == PieceType.Palace)) return configured;
     }
     return PieceDefinitions.King;
@@ -7806,7 +7778,7 @@ internal sealed class Game1 : Game
   {
     Rectangle panel = GetSetupPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    PieceDefinition royal = GetAllowedRoyals()[_selectedRoyalIndex];
+    PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
     TeamName localTeam = _onlineClient?.Team?.ToTeamName() ?? TeamName.Red;
     Color teamColour = UiTheme.GetTeamColour(localTeam);
     bool waitingForOpponent = _onlineRoyalChoicePending;
@@ -7916,12 +7888,6 @@ internal sealed class Game1 : Game
       return;
     }
 
-    if (_setupStage == SetupStage.Packs)
-    {
-      DrawPackSetup(panel);
-      return;
-    }
-
     if (_setupStage == SetupStage.Battlefield)
     {
       DrawBattlefieldSetup(panel);
@@ -7940,7 +7906,7 @@ internal sealed class Game1 : Game
       return;
     }
 
-    PieceDefinition royal = GetAllowedRoyals()[_selectedRoyalIndex];
+    PieceDefinition royal = PieceDefinitions.Royals[_selectedRoyalIndex];
     Color teamColour = UiTheme.GetTeamColour(_setupTeam);
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
 
@@ -7971,66 +7937,6 @@ internal sealed class Game1 : Game
     DrawMenuButton(GetSetupPreviousButtonBounds(), "<", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupNextButtonBounds(), ">", UiButtonTone.Neutral);
     DrawMenuButton(GetSetupConfirmButtonBounds(), "CONFIRM", UiButtonTone.Primary);
-  }
-
-  private Rectangle GetSetupPackButtonBounds(Pack pack)
-  {
-    Rectangle content = UiLayout.Inset(GetSetupPanelBounds(), UiTheme.SpaceLg);
-    int index = Array.IndexOf(Enum.GetValues<Pack>(), pack);
-    const int columns = 2;
-    const int gap = 10;
-    const int buttonHeight = 46;
-    int width = (content.Width - gap) / columns;
-    int row = index / columns;
-    int column = index % columns;
-    return new Rectangle(content.X + column * (width + gap), content.Y + 112 + row * (buttonHeight + gap), width, buttonHeight);
-  }
-
-  private PieceDefinition[] GetAllowedRoyals() => PieceDefinitions.Royals
-    .Where(royal => _allowedPacks.Contains(royal.Pack))
-    .ToArray();
-
-  private void ToggleSetupPack(Pack pack)
-  {
-    if (_allowedPacks.Contains(pack))
-    {
-      if (_allowedPacks.Count <= 1) return;
-      _allowedPacks.Remove(pack);
-      if (GetAllowedRoyals().Length == 0)
-      {
-        _allowedPacks.Add(pack);
-        return;
-      }
-      if (pack == Pack.Base) _farmsEnabled = false;
-    }
-    else
-    {
-      _allowedPacks.Add(pack);
-    }
-    _selectedRoyalIndex = 0;
-  }
-
-  private void DrawPackSetup(Rectangle panel)
-  {
-    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
-    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.Text("ALLOWED PACKS", new Vector2(content.X, content.Y), UiTheme.Gold);
-    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Choose which unit packs can be bought and which Royals can be selected.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
-    _ui.Divider(content, content.Y + 56);
-    DrawSetupProgress(content);
-
-    foreach (Pack pack in PackRules.All)
-    {
-      bool selected = _allowedPacks.Contains(pack);
-      DrawMenuButton(GetSetupPackButtonBounds(pack), pack.ToString().ToUpperInvariant(), selected ? UiButtonTone.Primary : UiButtonTone.Neutral, selected, 0.76f);
-    }
-
-    string hint = GetAllowedRoyals().Length == 0
-      ? "Select a pack containing a complete Royal before continuing."
-      : $"{_allowedPacks.Count} pack{(_allowedPacks.Count == 1 ? string.Empty : "s")} enabled.";
-    _ui.Text(hint, new Vector2(content.X, content.Bottom - 92), GetAllowedRoyals().Length == 0 ? UiTheme.Attack : UiTheme.TextMuted, 0.66f);
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", GetAllowedRoyals().Length == 0 ? UiButtonTone.Danger : UiButtonTone.Primary);
   }
 
   private void DrawModeSetup(Rectangle panel)

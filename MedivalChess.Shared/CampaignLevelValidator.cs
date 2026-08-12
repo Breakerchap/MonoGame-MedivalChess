@@ -222,17 +222,12 @@ public static class CampaignLevelValidator
   )
   {
     if (overrides is null) return;
-    if (overrides.MinimumMoveRange is < 0 or > 32 || overrides.MoveRange is < 0 or > 32 || overrides.Attack is < 0 or > 10_000 ||
+    if (overrides.MoveRange is < 0 or > 32 || overrides.Attack is < 0 or > 10_000 ||
         overrides.Health is < 1 or > 10_000 || overrides.Width is < 1 or > 8 ||
         overrides.Height is < 1 or > 8 || overrides.MinimumAttackRange is < 0 or > 32 ||
         overrides.MaximumAttackRange is < 0 or > 32 || overrides.Cost is < 0 or > 1_000_000)
     {
       problems.Add(CampaignValidationProblem.Error(code, "Custom stat values are outside the supported range."));
-    }
-    if (overrides.MinimumMoveRange.HasValue && overrides.MoveRange.HasValue &&
-        overrides.MoveRange.Value < overrides.MinimumMoveRange.Value)
-    {
-      problems.Add(CampaignValidationProblem.Error(code, "Maximum movement range cannot be lower than minimum movement range."));
     }
     if (overrides.MinimumAttackRange.HasValue && overrides.MaximumAttackRange.HasValue &&
         overrides.MaximumAttackRange.Value < overrides.MinimumAttackRange.Value)
@@ -742,10 +737,6 @@ public static class CampaignLevelValidator
     {
       problems.Add(CampaignValidationProblem.Error("restrictions.missing", "Restrictions settings are required."));
       return;
-    }
-    if (!PackRules.TryNormaliseAllowedPacks(restrictions.AllowedPacks, out _))
-    {
-      problems.Add(CampaignValidationProblem.Error("restriction.allowedPacks", "Choose at least one recognised unit pack."));
     }
     ValidateUnitIdentifiers(restrictions.AllowedUnitTypes, "restriction.allowedUnits", customUnitIds, problems);
     ValidateUnitIdentifiers(restrictions.DisabledUnitTypes, "restriction.disabledUnits", customUnitIds, problems);

@@ -29,7 +29,7 @@ public static class CampaignUnitResolver
         return false;
       }
       if (!TryApplyOverrides(
-        new PieceDefinition(nativeAbilitySource.Type, native.Category, native.Pack, native.Movement, native.Attack, native.Health, native.Size,
+        new PieceDefinition(nativeAbilitySource.Type, native.Category, native.Movement, native.Attack, native.Health, native.Size,
           native.AttackRange, native.AttackPattern, native.Cost, nativeAbilitySource.AbilityDescription, native.Identifier, template.Name, template.Abbreviation),
         template.StatOverrides, native.Identifier, template.Name, nativeAbilitySource.AbilityDescription, template.Abbreviation, out PieceDefinition templatedDefinition))
       {
@@ -53,7 +53,6 @@ public static class CampaignUnitResolver
       new PieceDefinition(
         abilitySource.Type,
         baseDefinition.Category,
-        baseDefinition.Pack,
         baseDefinition.Movement,
         baseDefinition.Attack,
         baseDefinition.Health,
@@ -91,9 +90,7 @@ public static class CampaignUnitResolver
     TryResolve(level, identifier, null, out _);
 
   public static IReadOnlyList<string> GetPurchasableIdentifiers(CampaignLevelDefinition level) =>
-    PieceDefinitions.Purchasable
-      .Where(definition => PackRules.IsAllowed(definition, level.Restrictions?.AllowedPacks))
-      .Where(definition => !((level.UnitOverrides ?? [])
+    PieceDefinitions.Purchasable.Where(definition => !((level.UnitOverrides ?? [])
         .FirstOrDefault(template => string.Equals(template.UnitType, definition.Identifier, StringComparison.Ordinal))?.Purchasable == false))
       .Select(definition => definition.Identifier)
       .Concat((level.CustomUnits ?? []).Where(unit => unit.Purchasable).Select(unit => unit.Id))
@@ -134,15 +131,12 @@ public static class CampaignUnitResolver
   {
     try
     {
-      int minimumMoveRange = overrides?.MinimumMoveRange ?? source.Movement.Minimum;
-      int maximumMoveRange = overrides?.MoveRange ?? source.Movement.Maximum;
       int minimumAttackRange = overrides?.MinimumAttackRange ?? source.AttackRange.Minimum;
       int maximumAttackRange = overrides?.MaximumAttackRange ?? source.AttackRange.Maximum;
       definition = new PieceDefinition(
         source.Type,
         source.Category,
-        source.Pack,
-        new MovementDefinition(minimumMoveRange, maximumMoveRange, overrides?.MovePattern ?? source.Movement.shape),
+        (overrides?.MoveRange ?? source.Movement.range, overrides?.MovePattern ?? source.Movement.shape),
         overrides?.Attack ?? source.Attack,
         overrides?.Health ?? source.Health,
         (overrides?.Width ?? source.Size.x, overrides?.Height ?? source.Size.y),

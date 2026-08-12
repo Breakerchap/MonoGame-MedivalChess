@@ -89,9 +89,7 @@ public sealed record NetworkMatchConfiguration(
   // deterministically falls back to Procedural.
   string TerrainSource = "Preset",
   // When supplied, this authored preset is used directly instead of choosing one from the density filter.
-  string? PresetId = null,
-  // Null is accepted from older clients and means every pack.
-  IReadOnlyList<string>? AllowedPacks = null
+  string? PresetId = null
 );
 
 /// <summary>Opening-buy progress for one team. The legacy Red/Blue fields on

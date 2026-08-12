@@ -354,9 +354,8 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     int availableMoney = state.Teams.GetValueOrDefault(team)?.Money ?? 0;
     IEnumerable<UnitRule> purchaseRules = openingFarmPlacement
       ? [farmRule]
-      : UnitRules.Purchasable
-        .Where(rule => PackRules.IsAllowed(rule.Type, state.Configuration.AllowedPacks))
-        .Where(rule => rule.Type == "Mercenary" || availableMoney >= GetPurchaseCost(state, rule));
+      : UnitRules.Purchasable.Where(rule => rule.Type == "Mercenary" ||
+        availableMoney >= GetPurchaseCost(state, rule));
     NetworkPiece[] placementEnemies = openingFarmPlacement
       ? []
       : state.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null).ToArray();
