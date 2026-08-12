@@ -23,18 +23,26 @@ jobs:
           dotnet-version: '9.0.x'
       - name: Apply integration patch
         run: python tools/implement_new_units.py
-      - name: Add movement tuple compatibility
+      - name: Add movement compatibility fixes
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path("MedivalChess.Shared/Piece.cs")
-          text = path.read_text(encoding="utf-8")
+          piece_path = Path("MedivalChess.Shared/Piece.cs")
+          text = piece_path.read_text(encoding="utf-8")
           needle = "  public void Deconstruct(out int range, out Shape shape)"
           replacement = "  public static implicit operator (int range, Shape shape)(MovementDefinition movement) =>\n    (movement.Maximum, movement.Shape);\n\n" + needle
           if text.count(needle) != 1:
             raise RuntimeError(f"Expected one MovementDefinition deconstructor, found {text.count(needle)}.")
-          path.write_text(text.replace(needle, replacement, 1), encoding="utf-8", newline="\n")
+          piece_path.write_text(text.replace(needle, replacement, 1), encoding="utf-8", newline="\n")
+
+          control_path = Path("GameBoard/PieceControl.cs")
+          text = control_path.read_text(encoding="utf-8")
+          old = "    var action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;"
+          new = "    (int range, Shape shape) action = isMoving\n      ? (piece.Definition.Movement.range, piece.Definition.Movement.shape)\n      : piece.Definition.AttackShape;"
+          if text.count(old) != 1:
+            raise RuntimeError(f"Expected one action tuple expression, found {text.count(old)}.")
+          control_path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
           PY
       - name: Test
         run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj -c Release
