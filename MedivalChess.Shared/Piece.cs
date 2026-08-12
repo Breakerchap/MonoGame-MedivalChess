@@ -111,6 +111,13 @@ public enum PieceType
   ChessKing
 }
 
+public enum PieceCategory
+{
+  Melee, Ranged, Intelligence,
+  Mechanical, Structure, Transport,
+  Royal
+}
+
 public enum Pack
 {
   Base,
@@ -120,6 +127,32 @@ public enum Pack
   Greek,
   Modern,
   Chess
+}
+
+/// <summary>Movement distance and geometry, retaining the old maximum-range tuple API for existing callers.</summary>
+public readonly record struct MovementDefinition
+{
+  public int Minimum { get; }
+  public int Maximum { get; }
+  public Shape Shape { get; }
+  public int range => Maximum;
+  public Shape shape => Shape;
+
+  public MovementDefinition(int minimum, int maximum, Shape shape)
+  {
+    if (minimum < 0) throw new ArgumentOutOfRangeException(nameof(minimum));
+    if (maximum < minimum) throw new ArgumentOutOfRangeException(nameof(maximum));
+    Minimum = minimum;
+    Maximum = maximum;
+    Shape = shape;
+  }
+
+  public static implicit operator MovementDefinition(((int minRange, int maxRange) range, Shape shape) value) =>
+    new(value.range.minRange, value.range.maxRange, value.shape);
+  public static implicit operator MovementDefinition((int range, Shape shape) value) =>
+    new(value.range == 0 ? 0 : 1, value.range, value.shape);
+  public static implicit operator (int range, Shape shape)(MovementDefinition value) =>
+    (value.Maximum, value.Shape);
 }
 
 /// <summary>Authoritative game-facing unit definition. All unit stats are declared in <see cref="PieceDefinitions"/>.</summary>
@@ -136,9 +169,11 @@ public sealed class PieceDefinition
   /// <summary>Short in-board label. Empty uses the game's standard abbreviation for native units.</summary>
   public string? Abbreviation { get; }
 
+  public PieceCategory Category { get; }
+
   public Pack Pack { get; }
 
-  public ((int minRange, int maxRange), Shape shape) Movement { get; }
+  public MovementDefinition Movement { get; }
 
   public int Attack { get; }
 
@@ -163,7 +198,7 @@ public sealed class PieceDefinition
     PieceType type,
     string abbreviation,
     Pack pack,
-    ((int minRange, int maxRange), Shape shape) movement,
+    MovementDefinition movement,
     int attack,
     int health,
     (int x, int y) size,
@@ -188,6 +223,7 @@ public sealed class PieceDefinition
       ? null
       : abbreviation;
 
+    Category = GetDefaultCategory(type);
     Pack = pack;
     Movement = movement;
     Attack = attack;
@@ -198,6 +234,18 @@ public sealed class PieceDefinition
     Cost = cost;
     AbilityDescription = abilityDescription;
   }
+
+  private static PieceCategory GetDefaultCategory(PieceType type) => type switch
+  {
+    PieceType.Archer or PieceType.Crossbowman or PieceType.Bombard or PieceType.Wizard or PieceType.Dragon => PieceCategory.Ranged,
+    PieceType.Cannon or PieceType.Catapult or PieceType.Ballista => PieceCategory.Mechanical,
+    PieceType.Spy or PieceType.Engineer => PieceCategory.Intelligence,
+    PieceType.Farm => PieceCategory.Structure,
+    PieceType.Ox => PieceCategory.Transport,
+    PieceType.King or PieceType.Princess or PieceType.Palace or PieceType.Baron or PieceType.Emissary or
+    PieceType.Emperor or PieceType.TerracottaWarrior or PieceType.GoblinRoyalty or PieceType.Phantom or PieceType.Zeus or PieceType.ChessKing => PieceCategory.Royal,
+    _ => PieceCategory.Melee
+  };
 }
 
 /// <summary>
