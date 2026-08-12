@@ -131,39 +131,21 @@ jobs:
           '''        custom.Name
                 ),''')
 
-          old = '''      definition = new PieceDefinition(
-                source.Type,
-                source.Category,
-                (overrides?.MoveRange ?? source.Movement.range, overrides?.MovePattern ?? source.Movement.shape),
-                overrides?.Attack ?? source.Attack,
-                overrides?.Health ?? source.Health,
-                (overrides?.Width ?? source.Size.x, overrides?.Height ?? source.Size.y),
-                new AttackRange(minimumAttackRange, maximumAttackRange),
-                overrides?.AttackPattern ?? source.AttackPattern,
-                overrides?.Cost ?? source.Cost,
-                abilityDescription,
-                identifier,
-                displayName,
-                abbreviation
-              );'''
-          new = '''      int maximumMoveRange = overrides?.MoveRange ?? source.Movement.Item1.maxRange;
-              int minimumMoveRange = Math.Min(source.Movement.Item1.minRange, maximumMoveRange);
-              definition = new PieceDefinition(
-                source.Type,
-                abbreviation ?? source.Abbreviation ?? string.Empty,
-                source.Pack,
-                ((minimumMoveRange, maximumMoveRange), overrides?.MovePattern ?? source.Movement.shape),
-                overrides?.Attack ?? source.Attack,
-                overrides?.Health ?? source.Health,
-                (overrides?.Width ?? source.Size.x, overrides?.Height ?? source.Size.y),
-                new AttackRange(minimumAttackRange, maximumAttackRange),
-                overrides?.AttackPattern ?? source.AttackPattern,
-                overrides?.Cost ?? source.Cost,
-                abilityDescription,
-                identifier,
-                displayName
-              );'''
-          text = text.replace(old, new)
+          text = text.replace(
+          '''        source.Category,
+                  (overrides?.MoveRange ?? source.Movement.range, overrides?.MovePattern ?? source.Movement.shape),''',
+          '''        abbreviation ?? source.Abbreviation ?? string.Empty,
+                  source.Pack,
+                  ((Math.Min(source.Movement.Item1.minRange, overrides?.MoveRange ?? source.Movement.Item1.maxRange), overrides?.MoveRange ?? source.Movement.Item1.maxRange), overrides?.MovePattern ?? source.Movement.shape),''')
+
+          text = text.replace(
+          '''        identifier,
+                  displayName,
+                  abbreviation
+                );''',
+          '''        identifier,
+                  displayName
+                );''')
 
           path.write_text(text, encoding='utf-8')
 
