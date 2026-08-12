@@ -1,0 +1,104 @@
+name: CPU movement completion check
+
+on:
+  push:
+    branches:
+      - cpu-search-behaviour-fixes
+
+permissions:
+  contents: write
+
+jobs:
+  patch-build-test-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cpu-search-behaviour-fixes
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+      - name: Apply movement clustering and completion changes
+        run: python tools/apply_cpu_movement_completion.py
+      - name: Fix patch details
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('MedivalChess.CPU/CpuActionGenerator.cs')
+          text = path.read_text()
+          helper = '''  private static int Distance((int x, int y) first, (int x, int y) second) =>
+            Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
+          '''
+          first = text.find(helper)
+          if first >= 0:
+              second = text.find(helper, first + len(helper))
+              while second >= 0:
+                  text = text[:second] + text[second + len(helper):]
+                  second = text.find(helper, first + len(helper))
+          path.write_text(text)
+
+          path = Path('MedivalChess.CPU/CpuSearch.cs')
+          text = path.read_text()
+          text = text.replace(
+          '''          .OrderByDescending(entry => entry.createsAttack)
+                    .ThenByDescending(entry => entry.candidate.Score)
+                    .Cast<(ScoredAction candidate, bool createsAttack)?>()
+                    .FirstOrDefault();''',
+          '''          .OrderByDescending(entry => entry.createsAttack)
+                    .ThenByDescending(entry => entry.candidate.Score)
+                    .Select(entry => ((ScoredAction candidate, bool createsAttack)?)entry)
+                    .FirstOrDefault();''', 1)
+          text = text.replace(
+          '''    if (Environment.ProcessorCount <= 2) return 1;
+              if (Environment.ProcessorCount <= 4) return Math.Max(1, Environment.ProcessorCount - 2);
+              return Math.Min(10, Math.Max(2, Environment.ProcessorCount - 2));''',
+          '''    return Environment.ProcessorCount <= 2 ? 1 : Math.Min(10, Environment.ProcessorCount - 1);''', 1)
+          path.write_text(text)
+          PY
+      - name: Restore
+        run: dotnet restore CrownAndSiege.sln
+      - name: Build
+        run: dotnet build CrownAndSiege.sln --configuration Release --no-restore
+      - name: Test
+        run: dotnet test CrownAndSiege.sln --configuration Release --no-build
+      - name: Generate crowded-turn probe
+        shell: bash
+        run: |
+          mkdir -p CpuMovementProbeTemp
+          cat > CpuMovementProbeTemp/CpuMovementProbeTemp.csproj <<'EOF'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+            <ItemGroup><ProjectReference Include="../MedivalChess.CPU/MedivalChess.CPU.csproj"/><ProjectReference Include="../MedivalChess.Shared/MedivalChess.Shared.csproj"/></ItemGroup>
+          </Project>
+          EOF
+          cat > CpuMovementProbeTemp/Program.cs <<'EOF'
+          using MedivalChess.CPU;
+          using MedivalChess.Shared;
+          Globals.ActionLimitsEnabled = false;
+          NetworkPiece P(string id,string type,NetworkTeam team,int x,int y){var r=UnitRules.GetRequired(type);return new NetworkPiece(id,type,team,x,y,r.Health);}
+          var config=new NetworkMatchConfiguration("Small","None","None","Regicide",9131,0,0f,0f,2,1,15,FarmsEnabled:false,UnitMaintenanceEnabled:false);
+          var state=new CpuGameState(config,new[]{
+            P("red-knight","Knight",NetworkTeam.Red,-2,5),P("red-archer","Archer",NetworkTeam.Red,2,5),P("red-soldier","Soldier",NetworkTeam.Red,0,4),P("red-defender","Defender",NetworkTeam.Red,-1,6),P("red-king","King",NetworkTeam.Red,0,8),
+            P("blue-knight","Knight",NetworkTeam.Blue,2,-5),P("blue-archer","Archer",NetworkTeam.Blue,-2,-5),P("blue-soldier","Soldier",NetworkTeam.Blue,0,-4),P("blue-defender","Defender",NetworkTeam.Blue,1,-6),P("blue-king","King",NetworkTeam.Blue,0,-8)},
+            new[]{new CpuTeamState(NetworkTeam.Red,0,MatchRules.ActionsPerTurn),new CpuTeamState(NetworkTeam.Blue,0,MatchRules.ActionsPerTurn)},NetworkTeam.Red,terrain:new BattlefieldTerrain(),scenario:CpuScenarioDefinition.ForMatch(config));
+          var generator=new CpuActionGenerator();
+          var exhaustive=generator.GenerateLegalActions(state,NetworkTeam.Red).OfType<MoveAction>().ToArray();
+          var search=generator.GenerateSearchActions(state,NetworkTeam.Red,1).OfType<MoveAction>().ToArray();
+          var plan=new CpuPlayer().ChooseTurn(state,NetworkTeam.Red,CpuProfile.Hard(9131),CancellationToken.None);
+          var active=plan.Actions.SelectMany(a=>a switch{MoveAction m=>new[]{m.PieceId},AttackAction a=>new[]{a.AttackerId},UseAbilityAction u=>new[]{u.ActorId},_=>Array.Empty<string>()}).Distinct().Order().ToArray();
+          Console.WriteLine($"PROBE|exhaustiveMoves={exhaustive.Length}|searchMoves={search.Length}|maxPerPiece={search.GroupBy(m=>m.PieceId).Select(g=>g.Count()).DefaultIfEmpty(0).Max()}|depth={plan.Report.CompletedSearchDepth}|nodes={plan.Report.NodesEvaluated}|ms={plan.Report.SearchTime.TotalMilliseconds:F0}|active={string.Join(',',active)}");
+          Console.WriteLine("PLAN|"+string.Join(" ; ",plan.Actions.Select(a=>a.Describe())));
+          EOF
+      - name: Run crowded-turn probe
+        run: dotnet run --project CpuMovementProbeTemp/CpuMovementProbeTemp.csproj --configuration Release
+      - name: Commit verified CPU changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MedivalChess.CPU/CpuActionGenerator.cs MedivalChess.CPU/CpuActionCandidates.cs MedivalChess.CPU/CpuSearch.cs MedivalChess.Tests/CpuPlanningEfficiencyTests.cs
+          git diff --cached --quiet && exit 0
+          git commit -m "Cluster CPU movement and complete useful unit actions"
+          git push origin HEAD:cpu-search-behaviour-fixes
