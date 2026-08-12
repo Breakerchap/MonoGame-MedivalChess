@@ -34,3 +34,5 @@ jobs:
           git add -A
           git commit -m "implement unit packs and new unit movement"
           git push origin HEAD:master
+
+# Triggered after the workflow existed on master.
