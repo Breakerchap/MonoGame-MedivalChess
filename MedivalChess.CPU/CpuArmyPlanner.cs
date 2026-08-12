@@ -71,6 +71,7 @@ internal sealed class CpuArmyPlanner
     bool verySafe = safe && homePressure < 18f && nearbyPowerfulEnemies == 0;
 
     Dictionary<string, float> needs = UnitRules.Purchasable
+      .Where(rule => PackRules.IsAllowed(rule.Type, state.Configuration.AllowedPacks))
       .Where(rule => rule.Type != "Farm")
       .ToDictionary(rule => rule.Type, rule => GetRecruitmentNeed(state, team, rule, enemies, friendly), StringComparer.Ordinal);
     float bestNeed = needs.Values.DefaultIfEmpty(0f).Max();
@@ -286,6 +287,7 @@ internal sealed class CpuArmyPlanner
   )
   {
     int cheapestCounter = UnitRules.Purchasable
+      .Where(rule => PackRules.IsAllowed(rule.Type, state.Configuration.AllowedPacks))
       .Where(rule => priorityCounters.Contains(rule.Type) && needs.GetValueOrDefault(rule.Type) >= 14f)
       .Select(rule => GetPrice(state.Configuration, rule))
       .DefaultIfEmpty(0)
