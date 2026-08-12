@@ -88,9 +88,9 @@ jobs:
           var exhaustive=generator.GenerateLegalActions(state,NetworkTeam.Red).OfType<MoveAction>().ToArray();
           var search=generator.GenerateSearchActions(state,NetworkTeam.Red,1).OfType<MoveAction>().ToArray();
           var plan=new CpuPlayer().ChooseTurn(state,NetworkTeam.Red,CpuProfile.Hard(9131),CancellationToken.None);
-          var active=plan.Actions.SelectMany(a=>a switch{MoveAction m=>new[]{m.PieceId},AttackAction a=>new[]{a.AttackerId},UseAbilityAction u=>new[]{u.ActorId},_=>Array.Empty<string>()}).Distinct().Order().ToArray();
+          var active=plan.Actions.SelectMany(action=>action switch{MoveAction move=>new[]{move.PieceId},AttackAction attack=>new[]{attack.AttackerId},UseAbilityAction ability=>new[]{ability.ActorId},_=>Array.Empty<string>()}).Distinct().Order().ToArray();
           Console.WriteLine($"PROBE|exhaustiveMoves={exhaustive.Length}|searchMoves={search.Length}|maxPerPiece={search.GroupBy(m=>m.PieceId).Select(g=>g.Count()).DefaultIfEmpty(0).Max()}|depth={plan.Report.CompletedSearchDepth}|nodes={plan.Report.NodesEvaluated}|ms={plan.Report.SearchTime.TotalMilliseconds:F0}|active={string.Join(',',active)}");
-          Console.WriteLine("PLAN|"+string.Join(" ; ",plan.Actions.Select(a=>a.Describe())));
+          Console.WriteLine("PLAN|"+string.Join(" ; ",plan.Actions.Select(action=>action.Describe())));
           EOF
       - name: Run crowded-turn probe
         run: dotnet run --project CpuMovementProbeTemp/CpuMovementProbeTemp.csproj --configuration Release
