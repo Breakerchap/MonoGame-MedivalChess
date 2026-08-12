@@ -30,23 +30,11 @@ jobs:
 
           path = Path("MedivalChess.Shared/Piece.cs")
           text = path.read_text(encoding="utf-8")
-          old = '''  public static implicit operator MovementDefinition(((int minRange, int maxRange) range, Shape shape) movement) =>
-            new(movement.range.minRange, movement.range.maxRange, movement.shape);
-
-          public void Deconstruct'''
-          # Match without relying on indentation inside this YAML block.
-          old = old.replace("          new(", "    new(").replace("          public", "  public")
-          new = '''  public static implicit operator MovementDefinition(((int minRange, int maxRange) range, Shape shape) movement) =>
-            new(movement.range.minRange, movement.range.maxRange, movement.shape);
-
-          public static implicit operator (int range, Shape shape)(MovementDefinition movement) =>
-            (movement.Maximum, movement.Shape);
-
-          public void Deconstruct'''
-          new = new.replace("          new(", "    new(").replace("          public", "  public").replace("          (movement", "    (movement")
-          if old not in text:
-            raise RuntimeError("MovementDefinition compatibility insertion point was not found.")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
+          needle = "  public void Deconstruct(out int range, out Shape shape)"
+          replacement = "  public static implicit operator (int range, Shape shape)(MovementDefinition movement) =>\n    (movement.Maximum, movement.Shape);\n\n" + needle
+          if text.count(needle) != 1:
+            raise RuntimeError(f"Expected one MovementDefinition deconstructor, found {text.count(needle)}.")
+          path.write_text(text.replace(needle, replacement, 1), encoding="utf-8", newline="\n")
           PY
       - name: Test
         run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj -c Release
