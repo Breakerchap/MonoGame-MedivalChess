@@ -85,21 +85,21 @@ public sealed class CpuProfile
   // opponent play like the strongest CPU when it finds a line early, rather than deliberately
   // omitting whole categories of moves or choosing mistakes.
   public static CpuProfile Easy(int seed = 1) => CreateTimeLimitedProfile(
-    "Easy CPU", CpuDifficultyLevel.Easy, seed, 250);
+    "Easy CPU", CpuDifficultyLevel.Easy, seed, 500);
 
   public static CpuProfile Medium(int seed = 1) => CreateTimeLimitedProfile(
-    "Medium CPU", CpuDifficultyLevel.Medium, seed, 700);
+    "Medium CPU", CpuDifficultyLevel.Medium, seed, 1_000);
 
   /// <summary>Compatibility alias for code and levels authored before Medium replaced Normal.</summary>
   public static CpuProfile Normal(int seed = 1) => Medium(seed);
 
   /// <summary>The campaign profile: the full CPU logic with a responsive 1.4-second budget.</summary>
   public static CpuProfile Hard(int seed = 1) => CreateTimeLimitedProfile(
-    "Hard CPU", CpuDifficultyLevel.Hard, seed, 1_400);
+    "Hard CPU", CpuDifficultyLevel.Hard, seed, 3_000);
 
   /// <summary>The full CPU logic with a five-second analysis budget.</summary>
   public static CpuProfile Best(int seed = 1) => CreateTimeLimitedProfile(
-    "Best CPU", CpuDifficultyLevel.Best, seed, 5_000);
+    "Best CPU", CpuDifficultyLevel.Best, seed, 8_000);
 
   private static CpuProfile CreateTimeLimitedProfile(
     string name,
