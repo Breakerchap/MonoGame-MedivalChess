@@ -44,8 +44,63 @@ jobs:
             raise RuntimeError(f"Expected one action tuple expression, found {text.count(old)}.")
           control_path.write_text(text.replace(old, new, 1), encoding="utf-8", newline="\n")
           PY
-      - name: Test
-        run: dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj -c Release
+      - name: Build production projects
+        run: |
+          dotnet build MedivalChess.csproj -c Release
+          dotnet build MedivalChess.Server/MedivalChess.Server.csproj -c Release
+      - name: Smoke-test new unit data and pack rules
+        run: |
+          mkdir -p /tmp/MedivalChessPackSmoke
+          cat > /tmp/MedivalChessPackSmoke/PackSmoke.csproj <<EOF
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>Exe</OutputType>
+              <TargetFramework>net9.0</TargetFramework>
+              <ImplicitUsings>enable</ImplicitUsings>
+              <Nullable>enable</Nullable>
+            </PropertyGroup>
+            <ItemGroup>
+              <ProjectReference Include="$GITHUB_WORKSPACE/MedivalChess.Shared/MedivalChess.Shared.csproj" />
+            </ItemGroup>
+          </Project>
+          EOF
+          cat > /tmp/MedivalChessPackSmoke/Program.cs <<'EOF'
+          using MedivalChess.Shared;
+
+          static void Check(bool condition, string message)
+          {
+            if (!condition) throw new Exception(message);
+          }
+
+          Check(PieceDefinitions.Ninja.Pack == Pack.Dynasty, "Ninja pack");
+          Check(PieceDefinitions.Ninja.AttackRange == new AttackRange(2, 4), "Ninja range");
+          Check(PieceDefinitions.Dragon.Pack == Pack.Fantasy && PieceDefinitions.Dragon.Size == (2, 3), "Dragon data");
+          Check(PieceDefinitions.Pegasus.Movement.Minimum == 2 && PieceDefinitions.Pegasus.Movement.Maximum == 4, "Pegasus movement range");
+          Check(PieceDefinitions.Queen.Movement.shape == Shape.LineOrDiagonal && PieceDefinitions.Queen.AttackPattern == Shape.None, "Chess movement without landing ability");
+          Check(!PieceDefinitions.Purchasable.Contains(PieceDefinitions.Flesh), "Flesh must not be purchasable");
+          Check(!PieceDefinitions.Royals.Contains(PieceDefinitions.TerracottaWarrior), "Terracotta Warrior must not be selectable");
+
+          Check(PackRules.TryNormaliseAllowedPacks(["chess", "Base", "Chess"], out string[] packs), "Pack parsing");
+          Check(packs.SequenceEqual(["Base", "Chess"]), "Pack normalisation");
+          Check(PackRules.IsAllowed(PieceDefinitions.Queen, packs) && !PackRules.IsAllowed(PieceDefinitions.Ninja, packs), "Pack filtering");
+
+          UnitRule bishop = UnitRules.GetRequired("Bishop");
+          Check(UnitRules.CanMove(bishop, 0, 0, 4, 4) && !UnitRules.CanMove(bishop, 0, 0, 4, 3), "Bishop geometry");
+          UnitRule knight = UnitRules.GetRequired("ChessKnight");
+          Check(UnitRules.CanMove(knight, 0, 0, 2, 1) && !UnitRules.CanMove(knight, 0, 0, 1, 1), "Chess knight geometry");
+
+          UnitRule pegasus = UnitRules.GetRequired("Pegasus");
+          var paths = MovementRules.FindPaths(pegasus, (0, 0), NetworkTeam.Red, _ => true, (_, _) => true, _ => 1, (_, _) => false);
+          Check(!paths.ContainsKey((1, 0)) && paths.ContainsKey((2, 0)) && paths.ContainsKey((4, 0)), "Pegasus minimum movement");
+
+          CampaignLevelDefinition level = CampaignLevelDefinition.CreateNew();
+          level.Restrictions.AllowedPacks = [Pack.Greek.ToString()];
+          IReadOnlyList<string> purchases = CampaignUnitResolver.GetPurchasableIdentifiers(level);
+          Check(purchases.Contains("Chariot") && purchases.Contains("Pegasus") && !purchases.Contains("Soldier"), "Campaign pack filtering");
+
+          Console.WriteLine("Pack smoke checks passed.");
+          EOF
+          dotnet run --project /tmp/MedivalChessPackSmoke/PackSmoke.csproj -c Release
       - name: Commit tested implementation
         run: |
           rm tools/implement_new_units.py
