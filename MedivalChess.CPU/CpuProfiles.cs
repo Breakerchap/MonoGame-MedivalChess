@@ -93,11 +93,11 @@ public sealed class CpuProfile
   /// <summary>Compatibility alias for code and levels authored before Medium replaced Normal.</summary>
   public static CpuProfile Normal(int seed = 1) => Medium(seed);
 
-  /// <summary>The campaign profile: the full CPU logic with a responsive 1.4-second budget.</summary>
+  /// <summary>The campaign profile: the full CPU logic with a three-second analysis budget.</summary>
   public static CpuProfile Hard(int seed = 1) => CreateTimeLimitedProfile(
     "Hard CPU", CpuDifficultyLevel.Hard, seed, 3_000);
 
-  /// <summary>The full CPU logic with a five-second analysis budget.</summary>
+  /// <summary>The full CPU logic with an eight-second analysis budget.</summary>
   public static CpuProfile Best(int seed = 1) => CreateTimeLimitedProfile(
     "Best CPU", CpuDifficultyLevel.Best, seed, 8_000);
 

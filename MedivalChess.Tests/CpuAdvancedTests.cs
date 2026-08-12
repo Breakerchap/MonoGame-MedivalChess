@@ -653,7 +653,7 @@ public sealed class CpuAdvancedTests
     CpuProfile profile = CpuProfile.Normal(123);
 
     Assert.Equal(CpuDifficultyLevel.Normal, profile.Difficulty);
-    Assert.Equal(700, profile.Search.MaxSearchMilliseconds);
+    Assert.Equal(1_000, profile.Search.MaxSearchMilliseconds);
     Assert.Equal(36, profile.Search.BeamWidth);
     Assert.Equal(48, profile.Search.CandidatesPerNode);
     Assert.Equal(96, profile.Search.MaximumPurchasePlacementCandidates);
