@@ -367,7 +367,7 @@ public sealed class CpuPlayer : ICpuPlayer
     {
       chosenActions = [immediateWin, .. chosenActions];
     }
-    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyActionSequence(state, team, chosenActions);
+    IReadOnlyList<ICpuGameAction> verifiedActions = VerifyAndCompleteActionSequence(state, team, chosenActions, profile);
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
   }
 
@@ -863,16 +863,23 @@ public sealed class CpuPlayer : ICpuPlayer
   /// this method validates the chosen line but never invents extra attacks or movement by taking
   /// the first action returned by the generator.
   /// </summary>
-  private static IReadOnlyList<ICpuGameAction> VerifyActionSequence(
+  private IReadOnlyList<ICpuGameAction> VerifyAndCompleteActionSequence(
     CpuGameState state,
     NetworkTeam team,
-    IReadOnlyList<ICpuGameAction> actions
+    IReadOnlyList<ICpuGameAction> actions,
+    CpuProfile profile
   )
   {
     List<ICpuGameAction> verified = [];
     CpuGameState current = state;
     foreach (ICpuGameAction action in actions)
     {
+      // In unlimited mode EndTurn is deliberately deferred until the cheap completion pass has
+      // checked untouched units. The searched strategic prefix is still preserved exactly.
+      if (!Globals.ActionLimitsEnabled && action is EndTurnAction)
+      {
+        break;
+      }
       if (current.IsFinished || current.CurrentTurn != team || !action.IsLegal(current))
       {
         break;
@@ -883,18 +890,55 @@ public sealed class CpuPlayer : ICpuPlayer
 
     if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
     {
-      // Attack availability is now a CPU invariant rather than merely a heuristic. A short search
-      // may time out on the move half of a move->attack line; complete any attacks that are legal in
-      // the exact searched state before EndTurn. This never invents movement or purchases.
-      for (int forcedAttack = 0; forcedAttack < 64 && current.CurrentTurn == team && !current.IsFinished; forcedAttack++)
+      ForceMandatoryAttacks(ref current, team, verified);
+
+      // A short beam can find a good tactical prefix without reaching every independent unit on a
+      // crowded turn. Give untouched mobile pieces one conservative chance to make a clearly useful
+      // move. This is deliberately not another search: it only consumes already-clustered moves and
+      // refuses marginal/negative repositioning. Any shot created by the move is then mandatory.
+      CpuSearchSettings completionSettings = new()
       {
-        AttackAction? attack = ChooseMandatoryAttack(current, team);
-        if (attack is null)
-        {
-          break;
-        }
-        verified.Add(attack);
-        current = attack.Apply(current);
+        CandidatesPerNode = 12,
+        PromisingCandidatesPerNode = 12,
+        MaximumPurchasePlacementCandidates = 1,
+        Randomness = 0f
+      };
+      for (int completion = 0; completion < 24 && current.CurrentTurn == team && !current.IsFinished; completion++)
+      {
+        NetworkPiece[] untouched = current.Pieces.Where(piece => piece.Team == team && piece.AttachedToId is null &&
+          !piece.HasMovedThisTurn && !piece.HasAttackedThisTurn && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+          rule.MoveRange > 0).ToArray();
+        if (untouched.Length == 0) break;
+        HashSet<string> untouchedIds = untouched.Select(piece => piece.Id).ToHashSet(StringComparer.Ordinal);
+        MoveAction[] moves = _actionGenerator.GenerateSearchActions(current, team, 1).OfType<MoveAction>()
+          .Where(move => untouchedIds.Contains(move.PieceId) && move.IsLegal(current)).ToArray();
+        if (moves.Length == 0) break;
+
+        IReadOnlyList<ScoredAction> rankedMoves = _candidateSelector.SelectCandidates(
+          current, team, moves, completionSettings, profile.Personality);
+        (ScoredAction candidate, bool createsAttack)? best = rankedMoves
+          .Select(candidate =>
+          {
+            MoveAction move = (MoveAction)candidate.Action;
+            CpuGameState result = CpuGameRules.ApplyLegal(current, move);
+            NetworkPiece? moved = result.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId);
+            bool createsAttack = moved is not null && result.Pieces.Any(enemy => enemy.Team != team &&
+              enemy.Team != NetworkTeam.Neutral && enemy.AttachedToId is null &&
+              CpuGameRules.CanDirectlyAttack(result, moved, enemy));
+            return (candidate, createsAttack);
+          })
+          .Where(entry => IsClearlyUsefulCompletionMove(current, (MoveAction)entry.candidate.Action,
+            entry.candidate.Score, entry.createsAttack))
+          .OrderByDescending(entry => entry.createsAttack)
+          .ThenByDescending(entry => entry.candidate.Score)
+          .Select(entry => ((ScoredAction candidate, bool createsAttack)?)entry)
+          .FirstOrDefault();
+        if (best is null) break;
+
+        MoveAction chosenMove = (MoveAction)best.Value.candidate.Action;
+        verified.Add(chosenMove);
+        current = chosenMove.Apply(current);
+        ForceMandatoryAttacks(ref current, team, verified);
       }
 
       EndTurnAction endTurn = new(team);
@@ -905,6 +949,38 @@ public sealed class CpuPlayer : ICpuPlayer
     }
 
     return verified;
+  }
+
+  private static bool IsClearlyUsefulCompletionMove(
+    CpuGameState state,
+    MoveAction move,
+    float score,
+    bool createsAttack
+  )
+  {
+    NetworkPiece? piece = state.Pieces.FirstOrDefault(candidate => candidate.Id == move.PieceId);
+    if (piece is null || !UnitRules.TryGet(piece.Type, out UnitRule rule)) return false;
+    // Attack-enabling moves can pass with a lower score because the following attack is guaranteed;
+    // quiet movement must be meaningfully positive. Royals need extra evidence before being moved by
+    // the fallback rather than the main search.
+    float threshold = createsAttack ? 0f : 12f;
+    if (rule.Category == RuleCategory.Royal) threshold += 12f;
+    return score >= threshold;
+  }
+
+  private static void ForceMandatoryAttacks(
+    ref CpuGameState current,
+    NetworkTeam team,
+    List<ICpuGameAction> verified
+  )
+  {
+    for (int forcedAttack = 0; forcedAttack < 64 && current.CurrentTurn == team && !current.IsFinished; forcedAttack++)
+    {
+      AttackAction? attack = ChooseMandatoryAttack(current, team);
+      if (attack is null) break;
+      verified.Add(attack);
+      current = attack.Apply(current);
+    }
   }
 
   private static AttackAction? ChooseMandatoryAttack(CpuGameState state, NetworkTeam team)
@@ -1195,10 +1271,10 @@ public sealed class CpuPlayer : ICpuPlayer
       return settings.MaxParallelism;
     }
 
-    // Leave one logical processor for the game/UI and cap worker pressure on high-core PCs.
-    // Two-core machines remain single-threaded because dedicating half the machine to a turn
-    // search is more disruptive than the small speed-up is worth.
-    return Environment.ProcessorCount <= 2 ? 1 : Math.Min(6, Environment.ProcessorCount - 1);
+    // Keep two logical processors free for MonoGame/OS on larger systems while letting the
+    // built-in evaluator use substantially more of modern 8-12+ thread CPUs. Small machines stay
+    // conservative. The explicit MaxParallelism setting can still override this policy.
+    return Environment.ProcessorCount <= 2 ? 1 : Math.Min(10, Environment.ProcessorCount - 1);
   }
 
   private IReadOnlyList<EvaluatedSearchExpansion> EvaluatePendingBranches(
@@ -1260,7 +1336,7 @@ public sealed class CpuPlayer : ICpuPlayer
   private static int GetEvaluationBatchSize(int parallelism) => Math.Clamp(
     Math.Max(1, parallelism) * 2,
     4,
-    16
+    20
   );
 
   private static bool ShouldAbortBranchEvaluation(

@@ -80,7 +80,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int candidateLimit
   )
   {
-    int scoringCapacity = Math.Clamp(candidateLimit * 4, 24, 64);
+    int scoringCapacity = Math.Clamp(candidateLimit * 3, 24, 48);
     if (legalActions.Count <= scoringCapacity)
     {
       return legalActions;

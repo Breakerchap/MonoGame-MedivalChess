@@ -48,7 +48,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     List<ICpuGameAction> actions = [];
     foreach (NetworkPiece piece in state.Pieces.Where(piece => piece.Team == team).OrderBy(piece => piece.Id, StringComparer.Ordinal))
     {
-      GenerateMoves(state, piece, actions);
+      GenerateClusteredSearchMoves(state, piece, actions);
       GenerateAttacks(state, piece, actions);
       GenerateAbilities(state, piece, actions);
     }
@@ -93,6 +93,131 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       AddIfLegal(state, new MoveAction(piece.Team, piece.Id, destination.x, destination.y), actions);
     }
   }
+
+  private sealed record SearchMoveRepresentative(
+    MoveAction Action,
+    bool CreatesAttack,
+    bool CreatesLethalAttack,
+    float AttackValue,
+    int ObjectiveProgress,
+    int EnemyProgress,
+    int EnemyDistance,
+    int ExposureCount,
+    float GeneralScore
+  );
+
+  /// <summary>
+  /// Search does not need every geometrically equivalent destination. Preserve a small set of
+  /// strategically distinct moves per piece, with an explicit slot for move-then-attack tactics.
+  /// The exhaustive GenerateLegalActions API remains unchanged.
+  /// </summary>
+  private static void GenerateClusteredSearchMoves(
+    CpuGameState state,
+    NetworkPiece piece,
+    List<ICpuGameAction> actions,
+    int maximumRepresentatives = 5
+  )
+  {
+    MoveAction[] legalMoves = CpuGameRules.GetLegalMovementPaths(state, piece).Keys
+      .OrderBy(position => position.y).ThenBy(position => position.x)
+      .Select(position => new MoveAction(piece.Team, piece.Id, position.x, position.y))
+      .Where(move => move.IsLegal(state))
+      .ToArray();
+    if (legalMoves.Length <= maximumRepresentatives)
+    {
+      actions.AddRange(legalMoves);
+      return;
+    }
+
+    NetworkPiece[] enemies = state.Pieces.Where(other => other.Team != piece.Team &&
+      other.Team != NetworkTeam.Neutral && other.AttachedToId is null).ToArray();
+    NetworkPiece[] allies = state.Pieces.Where(other => other.Team == piece.Team &&
+      other.Id != piece.Id && other.AttachedToId is null).ToArray();
+    (int x, int y)[] objectives = GetPurchaseObjectivePositions(state, piece.Team).ToArray();
+    int currentEnemyDistance = enemies.Select(enemy => Distance((piece.X, piece.Y), (enemy.X, enemy.Y))).DefaultIfEmpty(0).Min();
+    int currentObjectiveDistance = objectives.Select(goal => Distance((piece.X, piece.Y), goal)).DefaultIfEmpty(0).Min();
+
+    SearchMoveRepresentative[] ranked = legalMoves.Select(move =>
+    {
+      CpuGameState result = CpuGameRules.ApplyLegal(state, move);
+      NetworkPiece? moved = result.Pieces.FirstOrDefault(candidate => candidate.Id == piece.Id);
+      if (moved is null)
+      {
+        return new SearchMoveRepresentative(move, false, false, 0f, 0, 0, 0, int.MaxValue, float.MinValue);
+      }
+
+      float bestAttackValue = 0f;
+      bool lethalAttack = false;
+      foreach (NetworkPiece enemy in result.Pieces.Where(other => other.Team != piece.Team &&
+        other.Team != NetworkTeam.Neutral && other.AttachedToId is null))
+      {
+        if (!CpuGameRules.CanDirectlyAttack(result, moved, enemy) || !UnitRules.TryGet(enemy.Type, out UnitRule enemyRule))
+        {
+          continue;
+        }
+        int damage = CpuGameRules.EstimateAttackDamage(result, moved, enemy);
+        bool lethal = damage >= enemy.Health;
+        float targetValue = enemyRule.Cost + enemyRule.Attack * 1.5f + enemyRule.Health * 0.2f +
+          (lethal ? 55f : 0f) + (enemyRule.Category == RuleCategory.Royal ? 300f : 0f);
+        bestAttackValue = Math.Max(bestAttackValue, targetValue);
+        lethalAttack |= lethal;
+      }
+
+      int enemyDistance = result.Pieces.Where(other => other.Team != piece.Team &&
+          other.Team != NetworkTeam.Neutral && other.AttachedToId is null)
+        .Select(enemy => Distance((moved.X, moved.Y), (enemy.X, enemy.Y))).DefaultIfEmpty(0).Min();
+      int objectiveDistance = objectives.Select(goal => Distance((moved.X, moved.Y), goal)).DefaultIfEmpty(currentObjectiveDistance).Min();
+      int objectiveProgress = objectives.Length == 0 ? 0 : currentObjectiveDistance - objectiveDistance;
+      int enemyProgress = enemies.Length == 0 ? 0 : currentEnemyDistance - enemyDistance;
+      int exposure = result.Pieces.Count(enemy => enemy.Team != piece.Team && enemy.Team != NetworkTeam.Neutral &&
+        enemy.AttachedToId is null && CpuGameRules.CanDirectlyAttack(result, enemy, moved));
+      int allyDistance = allies.Select(ally => Distance((moved.X, moved.Y), (ally.X, ally.Y))).DefaultIfEmpty(4).Min();
+      float support = Math.Max(0, 4 - allyDistance) * 2f;
+      float general = bestAttackValue + objectiveProgress * 22f + enemyProgress * 5f + support - exposure * 24f;
+      if (state.Configuration.GameMode == "Conquest" && MatchRules.IsConquestSquare(state.Board, (moved.X, moved.Y))) general += 35f;
+      if (state.Configuration.GameMode == "Dominion" && MatchRules.GetDominionControlPoints(state.Board).Contains((moved.X, moved.Y))) general += 35f;
+      return new SearchMoveRepresentative(move, bestAttackValue > 0f, lethalAttack, bestAttackValue,
+        objectiveProgress, enemyProgress, enemyDistance, exposure, general);
+    }).ToArray();
+
+    List<MoveAction> selected = [];
+    HashSet<MoveAction> seen = [];
+    void Add(SearchMoveRepresentative? representative)
+    {
+      if (representative is not null && seen.Add(representative.Action)) selected.Add(representative.Action);
+    }
+
+    // Tactical slot: never prune the best move that creates a shot. Prefer a kill if one exists.
+    Add(ranked.Where(option => option.CreatesAttack)
+      .OrderByDescending(option => option.CreatesLethalAttack)
+      .ThenByDescending(option => option.AttackValue)
+      .ThenBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.GeneralScore)
+      .FirstOrDefault());
+    // Objective slot.
+    Add(ranked.OrderByDescending(option => option.ObjectiveProgress)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Aggressive contact slot.
+    Add(ranked.OrderByDescending(option => option.EnemyProgress)
+      .ThenBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Safety/retreat slot. It matters especially for threatened royals and expensive pieces.
+    Add(ranked.OrderBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.EnemyDistance)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Best all-round move, then deterministic fallbacks if categories overlapped.
+    foreach (SearchMoveRepresentative option in ranked.OrderByDescending(option => option.GeneralScore)
+      .ThenBy(option => option.Action.Describe(), StringComparer.Ordinal))
+    {
+      Add(option);
+      if (selected.Count >= maximumRepresentatives) break;
+    }
+
+    actions.AddRange(selected.Take(maximumRepresentatives));
+  }
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 
   private static void GenerateAttacks(CpuGameState state, NetworkPiece attacker, List<ICpuGameAction> actions)
   {
@@ -485,8 +610,6 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     return positions;
   }
 
-  private static int Distance((int x, int y) first, (int x, int y) second) =>
-    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 
   private static bool OverlapsExistingPiece(CpuGameState state, UnitRule rule, int x, int y) => state.Pieces.Any(piece =>
     UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&

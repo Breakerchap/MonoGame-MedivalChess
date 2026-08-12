@@ -263,6 +263,95 @@ public sealed class CpuPlanningEfficiencyTests
     }
   }
 
+  [Fact]
+  public void SearchMovement_ClustersDestinationsPerPiece()
+  {
+    CpuGameState state = CreateState(
+      money: 0,
+      Piece("red-knight", "Knight", NetworkTeam.Red, 0, 5),
+      Piece("red-archer", "Archer", NetworkTeam.Red, 2, 5),
+      Piece("red-soldier", "Soldier", NetworkTeam.Red, -2, 5),
+      Piece("blue-king", "King", NetworkTeam.Blue, 0, -8));
+    CpuActionGenerator generator = new();
+    MoveAction[] exhaustive = generator.GenerateLegalActions(state, NetworkTeam.Red).OfType<MoveAction>().ToArray();
+    MoveAction[] search = generator.GenerateSearchActions(state, NetworkTeam.Red, 1).OfType<MoveAction>().ToArray();
+
+    Assert.True(exhaustive.Length > search.Length, $"exhaustive={exhaustive.Length}, search={search.Length}");
+    Assert.All(search.GroupBy(move => move.PieceId), group => Assert.InRange(group.Count(), 1, 5));
+  }
+
+  [Fact]
+  public void SearchMovement_PreservesAMoveThatCreatesAnAttack()
+  {
+    CpuGameState state = CreateState(
+      money: 0,
+      Piece("red-knight", "Knight", NetworkTeam.Red, 0, 3),
+      Piece("red-king", "King", NetworkTeam.Red, 3, 7),
+      Piece("blue-archer", "Archer", NetworkTeam.Blue, 0, -2),
+      Piece("blue-king", "King", NetworkTeam.Blue, 3, -7));
+    CpuActionGenerator generator = new();
+    MoveAction[] exhaustiveAttackMoves = generator.GenerateLegalActions(state, NetworkTeam.Red).OfType<MoveAction>()
+      .Where(move => move.PieceId == "red-knight")
+      .Where(move =>
+      {
+        CpuGameState moved = move.Apply(state);
+        NetworkPiece knight = moved.Pieces.Single(piece => piece.Id == "red-knight");
+        return moved.Pieces.Any(enemy => enemy.Team == NetworkTeam.Blue &&
+          CpuGameRules.CanDirectlyAttack(moved, knight, enemy));
+      }).ToArray();
+    Assert.NotEmpty(exhaustiveAttackMoves);
+
+    MoveAction[] searchMoves = generator.GenerateSearchActions(state, NetworkTeam.Red, 1).OfType<MoveAction>()
+      .Where(move => move.PieceId == "red-knight").ToArray();
+    Assert.Contains(searchMoves, move =>
+    {
+      CpuGameState moved = move.Apply(state);
+      NetworkPiece knight = moved.Pieces.Single(piece => piece.Id == "red-knight");
+      return moved.Pieces.Any(enemy => enemy.Team == NetworkTeam.Blue &&
+        CpuGameRules.CanDirectlyAttack(moved, knight, enemy));
+    });
+  }
+
+  [Fact]
+  public void UnlimitedTurn_CompletesClearlyUsefulMovesForUntouchedCombatUnits()
+  {
+    bool previous = Globals.ActionLimitsEnabled;
+    Globals.ActionLimitsEnabled = false;
+    try
+    {
+      CpuGameState state = CreateState(
+        money: 0,
+        Piece("red-knight", "Knight", NetworkTeam.Red, -2, 5),
+        Piece("red-archer", "Archer", NetworkTeam.Red, 2, 5),
+        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 4),
+        Piece("red-defender", "Defender", NetworkTeam.Red, -1, 6),
+        Piece("red-king", "King", NetworkTeam.Red, 0, 8),
+        Piece("blue-knight", "Knight", NetworkTeam.Blue, 2, -5),
+        Piece("blue-archer", "Archer", NetworkTeam.Blue, -2, -5),
+        Piece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -4),
+        Piece("blue-defender", "Defender", NetworkTeam.Blue, 1, -6),
+        Piece("blue-king", "King", NetworkTeam.Blue, 0, -8));
+      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Hard(812), CancellationToken.None);
+      HashSet<string> active = plan.Actions.SelectMany(action => action switch
+      {
+        MoveAction move => new[] { move.PieceId },
+        AttackAction attack => new[] { attack.AttackerId },
+        UseAbilityAction ability => new[] { ability.ActorId },
+        _ => Array.Empty<string>()
+      }).ToHashSet(StringComparer.Ordinal);
+
+      Assert.Contains("red-knight", active);
+      Assert.Contains("red-archer", active);
+      Assert.Contains("red-soldier", active);
+      Assert.Contains("red-defender", active);
+      Assert.IsType<EndTurnAction>(plan.Actions[^1]);
+    }
+    finally
+    {
+      Globals.ActionLimitsEnabled = previous;
+    }
+  }
+
   private static NetworkPiece Piece(string id, string type, NetworkTeam team, int x, int y)
   {
     UnitRule rule = UnitRules.GetRequired(type);
