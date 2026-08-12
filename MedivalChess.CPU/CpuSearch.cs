@@ -762,18 +762,30 @@ public sealed class CpuPlayer : ICpuPlayer
 
     if (!Globals.ActionLimitsEnabled)
     {
-      bool immediateCombat = candidates.Any(candidate => candidate.Action is AttackAction);
+      ScoredAction[] attacks = candidates.Where(candidate => candidate.Action is AttackAction).ToArray();
       bool royalEmergency = IsRoyalUnderDirectThreat(state, team);
-      if (immediateCombat || royalEmergency)
+      if (attacks.Length > 0 || royalEmergency)
       {
+        HashSet<string> attackers = attacks
+          .Select(candidate => ((AttackAction)candidate.Action).AttackerId)
+          .ToHashSet(StringComparer.Ordinal);
         ScoredAction[] boardResponses = candidates
-          .Where(candidate => candidate.Action is AttackAction or MoveAction or UseAbilityAction)
+          .Where(candidate => candidate.Action switch
+          {
+            AttackAction => true,
+            // Once a piece has a shot, do not let it move away and throw that attack away. Other
+            // units may still reposition or use a setup ability while the attack obligation remains.
+            MoveAction move => !attackers.Contains(move.PieceId),
+            UseAbilityAction => true,
+            _ => false
+          })
           .ToArray();
         if (boardResponses.Length > 0)
         {
-          // Purchases cannot act this turn and therefore cannot improve an immediate exchange.
-          // Resolve the fight / royal emergency first, then reconsider spending from the resulting state.
-          return boardResponses;
+          return boardResponses
+            .OrderByDescending(candidate => candidate.Action is AttackAction)
+            .ThenByDescending(candidate => candidate.Score)
+            .ToArray();
         }
       }
     }
@@ -869,19 +881,66 @@ public sealed class CpuPlayer : ICpuPlayer
       current = action.Apply(current);
     }
 
-    // Ending an unlimited turn is bookkeeping, not a strategic continuation. It is safe to add
-    // after the searched line; unlike the former verifier this never chooses an unsearched attack
-    // or move on the CPU's behalf.
     if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
     {
+      // Attack availability is now a CPU invariant rather than merely a heuristic. A short search
+      // may time out on the move half of a move->attack line; complete any attacks that are legal in
+      // the exact searched state before EndTurn. This never invents movement or purchases.
+      for (int forcedAttack = 0; forcedAttack < 64 && current.CurrentTurn == team && !current.IsFinished; forcedAttack++)
+      {
+        AttackAction? attack = ChooseMandatoryAttack(current, team);
+        if (attack is null)
+        {
+          break;
+        }
+        verified.Add(attack);
+        current = attack.Apply(current);
+      }
+
       EndTurnAction endTurn = new(team);
-      if (endTurn.IsLegal(current))
+      if (endTurn.IsLegal(current) && ChooseMandatoryAttack(current, team) is null)
       {
         verified.Add(endTurn);
       }
     }
 
     return verified;
+  }
+
+  private static AttackAction? ChooseMandatoryAttack(CpuGameState state, NetworkTeam team)
+  {
+    return new CpuActionGenerator().GenerateSearchActions(state, team, 1)
+      .OfType<AttackAction>()
+      .Where(attack => attack.IsLegal(state))
+      .OrderByDescending(attack => CpuGameRules.ApplyLegal(state, attack).IsFinished)
+      .ThenByDescending(attack => ScoreMandatoryAttack(state, attack))
+      .ThenBy(attack => attack.Describe(), StringComparer.Ordinal)
+      .FirstOrDefault();
+  }
+
+  private static float ScoreMandatoryAttack(CpuGameState state, AttackAction attack)
+  {
+    NetworkPiece? attacker = state.Pieces.FirstOrDefault(piece => piece.Id == attack.AttackerId);
+    NetworkPiece? target = attack.TargetPieceId is null
+      ? null
+      : state.Pieces.FirstOrDefault(piece => piece.Id == attack.TargetPieceId);
+    if (attacker is null)
+    {
+      return float.MinValue;
+    }
+    if (target is null)
+    {
+      return 20f;
+    }
+
+    int damage = CpuGameRules.EstimateAttackDamage(state, attacker, target);
+    float score = CombatTargetScoring.GetDamageReward(state, attack.Team, target, damage) +
+      CpuStrategicHeuristics.ScoreAction(state, attack);
+    if (damage >= target.Health)
+    {
+      score += CombatTargetScoring.GetKillReward(state, attack.Team, target);
+    }
+    return score;
   }
 
   /// <summary>

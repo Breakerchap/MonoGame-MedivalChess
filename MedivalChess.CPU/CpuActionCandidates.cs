@@ -254,7 +254,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
   {
     if (action is AttackAction)
     {
-      return candidate with { Score = candidate.Score + 180f, Reason = $"{candidate.Reason}; takes an available attack" };
+      return candidate with { Score = candidate.Score + 300f, Reason = $"{candidate.Reason}; strongly prioritises an available attack" };
     }
 
     float penalty = 0f;
@@ -262,12 +262,12 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     {
       penalty += action switch
       {
-        PurchaseAction => 110f,
-        UseAbilityAction => 80f,
-        EndTurnAction => 220f,
+        PurchaseAction => 190f,
+        UseAbilityAction => 95f,
+        EndTurnAction => 360f,
         MoveAction move when state.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId) is NetworkPiece mover &&
           state.Pieces.Any(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral &&
-            target.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, mover, target)) => 150f,
+            target.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, mover, target)) => 280f,
         _ => 0f
       };
     }

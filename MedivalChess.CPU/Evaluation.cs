@@ -973,10 +973,77 @@ public sealed class AssetSafetyEvaluation : IEvaluationTerm
 
 public sealed class ActionEfficiencyEvaluation : IEvaluationTerm
 {
+  private readonly ICpuThreatMapBuilder _threatMapBuilder = new CpuThreatMapBuilder();
+
   public string Name => "ActionEfficiency";
 
-  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context) =>
-    Globals.ActionLimitsEnabled && state.CurrentTurn == perspective
-      ? MatchRules.ActionsPerTurn - state.ActionsRemaining
-      : 0f;
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    if (state.CurrentTurn != perspective)
+    {
+      return 0f;
+    }
+
+    if (Globals.ActionLimitsEnabled)
+    {
+      return MatchRules.ActionsPerTurn - state.ActionsRemaining;
+    }
+
+    // Unlimited-action turns should use the army that is already on the board. Search depths are
+    // often partial under a short clock, so score unused opportunities in every intermediate state
+    // rather than relying on EndTurn itself to notice that half the army did nothing.
+    CpuThreatMap attacks = context.Cache.GetThreatMap(state, perspective, _threatMapBuilder);
+    HashSet<string> immediateAttackers = attacks.ThreatsByPiece.Values
+      .SelectMany(threat => threat.AttackerIds)
+      .ToHashSet(StringComparer.Ordinal);
+    NetworkPiece[] enemies = state.Pieces.Where(piece =>
+      piece.Team != perspective && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null).ToArray();
+
+    float penalty = 0f;
+    foreach (NetworkPiece piece in state.Pieces.Where(piece =>
+      piece.Team == perspective && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out _)))
+    {
+      UnitRule rule = UnitRules.GetRequired(piece.Type);
+      if (!piece.HasAttackedThisTurn && immediateAttackers.Contains(piece.Id))
+      {
+        // Missing a shot is the clearest wasted action. This is intentionally much stronger than
+        // the ordinary idle-move cost so a searched line that attacks beats one that just develops.
+        float bestTargetValue = attacks.ThreatsByPiece.Values
+          .Where(threat => threat.AttackerIds.Contains(piece.Id, StringComparer.Ordinal))
+          .Select(threat => state.Pieces.FirstOrDefault(target => target.Id == threat.PieceId))
+          .Where(target => target is not null)
+          .Select(target => HangingPieceEvaluation.GetExchangeValue(target!.Type, state))
+          .DefaultIfEmpty(20f)
+          .Max();
+        penalty += 150f + Math.Min(70f, bestTargetValue * 0.65f);
+      }
+
+      bool untouched = !piece.HasMovedThisTurn && !piece.HasAttackedThisTurn;
+      if (!untouched || rule.MoveRange <= 0)
+      {
+        continue;
+      }
+
+      // A completely idle mobile unit receives a smaller development penalty. Scale it with how
+      // far the piece still is from contributing, so holding a useful firing/defensive position is
+      // far less objectionable than leaving a remote unit parked for no reason.
+      int nearestEnemy = enemies
+        .Select(enemy => Math.Abs(piece.X - enemy.X) + Math.Abs(piece.Y - enemy.Y))
+        .DefaultIfEmpty(0)
+        .Min();
+      if (nearestEnemy > 0)
+      {
+        int usefulReach = Math.Max(1, rule.AttackRange);
+        int excessDistance = Math.Max(0, nearestEnemy - usefulReach);
+        float idle = 10f + Math.Min(28f, excessDistance * 2.5f);
+        if (rule.Category == RuleCategory.Royal && !CpuObjectiveRules.IsRoyalEliminationObjective(state))
+        {
+          idle *= 0.6f;
+        }
+        penalty += idle;
+      }
+    }
+
+    return -penalty;
+  }
 }
