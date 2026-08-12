@@ -395,9 +395,9 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     int maxForwardProjection
   )
   {
-    NetworkTeam owner = MatchRules.GetSquareOwner(
+    NetworkTeam? owner = MatchRules.GetSquareOwner(
       state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount);
-    int territoryBand = owner == team ? 0 : owner == NetworkTeam.Neutral ? 1 : 2;
+    int territoryBand = owner == team ? 0 : owner is null || owner == NetworkTeam.Neutral ? 1 : 2;
     int projection = position.x * TeamRules.GetForwardDirection(team).x +
       position.y * TeamRules.GetForwardDirection(team).y;
     float forwardFraction = maxForwardProjection <= minForwardProjection
@@ -454,7 +454,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     HashSet<(int x, int y)> positions = [];
     if (state.Configuration.GameMode == "Conquest")
     {
-      positions.UnionWith(state.Board.Cells.Where(MatchRules.IsConquestSquare));
+      positions.UnionWith(state.Board.Cells.Where(position => MatchRules.IsConquestSquare(state.Board, position)));
     }
     else if (state.Configuration.GameMode == "Dominion")
     {
@@ -484,6 +484,9 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     }
     return positions;
   }
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 
   private static bool OverlapsExistingPiece(CpuGameState state, UnitRule rule, int x, int y) => state.Pieces.Any(piece =>
     UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
