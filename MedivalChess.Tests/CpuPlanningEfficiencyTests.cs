@@ -169,6 +169,100 @@ public sealed class CpuPlanningEfficiencyTests
     Assert.True(rearScore >= frontScore + 20f, $"rear={rearScore}, front={frontScore}");
   }
 
+  [Fact]
+  public void ActionEfficiency_HeavilyPenalisesLeavingAnAvailableAttackUnused()
+  {
+    bool previous = Globals.ActionLimitsEnabled;
+    Globals.ActionLimitsEnabled = false;
+    try
+    {
+      CpuGameState state = CreateState(
+        money: 0,
+        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0),
+        Piece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 1));
+      ActionEfficiencyEvaluation term = new();
+      EvaluationContext context = new(CpuProfile.Hard(17));
+      float idle = term.Evaluate(state, NetworkTeam.Red, context);
+      AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-peasant", 0, 1);
+      Assert.True(attack.IsLegal(state));
+      float afterAttack = term.Evaluate(attack.Apply(state), NetworkTeam.Red, context);
+
+      Assert.True(afterAttack >= idle + 150f, $"idle={idle}, after={afterAttack}");
+    }
+    finally
+    {
+      Globals.ActionLimitsEnabled = previous;
+    }
+  }
+
+  [Fact]
+  public void ActionEfficiency_PenalisesLeavingAMobileRemoteUnitCompletelyIdle()
+  {
+    bool previous = Globals.ActionLimitsEnabled;
+    Globals.ActionLimitsEnabled = false;
+    try
+    {
+      CpuGameState state = CreateState(
+        money: 0,
+        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 5),
+        Piece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -5));
+      ActionEfficiencyEvaluation term = new();
+      EvaluationContext context = new(CpuProfile.Hard(18));
+      float idle = term.Evaluate(state, NetworkTeam.Red, context);
+      MoveAction move = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+        .OfType<MoveAction>()
+        .Where(action => action.PieceId == "red-soldier")
+        .OrderBy(action => Math.Abs(action.DestinationY - (-5)))
+        .First();
+      float afterMove = term.Evaluate(move.Apply(state), NetworkTeam.Red, context);
+
+      Assert.True(afterMove > idle + 10f, $"idle={idle}, after={afterMove}, move={move.Describe()}");
+    }
+    finally
+    {
+      Globals.ActionLimitsEnabled = previous;
+    }
+  }
+
+  [Fact]
+  public void UnlimitedTurn_NeverEndsWhileALegalAttackRemains()
+  {
+    bool previous = Globals.ActionLimitsEnabled;
+    Globals.ActionLimitsEnabled = false;
+    try
+    {
+      CpuGameState state = CreateState(
+        money: 0,
+        Piece("red-soldier-one", "Soldier", NetworkTeam.Red, 0, 0),
+        Piece("red-soldier-two", "Soldier", NetworkTeam.Red, 2, 0),
+        Piece("blue-defender-one", "Defender", NetworkTeam.Blue, 0, 1),
+        Piece("blue-defender-two", "Defender", NetworkTeam.Blue, 2, 1));
+      CpuProfile profile = CpuProfile.Hard(19);
+
+      CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, profile, CancellationToken.None);
+      CpuGameState current = state;
+      foreach (ICpuGameAction action in plan.Actions)
+      {
+        if (action is EndTurnAction)
+        {
+          bool attackRemains = new CpuActionGenerator().GenerateSearchActions(current, NetworkTeam.Red, 1)
+            .OfType<AttackAction>()
+            .Any();
+          Assert.False(attackRemains, string.Join(" | ", plan.Actions.Select(candidate => candidate.Describe())));
+        }
+        Assert.True(action.IsLegal(current), action.Describe());
+        current = action.Apply(current);
+      }
+
+      Assert.Contains(plan.Actions, action => action is AttackAction { AttackerId: "red-soldier-one" });
+      Assert.Contains(plan.Actions, action => action is AttackAction { AttackerId: "red-soldier-two" });
+    }
+    finally
+    {
+      Globals.ActionLimitsEnabled = previous;
+    }
+  }
+
   private static NetworkPiece Piece(string id, string type, NetworkTeam team, int x, int y)
   {
     UnitRule rule = UnitRules.GetRequired(type);
