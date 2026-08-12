@@ -22,7 +22,8 @@ public readonly record struct AttackRange
     Maximum = maximum;
   }
 
-  public static implicit operator AttackRange((int minimum, int maximum) range) => new(range.minimum, range.maximum);
+  public static implicit operator AttackRange((int minimum, int maximum) range) =>
+    new(range.minimum, range.maximum);
 }
 
 public enum Shape
@@ -30,9 +31,13 @@ public enum Shape
   Any,
   Straight,
   Line,
+  Diagonal,
+  LineOrDiagonal,
+  ChessKnight,
   Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
+  ForwardLine,
   PierceStraight,
   MoveOnEnemy,
   None
@@ -40,47 +45,125 @@ public enum Shape
 
 public enum PieceType
 {
-  Soldier, Defender, Archer,
-  Peasant, Knight, Crossbowman, Cavalier, Chariot,
-  Cannon, Spy, Catapult, Bombard, Ox, Engineer, Ballista,
-  Elephant, Guard, Mercenary, Farm,
+  // Base
+  Soldier,
+  Defender,
+  Archer,
+  Peasant,
+  Knight,
+  Crossbowman,
+  Cavalier,
+  Cannon,
+  Catapult,
+  Bombard,
+  Guard,
+  Farm,
 
-  King, Princess, Palace, Baron, Emissary
+  King,
+  Princess,
+  Palace,
+  Baron,
+  Emissary,
+
+  // Dynasty
+  Elephant,
+  Ox,
+  Ninja,
+  Samurai,
+  Emperor,
+  TerracottaWarrior,
+
+  // Fantasy
+  Dragon,
+  GoblinRoyalty,
+  Adventurer,
+  Wizard,
+  Dragonborn,
+
+  // Undead
+  Skeleton,
+  Zombie,
+  Flesh,
+  Ghoul,
+  Phantom,
+
+  // Greek
+  Chariot,
+  Ballista,
+  Zeus,
+  Heracles,
+  Hermes,
+  Ares,
+  Chimera,
+  Pegasus,
+
+  // Modern
+  Spy,
+  Engineer,
+  Mercenary,
+
+  // Chess
+  Pawn,
+  ChessKnight,
+  Bishop,
+  Rook,
+  Queen,
+  ChessKing
 }
 
-public enum PieceCategory
+public enum Pack
 {
-  Melee, Ranged, Intelligence,
-  Mechanical, Structure, Transport,
-  Royal
+  Base,
+  Dynasty,
+  Fantasy,
+  Undead,
+  Greek,
+  Modern,
+  Chess
 }
 
 /// <summary>Authoritative game-facing unit definition. All unit stats are declared in <see cref="PieceDefinitions"/>.</summary>
 public sealed class PieceDefinition
 {
   public PieceType Type { get; }
+
   /// <summary>Stable purchase/editor identifier. Native units use their <see cref="Type"/> name.</summary>
   public string Identifier { get; }
+
   /// <summary>Player-facing name; custom campaign units can differ from their copied ability source.</summary>
   public string DisplayName { get; }
+
   /// <summary>Short in-board label. Empty uses the game's standard abbreviation for native units.</summary>
   public string? Abbreviation { get; }
-  public PieceCategory Category { get; }
-  public (int range, Shape shape) Movement { get; }
+
+  public Pack Pack { get; }
+
+  public ((int minRange, int maxRange), Shape shape) Movement { get; }
+
   public int Attack { get; }
+
   public int Health { get; }
+
   public (int x, int y) Size { get; }
+
   public AttackRange AttackRange { get; }
+
   public Shape AttackPattern { get; }
-  public (int range, Shape shape) AttackShape => (AttackRange.Maximum, AttackPattern);
+
+  public (int range, Shape shape) AttackShape =>
+    (AttackRange.Maximum, AttackPattern);
+
   public int MinimumAttackRange => AttackRange.Minimum;
+
   public int Cost { get; }
+
   public string AbilityDescription { get; }
 
   public PieceDefinition(
     PieceType type,
-    PieceCategory category,
-    (int range, Shape shape) movement,
+    string abbreviation,
+    Pack pack,
+    ((int minRange, int maxRange), Shape shape) movement,
     int attack,
     int health,
     (int x, int y) size,
@@ -89,15 +172,23 @@ public sealed class PieceDefinition
     int cost,
     string abilityDescription = "",
     string? identifier = null,
-    string? displayName = null,
-    string? abbreviation = null
+    string? displayName = null
   )
   {
     Type = type;
-    Identifier = string.IsNullOrWhiteSpace(identifier) ? type.ToString() : identifier;
-    DisplayName = string.IsNullOrWhiteSpace(displayName) ? type.ToString() : displayName;
-    Abbreviation = string.IsNullOrWhiteSpace(abbreviation) ? null : abbreviation;
-    Category = category;
+    Identifier = string.IsNullOrWhiteSpace(identifier)
+      ? type.ToString()
+      : identifier;
+
+    DisplayName = string.IsNullOrWhiteSpace(displayName)
+      ? type.ToString()
+      : displayName;
+
+    Abbreviation = string.IsNullOrWhiteSpace(abbreviation)
+      ? null
+      : abbreviation;
+
+    Pack = pack;
     Movement = movement;
     Attack = attack;
     Health = health;
@@ -118,98 +209,885 @@ public static class PieceDefinitions
   /// <summary>Fixed cost to hire a neutral Mercenary; rival buyouts still use the bid ladder.</summary>
   public const int NeutralMercenaryHireCost = 15;
 
+  // ============================================================
+  // Base
+  // ============================================================
+
   public static readonly PieceDefinition Soldier = new(
-    PieceType.Soldier, PieceCategory.Melee, (3, Shape.Straight), 10, 15, (1, 1), (1, 1), Shape.Straight, 20);
+    PieceType.Soldier,
+    "Sol",
+    Pack.Base,
+    ((3, 3), Shape.Straight),
+    10,
+    15,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    20
+  );
+
   public static readonly PieceDefinition Defender = new(
-    PieceType.Defender, PieceCategory.Melee, (2, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 20);
+    PieceType.Defender,
+    "Def",
+    Pack.Base,
+    ((2, 2), Shape.Any),
+    5,
+    25,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    20
+  );
+
   public static readonly PieceDefinition Archer = new(
-    PieceType.Archer, PieceCategory.Ranged, (3, Shape.Straight), 10, 10, (1, 1), (2, 3), Shape.Any, 25);
+    PieceType.Archer,
+    "Arc",
+    Pack.Base,
+    ((3, 3), Shape.Straight),
+    10,
+    10,
+    (1, 1),
+    (2, 3),
+    Shape.Any,
+    25
+  );
+
   public static readonly PieceDefinition Peasant = new(
-    PieceType.Peasant, PieceCategory.Melee, (1, Shape.Any), 5, 5, (1, 1), (1, 1), Shape.Straight, 10);
+    PieceType.Peasant,
+    "Pes",
+    Pack.Base,
+    ((1, 1), Shape.Any),
+    5,
+    5,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    10
+  );
+
   public static readonly PieceDefinition Knight = new(
-    PieceType.Knight, PieceCategory.Melee, (3, Shape.Straight), 20, 30, (1, 1), (1, 1), Shape.Any, 55);
+    PieceType.Knight,
+    "Knt",
+    Pack.Base,
+    ((3, 3), Shape.Straight),
+    20,
+    30,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    55
+  );
+
   public static readonly PieceDefinition Crossbowman = new(
-    PieceType.Crossbowman, PieceCategory.Ranged, (2, Shape.Any), 20, 15, (1, 1), (1, 3), Shape.Any, 50);
+    PieceType.Crossbowman,
+    "Cbo",
+    Pack.Base,
+    ((2, 2), Shape.Any),
+    20,
+    15,
+    (1, 1),
+    (1, 3),
+    Shape.Any,
+    50
+  );
+
   public static readonly PieceDefinition Cavalier = new(
-    PieceType.Cavalier, PieceCategory.Melee, (4, Shape.Any), 15, 20, (1, 1), (1, 1), Shape.Any, 55,
-    "If movement is already used, affter attacking allow a 2-Straight movement.");
-  public static readonly PieceDefinition Chariot = new(
-    PieceType.Chariot, PieceCategory.Melee, (5, Shape.Line), 15, 25, (1, 1), (1, 3), Shape.Line, 40);
+    PieceType.Cavalier,
+    "Cav",
+    Pack.Base,
+    ((4, 4), Shape.Any),
+    15,
+    20,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    55,
+    "If movement is already used, after attacking allow a 2-Straight movement."
+  );
+
   public static readonly PieceDefinition Cannon = new(
-    PieceType.Cannon, PieceCategory.Mechanical, (2, Shape.Straight), 30, 15, (1, 2), (2, 3), Shape.Line, 50);
-  public static readonly PieceDefinition Spy = new(
-    PieceType.Spy, PieceCategory.Intelligence, (5, Shape.Any), 0, 15, (1, 1), (1, 3), Shape.Straight, 35,
-    "Marks an enemy; it takes double damage until attacked.");
+    PieceType.Cannon,
+    "Cn",
+    Pack.Base,
+    ((2, 2), Shape.Straight),
+    30,
+    15,
+    (1, 2),
+    (2, 3),
+    Shape.Line,
+    50
+  );
+
   public static readonly PieceDefinition Catapult = new(
-    PieceType.Catapult, PieceCategory.Mechanical, (1, Shape.Any), 20, 15, (1, 2), (4, 5), Shape.Any, 55,
-    "Attacks over terrain and pieces.");
+    PieceType.Catapult,
+    "Cat",
+    Pack.Base,
+    ((1, 1), Shape.Any),
+    20,
+    15,
+    (1, 2),
+    (4, 5),
+    Shape.Any,
+    55,
+    "Attacks over terrain and pieces."
+  );
+
   public static readonly PieceDefinition Bombard = new(
-    PieceType.Bombard, PieceCategory.Ranged, (2, Shape.Straight), 15, 15, (1, 1), (2, 3), Shape.Straight, 55,
-    "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units.");
-  public static readonly PieceDefinition Ox = new(
-    PieceType.Ox, PieceCategory.Transport, (4, Shape.Any), 5, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Attaches to a 1x1 friendly unit and increases that unit's Movement by 2. While attatched, if attacked, both units take damage.");
-  public static readonly PieceDefinition Engineer = new(
-    PieceType.Engineer, PieceCategory.Intelligence, (3, Shape.Any), 0, 20, (1, 1), (1, 1), Shape.Any, 25,
-    "Builds up to two: roads, 20-health barricades, or mines each turn. It may also demolish Engineer structures within range. Doesn't trigger mines.");
-  public static readonly PieceDefinition Ballista = new(
-    PieceType.Ballista, PieceCategory.Mechanical, (1, Shape.Straight), 20, 20, (1, 2), (2, 5), Shape.Line, 55,
-    "Its attack pierces enemies in a straight line.");
-  public static readonly PieceDefinition Elephant = new(
-    PieceType.Elephant, PieceCategory.Melee, (3, Shape.Straight), 10, 60, (2, 2), (0, 0), Shape.None, 50,
-    "May move through enemies, damaging each crossed unit. Ignores terrain.");
+    PieceType.Bombard,
+    "Bom",
+    Pack.Base,
+    ((2, 2), Shape.Straight),
+    15,
+    15,
+    (1, 1),
+    (2, 3),
+    Shape.Straight,
+    55,
+    "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units."
+  );
+
   public static readonly PieceDefinition Guard = new(
-    PieceType.Guard, PieceCategory.Melee, (3, Shape.Straight), 10, 25, (1, 1), (1, 1), Shape.Straight, 35,
-    "Attaches to a friendly, non-royal unit and takes damage for it.");
-  public static readonly PieceDefinition Mercenary = new(
-    PieceType.Mercenary, PieceCategory.Melee, (3, Shape.Any), 15, 20, (1, 1), (1, 2), Shape.Straight, 25,
-    "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill.");
+    PieceType.Guard,
+    "Grd",
+    Pack.Base,
+    ((3, 3), Shape.Straight),
+    10,
+    25,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    35,
+    "Attaches to a friendly, non-royal unit and takes damage for it."
+  );
+
   public static readonly PieceDefinition Farm = new(
-    PieceType.Farm, PieceCategory.Structure, (0, Shape.None), 0, 30, (3, 3), (0, 0), Shape.None, 40,
-    "Earns 5 gold at the start of each owner turn. Units may move and attack over it.");
+    PieceType.Farm,
+    "Frm",
+    Pack.Base,
+    ((0, 0), Shape.None),
+    0,
+    30,
+    (3, 3),
+    (0, 0),
+    Shape.None,
+    40,
+    "Earns 5 gold at the start of each owner turn. Units may move and attack over it."
+  );
+
   public static readonly PieceDefinition King = new(
-    PieceType.King, PieceCategory.Royal, (1, Shape.Any), 15, 95, (1, 1), (1, 1), Shape.Any, 0);
+    PieceType.King,
+    "KIN",
+    Pack.Base,
+    ((1, 1), Shape.Any),
+    15,
+    95,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    0
+  );
+
   public static readonly PieceDefinition Princess = new(
-    PieceType.Princess, PieceCategory.Royal, (2, Shape.Straight), 15, 70, (1, 1), (1, 4), Shape.Any, 0,
-    "May attack over units and terrain and barricades.");
+    PieceType.Princess,
+    "PRI",
+    Pack.Base,
+    ((2, 2), Shape.Straight),
+    10,
+    70,
+    (1, 1),
+    (1, 4),
+    Shape.Any,
+    0,
+    "May attack over units and terrain and barricades."
+  );
+
   public static readonly PieceDefinition Palace = new(
-    PieceType.Palace, PieceCategory.Royal, (0, Shape.None), 0, 110, (3, 2), (0, 0), Shape.None, 0,
-    "Friendly pieces moving in the direction of the Palace gain +1 movement and ignore terrain.");
+    PieceType.Palace,
+    "PAL",
+    Pack.Base,
+    ((0, 0), Shape.None),
+    0,
+    110,
+    (3, 2),
+    (0, 0),
+    Shape.None,
+    0,
+    "Friendly pieces moving in the direction of the Palace gain +1 movement and ignore terrain."
+  );
+
   public static readonly PieceDefinition Baron = new(
-    PieceType.Baron, PieceCategory.Royal, (3, Shape.Straight), 10, 80, (1, 1), (1, 1), Shape.Any, 0,
-    "Adjacent allies deal 5 additional damage and take 5 less damage.");
+    PieceType.Baron,
+    "BAR",
+    Pack.Base,
+    ((3, 3), Shape.Straight),
+    10,
+    80,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    0,
+    "Adjacent allies deal 5 additional damage and take 5 less damage."
+  );
+
   public static readonly PieceDefinition Emissary = new(
-    PieceType.Emissary, PieceCategory.Royal, (4, Shape.Any), 5, 70, (1, 1), (1, 1), Shape.Any, 0,
-    "Moves (diagonally) adjacent friendly 1x1 pieces with it.");
+    PieceType.Emissary,
+    "EMI",
+    Pack.Base,
+    ((4, 4), Shape.Any),
+    5,
+    70,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    0,
+    "Moves (diagonally) adjacent friendly 1x1 pieces with it."
+  );
+
+  // ============================================================
+  // Dynasty
+  // ============================================================
+
+  public static readonly PieceDefinition Elephant = new(
+    PieceType.Elephant,
+    "Ele",
+    Pack.Dynasty,
+    ((3, 3), Shape.Straight),
+    10,
+    60,
+    (2, 2),
+    (0, 0),
+    Shape.None,
+    50,
+    "May move through enemies, damaging each crossed unit. Ignores terrain."
+  );
+
+  public static readonly PieceDefinition Ox = new(
+    PieceType.Ox,
+    "Ox",
+    Pack.Dynasty,
+    ((4, 4), Shape.Any),
+    5,
+    25,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    35,
+    "Attaches to a 1x1 friendly unit and increases that unit's Movement by 2. While attached, if attacked, both units take damage."
+  );
+
+  public static readonly PieceDefinition Ninja = new(
+    PieceType.Ninja,
+    "Nj",
+    Pack.Dynasty,
+    ((4, 4), Shape.Straight),
+    5,
+    10,
+    (1, 1),
+    (2, 4),
+    Shape.Straight,
+    40,
+    "May attack up to three times per turn."
+  );
+
+  public static readonly PieceDefinition Samurai = new(
+    PieceType.Samurai,
+    "Sam",
+    Pack.Dynasty,
+    ((3, 3), Shape.Straight),
+    15,
+    15,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    35,
+    "Deflects incoming projectiles."
+  );
+
+  public static readonly PieceDefinition Emperor = new(
+    PieceType.Emperor,
+    "EP",
+    Pack.Dynasty,
+    ((2, 2), Shape.Straight),
+    5,
+    60,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    0,
+    "After dying, revive in the same position as a Terracotta Warrior."
+  );
+
+  public static readonly PieceDefinition TerracottaWarrior = new(
+    PieceType.TerracottaWarrior,
+    "TW",
+    Pack.Dynasty,
+    ((0, 0), Shape.None),
+    0,
+    60,
+    (1, 1),
+    (0, 0),
+    Shape.None,
+    0,
+    "This unit cannot be bought.",
+    displayName: "Terracotta Warrior"
+  );
+
+  // ============================================================
+  // Fantasy
+  // ============================================================
+
+  public static readonly PieceDefinition Dragon = new(
+    PieceType.Dragon,
+    "Dra",
+    Pack.Fantasy,
+    ((5, 5), Shape.Straight),
+    20,
+    60,
+    (2, 3),
+    (3, 3),
+    Shape.ForwardLine,
+    90,
+    "Hits all units within attack range."
+  );
+
+  public static readonly PieceDefinition GoblinRoyalty = new(
+    PieceType.GoblinRoyalty,
+    "GK/GQ/GP/GP",
+    Pack.Fantasy,
+    ((2, 2), Shape.Any),
+    5,
+    20,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    0,
+    "This royal is made up of 4 separate units. You lose if all of them die.",
+    displayName: "Goblin Royalty"
+  );
+
+  public static readonly PieceDefinition Adventurer = new(
+    PieceType.Adventurer,
+    "Adv",
+    Pack.Fantasy,
+    ((3, 3), Shape.Straight),
+    10,
+    20,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    25
+  );
+
+  public static readonly PieceDefinition Wizard = new(
+    PieceType.Wizard,
+    "Wiz",
+    Pack.Fantasy,
+    ((1, 1), Shape.Any),
+    15,
+    10,
+    (1, 1),
+    (2, 4),
+    Shape.Any,
+    35,
+    "Shoots a fireball exploding in a 3x3 area dealing 15 damage to all enemies not in the middle of the explosion."
+  );
+
+  public static readonly PieceDefinition Dragonborn = new(
+    PieceType.Dragonborn,
+    "Dgb",
+    Pack.Fantasy,
+    ((2, 2), Shape.Any),
+    20,
+    20,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    40,
+    "After attacking, leave a burn effect that deals 5 damage to the attacked enemy at the start of your next turn."
+  );
+
+  // ============================================================
+  // Undead
+  // ============================================================
+
+  public static readonly PieceDefinition Skeleton = new(
+    PieceType.Skeleton,
+    "Ske",
+    Pack.Undead,
+    ((2, 2), Shape.Straight),
+    10,
+    10,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    15
+  );
+
+  public static readonly PieceDefinition Zombie = new(
+    PieceType.Zombie,
+    "Zom",
+    Pack.Undead,
+    ((1, 1), Shape.Straight),
+    10,
+    5,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    25,
+    "After dying, spawn a Flesh in its position."
+  );
+
+  public static readonly PieceDefinition Flesh = new(
+    PieceType.Flesh,
+    "Fle",
+    Pack.Undead,
+    ((0, 0), Shape.None),
+    0,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.None,
+    0,
+    "This unit cannot be bought. After one turn, transform into Zombie."
+  );
+
+  /*
+   * The PDF lists Ghoul's Health as "—", so there is no grounded numeric
+   * value to put into PieceDefinition.Health yet.
+   *
+   * public static readonly PieceDefinition Ghoul = new(
+   *   PieceType.Ghoul,
+   *   "Gou",
+   *   Pack.Undead,
+   *   ((2, 2), Shape.Any),
+   *   15,
+   *   ???,
+   *   (1, 1),
+   *   (1, 1),
+   *   Shape.Straight,
+   *   35,
+   *   "Dies after 4 turns."
+   * );
+   */
+
+  public static readonly PieceDefinition Phantom = new(
+    PieceType.Phantom,
+    "PHA",
+    Pack.Undead,
+    ((1, 1), Shape.Straight),
+    0,
+    10,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    0,
+    "Can 'Possess' any friendly unit, making it the royal. Can 'Unpossess' at any time."
+  );
+
+  // ============================================================
+  // Greek
+  // ============================================================
+
+  public static readonly PieceDefinition Chariot = new(
+    PieceType.Chariot,
+    "Cha",
+    Pack.Greek,
+    ((5, 5), Shape.Line),
+    15,
+    25,
+    (1, 1),
+    (1, 3),
+    Shape.Line,
+    40
+  );
+
+  public static readonly PieceDefinition Ballista = new(
+    PieceType.Ballista,
+    "Bal",
+    Pack.Greek,
+    ((1, 1), Shape.Straight),
+    20,
+    20,
+    (1, 2),
+    (2, 5),
+    Shape.Line,
+    55,
+    "Its attack pierces enemies in a straight line."
+  );
+
+  public static readonly PieceDefinition Zeus = new(
+    PieceType.Zeus,
+    "ZEU",
+    Pack.Greek,
+    ((2, 2), Shape.Any),
+    15,
+    75,
+    (1, 1),
+    (4, 4),
+    Shape.Any,
+    0,
+    "Its attack can chain to enemies directly next to it and enemies next to that one etc. Deals 5 damage."
+  );
+
+  public static readonly PieceDefinition Heracles = new(
+    PieceType.Heracles,
+    "Hcl",
+    Pack.Greek,
+    ((2, 2), Shape.Straight),
+    10,
+    15,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    15
+  );
+
+  public static readonly PieceDefinition Hermes = new(
+    PieceType.Hermes,
+    "Hem",
+    Pack.Greek,
+    ((4, 4), Shape.Any),
+    10,
+    15,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    35
+  );
+
+  public static readonly PieceDefinition Ares = new(
+    PieceType.Ares,
+    "Are",
+    Pack.Greek,
+    ((2, 2), Shape.Straight),
+    30,
+    10,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    30
+  );
+
+  public static readonly PieceDefinition Chimera = new(
+    PieceType.Chimera,
+    "Chi",
+    Pack.Greek,
+    ((3, 3), Shape.Any),
+    15,
+    35,
+    (1, 2),
+    (1, 1),
+    Shape.Any,
+    55,
+    "Attacks it makes behind it do 10 more damage."
+  );
+
+  public static readonly PieceDefinition Pegasus = new(
+    PieceType.Pegasus,
+    "Peg",
+    Pack.Greek,
+    ((2, 4), Shape.Straight),
+    10,
+    25,
+    (1, 1),
+    (1, 1),
+    Shape.Straight,
+    30
+  );
+
+  // ============================================================
+  // Modern
+  // ============================================================
+
+  public static readonly PieceDefinition Spy = new(
+    PieceType.Spy,
+    "Spy",
+    Pack.Modern,
+    ((5, 5), Shape.Any),
+    0,
+    15,
+    (1, 1),
+    (1, 3),
+    Shape.Straight,
+    35,
+    "Marks an enemy; it takes double damage until attacked."
+  );
+
+  public static readonly PieceDefinition Engineer = new(
+    PieceType.Engineer,
+    "Eng",
+    Pack.Modern,
+    ((3, 3), Shape.Any),
+    0,
+    20,
+    (1, 1),
+    (1, 1),
+    Shape.Any,
+    25,
+    "Builds up to two: roads, 20-health barricades, or mines each turn. It may also demolish Engineer structures within range. Doesn't trigger mines."
+  );
+
+  public static readonly PieceDefinition Mercenary = new(
+    PieceType.Mercenary,
+    "Mrc",
+    Pack.Modern,
+    ((3, 3), Shape.Any),
+    15,
+    20,
+    (1, 1),
+    (1, 2),
+    Shape.Straight,
+    25,
+    "Place anywhere in No-Man's-Land. Costs 10 gold per owner turn; it is fired if you cannot pay. Fire it to leave it neutral for either player to hire or kill."
+  );
+
+  // President is not defined here because the PDF only supplies:
+  // Move: 3
+  // Move Pattern: Straight
+  // The remaining columns are blank.
+
+  // ============================================================
+  // Chess
+  // ============================================================
+
+  public static readonly PieceDefinition Pawn = new(
+    PieceType.Pawn,
+    "Pwn",
+    Pack.Chess,
+    ((2, 2), Shape.Forward),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
+  );
+
+  public static readonly PieceDefinition ChessKnight = new(
+    PieceType.ChessKnight,
+    "KnC",
+    Pack.Chess,
+    ((3, 3), Shape.ChessKnight),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement.",
+    displayName: "Chess Knight"
+  );
+
+  public static readonly PieceDefinition Bishop = new(
+    PieceType.Bishop,
+    "Bsh",
+    Pack.Chess,
+    ((8, 8), Shape.Diagonal),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
+  );
+
+  public static readonly PieceDefinition Rook = new(
+    PieceType.Rook,
+    "Rok",
+    Pack.Chess,
+    ((8, 8), Shape.Line),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
+  );
+
+  public static readonly PieceDefinition Queen = new(
+    PieceType.Queen,
+    "Qun",
+    Pack.Chess,
+    ((8, 8), Shape.LineOrDiagonal),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement."
+  );
+
+  public static readonly PieceDefinition ChessKing = new(
+    PieceType.ChessKing,
+    "KIC",
+    Pack.Chess,
+    ((1, 1), Shape.Any),
+    60,
+    5,
+    (1, 1),
+    (0, 0),
+    Shape.MoveOnEnemy,
+    0,
+    "Attack a unit by landing on them; if they die, move onto the square they were on, else go to the previous square of your movement.",
+    displayName: "Chess King"
+  );
+
+  // ============================================================
+  // Collections
+  // ============================================================
 
   public static readonly PieceDefinition[] All =
   [
-    Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon,
-    Catapult, Bombard, Ox, Engineer,
-    Elephant, Guard, Mercenary, Farm, King, Princess,
-    Palace, Baron, Emissary
+    // Base
+    Soldier,
+    Defender,
+    Archer,
+    Peasant,
+    Knight,
+    Crossbowman,
+    Cavalier,
+    Cannon,
+    Catapult,
+    Bombard,
+    Guard,
+    Farm,
+    King,
+    Princess,
+    Palace,
+    Baron,
+    Emissary,
+
+    // Dynasty
+    Elephant,
+    Ox,
+    Ninja,
+    Samurai,
+    Emperor,
+    TerracottaWarrior,
+
+    // Fantasy
+    Dragon,
+    GoblinRoyalty,
+    Adventurer,
+    Wizard,
+    Dragonborn,
+
+    // Undead
+    Skeleton,
+    Zombie,
+    Flesh,
+    Phantom,
+
+    // Greek
+    Chariot,
+    Ballista,
+    Zeus,
+    Heracles,
+    Hermes,
+    Ares,
+    Chimera,
+    Pegasus,
+
+    // Modern
+    Spy,
+    Engineer,
+    Mercenary,
+
+    // Chess
+    Pawn,
+    ChessKnight,
+    Bishop,
+    Rook,
+    Queen,
+    ChessKing
   ];
 
   public static readonly PieceDefinition[] Encyclopedia =
   [
-    Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon,
-    Catapult, Bombard, Ox, Engineer,
-    Elephant, Guard, Mercenary, Farm, King, Princess,
-    Palace, Baron, Emissary
+    .. All
   ];
 
   public static readonly PieceDefinition[] Purchasable =
   [
-    Soldier, Defender, Archer, Peasant, Knight,
-    Crossbowman, Cavalier, Chariot, Cannon,
-    Catapult, Bombard, Ox, Engineer,
-    Elephant, Guard, Mercenary, Farm
+    // Base
+    Soldier,
+    Defender,
+    Archer,
+    Peasant,
+    Knight,
+    Crossbowman,
+    Cavalier,
+    Cannon,
+    Catapult,
+    Bombard,
+    Guard,
+    Farm,
+
+    // Dynasty
+    Elephant,
+    Ox,
+    Ninja,
+    Samurai,
+
+    // Fantasy
+    Dragon,
+    Adventurer,
+    Wizard,
+    Dragonborn,
+
+    // Undead
+    Skeleton,
+    Zombie,
+
+    // Greek
+    Chariot,
+    Ballista,
+    Heracles,
+    Hermes,
+    Ares,
+    Chimera,
+    Pegasus,
+
+    // Modern
+    Spy,
+    Engineer,
+    Mercenary,
+
+    // Chess
+    Pawn,
+    ChessKnight,
+    Bishop,
+    Rook,
+    Queen
   ];
 
   public static readonly PieceDefinition[] Royals =
   [
-    King, Princess, Palace, Baron, Emissary
+    // Base
+    King,
+    Princess,
+    Palace,
+    Baron,
+    Emissary,
+
+    // Dynasty
+    Emperor,
+    TerracottaWarrior,
+
+    // Fantasy
+    GoblinRoyalty,
+
+    // Undead
+    Phantom,
+
+    // Greek
+    Zeus,
+
+    // Chess
+    ChessKing
   ];
 }
