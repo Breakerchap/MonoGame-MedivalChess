@@ -279,10 +279,10 @@ public sealed class CpuPlayerTests
     CpuProfile hard = CpuProfile.Hard(84);
     CpuProfile best = CpuProfile.Best(84);
 
-    Assert.Equal(250, easy.Search.MaxSearchMilliseconds);
-    Assert.Equal(700, medium.Search.MaxSearchMilliseconds);
-    Assert.Equal(1_400, hard.Search.MaxSearchMilliseconds);
-    Assert.Equal(5_000, best.Search.MaxSearchMilliseconds);
+    Assert.Equal(500, easy.Search.MaxSearchMilliseconds);
+    Assert.Equal(1_000, medium.Search.MaxSearchMilliseconds);
+    Assert.Equal(3_000, hard.Search.MaxSearchMilliseconds);
+    Assert.Equal(8_000, best.Search.MaxSearchMilliseconds);
 
     Assert.Equal(easy.Search.BeamWidth, best.Search.BeamWidth);
     Assert.Equal(easy.Search.CandidatesPerNode, best.Search.CandidatesPerNode);

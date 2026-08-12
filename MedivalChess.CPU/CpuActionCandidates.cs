@@ -80,7 +80,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int candidateLimit
   )
   {
-    int scoringCapacity = Math.Clamp(candidateLimit * 4, 24, 64);
+    int scoringCapacity = Math.Clamp(candidateLimit * 3, 24, 48);
     if (legalActions.Count <= scoringCapacity)
     {
       return legalActions;
@@ -203,6 +203,13 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     if (action.TargetPieceId is not null && piecesById.TryGetValue(action.TargetPieceId, out NetworkPiece? target) &&
         UnitRules.TryGet(target.Type, out UnitRule rule))
     {
+      if (action.Ability.Equals("Attach", StringComparison.OrdinalIgnoreCase) &&
+          piecesById.TryGetValue(action.ActorId, out NetworkPiece? actor) && actor.Type == "Guard")
+      {
+        // Guard attachment is a scarce permanent protection choice. Make replacement cost dwarf
+        // target attack here so an expensive low-attack asset survives the cheap shortlist.
+        return rule.Cost * 4f + rule.Health * 0.1f;
+      }
       return rule.Cost + rule.Attack + (rule.Category == RuleCategory.Royal ? 100f : 0f);
     }
     return action.Ability is "Barrier" or "Mine" ? 8f : 2f;
@@ -247,7 +254,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
   {
     if (action is AttackAction)
     {
-      return candidate with { Score = candidate.Score + 180f, Reason = $"{candidate.Reason}; takes an available attack" };
+      return candidate with { Score = candidate.Score + 300f, Reason = $"{candidate.Reason}; strongly prioritises an available attack" };
     }
 
     float penalty = 0f;
@@ -255,12 +262,12 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     {
       penalty += action switch
       {
-        PurchaseAction => 110f,
-        UseAbilityAction => 80f,
-        EndTurnAction => 220f,
+        PurchaseAction => 190f,
+        UseAbilityAction => 95f,
+        EndTurnAction => 360f,
         MoveAction move when state.Pieces.FirstOrDefault(piece => piece.Id == move.PieceId) is NetworkPiece mover &&
           state.Pieces.Any(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral &&
-            target.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, mover, target)) => 150f,
+            target.AttachedToId is null && CpuGameRules.CanDirectlyAttack(state, mover, target)) => 280f,
         _ => 0f
       };
     }
@@ -939,7 +946,7 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     int purchaseQuota = Math.Max(3, count / 3);
     foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is PurchaseAction && IsPlausiblePurchase(candidate))
       .GroupBy(candidate => ((PurchaseAction)candidate.Action).UnitType, StringComparer.Ordinal)
-      .Select(group => group.First())
+      .SelectMany(group => group.Take(2))
       .Take(purchaseQuota)) Add(candidate);
 
     foreach (ScoredAction candidate in ranked.Where(candidate => candidate.Action is UseAbilityAction && IsPlausibleAbility(candidate)).Take(2)) Add(candidate);

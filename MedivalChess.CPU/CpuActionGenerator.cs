@@ -14,6 +14,15 @@ public interface ICpuActionGenerator
 /// </summary>
 public sealed class CpuActionGenerator : ICpuActionGenerator
 {
+  private readonly record struct PurchasePlacementCluster(
+    int TerritoryBand,
+    int ForwardBand,
+    int EnemyDistanceBand,
+    int ObjectiveDistanceBand,
+    bool Forest,
+    bool Supported
+  );
+
   /// <summary>
   /// Generates a bounded, prioritised subset for search. <see cref="GenerateLegalActions"/> remains
   /// the exhaustive public legality API; this method only controls search cost.
@@ -39,7 +48,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     List<ICpuGameAction> actions = [];
     foreach (NetworkPiece piece in state.Pieces.Where(piece => piece.Team == team).OrderBy(piece => piece.Id, StringComparer.Ordinal))
     {
-      GenerateMoves(state, piece, actions);
+      GenerateClusteredSearchMoves(state, piece, actions);
       GenerateAttacks(state, piece, actions);
       GenerateAbilities(state, piece, actions);
     }
@@ -84,6 +93,131 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       AddIfLegal(state, new MoveAction(piece.Team, piece.Id, destination.x, destination.y), actions);
     }
   }
+
+  private sealed record SearchMoveRepresentative(
+    MoveAction Action,
+    bool CreatesAttack,
+    bool CreatesLethalAttack,
+    float AttackValue,
+    int ObjectiveProgress,
+    int EnemyProgress,
+    int EnemyDistance,
+    int ExposureCount,
+    float GeneralScore
+  );
+
+  /// <summary>
+  /// Search does not need every geometrically equivalent destination. Preserve a small set of
+  /// strategically distinct moves per piece, with an explicit slot for move-then-attack tactics.
+  /// The exhaustive GenerateLegalActions API remains unchanged.
+  /// </summary>
+  private static void GenerateClusteredSearchMoves(
+    CpuGameState state,
+    NetworkPiece piece,
+    List<ICpuGameAction> actions,
+    int maximumRepresentatives = 5
+  )
+  {
+    MoveAction[] legalMoves = CpuGameRules.GetLegalMovementPaths(state, piece).Keys
+      .OrderBy(position => position.y).ThenBy(position => position.x)
+      .Select(position => new MoveAction(piece.Team, piece.Id, position.x, position.y))
+      .Where(move => move.IsLegal(state))
+      .ToArray();
+    if (legalMoves.Length <= maximumRepresentatives)
+    {
+      actions.AddRange(legalMoves);
+      return;
+    }
+
+    NetworkPiece[] enemies = state.Pieces.Where(other => other.Team != piece.Team &&
+      other.Team != NetworkTeam.Neutral && other.AttachedToId is null).ToArray();
+    NetworkPiece[] allies = state.Pieces.Where(other => other.Team == piece.Team &&
+      other.Id != piece.Id && other.AttachedToId is null).ToArray();
+    (int x, int y)[] objectives = GetPurchaseObjectivePositions(state, piece.Team).ToArray();
+    int currentEnemyDistance = enemies.Select(enemy => Distance((piece.X, piece.Y), (enemy.X, enemy.Y))).DefaultIfEmpty(0).Min();
+    int currentObjectiveDistance = objectives.Select(goal => Distance((piece.X, piece.Y), goal)).DefaultIfEmpty(0).Min();
+
+    SearchMoveRepresentative[] ranked = legalMoves.Select(move =>
+    {
+      CpuGameState result = CpuGameRules.ApplyLegal(state, move);
+      NetworkPiece? moved = result.Pieces.FirstOrDefault(candidate => candidate.Id == piece.Id);
+      if (moved is null)
+      {
+        return new SearchMoveRepresentative(move, false, false, 0f, 0, 0, 0, int.MaxValue, float.MinValue);
+      }
+
+      float bestAttackValue = 0f;
+      bool lethalAttack = false;
+      foreach (NetworkPiece enemy in result.Pieces.Where(other => other.Team != piece.Team &&
+        other.Team != NetworkTeam.Neutral && other.AttachedToId is null))
+      {
+        if (!CpuGameRules.CanDirectlyAttack(result, moved, enemy) || !UnitRules.TryGet(enemy.Type, out UnitRule enemyRule))
+        {
+          continue;
+        }
+        int damage = CpuGameRules.EstimateAttackDamage(result, moved, enemy);
+        bool lethal = damage >= enemy.Health;
+        float targetValue = enemyRule.Cost + enemyRule.Attack * 1.5f + enemyRule.Health * 0.2f +
+          (lethal ? 55f : 0f) + (enemyRule.Category == RuleCategory.Royal ? 300f : 0f);
+        bestAttackValue = Math.Max(bestAttackValue, targetValue);
+        lethalAttack |= lethal;
+      }
+
+      int enemyDistance = result.Pieces.Where(other => other.Team != piece.Team &&
+          other.Team != NetworkTeam.Neutral && other.AttachedToId is null)
+        .Select(enemy => Distance((moved.X, moved.Y), (enemy.X, enemy.Y))).DefaultIfEmpty(0).Min();
+      int objectiveDistance = objectives.Select(goal => Distance((moved.X, moved.Y), goal)).DefaultIfEmpty(currentObjectiveDistance).Min();
+      int objectiveProgress = objectives.Length == 0 ? 0 : currentObjectiveDistance - objectiveDistance;
+      int enemyProgress = enemies.Length == 0 ? 0 : currentEnemyDistance - enemyDistance;
+      int exposure = result.Pieces.Count(enemy => enemy.Team != piece.Team && enemy.Team != NetworkTeam.Neutral &&
+        enemy.AttachedToId is null && CpuGameRules.CanDirectlyAttack(result, enemy, moved));
+      int allyDistance = allies.Select(ally => Distance((moved.X, moved.Y), (ally.X, ally.Y))).DefaultIfEmpty(4).Min();
+      float support = Math.Max(0, 4 - allyDistance) * 2f;
+      float general = bestAttackValue + objectiveProgress * 22f + enemyProgress * 5f + support - exposure * 24f;
+      if (state.Configuration.GameMode == "Conquest" && MatchRules.IsConquestSquare(state.Board, (moved.X, moved.Y))) general += 35f;
+      if (state.Configuration.GameMode == "Dominion" && MatchRules.GetDominionControlPoints(state.Board).Contains((moved.X, moved.Y))) general += 35f;
+      return new SearchMoveRepresentative(move, bestAttackValue > 0f, lethalAttack, bestAttackValue,
+        objectiveProgress, enemyProgress, enemyDistance, exposure, general);
+    }).ToArray();
+
+    List<MoveAction> selected = [];
+    HashSet<MoveAction> seen = [];
+    void Add(SearchMoveRepresentative? representative)
+    {
+      if (representative is not null && seen.Add(representative.Action)) selected.Add(representative.Action);
+    }
+
+    // Tactical slot: never prune the best move that creates a shot. Prefer a kill if one exists.
+    Add(ranked.Where(option => option.CreatesAttack)
+      .OrderByDescending(option => option.CreatesLethalAttack)
+      .ThenByDescending(option => option.AttackValue)
+      .ThenBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.GeneralScore)
+      .FirstOrDefault());
+    // Objective slot.
+    Add(ranked.OrderByDescending(option => option.ObjectiveProgress)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Aggressive contact slot.
+    Add(ranked.OrderByDescending(option => option.EnemyProgress)
+      .ThenBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Safety/retreat slot. It matters especially for threatened royals and expensive pieces.
+    Add(ranked.OrderBy(option => option.ExposureCount)
+      .ThenByDescending(option => option.EnemyDistance)
+      .ThenByDescending(option => option.GeneralScore).FirstOrDefault());
+    // Best all-round move, then deterministic fallbacks if categories overlapped.
+    foreach (SearchMoveRepresentative option in ranked.OrderByDescending(option => option.GeneralScore)
+      .ThenBy(option => option.Action.Describe(), StringComparer.Ordinal))
+    {
+      Add(option);
+      if (selected.Count >= maximumRepresentatives) break;
+    }
+
+    actions.AddRange(selected.Take(maximumRepresentatives));
+  }
+
+  private static int Distance((int x, int y) first, (int x, int y) second) =>
+    Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y);
 
   private static void GenerateAttacks(CpuGameState state, NetworkPiece attacker, List<ICpuGameAction> actions)
   {
@@ -197,7 +331,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
     int centreY = state.Board.MinY + state.Board.BoardArray.GetLength(0) / 2;
     bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true;
     UnitRule farmRule = UnitRules.GetRequired("Farm");
-    int furthestForwardProjection = openingFarmPlacement
+    int furthestForwardProjection = state.Configuration.FarmsEnabled
       ? CpuPlacementHeuristics.GetFurthestForwardProjection(state, team)
       : 0;
     List<(int x, int y)> positions = openingFarmPlacement
@@ -222,8 +356,29 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       ? [farmRule]
       : UnitRules.Purchasable.Where(rule => rule.Type == "Mercenary" ||
         availableMoney >= GetPurchaseCost(state, rule));
+    NetworkPiece[] placementEnemies = openingFarmPlacement
+      ? []
+      : state.Pieces.Where(piece => piece.Team != team && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null).ToArray();
+    (int x, int y)[] placementObjectives = openingFarmPlacement
+      ? []
+      : GetPurchaseObjectivePositions(state, team).ToArray();
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    int minForwardProjection = state.Board.Cells.Select(position => position.x * forward.x + position.y * forward.y).DefaultIfEmpty(0).Min();
+    int maxForwardProjection = state.Board.Cells.Select(position => position.x * forward.x + position.y * forward.y).DefaultIfEmpty(0).Max();
+
     foreach (UnitRule rule in purchaseRules.OrderBy(rule => rule.Type, StringComparer.Ordinal))
     {
+      if (!openingFarmPlacement && placementLimit is int searchLimit)
+      {
+        foreach ((int x, int y) position in GetClusteredPurchasePositions(
+          state, team, rule, positions, searchLimit, avoidOccupiedPlacements,
+          placementEnemies, placementObjectives, minForwardProjection, maxForwardProjection, furthestForwardProjection))
+        {
+          actions.Add(new PurchaseAction(team, rule.Type, position.x, position.y));
+        }
+        continue;
+      }
+
       int legalPlacements = 0;
       foreach ((int x, int y) position in positions)
       {
@@ -256,6 +411,205 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
       }
     }
   }
+
+  private static IReadOnlyList<(int x, int y)> GetClusteredPurchasePositions(
+    CpuGameState state,
+    NetworkTeam team,
+    UnitRule rule,
+    IReadOnlyList<(int x, int y)> positions,
+    int requestedLimit,
+    bool avoidOccupiedPlacements,
+    IReadOnlyList<NetworkPiece> enemies,
+    IReadOnlyList<(int x, int y)> objectives,
+    int minForwardProjection,
+    int maxForwardProjection,
+    int farmForwardProjection
+  )
+  {
+    int maximumRepresentatives = Math.Max(1, Math.Min(requestedLimit, 12));
+    var raw = positions.Select(position =>
+    {
+      PurchasePlacementCluster cluster = ClassifyPurchasePlacement(
+        state, team, position, enemies, objectives, minForwardProjection, maxForwardProjection);
+      float score = GetPurchasePlacementRepresentativeScore(
+        state, team, rule, position, enemies, objectives, cluster, farmForwardProjection);
+      return (Position: position, Cluster: cluster, Score: score);
+    }).ToArray();
+
+    var groups = raw
+      .GroupBy(candidate => candidate.Cluster)
+      .Select(group => group
+        .OrderByDescending(candidate => candidate.Score)
+        .ThenBy(candidate => candidate.Position.y)
+        .ThenBy(candidate => candidate.Position.x)
+        .Take(4)
+        .ToArray())
+      .OrderByDescending(group => group[0].Score)
+      .ThenBy(group => group[0].Position.y)
+      .ThenBy(group => group[0].Position.x)
+      .ToArray();
+
+    List<(int x, int y)> selected = [];
+    HashSet<PurchasePlacementCluster> usedClusters = [];
+    HashSet<(int x, int y)> usedPositions = [];
+
+    bool TryAdd((int x, int y) position, PurchasePlacementCluster cluster)
+    {
+      if (selected.Count >= maximumRepresentatives || usedClusters.Contains(cluster) || usedPositions.Contains(position))
+      {
+        return false;
+      }
+      if (avoidOccupiedPlacements && rule.Type != "Mercenary" && OverlapsExistingPiece(state, rule, position.x, position.y))
+      {
+        return false;
+      }
+      PurchaseAction action = new(team, rule.Type, position.x, position.y);
+      if (!action.IsLegal(state))
+      {
+        return false;
+      }
+      selected.Add(position);
+      usedClusters.Add(cluster);
+      usedPositions.Add(position);
+      return true;
+    }
+
+    foreach (var group in groups)
+    {
+      foreach (var candidate in group)
+      {
+        if (TryAdd(candidate.Position, candidate.Cluster))
+        {
+          break;
+        }
+      }
+      if (selected.Count >= maximumRepresentatives)
+      {
+        break;
+      }
+    }
+
+    // Highly constrained boards may make the best few representatives of many clusters illegal.
+    // Fill from lower-ranked representatives while still refusing duplicate strategic clusters.
+    int minimumUseful = Math.Min(maximumRepresentatives, 4);
+    if (selected.Count < minimumUseful)
+    {
+      foreach (var candidate in raw
+        .OrderByDescending(candidate => candidate.Score)
+        .ThenBy(candidate => candidate.Position.y)
+        .ThenBy(candidate => candidate.Position.x))
+      {
+        TryAdd(candidate.Position, candidate.Cluster);
+        if (selected.Count >= minimumUseful)
+        {
+          break;
+        }
+      }
+    }
+
+    return selected;
+  }
+
+  private static PurchasePlacementCluster ClassifyPurchasePlacement(
+    CpuGameState state,
+    NetworkTeam team,
+    (int x, int y) position,
+    IReadOnlyList<NetworkPiece> enemies,
+    IReadOnlyList<(int x, int y)> objectives,
+    int minForwardProjection,
+    int maxForwardProjection
+  )
+  {
+    NetworkTeam? owner = MatchRules.GetSquareOwner(
+      state.Board, state.Configuration.GameMode, position, state.Configuration.PlayerCount);
+    int territoryBand = owner == team ? 0 : owner is null || owner == NetworkTeam.Neutral ? 1 : 2;
+    int projection = position.x * TeamRules.GetForwardDirection(team).x +
+      position.y * TeamRules.GetForwardDirection(team).y;
+    float forwardFraction = maxForwardProjection <= minForwardProjection
+      ? 0.5f
+      : (projection - minForwardProjection) / (float)(maxForwardProjection - minForwardProjection);
+    int forwardBand = forwardFraction < 0.34f ? 0 : forwardFraction < 0.67f ? 1 : 2;
+    int nearestEnemy = enemies.Select(enemy => Distance(position, (enemy.X, enemy.Y))).DefaultIfEmpty(99).Min();
+    int enemyBand = nearestEnemy <= 3 ? 0 : nearestEnemy <= 7 ? 1 : 2;
+    int nearestObjective = objectives.Select(objective => Distance(position, objective)).DefaultIfEmpty(99).Min();
+    int objectiveBand = nearestObjective <= 2 ? 0 : nearestObjective <= 6 ? 1 : 2;
+    bool forest = state.Terrain.IsForest(position);
+    bool supported = state.Pieces.Any(piece => piece.Team == team && piece.AttachedToId is null &&
+      Distance(position, (piece.X, piece.Y)) <= 2);
+    return new PurchasePlacementCluster(territoryBand, forwardBand, enemyBand, objectiveBand, forest, supported);
+  }
+
+  private static float GetPurchasePlacementRepresentativeScore(
+    CpuGameState state,
+    NetworkTeam team,
+    UnitRule rule,
+    (int x, int y) position,
+    IReadOnlyList<NetworkPiece> enemies,
+    IReadOnlyList<(int x, int y)> objectives,
+    PurchasePlacementCluster cluster,
+    int farmForwardProjection
+  )
+  {
+    if (rule.Type == "Farm")
+    {
+      return CpuPlacementHeuristics.GetFarmProtectionScore(
+        state, team, position.x, position.y, farmForwardProjection);
+    }
+
+    bool neutralMercenary = rule.Type == "Mercenary" && state.Pieces.Any(piece =>
+      piece.Type == "Mercenary" && piece.Team == NetworkTeam.Neutral &&
+      piece.X == position.x && piece.Y == position.y);
+    int nearestEnemy = enemies.Select(enemy => Distance(position, (enemy.X, enemy.Y))).DefaultIfEmpty(14).Min();
+    int nearestObjective = objectives.Select(objective => Distance(position, objective)).DefaultIfEmpty(12).Min();
+    float score = neutralMercenary ? 600f : 0f;
+    if (rule.Attack > 0)
+    {
+      score += Math.Max(0, 12 - nearestEnemy) * 2.5f;
+      score += cluster.ForwardBand * 2f;
+    }
+    score += Math.Max(0, 10 - nearestObjective) * 1.5f;
+    if (cluster.TerritoryBand == 0) score += 4f;
+    if (cluster.Forest) score += 2.5f;
+    if (cluster.Supported) score += 3f;
+    return score;
+  }
+
+  private static IEnumerable<(int x, int y)> GetPurchaseObjectivePositions(CpuGameState state, NetworkTeam team)
+  {
+    HashSet<(int x, int y)> positions = [];
+    if (state.Configuration.GameMode == "Conquest")
+    {
+      positions.UnionWith(state.Board.Cells.Where(position => MatchRules.IsConquestSquare(state.Board, position)));
+    }
+    else if (state.Configuration.GameMode == "Dominion")
+    {
+      positions.UnionWith(MatchRules.GetDominionControlPoints(state.Board));
+    }
+    else if (state.Configuration.GameMode == "Plunder" && state.TreasurePosition is (int x, int y) treasure)
+    {
+      positions.Add(treasure);
+    }
+
+    foreach (ICpuScenarioGoal goal in (state.Scenario?.VictoryGoals ?? [])
+      .Concat(state.Scenario?.SecondaryGoals ?? [])
+      .Concat(state.Scenario?.DefeatConditions ?? []))
+    {
+      foreach (CpuIntent intent in goal.GenerateIntents(state, team))
+      {
+        if (intent.TargetPosition is (int x, int y) targetPosition)
+        {
+          positions.Add(targetPosition);
+        }
+        if (intent.TargetPieceId is not null &&
+            state.Pieces.FirstOrDefault(piece => piece.Id == intent.TargetPieceId) is NetworkPiece target)
+        {
+          positions.Add((target.X, target.Y));
+        }
+      }
+    }
+    return positions;
+  }
+
 
   private static bool OverlapsExistingPiece(CpuGameState state, UnitRule rule, int x, int y) => state.Pieces.Any(piece =>
     UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&

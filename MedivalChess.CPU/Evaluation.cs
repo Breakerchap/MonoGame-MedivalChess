@@ -108,6 +108,7 @@ public sealed class StateEvaluator : IStateEvaluator
       new MaterialEvaluation(),
       new HealthEvaluation(),
       new ThreatEvaluation(_threatMapBuilder),
+      new HangingPieceEvaluation(_threatMapBuilder),
       new RoyalSafetyEvaluation(_threatMapBuilder),
       new ObjectiveEvaluation(),
       new IntentEvaluation(),
@@ -185,6 +186,7 @@ public sealed class StateEvaluator : IStateEvaluator
       "Material" => weights.Material * scenario.Material,
       "Health" => weights.Health,
       "Threat" => weights.ImmediateThreats * personality.Aggression,
+      "HangingPieces" => weights.AssetSafety * personality.Caution * 0.85f,
       "RoyalSafety" => weights.RoyalSafety * personality.RoyalProtection * personality.Caution * scenario.RoyalSafety *
         CpuObjectiveRules.GetRoyalSafetyImportance(state),
       "Objective" => weights.ObjectiveProgress * personality.ObjectiveFocus * scenario.ObjectiveProgress,
@@ -261,12 +263,15 @@ public sealed class MaterialEvaluation : IEvaluationTerm
       return 0f;
     }
 
-    // Board presence is deliberately flat for normal pieces. Price belongs in the tactical
-    // reward for destroying or damaging a target, rather than making the CPU hoard expensive
-    // units simply because they cost more.
     if (rule.Category != RuleCategory.Royal)
     {
-      return 20f;
+      // Board value follows replacement cost, but on a compressed curve so a premium specialist
+      // is worth protecting without becoming five times as important as a cheap screen. This also
+      // prevents the purchase evaluator from treating a 10-gold Peasant and a 55-gold Knight as
+      // identical material while simultaneously charging the full difference in cash.
+      if (rule.Type == "Farm") return 30f;
+      float cost = Math.Max(0f, rule.Cost);
+      return 18f + Math.Min(cost, 40f) * 1.35f + Math.Max(0f, cost - 40f) * 0.70f;
     }
 
     // In non-Regicide modes a royal is deliberately worth no more than another board unit,
@@ -405,6 +410,118 @@ public sealed class ThreatEvaluation : IEvaluationTerm
     float importantValue = threat.IsStrategicallyImportant && royalIsRelevant ? 80f : 0f;
     return damageValue + lethalValue + focusValue + importantValue;
   });
+}
+
+/// <summary>
+/// Explicit exchange-safety evaluation for pieces that can be damaged or removed immediately.
+/// Unlike flat material, this uses a compressed purchase-cost curve only while judging a concrete
+/// tactical loss, so a Knight is more worth saving than a Peasant without teaching the CPU to
+/// passively hoard expensive units. A credible recapture reduces, but never erases, the danger.
+/// </summary>
+public sealed class HangingPieceEvaluation : IEvaluationTerm
+{
+  private readonly ICpuThreatMapBuilder _threatMapBuilder;
+
+  public HangingPieceEvaluation(ICpuThreatMapBuilder? threatMapBuilder = null)
+  {
+    _threatMapBuilder = threatMapBuilder ?? new CpuThreatMapBuilder();
+  }
+
+  public string Name => "HangingPieces";
+
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    float score = 0f;
+    foreach (NetworkPiece target in state.Pieces.Where(piece =>
+      piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Category != RuleCategory.Royal))
+    {
+      float worstRisk = 0f;
+      foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != target.Team))
+      {
+        CpuPieceThreat? threat = context.Cache.GetThreatMap(state, enemy, _threatMapBuilder).GetThreat(target.Id);
+        if (threat is null)
+        {
+          continue;
+        }
+
+        // Guard damage is redirected to the attached Guard. Judge the health/value actually at
+        // risk first rather than incorrectly calling the protected premium unit itself hanging.
+        NetworkPiece exposed = state.Pieces.FirstOrDefault(piece =>
+          piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+        float exposedValue = GetExchangeValue(exposed.Type, state);
+        float incomingRatio = Math.Min(1.5f, threat.TotalExpectedDamage / (float)Math.Max(1, exposed.Health));
+        bool lethal = threat.TotalExpectedDamage >= exposed.Health;
+        float risk = exposedValue * incomingRatio * 0.45f;
+        if (lethal)
+        {
+          risk += exposedValue * 1.1f;
+        }
+        if (threat.AttackerCount > 1)
+        {
+          risk += exposedValue * Math.Min(0.28f, (threat.AttackerCount - 1) * 0.08f);
+        }
+
+        float recaptureValue = GetBestRecaptureValue(state, target.Team, threat);
+        if (recaptureValue > 0f)
+        {
+          risk -= Math.Min(risk * 0.65f, recaptureValue * 0.7f);
+        }
+        worstRisk = Math.Max(worstRisk, Math.Max(0f, risk));
+      }
+      score += target.Team == perspective ? -worstRisk : worstRisk;
+    }
+    return score;
+  }
+
+  internal static float GetExchangeValue(string type, CpuGameState state)
+  {
+    if (!UnitRules.TryGet(type, out UnitRule rule))
+    {
+      return 20f;
+    }
+
+    if (rule.Category == RuleCategory.Royal)
+    {
+      return MaterialEvaluation.GetUnitValue(type, state);
+    }
+
+    // Price matters here because this is a concrete sacrifice/trade calculation. Compress the
+    // curve above 40 gold so costly specialists are protected without becoming untouchable.
+    float cost = Math.Max(0f, rule.Cost);
+    return 20f + Math.Min(cost, 40f) * 0.9f + Math.Max(0f, cost - 40f) * 0.45f;
+  }
+
+  private static float GetBestRecaptureValue(CpuGameState state, NetworkTeam defendingTeam, CpuPieceThreat threat)
+  {
+    float best = 0f;
+    foreach (string attackerId in threat.AttackerIds)
+    {
+      NetworkPiece? attacker = state.Pieces.FirstOrDefault(piece => piece.Id == attackerId);
+      if (attacker is null || !UnitRules.TryGet(attacker.Type, out _))
+      {
+        continue;
+      }
+
+      float attackerValue = GetExchangeValue(attacker.Type, state);
+      foreach (NetworkPiece defender in state.Pieces.Where(piece =>
+        piece.Team == defendingTeam && piece.Id != threat.PieceId && piece.AttachedToId is null &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0 && !piece.HasAttackedThisTurn))
+      {
+        if (!CpuGameRules.CanDirectlyAttack(state, defender, attacker))
+        {
+          continue;
+        }
+
+        int damage = CpuGameRules.EstimateAttackDamage(state, defender, attacker);
+        float recoverable = damage >= attacker.Health
+          ? attackerValue
+          : attackerValue * Math.Clamp(damage / (float)Math.Max(1, attacker.Health), 0f, 1f) * 0.45f;
+        best = Math.Max(best, recoverable);
+      }
+    }
+    return best;
+  }
 }
 
 public sealed class RoyalSafetyEvaluation : IEvaluationTerm
@@ -712,7 +829,9 @@ public sealed class EconomyEvaluation : IEvaluationTerm
       float survival = threats.Any(threat => threat.IsLethal) ? 0.2f : threats.Length == 0 ? 1f : 0.65f;
       forecast += income * 3f * survival;
     }
-    return money + forecast;
+    // Gold is optionality, not board control. Valuing it one-for-one made cheap units exploit
+    // the evaluator because an expensive purchase lost far more cash score than it gained material.
+    return money * 0.5f + forecast;
   }
 }
 
@@ -825,7 +944,7 @@ public sealed class AssetSafetyEvaluation : IEvaluationTerm
 
       int forestSquares = OccupiedSquares(piece, rule).Count(state.Terrain.IsForest);
       float importance = rule.Type == "Farm" ? 4f : rule.Category == RuleCategory.Royal
-        ? 0.35f + CpuObjectiveRules.GetRoyalSafetyImportance(state) * 2.15f
+        ? 0.8f + CpuObjectiveRules.GetRoyalSafetyImportance(state) * 1.7f
         : 0.35f;
       float assetScore = forestSquares * importance * 3f;
       foreach (NetworkTeam enemy in TeamRules.GetActiveTeams(state.Configuration.PlayerCount).Where(team => team != piece.Team))
@@ -854,10 +973,77 @@ public sealed class AssetSafetyEvaluation : IEvaluationTerm
 
 public sealed class ActionEfficiencyEvaluation : IEvaluationTerm
 {
+  private readonly ICpuThreatMapBuilder _threatMapBuilder = new CpuThreatMapBuilder();
+
   public string Name => "ActionEfficiency";
 
-  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context) =>
-    Globals.ActionLimitsEnabled && state.CurrentTurn == perspective
-      ? MatchRules.ActionsPerTurn - state.ActionsRemaining
-      : 0f;
+  public float Evaluate(CpuGameState state, NetworkTeam perspective, EvaluationContext context)
+  {
+    if (state.CurrentTurn != perspective)
+    {
+      return 0f;
+    }
+
+    if (Globals.ActionLimitsEnabled)
+    {
+      return MatchRules.ActionsPerTurn - state.ActionsRemaining;
+    }
+
+    // Unlimited-action turns should use the army that is already on the board. Search depths are
+    // often partial under a short clock, so score unused opportunities in every intermediate state
+    // rather than relying on EndTurn itself to notice that half the army did nothing.
+    CpuThreatMap attacks = context.Cache.GetThreatMap(state, perspective, _threatMapBuilder);
+    HashSet<string> immediateAttackers = attacks.ThreatsByPiece.Values
+      .SelectMany(threat => threat.AttackerIds)
+      .ToHashSet(StringComparer.Ordinal);
+    NetworkPiece[] enemies = state.Pieces.Where(piece =>
+      piece.Team != perspective && piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null).ToArray();
+
+    float penalty = 0f;
+    foreach (NetworkPiece piece in state.Pieces.Where(piece =>
+      piece.Team == perspective && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out _)))
+    {
+      UnitRule rule = UnitRules.GetRequired(piece.Type);
+      if (!piece.HasAttackedThisTurn && immediateAttackers.Contains(piece.Id))
+      {
+        // Missing a shot is the clearest wasted action. This is intentionally much stronger than
+        // the ordinary idle-move cost so a searched line that attacks beats one that just develops.
+        float bestTargetValue = attacks.ThreatsByPiece.Values
+          .Where(threat => threat.AttackerIds.Contains(piece.Id, StringComparer.Ordinal))
+          .Select(threat => state.Pieces.FirstOrDefault(target => target.Id == threat.PieceId))
+          .Where(target => target is not null)
+          .Select(target => HangingPieceEvaluation.GetExchangeValue(target!.Type, state))
+          .DefaultIfEmpty(20f)
+          .Max();
+        penalty += 150f + Math.Min(70f, bestTargetValue * 0.65f);
+      }
+
+      bool untouched = !piece.HasMovedThisTurn && !piece.HasAttackedThisTurn;
+      if (!untouched || rule.MoveRange <= 0)
+      {
+        continue;
+      }
+
+      // A completely idle mobile unit receives a smaller development penalty. Scale it with how
+      // far the piece still is from contributing, so holding a useful firing/defensive position is
+      // far less objectionable than leaving a remote unit parked for no reason.
+      int nearestEnemy = enemies
+        .Select(enemy => Math.Abs(piece.X - enemy.X) + Math.Abs(piece.Y - enemy.Y))
+        .DefaultIfEmpty(0)
+        .Min();
+      if (nearestEnemy > 0)
+      {
+        int usefulReach = Math.Max(1, rule.AttackRange);
+        int excessDistance = Math.Max(0, nearestEnemy - usefulReach);
+        float idle = 10f + Math.Min(28f, excessDistance * 2.5f);
+        if (rule.Category == RuleCategory.Royal && !CpuObjectiveRules.IsRoyalEliminationObjective(state))
+        {
+          idle *= 0.6f;
+        }
+        penalty += idle;
+      }
+    }
+
+    return -penalty;
+  }
 }

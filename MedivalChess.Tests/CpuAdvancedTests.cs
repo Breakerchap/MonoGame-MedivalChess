@@ -196,19 +196,15 @@ public sealed class CpuAdvancedTests
   }
 
   [Fact]
-  public void MaterialEvaluation_DoesNotValueAnExpensiveUnitMoreThanAnyOtherNormalUnit()
+  public void MaterialEvaluation_UsesCompressedReplacementCostForNormalUnits()
   {
-    CpuGameState state = CreateState(
-      [
-        new NetworkPiece("red-peasant", "Peasant", NetworkTeam.Red, 0, 0, 5),
-        new NetworkPiece("blue-elephant", "Elephant", NetworkTeam.Blue, 4, 4, 60)
-      ],
-      redMoney: 0
-    );
+    float peasant = MaterialEvaluation.GetUnitValue("Peasant");
+    float defender = MaterialEvaluation.GetUnitValue("Defender");
+    float knight = MaterialEvaluation.GetUnitValue("Knight");
 
-    float material = new MaterialEvaluation().Evaluate(state, NetworkTeam.Red, new EvaluationContext(CpuProfile.Easy()));
-
-    Assert.Equal(0f, material);
+    Assert.True(peasant < defender, $"peasant={peasant}, defender={defender}");
+    Assert.True(defender < knight, $"defender={defender}, knight={knight}");
+    Assert.True(knight < peasant * 3f, $"peasant={peasant}, knight={knight}");
   }
 
   [Fact]
@@ -373,6 +369,39 @@ public sealed class CpuAdvancedTests
     Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Peasant" }).Score);
     Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Ballista" }).Score);
     Assert.True(ranked[0].Score > ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Mercenary" }).Score);
+  }
+
+  [Fact]
+  public void PurchaseRanking_PenalisesAnArmyAlreadySaturatedWithCheapScreens()
+  {
+    CpuGameState state = CreateState(
+      [
+        new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 95),
+        new NetworkPiece("red-defender-one", "Defender", NetworkTeam.Red, -2, 6, 25),
+        new NetworkPiece("red-defender-two", "Defender", NetworkTeam.Red, -1, 6, 25),
+        new NetworkPiece("red-peasant-one", "Peasant", NetworkTeam.Red, 1, 6, 5),
+        new NetworkPiece("red-peasant-two", "Peasant", NetworkTeam.Red, 2, 6, 5),
+        new NetworkPiece("blue-archer", "Archer", NetworkTeam.Blue, 0, 0, 10),
+        new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 95)
+      ],
+      redMoney: 500
+    );
+    IReadOnlyDictionary<string, PurchaseAction> options = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
+      .OfType<PurchaseAction>()
+      .Where(action => action.UnitType is "Peasant" or "Defender" or "Soldier")
+      .GroupBy(action => action.UnitType)
+      .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+
+    IReadOnlyList<ScoredAction> ranked = new CpuActionCandidateSelector().SelectCandidates(
+      state, NetworkTeam.Red,
+      [options["Peasant"], options["Defender"], options["Soldier"]],
+      new CpuSearchSettings { CandidatesPerNode = 3, PromisingCandidatesPerNode = 3 });
+
+    float soldier = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Soldier" }).Score;
+    float defender = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Defender" }).Score;
+    float peasant = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Peasant" }).Score;
+    Assert.True(soldier > defender, $"soldier={soldier}, defender={defender}");
+    Assert.True(soldier > peasant, $"soldier={soldier}, peasant={peasant}");
   }
 
   [Fact]
@@ -624,7 +653,7 @@ public sealed class CpuAdvancedTests
     CpuProfile profile = CpuProfile.Normal(123);
 
     Assert.Equal(CpuDifficultyLevel.Normal, profile.Difficulty);
-    Assert.Equal(700, profile.Search.MaxSearchMilliseconds);
+    Assert.Equal(1_000, profile.Search.MaxSearchMilliseconds);
     Assert.Equal(36, profile.Search.BeamWidth);
     Assert.Equal(48, profile.Search.CandidatesPerNode);
     Assert.Equal(96, profile.Search.MaximumPurchasePlacementCandidates);
