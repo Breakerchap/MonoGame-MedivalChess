@@ -93,7 +93,7 @@ internal static class Actions
 
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
-    var action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
+    (int range, Shape shape) action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
     List<(int x, int y)> squares;
 
     switch (action.shape)

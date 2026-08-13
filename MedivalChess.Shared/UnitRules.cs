@@ -10,9 +10,13 @@ public enum RuleShape
   Any,
   Straight,
   Line,
+  Diagonal,
+  LineOrDiagonal,
+  ChessKnight,
   Forward,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
+  ForwardLine,
   PierceStraight,
   None
 }
@@ -110,9 +114,13 @@ public static class UnitRules
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
     Shape.Line => RuleShape.Line,
+    Shape.Diagonal => RuleShape.Diagonal,
+    Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
+    Shape.ChessKnight => RuleShape.ChessKnight,
     Shape.Forward => RuleShape.Forward,
     Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
+    Shape.ForwardLine => RuleShape.ForwardLine,
     Shape.PierceStraight => RuleShape.PierceStraight,
     _ => RuleShape.None
   };
@@ -135,6 +143,9 @@ public static class UnitRules
     {
       RuleShape.Straight => taxicabDistance <= rule.MoveRange,
       RuleShape.Line => (dx == 0 || dy == 0) && chessboardDistance <= rule.MoveRange,
+      RuleShape.Diagonal => dx == dy && chessboardDistance <= rule.MoveRange,
+      RuleShape.LineOrDiagonal => (dx == 0 || dy == 0 || dx == dy) && chessboardDistance <= rule.MoveRange,
+      RuleShape.ChessKnight => ((dx == 1 && dy == 2) || (dx == 2 && dy == 1)) && chessboardDistance <= rule.MoveRange,
       RuleShape.Any => chessboardDistance <= rule.MoveRange,
       RuleShape.None => false,
       _ => chessboardDistance <= rule.MoveRange
@@ -188,7 +199,11 @@ public static class UnitRules
       RuleShape.Any => true,
       RuleShape.Straight => true,
       RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
+      RuleShape.Diagonal => Math.Abs(dx) == Math.Abs(dy),
+      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || Math.Abs(dx) == Math.Abs(dy),
+      RuleShape.ChessKnight => (Math.Abs(dx) == 1 && Math.Abs(dy) == 2) || (Math.Abs(dx) == 2 && Math.Abs(dy) == 1),
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
+      RuleShape.ForwardLine => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
       _ => false
     };

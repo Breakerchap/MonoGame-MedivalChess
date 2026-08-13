@@ -29,8 +29,8 @@ public static class CampaignUnitResolver
         return false;
       }
       if (!TryApplyOverrides(
-        new PieceDefinition(nativeAbilitySource.Type, native.Category, native.Movement, native.Attack, native.Health, native.Size,
-          native.AttackRange, native.AttackPattern, native.Cost, nativeAbilitySource.AbilityDescription, native.Identifier, template.Name, template.Abbreviation),
+        new PieceDefinition(nativeAbilitySource.Type, template.Abbreviation ?? native.Abbreviation ?? string.Empty, native.Pack, native.Movement, native.Attack, native.Health, native.Size,
+          native.AttackRange, native.AttackPattern, native.Cost, nativeAbilitySource.AbilityDescription, native.Identifier, template.Name),
         template.StatOverrides, native.Identifier, template.Name, nativeAbilitySource.AbilityDescription, template.Abbreviation, out PieceDefinition templatedDefinition))
       {
         definition = null!;
@@ -52,7 +52,8 @@ public static class CampaignUnitResolver
     if (!TryApplyOverrides(
       new PieceDefinition(
         abilitySource.Type,
-        baseDefinition.Category,
+        custom.Abbreviation ?? baseDefinition.Abbreviation ?? string.Empty,
+        baseDefinition.Pack,
         baseDefinition.Movement,
         baseDefinition.Attack,
         baseDefinition.Health,
@@ -62,8 +63,7 @@ public static class CampaignUnitResolver
         baseDefinition.Cost,
         abilitySource.AbilityDescription,
         custom.Id,
-        custom.Name,
-        custom.Abbreviation
+        custom.Name
       ),
       custom.StatOverrides,
       custom.Id,
@@ -133,10 +133,13 @@ public static class CampaignUnitResolver
     {
       int minimumAttackRange = overrides?.MinimumAttackRange ?? source.AttackRange.Minimum;
       int maximumAttackRange = overrides?.MaximumAttackRange ?? source.AttackRange.Maximum;
+      int maximumMoveRange = overrides?.MoveRange ?? source.Movement.Maximum;
+      int minimumMoveRange = Math.Min(source.Movement.Minimum, maximumMoveRange);
       definition = new PieceDefinition(
         source.Type,
-        source.Category,
-        (overrides?.MoveRange ?? source.Movement.range, overrides?.MovePattern ?? source.Movement.shape),
+        abbreviation ?? source.Abbreviation ?? string.Empty,
+        source.Pack,
+        new MovementDefinition(minimumMoveRange, maximumMoveRange, overrides?.MovePattern ?? source.Movement.Shape),
         overrides?.Attack ?? source.Attack,
         overrides?.Health ?? source.Health,
         (overrides?.Width ?? source.Size.x, overrides?.Height ?? source.Size.y),
@@ -145,8 +148,7 @@ public static class CampaignUnitResolver
         overrides?.Cost ?? source.Cost,
         abilityDescription,
         identifier,
-        displayName,
-        abbreviation
+        displayName
       );
       return true;
     }
