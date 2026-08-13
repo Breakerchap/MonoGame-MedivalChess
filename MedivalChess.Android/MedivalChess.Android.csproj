@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <ApplicationId>com.breakerchap.crownandsiege</ApplicationId>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+    <AndroidPackageFormats>apk</AndroidPackageFormats>
+    <PublishTrimmed>false</PublishTrimmed>
+    <AndroidBuildCommit Condition="'$(AndroidBuildCommit)' == ''">unknown</AndroidBuildCommit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\Game1.cs" Link="Game1.cs" />
+    <Compile Include="..\Debug.cs" Link="Debug.cs" />
+    <Compile Include="..\OnlineMatchClient.cs" Link="OnlineMatchClient.cs" />
+    <Compile Include="..\PlatformInput.cs" Link="PlatformInput.cs" />
+    <Compile Include="..\UiLayout.cs" Link="UiLayout.cs" />
+    <Compile Include="..\UiRenderer.cs" Link="UiRenderer.cs" />
+    <Compile Include="..\UiText.cs" Link="UiText.cs" />
+    <Compile Include="..\UiTheme.cs" Link="UiTheme.cs" />
+    <Compile Include="..\Campaign\**\*.cs" Link="Campaign\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\Player\**\*.cs" Link="Player\%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="..\GameBoard\MovementPathfinder.cs" Link="GameBoard\MovementPathfinder.cs" />
+    <Compile Include="..\GameBoard\Peice.cs" Link="GameBoard\Peice.cs" />
+    <Compile Include="..\GameBoard\PieceControl.cs" Link="GameBoard\PieceControl.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MedivalChess.Shared\MedivalChess.Shared.csproj" />
+    <ProjectReference Include="..\MedivalChess.CPU\MedivalChess.CPU.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <MonoGameContentReference Include="..\Content\Content.mgcb">
+      <Link>Content\Content.mgcb</Link>
+      <Platform>Android</Platform>
+    </MonoGameContentReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Content.Builder.Task" Version="3.8.5" />
+    <PackageReference Include="MonoGame.Framework.Android" Version="3.8.5" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="GitCommit" Value="$(AndroidBuildCommit)" />
+  </ItemGroup>
+</Project>
