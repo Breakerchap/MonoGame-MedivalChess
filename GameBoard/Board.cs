@@ -1,11 +1,12 @@
 namespace MedivalChess.Shared;
 
 using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 internal sealed class BoardData
 {
@@ -24,18 +25,7 @@ public sealed class Board
 
   public Board(string boardFileName = "board_medium.json")
   {
-    string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", boardFileName);
-    if (!File.Exists(boardPath))
-    {
-      boardPath = Path.Combine(Directory.GetCurrentDirectory(), "GameBoard", boardFileName);
-    }
-
-    if (!File.Exists(boardPath))
-    {
-      throw new FileNotFoundException($"Could not find {boardFileName}. Expected it at GameBoard/{boardFileName}", boardPath);
-    }
-
-    string json = File.ReadAllText(boardPath);
+    string json = LoadBoardJson(boardFileName);
     BoardData? data = JsonSerializer.Deserialize<BoardData>(json, new JsonSerializerOptions
     {
       PropertyNameCaseInsensitive = true
@@ -50,7 +40,7 @@ public sealed class Board
   }
 
   /// <summary>
-  /// Creates a board from explicit playable cells.  Custom campaign levels use this
+  /// Creates a board from explicit playable cells. Custom campaign levels use this
   /// constructor so their geometry is consumed by the same board and movement rules
   /// as built-in battlefields.
   /// </summary>
@@ -58,6 +48,41 @@ public sealed class Board
   {
     ArgumentNullException.ThrowIfNull(cells);
     Initialise(cells);
+  }
+
+  private static string LoadBoardJson(string boardFileName)
+  {
+    string boardPath = Path.Combine(AppContext.BaseDirectory, "GameBoard", boardFileName);
+    if (!File.Exists(boardPath))
+    {
+      boardPath = Path.Combine(Directory.GetCurrentDirectory(), "GameBoard", boardFileName);
+    }
+
+    if (File.Exists(boardPath))
+    {
+      return File.ReadAllText(boardPath);
+    }
+
+    // Android packages (and some other single-file/package layouts) do not expose
+    // copied data files as ordinary files beside the executable. The shared project
+    // therefore also embeds the built-in board definitions and falls back to them.
+    Assembly assembly = typeof(Board).Assembly;
+    string? resourceName = assembly.GetManifestResourceNames().FirstOrDefault(name =>
+      name.EndsWith('.' + boardFileName, StringComparison.OrdinalIgnoreCase));
+    if (resourceName is not null)
+    {
+      using Stream? stream = assembly.GetManifestResourceStream(resourceName);
+      if (stream is not null)
+      {
+        using StreamReader reader = new(stream);
+        return reader.ReadToEnd();
+      }
+    }
+
+    throw new FileNotFoundException(
+      $"Could not find {boardFileName}. Expected it at GameBoard/{boardFileName} or as an embedded board resource.",
+      boardPath
+    );
   }
 
   private void Initialise(IEnumerable<(int x, int y)> cells)
