@@ -23,7 +23,7 @@ public sealed class CpuSearchOptimizationTests
     CpuGameState result = macro.Apply(state);
 
     Assert.DoesNotContain(result.Pieces, piece => piece.Id == peasant.Id);
-    NetworkPiece moved = Assert.Single(result.Pieces.Where(piece => piece.Id == soldier.Id));
+    NetworkPiece moved = Assert.Single(result.Pieces, piece => piece.Id == soldier.Id);
     Assert.Equal((1, 0), (moved.X, moved.Y));
     Assert.True(moved.HasMovedThisTurn);
     Assert.True(moved.HasAttackedThisTurn);
@@ -78,7 +78,7 @@ public sealed class CpuSearchOptimizationTests
 
     Parallel.For(0, 24, _ =>
     {
-      _ = cache.GetThreatMap(state, NetworkTeam.Red, builder);
+      cache.GetThreatMap(state, NetworkTeam.Red, builder);
     });
 
     Assert.Equal(1, builder.BuildCount);

@@ -253,7 +253,7 @@ public sealed class MaterialEvaluation : IEvaluationTerm
     .Where(piece => piece.Team != NetworkTeam.Neutral && piece.AttachedToId is null)
     .Sum(piece => (piece.Team == perspective ? 1f : -1f) * GetUnitValue(piece.Type, state));
 
-  internal static float GetUnitValue(string type)
+  public static float GetUnitValue(string type)
     => GetUnitValue(type, state: null);
 
   internal static float GetUnitValue(string type, CpuGameState? state)

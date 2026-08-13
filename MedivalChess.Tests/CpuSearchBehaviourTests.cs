@@ -22,7 +22,7 @@ public sealed class CpuSearchBehaviourTests
     CpuTurnPlan plan = new CpuPlayer(candidateSelector: selector).ChooseTurn(
       state, NetworkTeam.Red, profile, CancellationToken.None);
 
-    ICpuGameAction firstBoardAction = Assert.Single(plan.Actions.Where(action => action is not EndTurnAction));
+    ICpuGameAction firstBoardAction = Assert.Single(plan.Actions, action => action is not EndTurnAction);
     Assert.IsType<MoveAction>(firstBoardAction);
   }
 
