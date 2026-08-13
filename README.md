@@ -64,5 +64,30 @@ On Windows, run `publish/win-x64/MedivalChess.exe`. If MonoGame content has not 
 dotnet mgcb Content/Content.mgcb
 ```
 
+## Android
+
+The Android client is in `MedivalChess.Android` and targets Android 6.0 (API 23) or newer. Install the .NET 9 Android workload once, then build an APK from the repository root:
+
+```bash
+dotnet tool restore
+dotnet workload install android
+dotnet restore MedivalChess.Android/MedivalChess.Android.csproj
+dotnet publish MedivalChess.Android/MedivalChess.Android.csproj -c Release -f net9.0-android -p:AndroidPackageFormats=apk
+```
+
+The APK is written below `MedivalChess.Android/bin/Release/net9.0-android/publish/`. To embed the current Git commit so the app can tell whether `master` has moved on, add `-p:AndroidBuildCommit=<commit-sha>` to the publish command.
+
+Android uses the same gameplay/UI code as desktop. Touch controls are:
+
+- Tap: normal/left-click action (select, move, buy, buttons).
+- Long press: secondary/right-click action (attack and special actions).
+- One-finger drag: pan the battlefield.
+- Two-finger pinch: zoom.
+- Two-finger drag: pan while zooming.
+
+The Android launcher uses a 720-pixel logical landscape height and preserves the device aspect ratio. This keeps the desktop UI layout responsive while making controls physically larger on high-DPI phones and tablets.
+
+When the app starts with internet access it checks the latest `master` commit on GitHub without blocking startup. If the installed build embeds an older commit, Android offers to open the repository for the newer build. If the device is offline or GitHub cannot be reached, the check is skipped and the game starts normally. Android cannot safely replace a running installed APK with a literal `git pull`, so executable updates still require installing the newer APK.
+
 ### Run Terrain Painter:
 ` `
