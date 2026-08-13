@@ -6,17 +6,14 @@
     <RollForward>Major</RollForward>
     <PublishReadyToRun>false</PublishReadyToRun>
     <TieredCompilation>false</TieredCompilation>
-    <!-- 1. ADDED: Runtime identifiers to enable cross-compilation target packaging -->
     <RuntimeIdentifiers>win-x64;linux-x64;linux-arm64;osx-x64;osx-arm64</RuntimeIdentifiers>
   </PropertyGroup>
 
-  <!-- 2. MODIFIED: Isolated Windows-only manifest and desktop icon settings -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows')) or '$(RuntimeIdentifier)' == 'win-x64'">
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Icon.ico</ApplicationIcon>
   </PropertyGroup>
 
-  <!-- Optional: If you eventually make an Apple Icon.icns for your Mac dock, target it here -->
   <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX')) or '$(RuntimeIdentifier)' == 'osx-x64' or '$(RuntimeIdentifier)' == 'osx-arm64'">
     <!-- <ApplicationIcon>Icon.icns</ApplicationIcon> -->
   </PropertyGroup>
@@ -28,7 +25,7 @@
     <Compile Remove="MedivalChess.Shared\**\*.cs" />
     <Compile Remove="MedivalChess.Server\**\*.cs" />
     <Compile Remove="MedivalChess.CPU\**\*.cs" />
-    <!-- TerrainPainter is a separate WinForms utility within this repository. -->
+    <Compile Remove="MedivalChess.Android\**\*.cs" />
     <Compile Remove="TerrainPainter\**\*.cs" />
     <Compile Remove="Globals.cs" />
     <Compile Remove="GameBoard\Board.cs" />
@@ -36,12 +33,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Icon.ico">
-      <LogicalName>Icon.ico</LogicalName>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Icon.bmp">
-      <LogicalName>Icon.bmp</LogicalName>
-    </EmbeddedResource>
+    <EmbeddedResource Include="Icon.ico"><LogicalName>Icon.ico</LogicalName></EmbeddedResource>
+    <EmbeddedResource Include="Icon.bmp"><LogicalName>Icon.bmp</LogicalName></EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>
@@ -55,10 +48,10 @@
     <ProjectReference Include="MedivalChess.CPU\MedivalChess.CPU.csproj" />
   </ItemGroup>
 
-  <ItemGroup> 
+  <ItemGroup>
     <None Update="GameBoard\board_*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory> 
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory> 
-    </None> 
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
   </ItemGroup>
 </Project>
