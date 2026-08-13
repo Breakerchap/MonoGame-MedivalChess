@@ -10,7 +10,10 @@ internal static class UiText
 {
   internal static string BuildPieceLabel(PieceDefinition definition)
   {
-    if (!string.IsNullOrWhiteSpace(definition.Abbreviation)) return definition.Abbreviation.ToUpperInvariant();
+    if (!string.IsNullOrWhiteSpace(definition.Abbreviation))
+    {
+      return new string(definition.Abbreviation.Take(2).ToArray()).ToUpperInvariant();
+    }
     if (!string.Equals(definition.Identifier, definition.Type.ToString(), StringComparison.Ordinal))
     {
       string letters = new(definition.DisplayName.Where(char.IsLetterOrDigit).Take(2).ToArray());

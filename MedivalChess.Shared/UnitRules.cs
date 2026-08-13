@@ -18,6 +18,7 @@ public enum RuleShape
   ForwardOrForwardDiagonal,
   ForwardLine,
   PierceStraight,
+  MoveOnEnemy,
   None
 }
 
@@ -122,6 +123,7 @@ public static class UnitRules
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
     Shape.ForwardLine => RuleShape.ForwardLine,
     Shape.PierceStraight => RuleShape.PierceStraight,
+    Shape.MoveOnEnemy => RuleShape.MoveOnEnemy,
     _ => RuleShape.None
   };
 
