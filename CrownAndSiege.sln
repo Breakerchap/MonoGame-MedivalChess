@@ -12,8 +12,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.Tests", "Mediv
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.CPU", "MedivalChess.CPU\MedivalChess.CPU.csproj", "{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MedivalChess.Android", "MedivalChess.Android\MedivalChess.Android.csproj", "{D15B602E-6396-4DBE-B9B5-0D9C72A4E7BE}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -30,9 +28,5 @@ Global
 		{4C97B9EB-58A5-49F8-B598-E948B236F3D1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{B7AD0EA1-4859-4D45-95B4-79A6B26540B6}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D15B602E-6396-4DBE-B9B5-0D9C72A4E7BE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{D15B602E-6396-4DBE-B9B5-0D9C72A4E7BE}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{D15B602E-6396-4DBE-B9B5-0D9C72A4E7BE}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{D15B602E-6396-4DBE-B9B5-0D9C72A4E7BE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
