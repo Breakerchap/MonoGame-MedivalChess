@@ -66,16 +66,16 @@ dotnet mgcb Content/Content.mgcb
 
 ## Android
 
-The Android client is in `MedivalChess.Android` and targets Android 6.0 (API 23) or newer. Install the .NET 9 Android workload once, then build an APK from the repository root:
+The Android client is in `MedivalChess.Android` and targets Android 6.0 (API 23) or newer. Install the .NET 9 Android workload once, then restore and build a signed APK from the repository root:
 
 ```bash
 dotnet tool restore
 dotnet workload install android
 dotnet restore MedivalChess.Android/MedivalChess.Android.csproj
-dotnet publish MedivalChess.Android/MedivalChess.Android.csproj -c Release -f net9.0-android -p:AndroidPackageFormats=apk
+dotnet build MedivalChess.Android/MedivalChess.Android.csproj -c Release -f net9.0-android -t:SignAndroidPackage -p:AndroidPackageFormats=apk
 ```
 
-The APK is written below `MedivalChess.Android/bin/Release/net9.0-android/publish/`. To embed the current Git commit so the app can tell whether `master` has moved on, add `-p:AndroidBuildCommit=<commit-sha>` to the publish command.
+`SignAndroidPackage` produces a `*-Signed.apk` under `MedivalChess.Android/bin/Release/net9.0-android/`. Without a release keystore configured, .NET for Android uses a generated debug-signing key, which is suitable for local sideload/testing but not a store release. To embed the current Git commit so the app can tell whether `master` has moved on, add `-p:AndroidBuildCommit=<commit-sha>` to the build command.
 
 Android uses the same gameplay/UI code as desktop. Touch controls are:
 
@@ -88,6 +88,8 @@ Android uses the same gameplay/UI code as desktop. Touch controls are:
 The Android launcher uses a 720-pixel logical landscape height and preserves the device aspect ratio. This keeps the desktop UI layout responsive while making controls physically larger on high-DPI phones and tablets.
 
 When the app starts with internet access it checks the latest `master` commit on GitHub without blocking startup. If the installed build embeds an older commit, Android offers to open the repository for the newer build. If the device is offline or GitHub cannot be reached, the check is skipped and the game starts normally. Android cannot safely replace a running installed APK with a literal `git pull`, so executable updates still require installing the newer APK.
+
+Current Android caveat: gameplay and menu buttons are touch-enabled, but the existing text-entry screens still consume key states directly. Until the Android software-keyboard bridge is wired in, entering/editing server URLs, room codes and other free-text/numeric fields requires a hardware/Bluetooth keyboard.
 
 ### Run Terrain Painter:
 ` `
