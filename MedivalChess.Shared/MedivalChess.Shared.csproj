@@ -12,6 +12,7 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+    <EmbeddedResource Include="..\GameBoard\board_*.json" Link="GameBoard\%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\GameBoard\BoardTerrains\**\*.mctrn" Link="GameBoard\BoardTerrains\%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
