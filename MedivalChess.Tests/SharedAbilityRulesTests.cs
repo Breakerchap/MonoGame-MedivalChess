@@ -108,7 +108,7 @@ public sealed class SharedAbilityRulesTests
     AbilityUnitSnapshot target = new("a", nameof(PieceType.Soldier), NetworkTeam.Blue, 2, 2, 1, 1);
     AbilityUnitSnapshot next = new("b", nameof(PieceType.Soldier), NetworkTeam.Blue, 3, 2, 1, 1);
     AbilityUnitSnapshot chained = new("c", nameof(PieceType.Soldier), NetworkTeam.Blue, 4, 2, 1, 1);
-    AbilityUnitSnapshot diagonalOnly = new("d", nameof(PieceType.Soldier), NetworkTeam.Blue, 3, 3, 1, 1);
+    AbilityUnitSnapshot diagonalOnly = new("d", nameof(PieceType.Soldier), NetworkTeam.Blue, 1, 1, 1, 1);
 
     AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
       zeus,
