@@ -78,18 +78,27 @@ internal sealed class PieceSetup
     }
 
     bool removed = _pieces.Remove(piece);
-    if (removed) RebuildOccupancy();
+    if (removed)
+    {
+      piece.DetachFromSetup(this);
+      RebuildOccupancy();
+    }
     return removed;
   }
 
   internal void AddPiece(Piece piece)
   {
     _pieces.Add(piece);
+    piece.AttachToSetup(this);
     AddToOccupancy(piece);
   }
 
   internal void ClearPieces()
   {
+    foreach (Piece piece in _pieces)
+    {
+      piece.DetachFromSetup(this);
+    }
     _pieces.Clear();
     _occupants.Clear();
   }
@@ -171,6 +180,8 @@ internal sealed class PieceSetup
       attachedPiece.AttachedTo = replacement;
     }
 
+    existingPiece.DetachFromSetup(this);
+    replacement.AttachToSetup(this);
     _pieces[index] = replacement;
     RebuildOccupancy();
   }
