@@ -23,6 +23,7 @@ public static class AbilityRules
   public const int TumbleweedLifetimeRounds = 3;
   public const int NinjaAttacksPerTurn = 3;
   public const int RaiderForwardMovementBonus = 2;
+  public const int OxHostMovementBonus = 2;
   public const int BerserkerEnrageHealth = 20;
   public const int BerserkerEnragedDamage = 40;
   public const int CavalierFollowUpMovement = 2;
@@ -62,6 +63,14 @@ public static class AbilityRules
 
   public static int GetMaximumMovementRangeBonus(UnitRule unit) =>
     unit.Type == nameof(PieceType.Raider) ? RaiderForwardMovementBonus : 0;
+
+  /// <summary>Movement bonus granted to the host by one attached unit.</summary>
+  public static int GetAttachmentMovementBonus(string attachmentType) =>
+    attachmentType == nameof(PieceType.Ox) ? OxHostMovementBonus : 0;
+
+  /// <summary>True when an attachment must take the same incoming damage as its host.</summary>
+  public static bool SharesIncomingDamageWithHost(string attachmentType) =>
+    attachmentType == nameof(PieceType.Ox);
 
   public static bool AttacksOverObstacles(UnitRule unit) =>
     unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess);
@@ -219,13 +228,11 @@ public static class AbilityRules
   public static bool CanUseCavalierFollowUpMove(string unitType, bool isAvailable) =>
     isAvailable && unitType == nameof(PieceType.Cavalier);
 
-  public static bool SharesDamageWithCargo(string unitType) => unitType == nameof(PieceType.Ox);
-
   public static bool CanGuardAttach(UnitRule guard, UnitRule target, bool guardIsAttached, bool targetAlreadyHasGuard) =>
     guard.Type == nameof(PieceType.Guard) && target.Category != RuleCategory.Royal && !guardIsAttached && !targetAlreadyHasGuard;
 
-  public static bool CanOxAttach(UnitRule ox, UnitRule target, bool targetIsAttached, bool oxAlreadyHasCargo) =>
-    ox.Type == nameof(PieceType.Ox) && !targetIsAttached && !oxAlreadyHasCargo &&
+  public static bool CanOxAttach(UnitRule ox, UnitRule target, bool oxIsAlreadyAttached, bool targetAlreadyHasOx) =>
+    ox.Type == nameof(PieceType.Ox) && !oxIsAlreadyAttached && !targetAlreadyHasOx &&
     target.Width == 1 && target.Height == 1;
 
   public static bool IsEngineerBuild(string ability) =>
