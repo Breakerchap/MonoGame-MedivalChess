@@ -113,7 +113,11 @@ internal sealed class Piece
   internal IReadOnlyList<NetworkPendingDamage> PendingDamage { get; set; } = Array.Empty<NetworkPendingDamage>();
 
   internal long NextMercenaryBid => (long)LastBid + 10;
-  internal bool IsRoyal => Definition.Category == PieceCategory.Royal || IsRoyalProxy;
+  internal bool IsRoyal => RoyalAbilityRules.IsRoyal(
+    Definition.Type.ToString(),
+    IsRoyalProxy,
+    PossessedUnitId
+  );
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
