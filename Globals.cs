@@ -4,7 +4,7 @@ namespace MedivalChess.Shared;
 public static class Globals
 {
   public static bool ActionLimitsEnabled { get; set; } = false;
-  public const int StartingCash = 200;
+  public const int StartingCash = 400;
   public const float KillerDeathRefundMultiplier = 0.0f;
   public const float DefeatedTeamDeathRefundMultiplier = 0.0f;
   public const int InitialBuysPerTurn = 2;

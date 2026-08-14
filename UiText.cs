@@ -12,11 +12,11 @@ internal static class UiText
   {
     if (!string.IsNullOrWhiteSpace(definition.Abbreviation))
     {
-      return new string(definition.Abbreviation.Take(2).ToArray()).ToUpperInvariant();
+      return new string(definition.Abbreviation.Take(3).ToArray()).ToUpperInvariant();
     }
     if (!string.Equals(definition.Identifier, definition.Type.ToString(), StringComparison.Ordinal))
     {
-      string letters = new(definition.DisplayName.Where(char.IsLetterOrDigit).Take(2).ToArray());
+      string letters = new(definition.DisplayName.Where(char.IsLetterOrDigit).Take(3).ToArray());
       return string.IsNullOrWhiteSpace(letters) ? "CU" : letters.ToUpperInvariant();
     }
     return definition.Type switch

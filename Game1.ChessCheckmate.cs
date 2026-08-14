@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using MedivalChess.GameBoard;
+using MedivalChess.Player;
 using MedivalChess.Shared;
 
 namespace MedivalChess;

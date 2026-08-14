@@ -9,10 +9,10 @@ public static class AbilityRules
   public const int BombardSplashDamage = 20;
   public const int ElephantTrampleDamage = 30;
   public const int EngineerBarrierHealth = 40;
-  public const int EngineerMineDamage = 60;
+  public const int EngineerMineDamage = 30;
   public const int EngineerBuildsPerTurn = 2;
   public const int MercenaryPayroll = 20;
-  public const int PresidentPayroll = 10;
+  public const int PresidentPayroll = 5;
   public const int DragonbornBurnDamage = 10;
   public const int VampireHealing = 20;
   public const int ZeusChainDamage = 10;

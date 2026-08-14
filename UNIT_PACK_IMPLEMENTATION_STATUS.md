@@ -33,7 +33,7 @@ These are intentionally **not** marked implemented merely because constants/desc
 - Bombard: existing local splash is still hard-coded as 10; workbook requires 20.
 - Engineer: existing local barricade HP is still hard-coded as 20; workbook requires 40.
 - Mercenary: existing local payroll is still hard-coded as 10; workbook requires 20, including the 10-19 gold unpaid/fire case.
-- President: pay 10 per turn or lose.
+- President: pay 5 per turn or lose.
 - Dragon: attack every unit in its forward attack line/range.
 - Goblin Royalty: four separate royal goblins and lose only when all four die.
 - Wizard: 3x3 attack damage centred on the target.

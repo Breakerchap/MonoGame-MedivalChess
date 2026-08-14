@@ -74,3 +74,13 @@ public static class ShapeGeometryRules
       : [forward, (forward.x, -1), (forward.x, 1)];
   }
 }
+
+/// <summary>
+/// Compatibility facade for callers that used the original shape helper API.
+/// New code should use <see cref="ShapeGeometryRules.GetOffsets"/> directly.
+/// </summary>
+public static class ShapeFuncs
+{
+  public static IReadOnlyList<(int x, int y)> CircleShape(int range) =>
+    ShapeGeometryRules.GetOffsets(RuleShape.Circle, 1, range, NetworkTeam.Red);
+}
