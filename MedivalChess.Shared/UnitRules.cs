@@ -1,7 +1,7 @@
 namespace MedivalChess.Shared;
 
 /// <summary>
-/// Portable unit data and board geometry used by every game mode.  This project deliberately has
+/// Portable unit data and board geometry used by every game mode. This project deliberately has
 /// no MonoGame dependency, so an authoritative server and the desktop client cannot silently
 /// drift apart on unit statistics, sizes, or basic move/attack patterns.
 /// </summary>
@@ -9,6 +9,7 @@ public enum RuleShape
 {
   Any,
   Straight,
+  Circle,
   Line,
   Diagonal,
   LineOrDiagonal,
@@ -46,7 +47,8 @@ public sealed record UnitRule(
   RuleShape AttackPattern,
   int Cost,
   int MinimumAttackRange = 1,
-  string AbilityDescription = ""
+  string AbilityDescription = "",
+  int MinimumMoveRange = 1
 )
 {
   public AttackRange AllowedAttackRange => new(MinimumAttackRange, AttackRange);
@@ -68,7 +70,8 @@ public static class UnitRules
       ToRuleShape(definition.AttackPattern),
       definition.Cost,
       definition.AttackRange.Minimum,
-      definition.AbilityDescription
+      definition.AbilityDescription,
+      definition.Movement.Minimum
     ))
     .ToArray();
 
@@ -106,7 +109,8 @@ public static class UnitRules
       ToRuleShape(definition.AttackPattern),
       definition.Cost,
       definition.AttackRange.Minimum,
-      definition.AbilityDescription
+      definition.AbilityDescription,
+      definition.Movement.Minimum
     );
   }
 
@@ -114,6 +118,7 @@ public static class UnitRules
   {
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
+    Shape.Circle => RuleShape.Circle,
     Shape.Line => RuleShape.Line,
     Shape.Diagonal => RuleShape.Diagonal,
     Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
@@ -139,18 +144,28 @@ public static class UnitRules
     int dy = Math.Abs(toY - fromY);
     if (dx == 0 && dy == 0) return false;
 
+    if (rule.MovePattern == RuleShape.Circle)
+    {
+      int squaredDistance = dx * dx + dy * dy;
+      return squaredDistance >= rule.MinimumMoveRange * rule.MinimumMoveRange &&
+             squaredDistance <= rule.MoveRange * rule.MoveRange;
+    }
+
     int chessboardDistance = Math.Max(dx, dy);
     int taxicabDistance = dx + dy;
+    int distance = rule.MovePattern == RuleShape.Straight ? taxicabDistance : chessboardDistance;
+    if (distance < rule.MinimumMoveRange || distance > rule.MoveRange) return false;
+
     return rule.MovePattern switch
     {
-      RuleShape.Straight => taxicabDistance <= rule.MoveRange,
-      RuleShape.Line => (dx == 0 || dy == 0) && chessboardDistance <= rule.MoveRange,
-      RuleShape.Diagonal => dx == dy && chessboardDistance <= rule.MoveRange,
-      RuleShape.LineOrDiagonal => (dx == 0 || dy == 0 || dx == dy) && chessboardDistance <= rule.MoveRange,
-      RuleShape.ChessKnight => ((dx == 1 && dy == 2) || (dx == 2 && dy == 1)) && chessboardDistance <= rule.MoveRange,
-      RuleShape.Any => chessboardDistance <= rule.MoveRange,
+      RuleShape.Straight => true,
+      RuleShape.Line => dx == 0 || dy == 0,
+      RuleShape.Diagonal => dx == dy,
+      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || dx == dy,
+      RuleShape.ChessKnight => (dx == 1 && dy == 2) || (dx == 2 && dy == 1),
+      RuleShape.Any => true,
       RuleShape.None => false,
-      _ => chessboardDistance <= rule.MoveRange
+      _ => true
     };
   }
 
@@ -191,8 +206,18 @@ public static class UnitRules
     int dy
   )
   {
-    int chessboardDistance = Math.Max(Math.Abs(dx), Math.Abs(dy));
-    int taxicabDistance = Math.Abs(dx) + Math.Abs(dy);
+    int absX = Math.Abs(dx);
+    int absY = Math.Abs(dy);
+
+    if (pattern == RuleShape.Circle)
+    {
+      int squaredDistance = absX * absX + absY * absY;
+      return squaredDistance >= minimumRange * minimumRange &&
+             squaredDistance <= range * range;
+    }
+
+    int chessboardDistance = Math.Max(absX, absY);
+    int taxicabDistance = absX + absY;
     int distance = pattern == RuleShape.Straight ? taxicabDistance : chessboardDistance;
     if (distance < minimumRange || distance > range) return false;
 
@@ -201,9 +226,9 @@ public static class UnitRules
       RuleShape.Any => true,
       RuleShape.Straight => true,
       RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
-      RuleShape.Diagonal => Math.Abs(dx) == Math.Abs(dy),
-      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || Math.Abs(dx) == Math.Abs(dy),
-      RuleShape.ChessKnight => (Math.Abs(dx) == 1 && Math.Abs(dy) == 2) || (Math.Abs(dx) == 2 && Math.Abs(dy) == 1),
+      RuleShape.Diagonal => absX == absY,
+      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || absX == absY,
+      RuleShape.ChessKnight => (absX == 1 && absY == 2) || (absX == 2 && absY == 1),
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardLine => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
