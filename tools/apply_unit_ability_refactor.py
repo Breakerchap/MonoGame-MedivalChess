@@ -16,6 +16,7 @@ def replace_once(path: str, old: str, new: str) -> None:
     print(f"{path}: transformed")
 
 
+# ---------------------------- CPU/local migration ----------------------------
 # Current Ox ability: Ox attaches to a friendly 1x1 host, gives the host +2 Move,
 # and takes the same incoming damage as that host.
 replace_once(
@@ -146,15 +147,8 @@ replace_once(
 '''
 )
 
-# Split the giant local game class so unit-specific runtime glue stays out of Game1.cs.
-replace_once(
-    "Game1.cs",
-    "internal sealed class Game1 : Game\n{",
-    "internal sealed partial class Game1 : Game\n{"
-)
+replace_once("Game1.cs", "internal sealed class Game1 : Game\n{", "internal sealed partial class Game1 : Game\n{")
 
-# Human/local attacks: Ballista keeps its terrain-aware pierce adapter; all other unit targets
-# use the shared multi-target attack plan.
 replace_once(
     "Game1.cs",
     '''              if (selectedPiece.Definition.Type == PieceType.Ballista)
@@ -189,7 +183,6 @@ replace_once(
 '''
 )
 
-# Local CPU execution must use exactly the same local/shared attack adapter as human input.
 replace_once(
     "Game1.cs",
     '''    if (attacker.Definition.Type == PieceType.Ballista)
@@ -349,7 +342,6 @@ replace_once(
 '''
 )
 
-# Keep all shared ability state when mirroring local games into CPU search snapshots.
 replace_once(
     "Game1.cs",
     '''        piece.EngineerBuildsThisTurn,
@@ -372,7 +364,6 @@ replace_once(
 '''
 )
 
-# Restore all shared ability state from authoritative online snapshots.
 replace_once(
     "Game1.cs",
     '''        LastBid = networkPiece.LastBid,
@@ -395,5 +386,397 @@ replace_once(
         ),
         PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>()
       };
+'''
+)
+
+# -------------------------- authoritative server -----------------------------
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    "public sealed class MatchStore\n{",
+    "public sealed partial class MatchStore\n{"
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''            ResolvePieceDamage(foundMatch, piece, player, crossed.Id, 15);
+''',
+    '''            ResolvePieceDamage(foundMatch, piece, player, crossed.Id, AbilityRules.ElephantTrampleDamage);
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if (rule.Type == "Ox")
+    {
+      NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
+        other.AttachmentKind == NetworkAttachmentKind.Carried);
+      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule))
+      {
+        rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
+      }
+    }
+''',
+    '''    int attachmentBonus = GetSharedServerAttachmentMovementBonus(match, piece);
+    if (attachmentBonus != 0)
+    {
+      rule = rule with { MoveRange = rule.MoveRange + attachmentBonus };
+    }
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
+      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
+      : rule;
+''',
+    '''    return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
+      ? rule with { MoveRange = AbilityRules.CavalierFollowUpMovement, MovePattern = RuleShape.Straight }
+      : rule;
+'''
+)
+
+# A unit may move through another only when the shared ability says so. No unit may finish
+# overlapped with an ordinary unit, including Elephant/Sleipnir.
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
+      (rule.Type == "Farm" || other.Type != "Farm") &&
+      // An elephant may end its move on an enemy it tramples, but never on an ally.
+      !(rule.Type == "Elephant" && other.Team != piece.Team) &&
+      NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
+''',
+    '''    if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
+      (rule.Type == "Farm" || other.Type != "Farm") &&
+      NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''        bool ignoresTerrain = piece.Type == "Elephant" ||
+          IsPalaceAssistedMovement(match, piece, rule, from, destination);
+''',
+    '''        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
+          IsPalaceAssistedMovement(match, piece, rule, from, destination);
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''        if (blocker is not null && !(piece.Type == "Elephant" && blocker.Team != piece.Team)) return false;
+''',
+    '''        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team)) return false;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if (rule.Type == "Elephant") return 1;
+    int cost = 0;
+''',
+    '''    int cost = 0;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''      cost = Math.Max(cost, match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+        ? 2
+        : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1);
+''',
+    '''      int ordinaryCost = match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+        ? 2
+        : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1;
+      cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if (rule.Type == "Elephant" || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
+''',
+    '''    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''  private static int GetAttackDamage(Match match, NetworkPiece attacker, NetworkPiece target)
+  {
+    int baseDamage = NetworkAttackRules.GetDamage(attacker.Type);
+    if (baseDamage <= 0) return 0;
+    return CombatRules.CalculateDamage(
+      baseDamage,
+      HasAdjacentUnit(match, attacker, attacker.Team, "Baron"),
+      match.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
+      false,
+      false,
+      0
+    );
+  }
+''',
+    '''  private static int GetAttackDamage(Match match, NetworkPiece attacker, NetworkPiece target) =>
+    GetSharedServerAttackDamage(match, attacker, target);
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    NetworkPiece target = match.Pieces[index];
+    NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Guard);
+    NetworkPiece damagedPiece = guard ?? target;
+    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
+      ? match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Carried)
+      : null;
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
+    ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
+    if (cargo is not null && cargo.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == cargo.Id))
+    {
+      ApplyDamageToPiece(match, attacker, attackingPlayer, cargo, unmitigatedDamage);
+    }
+''',
+    '''    NetworkPiece target = match.Pieces[index];
+    if (!CanSharedServerDamage(attacker, target)) return;
+    NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Guard);
+    NetworkPiece damagedPiece = guard ?? target;
+    NetworkPiece? oxAttachment = match.Pieces.FirstOrDefault(piece =>
+      piece.AttachedToId == target.Id && AbilityRules.SharesIncomingDamageWithHost(piece.Type));
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
+    ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
+    if (oxAttachment is not null && oxAttachment.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == oxAttachment.Id))
+    {
+      ApplyDamageToPiece(match, attacker, attackingPlayer, oxAttachment, unmitigatedDamage);
+    }
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    int damage = NetworkAttackRules.GetDamage(attacker.Type) +
+      (HasAdjacentUnit(match, attacker, attacker.Team, "Baron") ? 5 : 0);
+''',
+    '''    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health) +
+      (HasAdjacentUnit(match, attacker, attacker.Team, nameof(PieceType.Baron)) ? CombatRules.BaronDamageBonus : 0);
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if (target.Health > 30)
+    {
+      match.Pieces[index] = target with { Health = target.Health - 30 };
+''',
+    '''    if (target.Health > AbilityRules.EngineerMineDamage)
+    {
+      match.Pieces[index] = target with { Health = target.Health - AbilityRules.EngineerMineDamage };
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''  private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
+  {
+    if (match.TreasureCarrierId == defeatedPiece.Id)
+''',
+    '''  private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
+  {
+    if (TryApplySharedServerLethalAbility(match, defeatedPiece))
+    {
+      return;
+    }
+
+    IReadOnlyList<AbilityDamageInstruction> deathExplosion = GetSharedServerDeathExplosion(match, defeatedPiece);
+    PlayerSlot explosionSource = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team) ?? attackingPlayer;
+    if (match.TreasureCarrierId == defeatedPiece.Id)
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    RemovePiece(match, defeatedPiece.Id);
+    if (!UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return;
+''',
+    '''    RemovePiece(match, defeatedPiece.Id);
+    ApplySharedServerDeathExplosion(match, defeatedPiece, explosionSource, deathExplosion);
+    if (!UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return;
+    if (defeatedPiece.Type == nameof(PieceType.GoblinRoyalty) && match.Pieces.Any(piece =>
+      piece.Team == defeatedPiece.Team && piece.Type == nameof(PieceType.GoblinRoyalty))) return;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) || target is not null ||
+''',
+    '''    if ((!demolition && engineer.EngineerBuildsThisTurn >= AbilityRules.EngineerBuildsPerTurn) || target is not null ||
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''      match.Barricades[(targetX, targetY)] = 20;
+''',
+    '''      match.Barricades[(targetX, targetY)] = AbilityRules.EngineerBarrierHealth;
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''      HasAttackedThisTurn = buildsUsed >= 2
+''',
+    '''      HasAttackedThisTurn = buildsUsed >= AbilityRules.EngineerBuildsPerTurn
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''  private static bool TryAttachOxCargo(Match match, int actorIndex, int targetIndex)
+  {
+    if (targetIndex < 0 || !UnitRules.TryGet(match.Pieces[targetIndex].Type, out UnitRule targetRule)) return false;
+    NetworkPiece ox = match.Pieces[actorIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    bool hasCargo = match.Pieces.Any(piece => piece.AttachedToId == ox.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Carried);
+    if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id || target.Id == match.TreasureCarrierId ||
+        !AbilityRules.CanOxAttach(oxRule, targetRule, target.AttachedToId is not null, hasCargo)) return false;
+
+    match.Pieces[targetIndex] = target with
+    {
+      AttachedToId = ox.Id,
+      AttachmentKind = NetworkAttachmentKind.Carried,
+      X = ox.X,
+      Y = ox.Y
+    };
+    return true;
+  }
+''',
+    '''  private static bool TryAttachOxCargo(Match match, int actorIndex, int targetIndex)
+  {
+    if (targetIndex < 0 || !UnitRules.TryGet(match.Pieces[targetIndex].Type, out UnitRule targetRule)) return false;
+    NetworkPiece ox = match.Pieces[actorIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    bool targetAlreadyHasOx = match.Pieces.Any(piece =>
+      piece.AttachedToId == target.Id && piece.Type == nameof(PieceType.Ox));
+    if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id || target.Id == match.TreasureCarrierId ||
+        !AbilityRules.CanOxAttach(oxRule, targetRule, ox.AttachedToId is not null, targetAlreadyHasOx)) return false;
+
+    match.Pieces[actorIndex] = ox with
+    {
+      AttachedToId = target.Id,
+      AttachmentKind = NetworkAttachmentKind.Carried,
+      X = target.X,
+      Y = target.Y
+    };
+    return true;
+  }
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''  private static void ResetTurnActions(Match match, NetworkTeam team)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+''',
+    '''  private static void ResetTurnActions(Match match, NetworkTeam team)
+  {
+    ApplySharedServerStartOfTurnEffects(match, team);
+    for (int index = 0; index < match.Pieces.Count; index++)
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''          HasAttackedThisTurn = false,
+          CavalierFollowUpMoveAvailable = false,
+''',
+    '''          HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
+          CavalierFollowUpMoveAvailable = false,
+'''
+)
+
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece mercenary = match.Pieces[index];
+      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
+      {
+        continue;
+      }
+
+      const int mercenaryPayroll = 10;
+      if (player.Money < mercenaryPayroll)
+      {
+        match.Pieces[index] = mercenary with
+        {
+          Team = NetworkTeam.Neutral,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true
+        };
+        continue;
+      }
+
+      player.Money = ClampCurrency((long)player.Money - mercenaryPayroll);
+    }
+
+''',
+    '''    if (!ApplySharedServerAbilityUpkeep(match, team, player))
+    {
+      return;
+    }
+
+'''
+)
+
+# Server attack execution: one shared attack state/target plan for ordinary attacks; Ballista's
+# terrain-aware piercing ray remains adapter code but uses shared target geometry/damage.
+replace_once(
+    "MedivalChess.Server/MatchHub.cs",
+    '''      foundMatch.Pieces[attackerIndex] = attacker with
+      {
+        HasAttackedThisTurn = true,
+        CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
+          attacker.Type, attacker.HasMovedThisTurn)
+      };
+      if (target is null)
+      {
+        DamageBarricade(foundMatch, attacker, targetPosition);
+      }
+      else if (attacker.Type == "Bombard")
+      {
+        ResolveBombardDamage(foundMatch, attacker, player, target);
+      }
+      else
+      {
+        ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
+      }
+''',
+    '''      PrepareSharedServerAttack(foundMatch, attackerIndex, targetPosition, out attacker, out bool mayFire);
+      if (!mayFire)
+      {
+        if (foundMatch.Winner is null) SpendAction(foundMatch, player);
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+      if (target is null)
+      {
+        DamageBarricade(foundMatch, attacker, targetPosition);
+      }
+      else if (attacker.Type == nameof(PieceType.Ballista))
+      {
+        ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
+      }
+      else
+      {
+        ResolveSharedServerAttack(foundMatch, attacker, player, target);
+      }
 '''
 )
