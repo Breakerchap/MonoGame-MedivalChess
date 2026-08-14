@@ -322,6 +322,12 @@ public static partial class CpuGameRules
       "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
         actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
         action.TargetX == actor.X && action.TargetY == actor.Y,
+      "Phantom" => string.Equals(action.Ability, "Unpossess", StringComparison.OrdinalIgnoreCase)
+        ? !string.IsNullOrEmpty(actor.PossessedUnitId)
+        : string.Equals(action.Ability, "Possess", StringComparison.OrdinalIgnoreCase) && target is not null &&
+          RoyalAbilityRules.CanPhantomPossess(
+            actor.Type, actor.Team, actor.PossessedUnitId,
+            target.Id, target.Type, target.Team, target.IsRoyalProxy),
       _ => false
     };
   }

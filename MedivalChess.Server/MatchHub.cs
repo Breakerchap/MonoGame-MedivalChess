@@ -608,6 +608,7 @@ public sealed partial class MatchStore
           "Engineer" => TryUseEngineerSpecial(foundMatch, actorIndex, request.Ability, request.TargetX, request.TargetY, target),
           "Guard" => TryAttachGuard(foundMatch, actorIndex, targetIndex),
           "Ox" => TryAttachOxCargo(foundMatch, actorIndex, targetIndex),
+          "Phantom" => TryUseSharedServerPhantomAbility(foundMatch, actorIndex, targetIndex, request.Ability),
           "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
           _ => false
         };
@@ -695,16 +696,17 @@ public sealed partial class MatchStore
       }
 
       (int width, int height, int health) = GetRoyalStats(foundMatch.Configuration, request.RoyalType);
+      (int spawnWidth, int spawnHeight) = RoyalAbilityRules.GetRoyalSpawnFootprint(request.RoyalType);
       (int x, int y) position = request.X is int requestedX && request.Y is int requestedY
         ? (requestedX, requestedY)
         // Keep the hub compatible with older clients while the current client always provides a placement.
-        : NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, width, height);
-      if (!CanPlaceRoyal(foundMatch, player.Team, position.x, position.y, width, height))
+        : NetworkBoardRules.GetRoyalSpawn(foundMatch.Configuration, player.Team, spawnWidth, spawnHeight);
+      if (!CanPlaceSharedServerRoyalGroup(foundMatch, player.Team, request.RoyalType, position.x, position.y))
       {
         return new(false, "Place your royal on an empty, traversable square in your territory.", foundMatch.State());
       }
 
-      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), request.RoyalType, player.Team, position.x, position.y, health));
+      AddSharedServerRoyalGroup(foundMatch, player.Team, request.RoyalType, position.x, position.y, health);
       player.ChosenRoyal = request.RoyalType;
       if (foundMatch.MatchReady)
       {
@@ -1535,11 +1537,10 @@ public sealed partial class MatchStore
       }
     }
 
+    bool royalDeath = IsSharedServerRoyalDeath(match, defeatedPiece);
     RemovePiece(match, defeatedPiece.Id);
     ApplySharedServerDeathExplosion(match, defeatedPiece, explosionSource, deathExplosion);
-    if (!UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return;
-    if (defeatedPiece.Type == nameof(PieceType.GoblinRoyalty) && match.Pieces.Any(piece =>
-      piece.Team == defeatedPiece.Team && piece.Type == nameof(PieceType.GoblinRoyalty))) return;
+    if (!royalDeath || !UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule)) return;
     if (match.Configuration.GameMode == "Regicide" && attackingPlayer.Team != defeatedPiece.Team)
     {
       match.Winner = attackingPlayer.Team;

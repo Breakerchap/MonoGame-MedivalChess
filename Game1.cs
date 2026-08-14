@@ -2282,6 +2282,9 @@ internal sealed partial class Game1 : Game
       PieceType.Spy => target is not null && target.Team != actor.Team,
       PieceType.Engineer => true,
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
+      PieceType.Phantom => !string.IsNullOrEmpty(actor.PossessedUnitId)
+        ? target == actor || target?.NetworkId == actor.PossessedUnitId
+        : target is not null && target.Team == actor.Team,
       PieceType.Mercenary => targetPosition == actor.Position,
       _ => false
     };
@@ -2296,7 +2299,9 @@ internal sealed partial class Game1 : Game
       ? _selectedEngineerAbility.ToString()
       : actor.Definition.Type == PieceType.Mercenary
         ? "Fire"
-        : string.Empty;
+        : actor.Definition.Type == PieceType.Phantom
+          ? string.IsNullOrEmpty(actor.PossessedUnitId) ? "Possess" : "Unpossess"
+          : string.Empty;
     _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, actor.Definition.Type == PieceType.Mercenary ? actor.Position : targetPosition);
     return true;
   }
@@ -7154,7 +7159,7 @@ internal sealed partial class Game1 : Game
     }
 
     TeamName placementTeam = _onlineClient?.Team?.ToTeamName() ?? _setupTeam;
-    if (!CanPlacePiece(royal, position, placementTeam))
+    if (!CanPlaceSharedRoyalGroup(royal, position, placementTeam))
     {
       Console.WriteLine("Royals must be placed on empty, traversable squares in their own territory.");
       return;
@@ -7176,10 +7181,7 @@ internal sealed partial class Game1 : Game
   {
     Team setupTeam = _teams.Find(team => team.TeamName == teamName);
     setupTeam.ChooseRoyal(royal.Type);
-    pieceSetup.AddPiece(new Piece(royal, position, teamName)
-    {
-      CurrentHealth = GetRoyalStartingHealth(royal)
-    });
+    AddSharedRoyalGroup(royal, position, teamName);
   }
 
   private (int x, int y) ChooseCpuRoyalPlacement(
@@ -7195,7 +7197,7 @@ internal sealed partial class Game1 : Game
       royal.Size.x,
       royal.Size.y,
       _playerCount
-    ).Where(position => CanPlacePiece(royal, position, teamName)).ToList();
+    ).Where(position => CanPlaceSharedRoyalGroup(royal, position, teamName)).ToList();
 
     if (candidates.Count == 0)
     {

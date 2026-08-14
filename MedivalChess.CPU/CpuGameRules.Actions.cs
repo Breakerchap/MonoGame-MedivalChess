@@ -256,6 +256,9 @@ public static partial class CpuGameRules
             HasAttackedThisTurn = true
           };
           break;
+        case nameof(PieceType.Phantom):
+          ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);
+          break;
       }
     }
 
