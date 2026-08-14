@@ -100,7 +100,7 @@ public static class UnitRules
     );
   }
 
-  private static RuleShape ToRuleShape(Shape shape) => shape switch
+  public static RuleShape ToRuleShape(Shape shape) => shape switch
   {
     Shape.Any => RuleShape.Any,
     Shape.Straight => RuleShape.Straight,
@@ -148,7 +148,7 @@ public static class UnitRules
       RuleShape.Straight => true,
       RuleShape.Line => dx == 0 || dy == 0,
       RuleShape.Diagonal => dx == dy,
-      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || dx == dy,
+      RuleShape.LineOrDiagonal or RuleShape.AbsoluteStraightOrDiagonal => dx == 0 || dy == 0 || dx == dy,
       RuleShape.ChessKnight => (dx == 1 && dy == 2) || (dx == 2 && dy == 1),
       RuleShape.Any => true,
       RuleShape.None => false,
@@ -215,7 +215,7 @@ public static class UnitRules
       RuleShape.Straight => true,
       RuleShape.Line or RuleShape.PierceStraight => dx == 0 || dy == 0,
       RuleShape.Diagonal => absX == absY,
-      RuleShape.LineOrDiagonal => dx == 0 || dy == 0 || absX == absY,
+      RuleShape.LineOrDiagonal or RuleShape.AbsoluteStraightOrDiagonal => dx == 0 || dy == 0 || absX == absY,
       RuleShape.ChessKnight => (absX == 1 && absY == 2) || (absX == 2 && absY == 1),
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardLine => IsForwardOffset(team, dx, dy, distance),
