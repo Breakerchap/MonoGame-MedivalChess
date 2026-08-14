@@ -13,6 +13,8 @@ internal enum AttachmentKind
 
 internal sealed class Piece
 {
+  private bool _hasAttackedThisTurn;
+
   internal PieceDefinition Definition { get; }
   internal int CurrentHealth { get; set; }
   internal (int x, int y) Position { get; set; }
@@ -23,13 +25,38 @@ internal sealed class Piece
   internal AttachmentKind AttachmentKind { get; set; }
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
   internal bool HasMovedThisTurn { get; set; }
-  internal bool HasAttackedThisTurn { get; set; }
+  internal bool HasAttackedThisTurn
+  {
+    get => Definition.Type == PieceType.Ninja
+      ? AttacksThisTurn >= AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString())
+      : _hasAttackedThisTurn;
+    set
+    {
+      if (!value)
+      {
+        _hasAttackedThisTurn = false;
+        AttacksThisTurn = 0;
+        return;
+      }
+
+      if (Definition.Type == PieceType.Ninja)
+      {
+        AttacksThisTurn = Math.Min(
+          AttacksThisTurn + 1,
+          AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString()));
+        _hasAttackedThisTurn = AttacksThisTurn >= AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString());
+        return;
+      }
+
+      _hasAttackedThisTurn = true;
+      AttacksThisTurn = 1;
+    }
+  }
   internal int AttacksThisTurn { get; set; }
   internal bool CavalierFollowUpMoveAvailable { get; set; }
   internal int EngineerBuildsThisTurn { get; set; }
   internal bool CannotContributeToConquestThisTurn { get; set; }
 
-  // Ability state.
   internal int TurnsInCurrentForm { get; set; }
   internal bool HasRevived { get; set; }
   internal bool IsRoyalProxy { get; set; }
