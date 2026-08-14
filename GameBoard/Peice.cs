@@ -37,6 +37,12 @@ internal sealed class Piece
         return;
       }
 
+      if (value <= 0 && Definition.Type == PieceType.Zombie)
+      {
+        TransformTo(PieceDefinitions.Flesh);
+        return;
+      }
+
       _currentHealth = value;
     }
   }
