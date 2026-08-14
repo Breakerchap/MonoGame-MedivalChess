@@ -1,4 +1,5 @@
 using MedivalChess.GameBoard;
+using MedivalChess.Player;
 using MedivalChess.Shared;
 
 namespace MedivalChess;
