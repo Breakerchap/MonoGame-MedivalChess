@@ -40,37 +40,25 @@ internal static class MovementPathfinder
     UnitRule rule = movementRule ?? UnitRules.FromPieceDefinition(piece.Definition);
     NetworkTeam team = piece.Team.ToNetworkTeam();
 
-    if (piece.Definition.Type == PieceType.Raider)
-    {
-      int normalRange = rule.MoveRange;
-      rule = rule with { MoveRange = normalRange + 2 };
-      Func<(int x, int y), int> suppliedRange = movementRangeAt;
-      movementRangeAt = destination =>
-      {
-        int range = suppliedRange?.Invoke(destination) ?? normalRange;
-        return AbilityRules.IsForwardDestination(team, piece.Position, destination)
-          ? range + 2
-          : range;
-      };
-      maximumMovementRange = Math.Max(maximumMovementRange ?? 0, normalRange + 2);
-    }
-
-    if (piece.Definition.Type == PieceType.Sleipnir)
+    if (AbilityRules.IsTerrainImmune(rule))
     {
       Func<(int x, int y), (int x, int y), bool> suppliedTravel = canTravelThrough;
       Func<(int x, int y), int> suppliedLandingCost = landingCost;
       Func<(int x, int y), (int x, int y), int> suppliedStepCost = stepCost;
 
       canTravelThrough = (from, destination) =>
-        suppliedTravel(from, destination) || HasBlockingUnitAt(piece, destination);
+        suppliedTravel(from, destination) ||
+        (HasBlockingUnitAt(piece, destination, out Piece blocker) &&
+          AbilityRules.CanTravelThroughUnit(rule, team, blocker.Team.ToNetworkTeam()));
 
-      // Sleipnir ignores movement penalties from terrain. A road on open ground still keeps
-      // its zero-cost benefit because Math.Min preserves the existing road cost of zero.
-      landingCost = destination => Math.Min(1, suppliedLandingCost(destination));
+      landingCost = destination => AbilityRules.ApplyTerrainMovementCost(rule, suppliedLandingCost(destination));
       stepCost = suppliedStepCost is null
         ? null
-        : (from, destination) => Math.Min(1, suppliedStepCost(from, destination));
-      crossesRiver = (_, _) => false;
+        : (from, destination) => AbilityRules.ApplyTerrainMovementCost(rule, suppliedStepCost(from, destination));
+      if (AbilityRules.IgnoresRivers(rule))
+      {
+        crossesRiver = (_, _) => false;
+      }
     }
 
     return MovementRules.FindPaths(
@@ -79,19 +67,21 @@ internal static class MovementPathfinder
     );
   }
 
-  private static bool HasBlockingUnitAt(Piece mover, (int x, int y) destination)
+  private static bool HasBlockingUnitAt(Piece mover, (int x, int y) destination, out Piece blocker)
   {
+    blocker = null;
     if (mover.OwnerSetup is null)
     {
       return false;
     }
 
-    return mover.OwnerSetup.Pieces.Any(other =>
+    blocker = mover.OwnerSetup.Pieces.FirstOrDefault(other =>
       other != mover &&
       other.AttachedTo is null &&
       other.Definition.Type != PieceType.Farm &&
       UnitRules.FootprintsOverlap(
         destination.x, destination.y, mover.Definition.Size.x, mover.Definition.Size.y,
         other.Position.x, other.Position.y, other.Definition.Size.x, other.Definition.Size.y));
+    return blocker is not null;
   }
 }
