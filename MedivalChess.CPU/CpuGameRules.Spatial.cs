@@ -31,13 +31,14 @@ public static partial class CpuGameRules
 
   private static UnitRule GetEffectiveMovementRule(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule)
   {
-    if (rule.Type == "Ox")
+    NetworkPiece? oxAttachment = pieces.FirstOrDefault(other =>
+      other.AttachedToId == piece.Id && other.Type == nameof(PieceType.Ox));
+    if (oxAttachment is not null)
     {
-      NetworkPiece? cargo = pieces.FirstOrDefault(other => other.AttachedToId == piece.Id && other.AttachmentKind == NetworkAttachmentKind.Carried);
-      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule))
+      rule = rule with
       {
-        rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
-      }
+        MoveRange = rule.MoveRange + AbilityRules.GetAttachmentMovementBonus(oxAttachment.Type)
+      };
     }
     if (state.TreasureCarrierId == piece.Id)
     {

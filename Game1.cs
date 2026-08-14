@@ -2926,13 +2926,14 @@ internal sealed class Game1 : Game
   private UnitRule GetEffectiveMovementRule(Piece piece)
   {
     UnitRule rule = UnitRules.FromPieceDefinition(piece.Definition);
-    Piece cargo = piece.Definition.Type == PieceType.Ox
-      ? pieceSetup.GetAttachedPiece(piece, AttachmentKind.Carried)
-      : null;
-    if (cargo is not null)
+    Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
+      candidate.AttachedTo == piece && candidate.Definition.Type == PieceType.Ox);
+    if (oxAttachment is not null)
     {
-      UnitRule cargoRule = UnitRules.FromPieceDefinition(cargo.Definition);
-      rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
+      rule = rule with
+      {
+        MoveRange = rule.MoveRange + AbilityRules.GetAttachmentMovementBonus(oxAttachment.Definition.Type.ToString())
+      };
     }
     if (IsTreasureCarrier(piece))
     {
@@ -3467,15 +3468,14 @@ internal sealed class Game1 : Game
   {
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
     Piece damagedPiece = guard ?? target;
-    Piece cargo = AbilityRules.SharesDamageWithCargo(target.Definition.Type.ToString())
-      ? pieceSetup.GetAttachedPiece(target, AttachmentKind.Carried)
-      : null;
+    Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
+      candidate.AttachedTo == target && AbilityRules.SharesIncomingDamageWithHost(candidate.Definition.Type.ToString()));
     int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
 
     ApplyDamageToPiece(attacker, damagedPiece, unmitigatedDamage);
-    if (cargo is not null && cargo != damagedPiece && pieceSetup.Pieces.Contains(cargo))
+    if (oxAttachment is not null && oxAttachment != damagedPiece && pieceSetup.Pieces.Contains(oxAttachment))
     {
-      ApplyDamageToPiece(attacker, cargo, unmitigatedDamage);
+      ApplyDamageToPiece(attacker, oxAttachment, unmitigatedDamage);
     }
 
     foreach (Piece spy in pieceSetup.Pieces.Where(spy => spy.MarkedTarget == target))

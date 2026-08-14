@@ -26,15 +26,13 @@ public static partial class CpuGameRules
 
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
-    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
-      ? state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-        piece.AttachmentKind == NetworkAttachmentKind.Carried)
-      : null;
+    NetworkPiece? oxAttachment = state.Pieces.FirstOrDefault(piece =>
+      piece.AttachedToId == target.Id && AbilityRules.SharesIncomingDamageWithHost(piece.Type));
     int unmitigated = damageOverride ?? GetSharedAttackDamage(state, attacker, target);
     ApplySharedDamageToPiece(state, attacker, attackerTeam, damaged, unmitigated);
-    if (cargo is not null && cargo.Id != damaged.Id && FindPiece(state.Pieces, cargo.Id) is not null)
+    if (oxAttachment is not null && oxAttachment.Id != damaged.Id && FindPiece(state.Pieces, oxAttachment.Id) is not null)
     {
-      ApplySharedDamageToPiece(state, attacker, attackerTeam, cargo, unmitigated);
+      ApplySharedDamageToPiece(state, attacker, attackerTeam, oxAttachment, unmitigated);
     }
 
     for (int index = 0; index < state.Pieces.Count; index++)

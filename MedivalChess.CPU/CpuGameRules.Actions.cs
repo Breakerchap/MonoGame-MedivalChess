@@ -240,13 +240,12 @@ public static partial class CpuGameRules
           };
           break;
         case nameof(PieceType.Ox):
-          int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
-          state.Pieces[targetIndex] = target with
+          state.Pieces[actorIndex] = actor with
           {
-            AttachedToId = actor.Id,
+            AttachedToId = target!.Id,
             AttachmentKind = NetworkAttachmentKind.Carried,
-            X = actor.X,
-            Y = actor.Y
+            X = target.X,
+            Y = target.Y
           };
           break;
         case nameof(PieceType.Mercenary):
