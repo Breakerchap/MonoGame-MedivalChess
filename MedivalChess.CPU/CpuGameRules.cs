@@ -316,9 +316,9 @@ public static partial class CpuGameRules
           state.Pieces.Any(piece => piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Guard)),
       "Ox" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != actor.Id && target.Id != state.TreasureCarrierId &&
-        UnitRules.TryGet(target.Type, out UnitRule cargoRule) && UnitRules.TryGet(actor.Type, out UnitRule oxRule) &&
-        AbilityRules.CanOxAttach(oxRule, cargoRule, target.AttachedToId is not null,
-          state.Pieces.Any(piece => piece.AttachedToId == actor.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)),
+        UnitRules.TryGet(target.Type, out UnitRule oxTargetRule) && UnitRules.TryGet(actor.Type, out UnitRule oxRule) &&
+        AbilityRules.CanOxAttach(oxRule, oxTargetRule, actor.AttachedToId is not null,
+          state.Pieces.Any(piece => piece.AttachedToId == target.Id && piece.Type == nameof(PieceType.Ox))),
       "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
         actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
         action.TargetX == actor.X && action.TargetY == actor.Y,
@@ -329,7 +329,7 @@ public static partial class CpuGameRules
   private static bool IsLegalEngineerAbility(CpuGameState state, NetworkPiece actor, UseAbilityAction action, NetworkPiece? target)
   {
     bool demolition = AbilityRules.IsEngineerDemolition(action.Ability);
-    if ((!demolition && actor.EngineerBuildsThisTurn >= 2) || target is not null ||
+    if ((!demolition && actor.EngineerBuildsThisTurn >= AbilityRules.EngineerBuildsPerTurn) || target is not null ||
         (!demolition && !AbilityRules.IsEngineerBuild(action.Ability)))
     {
       return false;
@@ -349,118 +349,6 @@ public static partial class CpuGameRules
 
   private static bool IsLegalStopInitialBuying(CpuGameState state, NetworkTeam team) => state.InitialBuy is { IsComplete: false, IsFarmPlacementPhase: false } initialBuy &&
     IsCurrentInitialBuyer(initialBuy, team);
-
-  private static void ResolveBombardDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkTeam attackerTeam, NetworkPiece target)
-  {
-    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule))
-    {
-      return;
-    }
-
-    foreach (NetworkPiece affected in state.Pieces.Where(piece => piece.Id != attacker.Id && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
-      OccupiedSquares(rule, (piece.X, piece.Y)).Any(square =>
-        OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
-          Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1))).ToArray())
-    {
-      ResolvePieceDamage(state, attacker, attackerTeam, affected.Id, 10);
-    }
-  }
-
-  private static void ResolvePieceDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkTeam attackerTeam, string targetId, int? damageOverride)
-  {
-    NetworkPiece? target = FindPiece(state.Pieces, targetId);
-    if (target is null)
-    {
-      return;
-    }
-
-    NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-      piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
-    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
-      ? state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-        piece.AttachmentKind == NetworkAttachmentKind.Carried)
-      : null;
-    int unmitigated = damageOverride ?? GetAttackDamage(state, attacker, target);
-    ApplyDamageToPiece(state, attacker, attackerTeam, damaged, unmitigated);
-    if (cargo is not null && cargo.Id != damaged.Id && FindPiece(state.Pieces, cargo.Id) is not null)
-    {
-      ApplyDamageToPiece(state, attacker, attackerTeam, cargo, unmitigated);
-    }
-
-    for (int index = 0; index < state.Pieces.Count; index++)
-    {
-      if (state.Pieces[index].MarkedTargetId == target.Id)
-      {
-        state.Pieces[index] = state.Pieces[index] with { MarkedTargetId = null };
-      }
-    }
-  }
-
-  private static void ApplyDamageToPiece(
-    CpuMutableGameState state,
-    NetworkPiece attacker,
-    NetworkTeam attackerTeam,
-    NetworkPiece damaged,
-    int unmitigatedDamage
-  )
-  {
-    int damage = CombatRules.CalculateDamage(
-      unmitigatedDamage,
-      false,
-      false,
-      HasAdjacentUnit(state, damaged, damaged.Team, "Baron"),
-      IsInForest(state, damaged),
-      state.Source.Terrain.ForestDamageReduction
-    );
-    int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
-    if (damagedIndex < 0)
-    {
-      return;
-    }
-    if (damaged.Health > damage)
-    {
-      state.Pieces[damagedIndex] = damaged with { Health = damaged.Health - damage };
-    }
-    else
-    {
-      HandlePieceDestroyed(state, damaged, attackerTeam);
-    }
-  }
-
-  private static void HandlePieceDestroyed(CpuMutableGameState state, NetworkPiece piece, NetworkTeam? attackingTeam)
-  {
-    if (state.TreasureCarrierId == piece.Id)
-    {
-      state.TreasureCarrierId = null;
-      state.TreasurePosition = (piece.X, piece.Y);
-    }
-
-    if (piece.Team != NetworkTeam.Neutral && attackingTeam is NetworkTeam attacker && attacker != piece.Team)
-    {
-      int unitPrice = UnitRules.TryGet(piece.Type, out UnitRule rule) ? GetUnitPrice(state.Source.Configuration, rule) : 0;
-      AddMoney(state, attacker, CombatRules.RoundCurrencyToNearestFive(unitPrice * state.Source.Configuration.KillerRefundMultiplier));
-      AddMoney(state, piece.Team, CombatRules.RoundCurrencyToNearestFive(unitPrice * state.Source.Configuration.DefeatedTeamRefundMultiplier));
-    }
-
-    RemovePiece(state, piece.Id);
-    if (!UnitRules.TryGet(piece.Type, out UnitRule destroyedRule) || destroyedRule.Category != RuleCategory.Royal)
-    {
-      return;
-    }
-
-    if (state.Source.Configuration.GameMode == "Regicide" && attackingTeam is NetworkTeam winner && winner != piece.Team)
-    {
-      state.Winner = winner;
-    }
-    else if (state.Source.Configuration.GameMode == "Escort")
-    {
-      RespawnEscortRoyal(state, piece, destroyedRule);
-    }
-    else if (state.Source.Configuration.GameMode == "Plunder" && attackingTeam is NetworkTeam plunderAttacker && plunderAttacker != piece.Team)
-    {
-      state.ModeScores[plunderAttacker] = Math.Max(0, state.ModeScores.GetValueOrDefault(plunderAttacker) - state.Source.Configuration.PlunderRoyalKillPenalty);
-    }
-  }
 
   private static void RemovePiece(CpuMutableGameState state, string pieceId)
   {
@@ -505,83 +393,6 @@ public static partial class CpuGameRules
         state.Pieces.Add(new NetworkPiece(CreatePieceId(state, rule.Type), rule.Type, defeated.Team, position.x, position.y, health));
         return;
       }
-    }
-  }
-
-  private static void DamageBarricade(CpuMutableGameState state, NetworkPiece attacker, (int x, int y) position)
-  {
-    if (!state.Barricades.TryGetValue(position, out int health))
-    {
-      return;
-    }
-
-    int damage = UnitRules.GetRequired(attacker.Type).Attack +
-      (HasAdjacentUnit(state, attacker, attacker.Team, "Baron") ? 5 : 0);
-    if (health <= damage)
-    {
-      state.Barricades.Remove(position);
-    }
-    else
-    {
-      state.Barricades[position] = health - damage;
-    }
-  }
-
-  private static void TriggerMinesAlongMovement(CpuMutableGameState state, NetworkPiece movingPiece, IReadOnlyList<(int x, int y)> path)
-  {
-    if (movingPiece.Type == "Engineer" || !UnitRules.TryGet(movingPiece.Type, out UnitRule rule))
-    {
-      return;
-    }
-
-    List<((int x, int y) position, NetworkTeam owner)> triggered = [];
-    foreach ((int x, int y) step in path)
-    {
-      foreach ((int x, int y) square in OccupiedSquares(rule, step))
-      {
-        if (state.Mines.TryGetValue(square, out NetworkTeam owner) && owner != movingPiece.Team)
-        {
-          triggered.Add((square, owner));
-        }
-      }
-    }
-
-    foreach (((int x, int y) position, NetworkTeam owner) mine in triggered.Distinct())
-    {
-      state.Mines.Remove(mine.position);
-      // The live match always includes the mover in the blast, even when it finishes beyond
-      // the one-square radius after crossing a mine. Preserve that rule in simulation so search
-      // never evaluates such a path as safely escaping the explosion.
-      HashSet<string> affectedIds = state.Pieces.Where(piece => UnitRules.TryGet(piece.Type, out UnitRule affectedRule) &&
-        OccupiedSquares(affectedRule, (piece.X, piece.Y)).Any(square =>
-          Math.Abs(square.x - mine.position.x) <= 1 && Math.Abs(square.y - mine.position.y) <= 1))
-        .Select(piece => piece.Id)
-        .ToHashSet(StringComparer.Ordinal);
-      affectedIds.Add(movingPiece.Id);
-      foreach (string affectedId in affectedIds)
-      {
-        ResolveMineDamage(state, affectedId, mine.owner);
-      }
-    }
-  }
-
-  private static void ResolveMineDamage(CpuMutableGameState state, string targetId, NetworkTeam owner)
-  {
-    NetworkPiece? target = FindPiece(state.Pieces, targetId);
-    if (target is null)
-    {
-      return;
-    }
-
-    int damage = 30;
-    int index = FindPieceIndex(state.Pieces, target.Id);
-    if (target.Health > damage)
-    {
-      state.Pieces[index] = target with { Health = target.Health - damage };
-    }
-    else
-    {
-      HandlePieceDestroyed(state, target, owner);
     }
   }
 

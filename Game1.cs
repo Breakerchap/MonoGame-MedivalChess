@@ -3657,8 +3657,9 @@ internal sealed partial class Game1 : Game
         AbilityRules.CanOxAttach(
           UnitRules.FromPieceDefinition(actor.Definition),
           UnitRules.FromPieceDefinition(targetPiece.Definition),
-          targetPiece.AttachedTo != null,
-          pieceSetup.GetAttachedPiece(actor, AttachmentKind.Carried) != null
+          actor.AttachedTo != null,
+          pieceSetup.Pieces.Any(candidate =>
+            candidate.AttachedTo == targetPiece && candidate.Definition.Type == PieceType.Ox)
         ) &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
@@ -3799,8 +3800,8 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
-    _barricades[targetPosition] = 20;
-    Console.WriteLine("Engineer built a 20 HP barrier.");
+    _barricades[targetPosition] = AbilityRules.EngineerBarrierHealth;
+    Console.WriteLine($"Engineer built a {AbilityRules.EngineerBarrierHealth} HP barrier.");
     return true;
   }
 
@@ -4231,10 +4232,13 @@ internal sealed partial class Game1 : Game
 
   private void DamageBarricade(Piece attacker, (int x, int y) position)
   {
-    int damage = attacker.Definition.Attack;
+    int damage = AbilityRules.GetBaseAttack(
+      UnitRules.FromPieceDefinition(attacker.Definition),
+      attacker.CurrentHealth
+    );
     if (HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team))
     {
-      damage += 5;
+      damage += CombatRules.BaronDamageBonus;
     }
 
     _barricades[position] -= damage;
@@ -9193,9 +9197,9 @@ internal sealed partial class Game1 : Game
     DrawPanel(control, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
     if (cargo == null)
     {
-      _ui.Text("CARGO: EMPTY", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.72f);
+      _ui.Text("ATTACHMENT: NONE", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.72f);
       _ui.TextWrapped(
-        "RIGHT-CLICK a friendly 1 x 1 or Mechanical unit to carry.",
+        "RIGHT-CLICK a friendly 1 x 1 unit to attach. That unit gains +2 Movement; when it is attacked, the Ox takes the same damage.",
         new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
         UiTheme.TextMuted,
         0.62f
@@ -9204,14 +9208,14 @@ internal sealed partial class Game1 : Game
     }
 
     Rectangle button = GetOxCargoButtonBounds();
-    _ui.Text($"CARGO: CARRYING {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
+    _ui.Text($"ATTACHED TO: {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.66f);
     _ui.TextWrapped(
-      "The Ox moves both units using the cargo's movement pattern with +2 range. Select cargo to move it separately and dismount it. Either piece can attack.",
+      "The host gains +2 Movement. The Ox moves with the host and takes the same incoming damage. Select the host below.",
       new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, button.Y - control.Y - 34)),
       UiTheme.TextMuted,
       0.56f
     );
-    DrawMenuButton(button, "SELECT CARGO", UiButtonTone.Accent);
+    DrawMenuButton(button, "SELECT HOST", UiButtonTone.Accent);
   }
 
   private void DrawGuardControls()
@@ -9275,7 +9279,7 @@ internal sealed partial class Game1 : Game
 
   private Piece GetOxCargo(Piece ox)
   {
-    return pieceSetup.GetAttachedPiece(ox, AttachmentKind.Carried);
+    return ox.AttachmentKind == AttachmentKind.Carried ? ox.AttachedTo : null;
   }
 
   private string GetSelectedPieceControlHint(Piece piece)
@@ -9316,8 +9320,8 @@ internal sealed partial class Game1 : Game
     {
       PieceType.Guard => "RIGHT-CLICK ally to protect",
       PieceType.Ox => GetOxCargo(piece) == null
-        ? "RIGHT-CLICK ally to carry"
-        : "CARGO LINKED - USE CONTROL BELOW",
+        ? "RIGHT-CLICK friendly 1 x 1 unit to attach"
+        : "ATTACHED - HOST GAINS +2 MOVE",
       PieceType.Spy => "RIGHT-CLICK to use special",
       PieceType.Mercenary => "RIGHT-CLICK this unit to fire; enemies to attack",
       _ => "RIGHT-CLICK red to attack"
@@ -9444,7 +9448,7 @@ internal sealed partial class Game1 : Game
               UiTheme.Barricade,
               0.115f
             );
-            int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / 20;
+            int barrierHealthWidth = (cellBounds.Width - 16) * _barricades[boardPosition] / AbilityRules.EngineerBarrierHealth;
             DrawWorldRectangle(
               new Rectangle(cellBounds.X + 8, cellBounds.Bottom - 13, barrierHealthWidth, 3),
               UiTheme.Health,

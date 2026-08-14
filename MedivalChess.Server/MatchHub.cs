@@ -1444,28 +1444,6 @@ public sealed partial class MatchStore
     }
   }
 
-  private static void ResolveBombardDamage(
-    Match match,
-    NetworkPiece attacker,
-    PlayerSlot attackingPlayer,
-    NetworkPiece target
-  )
-  {
-    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return;
-    IReadOnlyList<NetworkPiece> affected = match.Pieces.Where(piece =>
-    {
-      if (piece.AttachedToId is not null || !UnitRules.TryGet(piece.Type, out UnitRule pieceRule)) return false;
-      return OccupiedSquares(pieceRule, (piece.X, piece.Y)).Any(square =>
-        OccupiedSquares(targetRule, (target.X, target.Y)).Any(targetSquare =>
-          Math.Abs(square.x - targetSquare.x) <= 1 && Math.Abs(square.y - targetSquare.y) <= 1));
-    }).ToArray();
-
-    foreach (NetworkPiece affectedPiece in affected)
-    {
-      ResolvePieceDamage(match, attacker, attackingPlayer, affectedPiece.Id, 10);
-    }
-  }
-
   private static void DamageBarricade(Match match, NetworkPiece attacker, (int x, int y) position)
   {
     if (!match.Barricades.TryGetValue(position, out int health)) return;

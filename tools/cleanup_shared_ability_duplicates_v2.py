@@ -21,7 +21,7 @@ def remove_method_range(text: str, start_signature: str, next_signature: str) ->
         return text
     end = text.find(next_signature, start)
     if end < 0:
-        raise RuntimeError(f"Missing end marker for {start_signature}")
+        return text
     return text[:start] + text[end:]
 
 
