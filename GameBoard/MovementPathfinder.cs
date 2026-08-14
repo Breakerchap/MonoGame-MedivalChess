@@ -38,6 +38,22 @@ internal static class MovementPathfinder
   {
     UnitRule rule = movementRule ?? UnitRules.FromPieceDefinition(piece.Definition);
     NetworkTeam team = piece.Team.ToNetworkTeam();
+
+    if (piece.Definition.Type == PieceType.Raider)
+    {
+      int normalRange = rule.MoveRange;
+      rule = rule with { MoveRange = normalRange + 2 };
+      Func<(int x, int y), int> suppliedRange = movementRangeAt;
+      movementRangeAt = destination =>
+      {
+        int range = suppliedRange?.Invoke(destination) ?? normalRange;
+        return AbilityRules.IsForwardDestination(team, piece.Position, destination)
+          ? range + 2
+          : range;
+      };
+      maximumMovementRange = Math.Max(maximumMovementRange ?? 0, normalRange + 2);
+    }
+
     return MovementRules.FindPaths(
       rule, piece.Position, team, canLand, canTravelThrough, landingCost, crossesRiver,
       stepCost, movementRangeAt, maximumMovementRange
