@@ -1,0 +1,32 @@
+name: Apply unit ability refactor
+
+on:
+  push:
+    branches: [unit-packs-circle]
+    paths:
+      - tools/apply_unit_ability_refactor.py
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: unit-packs-circle
+      - name: Apply checked source transformations
+        run: python3 tools/apply_unit_ability_refactor.py
+      - name: Commit transformed sources
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No source changes were needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Apply shared unit ability refactor"
+          git push origin HEAD:unit-packs-circle
