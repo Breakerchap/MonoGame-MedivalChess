@@ -14,9 +14,32 @@ internal enum AttachmentKind
 internal sealed class Piece
 {
   private bool _hasAttackedThisTurn;
+  private int _currentHealth;
 
-  internal PieceDefinition Definition { get; }
-  internal int CurrentHealth { get; set; }
+  internal PieceDefinition Definition { get; private set; }
+  internal int CurrentHealth
+  {
+    get => _currentHealth;
+    set
+    {
+      if (value <= 0 && !HasRevived && Definition.Type == PieceType.Shieldbearer)
+      {
+        HasRevived = true;
+        _currentHealth = AbilityRules.ShieldbearerReviveHealth;
+        return;
+      }
+
+      if (value <= 0 && !HasRevived && Definition.Type == PieceType.Emperor)
+      {
+        HasRevived = true;
+        Definition = PieceDefinitions.TerracottaWarrior;
+        _currentHealth = Definition.Health;
+        return;
+      }
+
+      _currentHealth = value;
+    }
+  }
   internal (int x, int y) Position { get; set; }
   internal TeamName Team { get; set; }
   internal int LastBid { get; set; }
@@ -70,11 +93,18 @@ internal sealed class Piece
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
     Definition = definition;
-    CurrentHealth = Definition.Health;
+    _currentHealth = Definition.Health;
     Position = position;
     Team = team;
     LastBid = definition.Cost;
     Facing = TeamRules.GetForwardDirection(team.ToNetworkTeam());
+  }
+
+  internal void TransformTo(PieceDefinition definition)
+  {
+    Definition = definition;
+    _currentHealth = definition.Health;
+    TurnsInCurrentForm = 0;
   }
 
   internal bool Occupies((int x, int y) position)
