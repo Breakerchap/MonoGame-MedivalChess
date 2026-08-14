@@ -272,9 +272,6 @@ public static partial class CpuGameRules
         case nameof(PieceType.Phantom):
           ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);
           break;
-        case nameof(PieceType.Phantom):
-          ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);
-          break;
       }
     }
 
