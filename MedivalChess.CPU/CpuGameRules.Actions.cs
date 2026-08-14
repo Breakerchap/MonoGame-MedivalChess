@@ -29,7 +29,7 @@ public static partial class CpuGameRules
         if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) &&
             AbilityRules.PathOverlapsUnit(elephantRule, path, crossedRule, crossed.X, crossed.Y))
         {
-          ResolvePieceDamage(state, piece, action.Team, crossed.Id, 15);
+          ResolvePieceDamage(state, piece, action.Team, crossed.Id, AbilityRules.ElephantTrampleDamage);
           elephantDamaged = true;
         }
       }
@@ -46,9 +46,7 @@ public static partial class CpuGameRules
       Y = action.DestinationY,
       HasMovedThisTurn = true,
       HasAttackedThisTurn = elephantDamaged || state.Pieces[index].HasAttackedThisTurn,
-      CavalierFollowUpMoveAvailable = usesCavalierFollowUpMove
-        ? false
-        : state.Pieces[index].CavalierFollowUpMoveAvailable
+      CavalierFollowUpMoveAvailable = false
     };
     state.Pieces[index] = piece;
     state.RecordMove(action.Team, piece.Id, oldX, oldY, action.DestinationX, action.DestinationY);
@@ -199,7 +197,7 @@ public static partial class CpuGameRules
     }
     else if (string.Equals(action.Ability, "Barrier", StringComparison.OrdinalIgnoreCase))
     {
-      state.Barricades[position] = 20;
+      state.Barricades[position] = AbilityRules.EngineerBarrierHealth;
     }
     else if (string.Equals(action.Ability, "Mine", StringComparison.OrdinalIgnoreCase))
     {
@@ -210,7 +208,7 @@ public static partial class CpuGameRules
     state.Pieces[actorIndex] = engineer with
     {
       EngineerBuildsThisTurn = buildsUsed,
-      HasAttackedThisTurn = buildsUsed >= 2
+      HasAttackedThisTurn = buildsUsed >= AbilityRules.EngineerBuildsPerTurn
     };
   }
 
