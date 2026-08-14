@@ -165,7 +165,8 @@ public static class UnitRules
     int targetY
   )
   {
-    if (attacker.Attack <= 0 || attacker.AttackPattern == RuleShape.None) return false;
+    if (attacker.Attack <= 0 || attacker.AttackPattern == RuleShape.None ||
+        !AbilityRules.CanDamageTarget(attacker, target)) return false;
     for (int sourceY = 0; sourceY < attacker.Height; sourceY++)
     for (int sourceX = 0; sourceX < attacker.Width; sourceX++)
     for (int victimY = 0; victimY < target.Height; victimY++)
