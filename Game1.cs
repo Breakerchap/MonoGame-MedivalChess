@@ -14,7 +14,7 @@ using System.Runtime.InteropServices;
 
 namespace MedivalChess;
 
-internal sealed class Game1 : Game
+internal sealed partial class Game1 : Game
 {
   private enum Screen
   {
@@ -677,17 +677,13 @@ internal sealed class Game1 : Game
               {
                 PerformPiercingAttack(selectedPiece, targetPosition);
               }
-              else if (selectedPiece.Definition.Type == PieceType.Bombard)
-              {
-                PerformBombardAttack(selectedPiece, hostilePieceAtTarget);
-              }
               else if (_barricades.ContainsKey(targetPosition))
               {
                 DamageBarricade(selectedPiece, targetPosition);
               }
               else
               {
-                ResolveDamage(selectedPiece, hostilePieceAtTarget);
+                PerformSharedUnitAttack(selectedPiece, hostilePieceAtTarget);
               }
 
               selectedPiece.HasAttackedThisTurn = true;
@@ -1647,7 +1643,15 @@ internal sealed class Game1 : Game
         piece.LastBid,
         piece.EngineerBuildsThisTurn,
         piece.CannotContributeToConquestThisTurn,
-        piece.CavalierFollowUpMoveAvailable
+        piece.CavalierFollowUpMoveAvailable,
+        piece.AttacksThisTurn,
+        piece.HasRevived,
+        piece.TurnsInCurrentForm,
+        piece.IsRoyalProxy,
+        piece.PossessedUnitId,
+        piece.Facing.x,
+        piece.Facing.y,
+        piece.PendingDamage
       )),
       _teams.Select(team => new CpuTeamState(
         team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString(), team.ActionLimit
@@ -1845,17 +1849,13 @@ internal sealed class Game1 : Game
     {
       PerformPiercingAttack(attacker, targetPosition);
     }
-    else if (attacker.Definition.Type == PieceType.Bombard && target is not null)
-    {
-      PerformBombardAttack(attacker, target);
-    }
     else if (_barricades.ContainsKey(targetPosition))
     {
       DamageBarricade(attacker, targetPosition);
     }
     else
     {
-      ResolveDamage(attacker, target);
+      PerformSharedUnitAttack(attacker, target);
     }
 
     attacker.HasAttackedThisTurn = true;
@@ -1870,7 +1870,8 @@ internal sealed class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
-    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
+    ApplySharedStartOfTurnEffects(teamName);
+    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1).ToArray())
     {
       if (piece.Team == teamName)
       {
@@ -1902,31 +1903,10 @@ internal sealed class Game1 : Game
       Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms.");
     }
 
-    int paidMercenaries = 0;
-    int firedMercenaries = 0;
-    foreach (Piece mercenary in pieceSetup.Pieces.Where(piece =>
-      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Mercenary).ToList())
+    ApplySharedAbilityUpkeep(teamName, team);
+    if (_screen == Screen.GameOver)
     {
-      const int mercenaryPayroll = 10;
-      if (team.Money < mercenaryPayroll)
-      {
-        mercenary.Team = TeamName.Neutral;
-        mercenary.HasMovedThisTurn = true;
-        mercenary.HasAttackedThisTurn = true;
-        firedMercenaries++;
-        continue;
-      }
-
-      team.Money = ClampCurrency((long)team.Money - mercenaryPayroll);
-      paidMercenaries++;
-    }
-    if (paidMercenaries > 0)
-    {
-      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} paid {paidMercenaries * 10} gold to {paidMercenaries} Mercenary unit(s).");
-    }
-    if (firedMercenaries > 0)
-    {
-      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} could not afford {firedMercenaries} Mercenary unit(s); they were fired and left neutral.");
+      return;
     }
 
     if (!_unitMaintenanceEnabled || _unitMaintenancePercent <= 0)
@@ -2631,7 +2611,18 @@ internal sealed class Game1 : Game
         CavalierFollowUpMoveAvailable = networkPiece.CavalierFollowUpMoveAvailable,
         LastBid = networkPiece.LastBid,
         EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn,
-        CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn
+        CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn,
+        AttacksThisTurn = networkPiece.AttacksThisTurn,
+        HasRevived = networkPiece.HasRevived,
+        TurnsInCurrentForm = networkPiece.TurnsInCurrentForm,
+        IsRoyalProxy = networkPiece.IsRoyalProxy,
+        PossessedUnitId = networkPiece.PossessedUnitId,
+        Facing = AbilityStateRules.GetFacing(
+          networkPiece.Team,
+          networkPiece.FacingX,
+          networkPiece.FacingY
+        ),
+        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>()
       };
       pieceSetup.AddPiece(piece);
       piecesByNetworkId[networkPiece.Id] = piece;
@@ -3456,16 +3447,16 @@ internal sealed class Game1 : Game
     return false;
   }
 
-  private int GetAttackDamage(Piece attacker, Piece target)
-  {
-    bool hasBaronBonus = HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team);
-    bool isSpyMarked = pieceSetup.Pieces.Any(spy =>
-      spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target);
-    return CombatRules.CalculateDamage(attacker.Definition.Attack, hasBaronBonus, isSpyMarked, false, false, 0);
-  }
+  private int GetAttackDamage(Piece attacker, Piece target) =>
+    GetSharedLocalAttackDamage(attacker, target);
 
   private void ResolveDamage(Piece attacker, Piece target, int? damageOverride = null)
   {
+    if (target is null || !CanSharedAttackDamage(attacker, target))
+    {
+      return;
+    }
+
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
     Piece damagedPiece = guard ?? target;
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
@@ -3501,8 +3492,8 @@ internal sealed class Game1 : Game
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
   {
-    target.CurrentHealth -= 30;
-    Console.WriteLine($"Mine dealt 30 damage to {target.Definition.Type}.");
+    target.CurrentHealth -= AbilityRules.EngineerMineDamage;
+    Console.WriteLine($"Mine dealt {AbilityRules.EngineerMineDamage} damage to {target.Definition.Type}.");
     HandlePieceDestroyed(target, mineOwner);
   }
 
@@ -3513,6 +3504,7 @@ internal sealed class Game1 : Game
       return;
     }
 
+    ApplySharedDeathExplosion(damagedPiece);
     DropTreasure(damagedPiece);
 
     if (damagedPiece.Team == TeamName.Neutral)
