@@ -15,8 +15,10 @@ public static class MovementRules
     int? maximumMovementRange = null
   )
   {
-    movementRangeAt ??= _ => unit.MoveRange;
-    int maximumRange = maximumMovementRange ?? unit.MoveRange;
+    Func<(int x, int y), int> callerMovementRangeAt = movementRangeAt ?? (_ => unit.MoveRange);
+    movementRangeAt = destination =>
+      callerMovementRangeAt(destination) + AbilityRules.GetMovementRangeBonus(unit, team, origin, destination);
+    int maximumRange = (maximumMovementRange ?? unit.MoveRange) + AbilityRules.GetMaximumMovementRangeBonus(unit);
 
     if (unit.MovePattern == RuleShape.Line)
     {
