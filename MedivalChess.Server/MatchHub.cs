@@ -134,7 +134,7 @@ public sealed class MatchHub(MatchStore matches) : Hub
   }
 }
 
-public sealed class MatchStore
+public sealed partial class MatchStore
 {
   public const string DebugJoinCode = "DEBUG";
   private const string CodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -375,7 +375,7 @@ public sealed class MatchStore
           if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) && AbilityRules.PathOverlapsUnit(
             elephantRule, movementPath, crossedRule, crossed.X, crossed.Y))
           {
-            ResolvePieceDamage(foundMatch, piece, player, crossed.Id, 15);
+            ResolvePieceDamage(foundMatch, piece, player, crossed.Id, AbilityRules.ElephantTrampleDamage);
             elephantDamagedAnEnemy = true;
           }
         }
@@ -509,23 +509,25 @@ public sealed class MatchStore
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
 
-      foundMatch.Pieces[attackerIndex] = attacker with
+      PrepareSharedServerAttack(foundMatch, attackerIndex, targetPosition, out attacker, out bool mayFire);
+      if (!mayFire)
       {
-        HasAttackedThisTurn = true,
-        CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
-          attacker.Type, attacker.HasMovedThisTurn)
-      };
+        if (foundMatch.Winner is null) SpendAction(foundMatch, player);
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
       if (target is null)
       {
         DamageBarricade(foundMatch, attacker, targetPosition);
       }
-      else if (attacker.Type == "Bombard")
+      else if (attacker.Type == nameof(PieceType.Ballista))
       {
-        ResolveBombardDamage(foundMatch, attacker, player, target);
+        ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
       }
       else
       {
-        ResolvePieceDamage(foundMatch, attacker, player, target.Id, null);
+        ResolveSharedServerAttack(foundMatch, attacker, player, target);
       }
 
       if (target is not null && attacker.Type == "Ballista" && UnitRules.TryGet(attacker.Type, out UnitRule ballistaRule))
@@ -1233,8 +1235,6 @@ public sealed class MatchStore
       .ToHashSet(StringComparer.Ordinal);
     if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
       (rule.Type == "Farm" || other.Type != "Farm") &&
-      // An elephant may end its move on an enemy it tramples, but never on an ally.
-      !(rule.Type == "Elephant" && other.Team != piece.Team) &&
       NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
 
     return true;
@@ -1242,14 +1242,10 @@ public sealed class MatchStore
 
   private static UnitRule GetEffectiveMovementRule(Match match, NetworkPiece piece, UnitRule rule)
   {
-    if (rule.Type == "Ox")
+    int attachmentBonus = GetSharedServerAttachmentMovementBonus(match, piece);
+    if (attachmentBonus != 0)
     {
-      NetworkPiece? cargo = match.Pieces.FirstOrDefault(other => other.AttachedToId == piece.Id &&
-        other.AttachmentKind == NetworkAttachmentKind.Carried);
-      if (cargo is not null && UnitRules.TryGet(cargo.Type, out UnitRule cargoRule))
-      {
-        rule = cargoRule with { MoveRange = cargoRule.MoveRange + 2 };
-      }
+      rule = rule with { MoveRange = rule.MoveRange + attachmentBonus };
     }
 
     if (match.TreasureCarrierId == piece.Id)
@@ -1258,7 +1254,7 @@ public sealed class MatchStore
     }
 
     return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
-      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
+      ? rule with { MoveRange = AbilityRules.CavalierFollowUpMovement, MovePattern = RuleShape.Straight }
       : rule;
   }
 
@@ -1273,7 +1269,7 @@ public sealed class MatchStore
     foreach ((int x, int y) position in PositionsBetween(from, destination))
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        bool ignoresTerrain = piece.Type == "Elephant" ||
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(match, piece, rule, from, destination);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
             (!ignoresTerrain && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
@@ -1281,7 +1277,7 @@ public sealed class MatchStore
         NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
           UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1));
-        if (blocker is not null && !(piece.Type == "Elephant" && blocker.Team != piece.Team)) return false;
+        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team)) return false;
       }
 
     return true;
@@ -1300,15 +1296,15 @@ public sealed class MatchStore
     (int x, int y) destination
   )
   {
-    if (rule.Type == "Elephant") return 1;
     int cost = 0;
     bool ignoresTerrain = IsPalaceAssistedMovement(match, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = match.Roads.TryGetValue(square, out NetworkTeam roadOwner) && roadOwner == piece.Team;
-      cost = Math.Max(cost, match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
         ? 2
-        : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1);
+        : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1;
+      cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
     }
     return cost;
   }
@@ -1321,7 +1317,7 @@ public sealed class MatchStore
     (int x, int y) to
   )
   {
-    if (rule.Type == "Elephant" || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
+    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
     foreach ((int x, int y) fromSquare in OccupiedSquares(rule, from))
     {
       var toSquare = (fromSquare.x + to.x - from.x, fromSquare.y + to.y - from.y);
@@ -1380,19 +1376,8 @@ public sealed class MatchStore
     return false;
   }
 
-  private static int GetAttackDamage(Match match, NetworkPiece attacker, NetworkPiece target)
-  {
-    int baseDamage = NetworkAttackRules.GetDamage(attacker.Type);
-    if (baseDamage <= 0) return 0;
-    return CombatRules.CalculateDamage(
-      baseDamage,
-      HasAdjacentUnit(match, attacker, attacker.Team, "Baron"),
-      match.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
-      false,
-      false,
-      0
-    );
-  }
+  private static int GetAttackDamage(Match match, NetworkPiece attacker, NetworkPiece target) =>
+    GetSharedServerAttackDamage(match, attacker, target);
 
   private static void ResolvePieceDamage(
     Match match,
@@ -1405,18 +1390,17 @@ public sealed class MatchStore
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
+    if (!CanSharedServerDamage(attacker, target)) return;
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard);
     NetworkPiece damagedPiece = guard ?? target;
-    NetworkPiece? cargo = AbilityRules.SharesDamageWithCargo(target.Type)
-      ? match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-        piece.AttachmentKind == NetworkAttachmentKind.Carried)
-      : null;
+    NetworkPiece? oxAttachment = match.Pieces.FirstOrDefault(piece =>
+      piece.AttachedToId == target.Id && AbilityRules.SharesIncomingDamageWithHost(piece.Type));
     int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
     ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
-    if (cargo is not null && cargo.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == cargo.Id))
+    if (oxAttachment is not null && oxAttachment.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == oxAttachment.Id))
     {
-      ApplyDamageToPiece(match, attacker, attackingPlayer, cargo, unmitigatedDamage);
+      ApplyDamageToPiece(match, attacker, attackingPlayer, oxAttachment, unmitigatedDamage);
     }
 
     for (int pieceIndex = 0; pieceIndex < match.Pieces.Count; pieceIndex++)
@@ -1485,8 +1469,9 @@ public sealed class MatchStore
   private static void DamageBarricade(Match match, NetworkPiece attacker, (int x, int y) position)
   {
     if (!match.Barricades.TryGetValue(position, out int health)) return;
-    int damage = NetworkAttackRules.GetDamage(attacker.Type) +
-      (HasAdjacentUnit(match, attacker, attacker.Team, "Baron") ? 5 : 0);
+    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health) +
+      (HasAdjacentUnit(match, attacker, attacker.Team, nameof(PieceType.Baron)) ? CombatRules.BaronDamageBonus : 0);
     health -= damage;
     if (health <= 0) match.Barricades.Remove(position);
     else match.Barricades[position] = health;
@@ -1528,9 +1513,9 @@ public sealed class MatchStore
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
-    if (target.Health > 30)
+    if (target.Health > AbilityRules.EngineerMineDamage)
     {
-      match.Pieces[index] = target with { Health = target.Health - 30 };
+      match.Pieces[index] = target with { Health = target.Health - AbilityRules.EngineerMineDamage };
     }
     else
     {
@@ -1540,6 +1525,13 @@ public sealed class MatchStore
 
   private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
   {
+    if (TryApplySharedServerLethalAbility(match, defeatedPiece))
+    {
+      return;
+    }
+
+    IReadOnlyList<AbilityDamageInstruction> deathExplosion = GetSharedServerDeathExplosion(match, defeatedPiece);
+    PlayerSlot explosionSource = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team) ?? attackingPlayer;
     if (match.TreasureCarrierId == defeatedPiece.Id)
     {
       match.TreasureCarrierId = null;
@@ -1566,7 +1558,10 @@ public sealed class MatchStore
     }
 
     RemovePiece(match, defeatedPiece.Id);
+    ApplySharedServerDeathExplosion(match, defeatedPiece, explosionSource, deathExplosion);
     if (!UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule) || rule.Category != RuleCategory.Royal) return;
+    if (defeatedPiece.Type == nameof(PieceType.GoblinRoyalty) && match.Pieces.Any(piece =>
+      piece.Team == defeatedPiece.Team && piece.Type == nameof(PieceType.GoblinRoyalty))) return;
     if (match.Configuration.GameMode == "Regicide" && attackingPlayer.Team != defeatedPiece.Team)
     {
       match.Winner = attackingPlayer.Team;
@@ -1743,7 +1738,7 @@ public sealed class MatchStore
   {
     NetworkPiece engineer = match.Pieces[actorIndex];
     bool demolition = AbilityRules.IsEngineerDemolition(ability);
-    if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) || target is not null ||
+    if ((!demolition && engineer.EngineerBuildsThisTurn >= AbilityRules.EngineerBuildsPerTurn) || target is not null ||
         (!AbilityRules.IsEngineerBuild(ability) && !demolition)) return false;
     if (demolition)
     {
@@ -1762,7 +1757,7 @@ public sealed class MatchStore
     }
     else if (string.Equals(ability, "Barrier", StringComparison.OrdinalIgnoreCase))
     {
-      match.Barricades[(targetX, targetY)] = 20;
+      match.Barricades[(targetX, targetY)] = AbilityRules.EngineerBarrierHealth;
     }
     else if (string.Equals(ability, "Mine", StringComparison.OrdinalIgnoreCase))
     {
@@ -1772,7 +1767,7 @@ public sealed class MatchStore
     match.Pieces[actorIndex] = engineer with
     {
       EngineerBuildsThisTurn = buildsUsed,
-      HasAttackedThisTurn = buildsUsed >= 2
+      HasAttackedThisTurn = buildsUsed >= AbilityRules.EngineerBuildsPerTurn
     };
     return true;
   }
@@ -1824,17 +1819,17 @@ public sealed class MatchStore
     if (targetIndex < 0 || !UnitRules.TryGet(match.Pieces[targetIndex].Type, out UnitRule targetRule)) return false;
     NetworkPiece ox = match.Pieces[actorIndex];
     NetworkPiece target = match.Pieces[targetIndex];
-    bool hasCargo = match.Pieces.Any(piece => piece.AttachedToId == ox.Id &&
-      piece.AttachmentKind == NetworkAttachmentKind.Carried);
+    bool targetAlreadyHasOx = match.Pieces.Any(piece =>
+      piece.AttachedToId == target.Id && piece.Type == nameof(PieceType.Ox));
     if (!UnitRules.TryGet(ox.Type, out UnitRule oxRule) || target.Team != ox.Team || target.Id == ox.Id || target.Id == match.TreasureCarrierId ||
-        !AbilityRules.CanOxAttach(oxRule, targetRule, target.AttachedToId is not null, hasCargo)) return false;
+        !AbilityRules.CanOxAttach(oxRule, targetRule, ox.AttachedToId is not null, targetAlreadyHasOx)) return false;
 
-    match.Pieces[targetIndex] = target with
+    match.Pieces[actorIndex] = ox with
     {
-      AttachedToId = ox.Id,
+      AttachedToId = target.Id,
       AttachmentKind = NetworkAttachmentKind.Carried,
-      X = ox.X,
-      Y = ox.Y
+      X = target.X,
+      Y = target.Y
     };
     return true;
   }
@@ -1898,6 +1893,7 @@ public sealed class MatchStore
 
   private static void ResetTurnActions(Match match, NetworkTeam team)
   {
+    ApplySharedServerStartOfTurnEffects(match, team);
     for (int index = 0; index < match.Pieces.Count; index++)
     {
       NetworkPiece piece = match.Pieces[index];
@@ -1907,6 +1903,7 @@ public sealed class MatchStore
         {
           HasMovedThisTurn = false,
           HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
           CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
           CannotContributeToConquestThisTurn = false
@@ -2023,27 +2020,9 @@ public sealed class MatchStore
       player.Money = ClampCurrency((long)player.Money + income);
     }
 
-    for (int index = 0; index < match.Pieces.Count; index++)
+    if (!ApplySharedServerAbilityUpkeep(match, team, player))
     {
-      NetworkPiece mercenary = match.Pieces[index];
-      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
-      {
-        continue;
-      }
-
-      const int mercenaryPayroll = 10;
-      if (player.Money < mercenaryPayroll)
-      {
-        match.Pieces[index] = mercenary with
-        {
-          Team = NetworkTeam.Neutral,
-          HasMovedThisTurn = true,
-          HasAttackedThisTurn = true
-        };
-        continue;
-      }
-
-      player.Money = ClampCurrency((long)player.Money - mercenaryPayroll);
+      return;
     }
 
     if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;
