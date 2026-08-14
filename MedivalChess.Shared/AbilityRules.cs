@@ -1,10 +1,16 @@
 namespace MedivalChess.Shared;
 
-/// <summary>Shared, deterministic helpers for unit abilities used by client, CPU and server.</summary>
+/// <summary>
+/// Shared, deterministic unit-ability rules. Runtime layers (local, CPU and server) should only
+/// adapt their board state to these helpers; ability numbers and decisions belong here.
+/// </summary>
 public static class AbilityRules
 {
   public const int BombardSplashDamage = 20;
+  public const int ElephantTrampleDamage = 30;
   public const int EngineerBarrierHealth = 40;
+  public const int EngineerMineDamage = 60;
+  public const int EngineerBuildsPerTurn = 2;
   public const int MercenaryPayroll = 20;
   public const int PresidentPayroll = 10;
   public const int DragonbornBurnDamage = 10;
@@ -15,13 +21,53 @@ public static class AbilityRules
   public const int ShieldbearerReviveHealth = 20;
   public const int GhoulLifetimeTurns = 4;
   public const int TumbleweedLifetimeRounds = 3;
+  public const int NinjaAttacksPerTurn = 3;
+  public const int RaiderForwardMovementBonus = 2;
+  public const int BerserkerEnrageHealth = 20;
+  public const int BerserkerEnragedDamage = 40;
+  public const int CavalierFollowUpMovement = 2;
 
-  public static bool IsTerrainImmune(UnitRule unit) => unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
-  public static bool CanTravelThroughUnits(UnitRule unit) => unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
+  public static bool IsTerrainImmune(UnitRule unit) =>
+    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
+
+  /// <summary>True when lakes and similar terrain restrictions do not block this unit.</summary>
+  public static bool IgnoresImpassableTerrain(UnitRule unit) => IsTerrainImmune(unit);
+
+  public static bool IgnoresRivers(UnitRule unit) => IsTerrainImmune(unit);
+
+  /// <summary>
+  /// Applies a unit's terrain-cost rule while preserving zero-cost roads. Elephant and Sleipnir
+  /// pay at most one movement for a step; an owned open-ground road may still cost zero.
+  /// </summary>
+  public static int ApplyTerrainMovementCost(UnitRule unit, int ordinaryCost) =>
+    IsTerrainImmune(unit) ? Math.Min(1, ordinaryCost) : ordinaryCost;
+
+  public static bool CanTravelThroughUnits(UnitRule unit) =>
+    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
+
+  public static bool CanTravelThroughUnit(UnitRule mover, NetworkTeam moverTeam, NetworkTeam blockerTeam) =>
+    mover.Type == nameof(PieceType.Sleipnir) ||
+    (mover.Type == nameof(PieceType.Elephant) && blockerTeam != moverTeam);
+
   public static bool IsTrampleAttacker(UnitRule unit) => unit.Type == nameof(PieceType.Elephant);
 
-  public static bool AttacksOverObstacles(UnitRule unit) => unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess);
-  public static bool AttacksThroughForests(UnitRule unit) => unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess);
+  public static int GetMovementRangeBonus(
+    UnitRule unit,
+    NetworkTeam team,
+    (int x, int y) origin,
+    (int x, int y) destination
+  ) => unit.Type == nameof(PieceType.Raider) && IsForwardDestination(team, origin, destination)
+    ? RaiderForwardMovementBonus
+    : 0;
+
+  public static int GetMaximumMovementRangeBonus(UnitRule unit) =>
+    unit.Type == nameof(PieceType.Raider) ? RaiderForwardMovementBonus : 0;
+
+  public static bool AttacksOverObstacles(UnitRule unit) =>
+    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess);
+
+  public static bool AttacksThroughForests(UnitRule unit) =>
+    unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess);
 
   public static bool IsProjectileAttack(UnitRule attacker) => attacker.Type is
     nameof(PieceType.Archer) or nameof(PieceType.Crossbowman) or nameof(PieceType.Ninja) or
@@ -29,27 +75,53 @@ public static class AbilityRules
     nameof(PieceType.Ballista) or nameof(PieceType.Artemis) or nameof(PieceType.Gunman) or
     nameof(PieceType.Sniper) or nameof(PieceType.Cowboy);
 
+  public static bool CanDamageTarget(UnitRule attacker, UnitRule target) =>
+    !(target.Type == nameof(PieceType.Samurai) && IsProjectileAttack(attacker));
+
   public static int MaximumAttacksPerTurn(string unitType) =>
-    unitType == nameof(PieceType.Ninja) ? 3 : 1;
+    unitType == nameof(PieceType.Ninja) ? NinjaAttacksPerTurn : 1;
 
   public static int GetBaseAttack(UnitRule attacker, int currentHealth) =>
-    attacker.Type == nameof(PieceType.Berserker) && currentHealth <= 20 ? 40 : attacker.Attack;
+    attacker.Type == nameof(PieceType.Berserker) && currentHealth <= BerserkerEnrageHealth
+      ? BerserkerEnragedDamage
+      : attacker.Attack;
+
+  public static int GetAttackAbilityBonus(
+    UnitRule attacker,
+    UnitRule target,
+    bool targetIsInForest,
+    (int x, int y) targetFacing,
+    (int x, int y) attackerPosition,
+    (int x, int y) targetPosition
+  )
+  {
+    int bonus = 0;
+    if (attacker.Type == nameof(PieceType.Artemis) && targetIsInForest)
+    {
+      bonus += ArtemisForestBonus;
+    }
+    if (target.Type == nameof(PieceType.Chimera) && IsBehind(targetFacing, targetPosition, attackerPosition))
+    {
+      bonus += ChimeraRearBonus;
+    }
+    return bonus;
+  }
 
   public static bool IsForestProtected(UnitRule target) => target.Category == RuleCategory.Ranged;
 
-  public static bool IsBehind((int x, int y) facing, (int x, int y) attackerPosition, (int x, int y) targetPosition)
+  public static bool IsBehind((int x, int y) facing, (int x, int y) subjectPosition, (int x, int y) otherPosition)
   {
     if (facing == (0, 0)) return false;
-    int dx = targetPosition.x - attackerPosition.x;
-    int dy = targetPosition.y - attackerPosition.y;
+    int dx = otherPosition.x - subjectPosition.x;
+    int dy = otherPosition.y - subjectPosition.y;
     return dx * facing.x + dy * facing.y < 0;
   }
 
-  public static bool IsInFront((int x, int y) facing, (int x, int y) attackerPosition, (int x, int y) targetPosition)
+  public static bool IsInFront((int x, int y) facing, (int x, int y) subjectPosition, (int x, int y) otherPosition)
   {
     if (facing == (0, 0)) return false;
-    int dx = targetPosition.x - attackerPosition.x;
-    int dy = targetPosition.y - attackerPosition.y;
+    int dx = otherPosition.x - subjectPosition.x;
+    int dy = otherPosition.y - subjectPosition.y;
     return dx * facing.x + dy * facing.y > 0;
   }
 
@@ -88,6 +160,43 @@ public static class AbilityRules
       FootprintDistance(movingUnit, from, palace, palacePosition);
   }
 
+  public static bool AreAdjacent(
+    UnitRule first,
+    (int x, int y) firstPosition,
+    UnitRule second,
+    (int x, int y) secondPosition,
+    bool includeDiagonal = false
+  )
+  {
+    int horizontalGap = Math.Max(0, Math.Max(
+      secondPosition.x - (firstPosition.x + first.Width - 1),
+      firstPosition.x - (secondPosition.x + second.Width - 1)));
+    int verticalGap = Math.Max(0, Math.Max(
+      secondPosition.y - (firstPosition.y + first.Height - 1),
+      firstPosition.y - (secondPosition.y + second.Height - 1)));
+
+    return includeDiagonal
+      ? Math.Max(horizontalGap, verticalGap) == 1
+      : horizontalGap + verticalGap == 1;
+  }
+
+  public static bool IsWithinSquareRadius(
+    UnitRule centre,
+    (int x, int y) centrePosition,
+    UnitRule candidate,
+    (int x, int y) candidatePosition,
+    int radius
+  )
+  {
+    int horizontalGap = Math.Max(0, Math.Max(
+      candidatePosition.x - (centrePosition.x + centre.Width - 1),
+      centrePosition.x - (candidatePosition.x + candidate.Width - 1)));
+    int verticalGap = Math.Max(0, Math.Max(
+      candidatePosition.y - (centrePosition.y + centre.Height - 1),
+      centrePosition.y - (candidatePosition.y + candidate.Height - 1)));
+    return Math.Max(horizontalGap, verticalGap) <= radius;
+  }
+
   private static int FootprintDistance(
     UnitRule first,
     (int x, int y) firstPosition,
@@ -124,7 +233,8 @@ public static class AbilityRules
     string.Equals(ability, "Barrier", StringComparison.OrdinalIgnoreCase) ||
     string.Equals(ability, "Mine", StringComparison.OrdinalIgnoreCase);
 
-  public static bool IsEngineerDemolition(string ability) => string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase);
+  public static bool IsEngineerDemolition(string ability) =>
+    string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase);
 
   public static bool PathOverlapsUnit(
     UnitRule movingUnit,
