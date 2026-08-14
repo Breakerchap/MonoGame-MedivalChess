@@ -78,6 +78,15 @@ internal sealed class Piece
       : _hasAttackedThisTurn;
     set
     {
+      if (!_turnStateInitialised)
+      {
+        _hasAttackedThisTurn = value;
+        AttacksThisTurn = value
+          ? AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString())
+          : 0;
+        return;
+      }
+
       if (!value)
       {
         _hasAttackedThisTurn = false;
