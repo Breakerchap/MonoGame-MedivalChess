@@ -17,12 +17,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: unit-packs-circle
-      - name: Apply checked source transformations
+      - name: Apply checked source transformation
         shell: bash
         run: |
-          python3 tools/apply_unit_ability_refactor.py
           if [ -f tools/cleanup_shared_ability_duplicates.py ]; then
             python3 tools/cleanup_shared_ability_duplicates.py
+          else
+            python3 tools/apply_unit_ability_refactor.py
           fi
       - name: Commit transformed sources
         shell: bash
