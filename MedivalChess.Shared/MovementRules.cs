@@ -22,7 +22,7 @@ public static class MovementRules
     canContinueFrom ??= _ => true;
     int maximumRange = (maximumMovementRange ?? unit.MoveRange) + AbilityRules.GetMaximumMovementRangeBonus(unit);
 
-    if (unit.MovePattern is RuleShape.Line or RuleShape.Diagonal or RuleShape.LineOrDiagonal)
+    if (unit.MovePattern is RuleShape.Line or RuleShape.Diagonal or RuleShape.LineOrDiagonal or RuleShape.AbsoluteStraightOrDiagonal)
     {
       return FindRayPaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver,
         stepCost, movementRangeAt, maximumRange, canContinueFrom);
@@ -30,7 +30,7 @@ public static class MovementRules
 
     if (unit.MovePattern == RuleShape.ChessKnight)
     {
-      return FindKnightPaths(unit, origin, canLand, canTravelThrough, landingCost, movementRangeAt);
+      return FindKnightPaths(unit, origin, team, canLand, canTravelThrough, landingCost, movementRangeAt);
     }
 
     Dictionary<(int x, int y), int> bestCosts = new() { [origin] = 0 };
@@ -42,7 +42,7 @@ public static class MovementRules
     {
       if (current.Cost >= maximumRange) continue;
 
-      foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
+      foreach ((int x, int y) direction in ShapeGeometryRules.GetStepDirections(unit.MovePattern, team))
       {
         var next = (x: current.Position.x + direction.x, y: current.Position.y + direction.y);
         if (!canTravelThrough(current.Position, next)) continue;
@@ -82,7 +82,7 @@ public static class MovementRules
   {
     Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
 
-    foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
+    foreach ((int x, int y) direction in ShapeGeometryRules.GetStepDirections(unit.MovePattern, team))
     {
       int cost = 0;
       (int x, int y) previous = origin;
@@ -117,6 +117,7 @@ public static class MovementRules
   private static Dictionary<(int x, int y), List<(int x, int y)>> FindKnightPaths(
     UnitRule unit,
     (int x, int y) origin,
+    NetworkTeam team,
     Func<(int x, int y), bool> canLand,
     Func<(int x, int y), (int x, int y), bool> canTravelThrough,
     Func<(int x, int y), int> landingCost,
@@ -124,7 +125,7 @@ public static class MovementRules
   )
   {
     Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
-    foreach ((int x, int y) offset in KnightOffsets)
+    foreach ((int x, int y) offset in ShapeGeometryRules.GetStepDirections(RuleShape.ChessKnight, team))
     {
       var destination = (x: origin.x + offset.x, y: origin.y + offset.y);
       // A knight jumps intervening units/terrain, but its landing square must itself be valid.
@@ -140,34 +141,6 @@ public static class MovementRules
   }
 
   private static int GetRiverCrossingCost(int currentCost, int baseMovementRange) => Math.Max(currentCost + 1, baseMovementRange);
-
-  private static readonly (int x, int y)[] KnightOffsets =
-  [
-    (1, 2), (2, 1), (-1, 2), (-2, 1),
-    (1, -2), (2, -1), (-1, -2), (-2, -1)
-  ];
-
-  public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
-  {
-    RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
-    RuleShape.Line => [(1, 0), (-1, 0), (0, 1), (0, -1)],
-    RuleShape.Diagonal => [(1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.LineOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.Any or RuleShape.Circle => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
-    RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),
-    RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
-    RuleShape.ChessKnight => KnightOffsets,
-    _ => []
-  };
-
-  private static IReadOnlyList<(int x, int y)> GetForwardAndDiagonalDirections(NetworkTeam team)
-  {
-    (int x, int y) forward = TeamRules.GetForwardDirection(team);
-    return forward.x == 0
-      ? [forward, (-1, forward.y), (1, forward.y)]
-      : [forward, (forward.x, -1), (forward.x, 1)];
-  }
 
   private sealed record MovementState((int x, int y) Position, int Cost, List<(int x, int y)> Path);
 }
