@@ -153,4 +153,61 @@ public sealed class SharedAbilityRulesTests
     Assert.Equal(105, PieceDefinitions.Orc.Cost);
     Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
   }
+
+  [Fact]
+  public void ChessPack_UsesCurrentWorkbookCombatAndPurchaseValues()
+  {
+    Assert.Equal((120, 20), (PieceDefinitions.Pawn.Attack, PieceDefinitions.Pawn.Cost));
+    Assert.Equal((120, 60), (PieceDefinitions.ChessKnight.Attack, PieceDefinitions.ChessKnight.Cost));
+    Assert.Equal((120, 60), (PieceDefinitions.Bishop.Attack, PieceDefinitions.Bishop.Cost));
+    Assert.Equal((120, 100), (PieceDefinitions.Rook.Attack, PieceDefinitions.Rook.Cost));
+    Assert.Equal((120, 180), (PieceDefinitions.Queen.Attack, PieceDefinitions.Queen.Cost));
+    Assert.Equal(120, PieceDefinitions.ChessKing.Attack);
+  }
+
+  [Fact]
+  public void ChessLandingCaptureRules_HandlePawnAndFailedCaptureFallback()
+  {
+    UnitRule pawn = UnitRules.GetRequired(nameof(PieceType.Pawn));
+    (int x, int y) forward = TeamRules.GetForwardDirection(NetworkTeam.Red);
+    var origin = (x: 5, y: 5);
+    var diagonal = forward.x == 0
+      ? (x: origin.x + 1, y: origin.y + forward.y)
+      : (x: origin.x + forward.x, y: origin.y + 1);
+    var straight = (x: origin.x + forward.x, y: origin.y + forward.y);
+
+    Assert.True(ChessAbilityRules.CanCaptureByLanding(
+      pawn, NetworkTeam.Red, origin, diagonal, NetworkTeam.Blue));
+    Assert.False(ChessAbilityRules.CanCaptureByLanding(
+      pawn, NetworkTeam.Red, origin, straight, NetworkTeam.Blue));
+    Assert.Equal(origin, ChessAbilityRules.GetFailedCaptureFallback(origin, [diagonal]));
+    Assert.Equal((6, 5), ChessAbilityRules.GetFailedCaptureFallback(origin, [(6, 5), (7, 5)]));
+  }
+
+  [Fact]
+  public void SharedMovementRules_HandleChessRaysAndKnightJumps()
+  {
+    static Dictionary<(int x, int y), List<(int x, int y)>> Paths(UnitRule rule) =>
+      MovementRules.FindPaths(
+        rule,
+        (0, 0),
+        NetworkTeam.Red,
+        _ => true,
+        (_, _) => true,
+        _ => 1,
+        (_, _) => false
+      );
+
+    Dictionary<(int x, int y), List<(int x, int y)>> bishop = Paths(UnitRules.GetRequired(nameof(PieceType.Bishop)));
+    Assert.Contains((3, 3), bishop.Keys);
+    Assert.DoesNotContain((2, 1), bishop.Keys);
+
+    Dictionary<(int x, int y), List<(int x, int y)>> queen = Paths(UnitRules.GetRequired(nameof(PieceType.Queen)));
+    Assert.Contains((3, 0), queen.Keys);
+    Assert.Contains((3, 3), queen.Keys);
+
+    Dictionary<(int x, int y), List<(int x, int y)>> knight = Paths(UnitRules.GetRequired(nameof(PieceType.ChessKnight)));
+    Assert.Contains((2, 1), knight.Keys);
+    Assert.DoesNotContain((1, 1), knight.Keys);
+  }
 }
