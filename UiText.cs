@@ -71,6 +71,14 @@ internal static class UiText
     return $"{action.range} {GetShapeLabel(action.shape)}";
   }
 
+  internal static string FormatAction(MovementDefinition movement)
+  {
+    string distance = movement.Minimum == movement.Maximum || movement.Minimum <= 1
+      ? movement.Maximum.ToString()
+      : $"{movement.Minimum}-{movement.Maximum}";
+    return $"{distance} {GetShapeLabel(movement.Shape)}";
+  }
+
   internal static string FormatAction(AttackRange range, Shape shape)
   {
     string distance = range.Minimum == range.Maximum
@@ -84,10 +92,12 @@ internal static class UiText
     return shape switch
     {
       Shape.Straight => "Straight",
+      Shape.Circle => "Circle",
       Shape.Line => "Line",
       Shape.Forward => "Forward",
       Shape.AbsoluteStraightOrDiagonal => "Line/Diag",
       Shape.ForwardOrForwardDiagonal => "Fwd/Diag",
+      Shape.ForwardLine => "Forward Line",
       Shape.PierceStraight => "Pierce",
       Shape.MoveOnEnemy => "Enemy",
       _ => shape.ToString()
