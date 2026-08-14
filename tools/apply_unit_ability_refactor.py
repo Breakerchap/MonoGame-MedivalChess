@@ -16,6 +16,8 @@ def replace_once(path: str, old: str, new: str) -> None:
     print(f"{path}: transformed")
 
 
+# Current Ox ability: Ox attaches to a friendly 1x1 host, gives the host +2 Move,
+# and takes the same incoming damage as that host.
 replace_once(
     "MedivalChess.CPU/CpuGameRules.Spatial.cs",
     '''    if (rule.Type == "Ox")
@@ -141,5 +143,257 @@ replace_once(
     {
       ApplyDamageToPiece(attacker, oxAttachment, unmitigatedDamage);
     }
+'''
+)
+
+# Split the giant local game class so unit-specific runtime glue stays out of Game1.cs.
+replace_once(
+    "Game1.cs",
+    "internal sealed class Game1 : Game\n{",
+    "internal sealed partial class Game1 : Game\n{"
+)
+
+# Human/local attacks: Ballista keeps its terrain-aware pierce adapter; all other unit targets
+# use the shared multi-target attack plan.
+replace_once(
+    "Game1.cs",
+    '''              if (selectedPiece.Definition.Type == PieceType.Ballista)
+              {
+                PerformPiercingAttack(selectedPiece, targetPosition);
+              }
+              else if (selectedPiece.Definition.Type == PieceType.Bombard)
+              {
+                PerformBombardAttack(selectedPiece, hostilePieceAtTarget);
+              }
+              else if (_barricades.ContainsKey(targetPosition))
+              {
+                DamageBarricade(selectedPiece, targetPosition);
+              }
+              else
+              {
+                ResolveDamage(selectedPiece, hostilePieceAtTarget);
+              }
+''',
+    '''              if (selectedPiece.Definition.Type == PieceType.Ballista)
+              {
+                PerformPiercingAttack(selectedPiece, targetPosition);
+              }
+              else if (_barricades.ContainsKey(targetPosition))
+              {
+                DamageBarricade(selectedPiece, targetPosition);
+              }
+              else
+              {
+                PerformSharedUnitAttack(selectedPiece, hostilePieceAtTarget);
+              }
+'''
+)
+
+# Local CPU execution must use exactly the same local/shared attack adapter as human input.
+replace_once(
+    "Game1.cs",
+    '''    if (attacker.Definition.Type == PieceType.Ballista)
+    {
+      PerformPiercingAttack(attacker, targetPosition);
+    }
+    else if (attacker.Definition.Type == PieceType.Bombard && target is not null)
+    {
+      PerformBombardAttack(attacker, target);
+    }
+    else if (_barricades.ContainsKey(targetPosition))
+    {
+      DamageBarricade(attacker, targetPosition);
+    }
+    else
+    {
+      ResolveDamage(attacker, target);
+    }
+''',
+    '''    if (attacker.Definition.Type == PieceType.Ballista)
+    {
+      PerformPiercingAttack(attacker, targetPosition);
+    }
+    else if (_barricades.ContainsKey(targetPosition))
+    {
+      DamageBarricade(attacker, targetPosition);
+    }
+    else
+    {
+      PerformSharedUnitAttack(attacker, target);
+    }
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''  private int GetAttackDamage(Piece attacker, Piece target)
+  {
+    bool hasBaronBonus = HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team);
+    bool isSpyMarked = pieceSetup.Pieces.Any(spy =>
+      spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target);
+    return CombatRules.CalculateDamage(attacker.Definition.Attack, hasBaronBonus, isSpyMarked, false, false, 0);
+  }
+''',
+    '''  private int GetAttackDamage(Piece attacker, Piece target) =>
+    GetSharedLocalAttackDamage(attacker, target);
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''  private void ResolveDamage(Piece attacker, Piece target, int? damageOverride = null)
+  {
+    Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
+''',
+    '''  private void ResolveDamage(Piece attacker, Piece target, int? damageOverride = null)
+  {
+    if (target is null || !CanSharedAttackDamage(attacker, target))
+    {
+      return;
+    }
+
+    Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''  private void ResolveMineDamage(Piece target, TeamName mineOwner)
+  {
+    target.CurrentHealth -= 30;
+    Console.WriteLine($"Mine dealt 30 damage to {target.Definition.Type}.");
+    HandlePieceDestroyed(target, mineOwner);
+  }
+''',
+    '''  private void ResolveMineDamage(Piece target, TeamName mineOwner)
+  {
+    target.CurrentHealth -= AbilityRules.EngineerMineDamage;
+    Console.WriteLine($"Mine dealt {AbilityRules.EngineerMineDamage} damage to {target.Definition.Type}.");
+    HandlePieceDestroyed(target, mineOwner);
+  }
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''  private void HandlePieceDestroyed(Piece damagedPiece, TeamName? attackingTeamName)
+  {
+    if (damagedPiece.CurrentHealth > 0)
+    {
+      return;
+    }
+
+    DropTreasure(damagedPiece);
+''',
+    '''  private void HandlePieceDestroyed(Piece damagedPiece, TeamName? attackingTeamName)
+  {
+    if (damagedPiece.CurrentHealth > 0)
+    {
+      return;
+    }
+
+    ApplySharedDeathExplosion(damagedPiece);
+    DropTreasure(damagedPiece);
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''  private void ResetPieceTurnActions(TeamName teamName)
+  {
+    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1))
+''',
+    '''  private void ResetPieceTurnActions(TeamName teamName)
+  {
+    ApplySharedStartOfTurnEffects(teamName);
+    foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1).ToArray())
+'''
+)
+
+replace_once(
+    "Game1.cs",
+    '''    int paidMercenaries = 0;
+    int firedMercenaries = 0;
+    foreach (Piece mercenary in pieceSetup.Pieces.Where(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Mercenary).ToList())
+    {
+      const int mercenaryPayroll = 10;
+      if (team.Money < mercenaryPayroll)
+      {
+        mercenary.Team = TeamName.Neutral;
+        mercenary.HasMovedThisTurn = true;
+        mercenary.HasAttackedThisTurn = true;
+        firedMercenaries++;
+        continue;
+      }
+
+      team.Money = ClampCurrency((long)team.Money - mercenaryPayroll);
+      paidMercenaries++;
+    }
+    if (paidMercenaries > 0)
+    {
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} paid {paidMercenaries * 10} gold to {paidMercenaries} Mercenary unit(s).");
+    }
+    if (firedMercenaries > 0)
+    {
+      Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} could not afford {firedMercenaries} Mercenary unit(s); they were fired and left neutral.");
+    }
+
+''',
+    '''    ApplySharedAbilityUpkeep(teamName, team);
+    if (_screen == Screen.GameOver)
+    {
+      return;
+    }
+
+'''
+)
+
+# Keep all shared ability state when mirroring local games into CPU search snapshots.
+replace_once(
+    "Game1.cs",
+    '''        piece.EngineerBuildsThisTurn,
+        piece.CannotContributeToConquestThisTurn,
+        piece.CavalierFollowUpMoveAvailable
+      )),
+''',
+    '''        piece.EngineerBuildsThisTurn,
+        piece.CannotContributeToConquestThisTurn,
+        piece.CavalierFollowUpMoveAvailable,
+        piece.AttacksThisTurn,
+        piece.HasRevived,
+        piece.TurnsInCurrentForm,
+        piece.IsRoyalProxy,
+        piece.PossessedUnitId,
+        piece.Facing.x,
+        piece.Facing.y,
+        piece.PendingDamage
+      )),
+'''
+)
+
+# Restore all shared ability state from authoritative online snapshots.
+replace_once(
+    "Game1.cs",
+    '''        LastBid = networkPiece.LastBid,
+        EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn,
+        CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn
+      };
+''',
+    '''        LastBid = networkPiece.LastBid,
+        EngineerBuildsThisTurn = networkPiece.EngineerBuildsThisTurn,
+        CannotContributeToConquestThisTurn = networkPiece.CannotContributeToConquestThisTurn,
+        AttacksThisTurn = networkPiece.AttacksThisTurn,
+        HasRevived = networkPiece.HasRevived,
+        TurnsInCurrentForm = networkPiece.TurnsInCurrentForm,
+        IsRoyalProxy = networkPiece.IsRoyalProxy,
+        PossessedUnitId = networkPiece.PossessedUnitId,
+        Facing = AbilityStateRules.GetFacing(
+          networkPiece.Team,
+          networkPiece.FacingX,
+          networkPiece.FacingY
+        ),
+        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>()
+      };
 '''
 )
