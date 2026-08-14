@@ -16,6 +16,8 @@ public enum NetworkAttachmentKind
   Carried
 }
 
+public sealed record NetworkPendingDamage(NetworkTeam TriggerTeam, NetworkTeam SourceTeam, int Damage);
+
 public sealed record NetworkPiece(
   string Id,
   string Type,
@@ -31,7 +33,15 @@ public sealed record NetworkPiece(
   int LastBid = 0,
   int EngineerBuildsThisTurn = 0,
   bool CannotContributeToConquestThisTurn = false,
-  bool CavalierFollowUpMoveAvailable = false
+  bool CavalierFollowUpMoveAvailable = false,
+  int AttacksThisTurn = 0,
+  bool HasRevived = false,
+  int TurnsInCurrentForm = 0,
+  bool IsRoyalProxy = false,
+  string? PossessedUnitId = null,
+  int FacingX = 0,
+  int FacingY = 0,
+  IReadOnlyList<NetworkPendingDamage>? PendingDamage = null
 );
 
 public sealed record NetworkImprovement(
@@ -141,7 +151,7 @@ public sealed record JoinGameRequest(
 
 public sealed record MoveRequest(string PieceId, int ToX, int ToY);
 
-// TargetId is used for a unit.  TargetX/TargetY let the same authoritative attack flow
+// TargetId is used for a unit. TargetX/TargetY let the same authoritative attack flow
 // damage a barricade, which is selected by board square rather than by unit id.
 public sealed record AttackRequest(string AttackerId, string? TargetId, int? TargetX = null, int? TargetY = null);
 
