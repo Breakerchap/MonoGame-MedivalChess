@@ -44,14 +44,15 @@ public static class MovementRules
           int nextCost = crossesRiver(current.Position, next)
             ? GetRiverCrossingCost(current.Cost, unit.MoveRange)
             : current.Cost + (stepCost?.Invoke(current.Position, next) ?? landingCost(next));
+          int effectiveRange = movementRangeAt(next);
           bool isInitialStep = current.Path.Count == 0;
-          bool exceedsMovementRange = nextCost > movementRangeAt(next);
+          bool exceedsMovementRange = nextCost > effectiveRange;
           if ((exceedsMovementRange && !isInitialStep) ||
               (bestCosts.TryGetValue(next, out int bestCost) && bestCost <= nextCost)) continue;
 
           List<(int x, int y)> nextPath = [.. current.Path, next];
           bestCosts[next] = nextCost;
-          if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = nextPath;
+          if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = nextPath;
           if (!exceedsMovementRange) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
         }
       }
@@ -90,15 +91,16 @@ public static class MovementRules
         cost = crossesRiver(previous, next)
           ? GetRiverCrossingCost(cost, unit.MoveRange)
           : cost + (stepCost?.Invoke(previous, next) ?? landingCost(next));
+        int effectiveRange = movementRangeAt(next);
         bool isInitialStep = path.Count == 0;
-        if (cost > movementRangeAt(next))
+        if (cost > effectiveRange)
         {
-          if (isInitialStep && canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = [next];
+          if (isInitialStep && canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = [next];
           break;
         }
 
         path.Add(next);
-        if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = [.. path];
+        if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = [.. path];
         previous = next;
       }
     }
