@@ -61,6 +61,13 @@ internal static class Actions
       return false;
     }
 
+    Piece target = piece.OwnerSetup?.GetPieceAt(targetPosition);
+    if (target?.Definition.Type == PieceType.Samurai &&
+        AbilityRules.IsProjectileAttack(UnitRules.FromPieceDefinition(piece.Definition)))
+    {
+      return false;
+    }
+
     foreach ((int x, int y) origin in piece.OccupiedSquares())
     {
       if (UnitRules.CanAttackOffset(
@@ -159,6 +166,12 @@ internal static class Actions
 
   internal static void Attack(Piece attackingPiece, Piece attackedPiece)
   {
+    if (attackedPiece.Definition.Type == PieceType.Samurai &&
+        AbilityRules.IsProjectileAttack(UnitRules.FromPieceDefinition(attackingPiece.Definition)))
+    {
+      return;
+    }
+
     attackedPiece.CurrentHealth -= attackingPiece.Definition.Attack;
   }
 
