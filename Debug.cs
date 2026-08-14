@@ -8,9 +8,6 @@ using MedivalChess.Shared;
 internal sealed class PieceSetup
 {
   private readonly List<Piece> _pieces = new();
-  // A square can temporarily contain a farm and a unit, or an attached unit and
-  // its host. Keep the small local list so GetPieceAt preserves its historical
-  // priority rules without repeatedly scanning the entire army.
   private readonly Dictionary<(int x, int y), List<Piece>> _occupants = [];
 
   internal IReadOnlyList<Piece> Pieces => _pieces;
@@ -99,12 +96,18 @@ internal sealed class PieceSetup
 
   internal void MovePiece(Piece piece, (int x, int y) destination)
   {
+    if (destination != piece.Position)
+    {
+      piece.Facing = AbilityRules.DirectionToward(piece.Position, destination);
+    }
+
     piece.Position = destination;
     piece.HasMovedThisTurn = true;
 
     foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
     {
       attachedPiece.Position = destination;
+      attachedPiece.Facing = piece.Facing;
       attachedPiece.HasMovedThisTurn = true;
     }
     RebuildOccupancy();
@@ -135,6 +138,7 @@ internal sealed class PieceSetup
     attachment.AttachedTo = host;
     attachment.AttachmentKind = kind;
     attachment.Position = host.Position;
+    attachment.Facing = host.Facing;
     RebuildOccupancy();
     return true;
   }
@@ -171,7 +175,6 @@ internal sealed class PieceSetup
     RebuildOccupancy();
   }
 
-  // Network snapshots set attachment metadata in a second pass after all units exist.
   internal void RefreshOccupancy() => RebuildOccupancy();
 
   private Piece FindOccupant((int x, int y) position, System.Predicate<Piece> predicate)
@@ -210,7 +213,7 @@ internal sealed class PieceSetup
 
       foreach (Piece piece in _pieces)
       {
-        if (piece.Definition.Category == PieceCategory.Royal && piece.Team == currentTeam)
+        if (piece.IsRoyal && piece.Team == currentTeam)
         {
           chosenRoyal = piece.Definition.Type;
           break;
