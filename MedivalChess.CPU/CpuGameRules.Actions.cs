@@ -29,7 +29,7 @@ public static partial class CpuGameRules
         if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) &&
             AbilityRules.PathOverlapsUnit(elephantRule, path, crossedRule, crossed.X, crossed.Y))
         {
-          ResolvePieceDamage(state, piece, action.Team, crossed.Id, AbilityRules.ElephantTrampleDamage);
+          ResolveSharedPieceDamage(state, piece, action.Team, crossed.Id, AbilityRules.ElephantTrampleDamage);
           elephantDamaged = true;
         }
       }
@@ -52,7 +52,7 @@ public static partial class CpuGameRules
     state.RecordMove(action.Team, piece.Id, oldX, oldY, action.DestinationX, action.DestinationY);
     MoveAttachedPieces(state, piece);
     MoveEmissaryCompanions(state, piece, oldX, oldY);
-    TriggerMinesAlongMovement(state, piece, path);
+    TriggerSharedMinesAlongMovement(state, piece, path);
 
     NetworkPiece? moved = FindPiece(state.Pieces, piece.Id);
     if (moved is not null)
@@ -66,7 +66,7 @@ public static partial class CpuGameRules
 
     if (state.Winner is null)
     {
-      SpendAction(state, action.Team);
+      SpendSharedAction(state, action.Team);
     }
   }
 
@@ -100,7 +100,7 @@ public static partial class CpuGameRules
       state.Pieces[attackerIndex] = attacker;
       if (!tank.MayFire)
       {
-        if (state.Winner is null) SpendAction(state, action.Team);
+        if (state.Winner is null) SpendSharedAction(state, action.Team);
         return;
       }
     }
@@ -118,7 +118,7 @@ public static partial class CpuGameRules
     AbilityAttackPlan? abilityPlan = null;
     if (target is null)
     {
-      DamageBarricade(state, attacker, (action.TargetX, action.TargetY));
+      DamageSharedBarricade(state, attacker, (action.TargetX, action.TargetY));
     }
     else
     {
@@ -137,7 +137,7 @@ public static partial class CpuGameRules
         int? damageOverride = instruction.Mode == AbilityDamageMode.Fixed
           ? instruction.FixedDamage
           : null;
-        ResolvePieceDamage(state, attacker, action.Team, instruction.TargetId, damageOverride);
+        ResolveSharedPieceDamage(state, attacker, action.Team, instruction.TargetId, damageOverride);
       }
     }
 
@@ -156,7 +156,7 @@ public static partial class CpuGameRules
           UnitRules.TryGet(piece.Type, out UnitRule rule) && Occupies(rule, piece, position));
         if (pierced is not null)
         {
-          ResolvePieceDamage(state, attacker, action.Team, pierced.Id, null);
+          ResolveSharedPieceDamage(state, attacker, action.Team, pierced.Id, null);
         }
       }
     }
@@ -196,13 +196,13 @@ public static partial class CpuGameRules
       attackerIndex = FindPieceIndex(state.Pieces, attacker.Id);
       if (attackerIndex >= 0)
       {
-        HandlePieceDestroyed(state, state.Pieces[attackerIndex], null);
+        HandleSharedPieceDestroyed(state, state.Pieces[attackerIndex], null);
       }
     }
 
     if (state.Winner is null)
     {
-      SpendAction(state, action.Team);
+      SpendSharedAction(state, action.Team);
     }
   }
 
@@ -260,7 +260,7 @@ public static partial class CpuGameRules
       }
     }
 
-    SpendAction(state, action.Team);
+    SpendSharedAction(state, action.Team);
   }
 
   private static void ApplyEngineerAbility(CpuMutableGameState state, int actorIndex, UseAbilityAction action)
@@ -311,7 +311,7 @@ public static partial class CpuGameRules
         HasAttackedThisTurn = true,
         CannotContributeToConquestThisTurn = true
       };
-      SpendAction(state, action.Team);
+      SpendSharedAction(state, action.Team);
       return;
     }
 
@@ -337,7 +337,7 @@ public static partial class CpuGameRules
 
     if (state.InitialBuy is null)
     {
-      SpendAction(state, action.Team);
+      SpendSharedAction(state, action.Team);
     }
     else
     {
@@ -349,13 +349,13 @@ public static partial class CpuGameRules
   {
     if (!Globals.ActionLimitsEnabled)
     {
-      CompleteTurn(state, team);
+      CompleteSharedTurn(state, team);
       return;
     }
 
     CpuTeamState current = state.Teams[team];
     state.Teams[team] = current with { ActionsRemaining = 1 };
-    SpendAction(state, team);
+    SpendSharedAction(state, team);
   }
 
   private static void ApplyStopInitialBuying(CpuMutableGameState state, NetworkTeam team)
