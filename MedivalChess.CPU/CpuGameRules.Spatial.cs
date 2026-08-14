@@ -45,7 +45,7 @@ public static partial class CpuGameRules
     }
 
     return AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)
-      ? rule with { MoveRange = 2, MovePattern = RuleShape.Straight }
+      ? rule with { MoveRange = AbilityRules.CavalierFollowUpMovement, MovePattern = RuleShape.Straight }
       : rule;
   }
 
@@ -64,8 +64,8 @@ public static partial class CpuGameRules
       destination.x,
       destination.y,
       piece.Id,
-      piece.Type == "Elephant" || mayUsePalaceSupport,
-      piece.Type == "Elephant" ? piece.Team : null
+      AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
+      null
     );
 
   private static bool CanPlace(
@@ -75,7 +75,7 @@ public static partial class CpuGameRules
     int x,
     int y,
     string? ignoredPieceId = null,
-    bool elephantCanIgnoreLakes = false,
+    bool canIgnoreLakes = false,
     NetworkTeam? teamWhoseEnemiesMayBeOverlapped = null
   )
   {
@@ -85,7 +85,7 @@ public static partial class CpuGameRules
     }
     foreach ((int x, int y) square in OccupiedSquares(rule, (x, y)))
     {
-      if ((!elephantCanIgnoreLakes && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+      if ((!canIgnoreLakes && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
       {
         return false;
       }
@@ -114,7 +114,7 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        bool ignoresTerrain = piece.Type == "Elephant" ||
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
             (!ignoresTerrain && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
@@ -123,7 +123,7 @@ public static partial class CpuGameRules
         }
         NetworkPiece? blocker = pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id &&
           other.Type != "Farm" && UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
-        if (blocker is not null && !(piece.Type == "Elephant" && blocker.Team != piece.Team))
+        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team))
         {
           return false;
         }
@@ -146,19 +146,16 @@ public static partial class CpuGameRules
     (int x, int y) destination
   )
   {
-    if (rule.Type == "Elephant")
-    {
-      return 1;
-    }
     int cost = 0;
     bool ignoresTerrain = IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
         (roadOwner == piece.Team || roadOwner == NetworkTeam.Neutral);
-      cost = Math.Max(cost, state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
         ? 2
-        : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1);
+        : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1;
+      cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
     }
     return cost;
   }
@@ -172,7 +169,7 @@ public static partial class CpuGameRules
     (int x, int y) to
   )
   {
-    if (rule.Type == "Elephant" || IsPalaceAssistedMovement(pieces, piece, rule, from, to))
+    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(pieces, piece, rule, from, to))
     {
       return false;
     }
@@ -234,10 +231,6 @@ public static partial class CpuGameRules
     if (!UnitRules.TryGet(attacker.Type, out UnitRule rule))
     {
       return false;
-    }
-    if (rule.Type == "Catapult")
-    {
-      return true;
     }
     return LineOfSightRules.HasClearAttackPath(
       rule,
