@@ -20,9 +20,15 @@ public static class MovementRules
       callerMovementRangeAt(destination) + AbilityRules.GetMovementRangeBonus(unit, team, origin, destination);
     int maximumRange = (maximumMovementRange ?? unit.MoveRange) + AbilityRules.GetMaximumMovementRangeBonus(unit);
 
-    if (unit.MovePattern == RuleShape.Line)
+    if (unit.MovePattern is RuleShape.Line or RuleShape.Diagonal or RuleShape.LineOrDiagonal)
     {
-      return FindLinePaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver, stepCost, movementRangeAt, maximumRange);
+      return FindRayPaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver,
+        stepCost, movementRangeAt, maximumRange);
+    }
+
+    if (unit.MovePattern == RuleShape.ChessKnight)
+    {
+      return FindKnightPaths(unit, origin, canLand, canTravelThrough, landingCost, movementRangeAt);
     }
 
     Dictionary<(int x, int y), int> bestCosts = new() { [origin] = 0 };
@@ -36,32 +42,29 @@ public static class MovementRules
 
       foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
       {
-        for (int stepDistance = 1; stepDistance <= GetMaximumStepDistance(unit, direction); stepDistance++)
-        {
-          var next = (x: current.Position.x + direction.x * stepDistance, y: current.Position.y + direction.y * stepDistance);
-          if (!canTravelThrough(current.Position, next)) continue;
+        var next = (x: current.Position.x + direction.x, y: current.Position.y + direction.y);
+        if (!canTravelThrough(current.Position, next)) continue;
 
-          int nextCost = crossesRiver(current.Position, next)
-            ? GetRiverCrossingCost(current.Cost, unit.MoveRange)
-            : current.Cost + (stepCost?.Invoke(current.Position, next) ?? landingCost(next));
-          int effectiveRange = movementRangeAt(next);
-          bool isInitialStep = current.Path.Count == 0;
-          bool exceedsMovementRange = nextCost > effectiveRange;
-          if ((exceedsMovementRange && !isInitialStep) ||
-              (bestCosts.TryGetValue(next, out int bestCost) && bestCost <= nextCost)) continue;
+        int nextCost = crossesRiver(current.Position, next)
+          ? GetRiverCrossingCost(current.Cost, unit.MoveRange)
+          : current.Cost + (stepCost?.Invoke(current.Position, next) ?? landingCost(next));
+        int effectiveRange = movementRangeAt(next);
+        bool isInitialStep = current.Path.Count == 0;
+        bool exceedsMovementRange = nextCost > effectiveRange;
+        if ((exceedsMovementRange && !isInitialStep) ||
+            (bestCosts.TryGetValue(next, out int bestCost) && bestCost <= nextCost)) continue;
 
-          List<(int x, int y)> nextPath = [.. current.Path, next];
-          bestCosts[next] = nextCost;
-          if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = nextPath;
-          if (!exceedsMovementRange) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
-        }
+        List<(int x, int y)> nextPath = [.. current.Path, next];
+        bestCosts[next] = nextCost;
+        if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = nextPath;
+        if (!exceedsMovementRange) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
       }
     }
 
     return paths;
   }
 
-  private static Dictionary<(int x, int y), List<(int x, int y)>> FindLinePaths(
+  private static Dictionary<(int x, int y), List<(int x, int y)>> FindRayPaths(
     UnitRule unit,
     (int x, int y) origin,
     NetworkTeam team,
@@ -70,12 +73,11 @@ public static class MovementRules
     Func<(int x, int y), int> landingCost,
     Func<(int x, int y), (int x, int y), bool> crossesRiver,
     Func<(int x, int y), (int x, int y), int>? stepCost,
-    Func<(int x, int y), int>? movementRangeAt,
+    Func<(int x, int y), int> movementRangeAt,
     int maximumMovementRange
   )
   {
     Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
-    movementRangeAt ??= _ => unit.MoveRange;
 
     foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
     {
@@ -108,16 +110,50 @@ public static class MovementRules
     return paths;
   }
 
+  private static Dictionary<(int x, int y), List<(int x, int y)>> FindKnightPaths(
+    UnitRule unit,
+    (int x, int y) origin,
+    Func<(int x, int y), bool> canLand,
+    Func<(int x, int y), (int x, int y), bool> canTravelThrough,
+    Func<(int x, int y), int> landingCost,
+    Func<(int x, int y), int> movementRangeAt
+  )
+  {
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
+    foreach ((int x, int y) offset in KnightOffsets)
+    {
+      var destination = (x: origin.x + offset.x, y: origin.y + offset.y);
+      // A knight jumps intervening units/terrain, but its landing square must itself be valid.
+      if (!canTravelThrough(destination, destination) || !canLand(destination)) continue;
+      int effectiveRange = movementRangeAt(destination);
+      if (landingCost(destination) <= effectiveRange &&
+          UnitRules.CanMove(unit, origin.x, origin.y, destination.x, destination.y, effectiveRange))
+      {
+        paths[destination] = [destination];
+      }
+    }
+    return paths;
+  }
+
   private static int GetRiverCrossingCost(int currentCost, int baseMovementRange) => Math.Max(currentCost + 1, baseMovementRange);
+
+  private static readonly (int x, int y)[] KnightOffsets =
+  [
+    (1, 2), (2, 1), (-1, 2), (-2, 1),
+    (1, -2), (2, -1), (-1, -2), (-2, -1)
+  ];
 
   public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
   {
     RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
     RuleShape.Line => [(1, 0), (-1, 0), (0, 1), (0, -1)],
+    RuleShape.Diagonal => [(1, 1), (1, -1), (-1, 1), (-1, -1)],
+    RuleShape.LineOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     RuleShape.Any or RuleShape.Circle => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
     RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),
     RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
+    RuleShape.ChessKnight => KnightOffsets,
     _ => []
   };
 
@@ -128,8 +164,6 @@ public static class MovementRules
       ? [forward, (-1, forward.y), (1, forward.y)]
       : [forward, (forward.x, -1), (forward.x, 1)];
   }
-
-  private static int GetMaximumStepDistance(UnitRule unit, (int x, int y) direction) => 1;
 
   private sealed record MovementState((int x, int y) Position, int Cost, List<(int x, int y)> Path);
 }
