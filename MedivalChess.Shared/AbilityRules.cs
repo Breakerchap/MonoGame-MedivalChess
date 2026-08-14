@@ -20,9 +20,8 @@ public static class AbilityRules
   public static bool CanTravelThroughUnits(UnitRule unit) => unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
   public static bool IsTrampleAttacker(UnitRule unit) => unit.Type == nameof(PieceType.Elephant);
 
-  /// <summary>Catapult ignores ordinary line-of-sight blockers. Princess ignores units naturally but forests still block it.</summary>
-  public static bool AttacksOverObstacles(UnitRule unit) => unit.Type == nameof(PieceType.Catapult);
-  public static bool AttacksThroughForests(UnitRule unit) => unit.Type == nameof(PieceType.Artemis);
+  public static bool AttacksOverObstacles(UnitRule unit) => unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess);
+  public static bool AttacksThroughForests(UnitRule unit) => unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess);
 
   public static bool IsProjectileAttack(UnitRule attacker) => attacker.Type is
     nameof(PieceType.Archer) or nameof(PieceType.Crossbowman) or nameof(PieceType.Ninja) or
@@ -72,7 +71,9 @@ public static class AbilityRules
   }
 
   public static bool IsEmissaryCompanion(UnitRule unit, (int x, int y) emissaryPosition, (int x, int y) unitPosition) =>
-    Math.Max(Math.Abs(unitPosition.x - emissaryPosition.x), Math.Abs(unitPosition.y - emissaryPosition.y)) == 1;
+    unit.Width == 1 && unit.Height == 1 &&
+    Math.Abs(unitPosition.x - emissaryPosition.x) == 1 &&
+    Math.Abs(unitPosition.y - emissaryPosition.y) == 1;
 
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
@@ -116,7 +117,7 @@ public static class AbilityRules
 
   public static bool CanOxAttach(UnitRule ox, UnitRule target, bool targetIsAttached, bool oxAlreadyHasCargo) =>
     ox.Type == nameof(PieceType.Ox) && !targetIsAttached && !oxAlreadyHasCargo &&
-    ((target.Width == 1 && target.Height == 1) || target.Category == RuleCategory.Mechanical);
+    target.Width == 1 && target.Height == 1;
 
   public static bool IsEngineerBuild(string ability) =>
     string.Equals(ability, "Road", StringComparison.OrdinalIgnoreCase) ||
