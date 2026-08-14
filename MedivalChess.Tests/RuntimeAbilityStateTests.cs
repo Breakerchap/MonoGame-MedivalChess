@@ -72,9 +72,11 @@ public sealed class RuntimeAbilityStateTests
   }
 
   [Fact]
-  public void ZombieTurnsIntoFleshInsteadOfBeingRemovedByLethalDamage()
+  public void ZombieTurnsIntoFleshAndFleshReturnsToZombieOnNextOwnerTurn()
   {
+    PieceSetup setup = new();
     Piece zombie = new(PieceDefinitions.Zombie, (3, 4), TeamName.Blue);
+    setup.AddPiece(zombie);
 
     zombie.CurrentHealth = 0;
 
@@ -82,5 +84,53 @@ public sealed class RuntimeAbilityStateTests
     Assert.Equal(PieceDefinitions.Flesh.Health, zombie.CurrentHealth);
     Assert.Equal((3, 4), zombie.Position);
     Assert.Equal(TeamName.Blue, zombie.Team);
+
+    zombie.HasMovedThisTurn = false;
+    Assert.Same(PieceDefinitions.Zombie, zombie.Definition);
+    Assert.Equal(PieceDefinitions.Zombie.Health, zombie.CurrentHealth);
+  }
+
+  [Fact]
+  public void GhoulExpiresAfterFourOwnerTurns()
+  {
+    PieceSetup setup = new();
+    Piece ghoul = new(PieceDefinitions.Ghoul, (0, 0), TeamName.Red);
+    setup.AddPiece(ghoul);
+
+    for (int turn = 0; turn < AbilityRules.GhoulLifetimeTurns - 1; turn++)
+    {
+      ghoul.HasMovedThisTurn = false;
+      Assert.Contains(ghoul, setup.Pieces);
+    }
+
+    ghoul.HasMovedThisTurn = false;
+    Assert.DoesNotContain(ghoul, setup.Pieces);
+  }
+
+  [Fact]
+  public void TumbleweedExpiresAfterThreeOwnerRounds()
+  {
+    PieceSetup setup = new();
+    Piece tumbleweed = new(PieceDefinitions.Tumbleweed, (0, 0), TeamName.Red);
+    setup.AddPiece(tumbleweed);
+
+    tumbleweed.HasMovedThisTurn = false;
+    tumbleweed.HasMovedThisTurn = false;
+    Assert.Contains(tumbleweed, setup.Pieces);
+
+    tumbleweed.HasMovedThisTurn = false;
+    Assert.DoesNotContain(tumbleweed, setup.Pieces);
+  }
+
+  [Fact]
+  public void BerserkerDoublesItsAttackAtTwentyHealthOrLess()
+  {
+    Piece berserker = new(PieceDefinitions.Berserker, (0, 0), TeamName.Red);
+
+    Assert.Equal(20, berserker.Definition.Attack);
+    berserker.CurrentHealth = 20;
+    Assert.Equal(40, berserker.Definition.Attack);
+    berserker.CurrentHealth = 30;
+    Assert.Equal(20, berserker.Definition.Attack);
   }
 }
