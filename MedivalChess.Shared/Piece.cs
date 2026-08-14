@@ -30,6 +30,7 @@ public enum Shape
 {
   Any,
   Straight,
+  Circle,
   Line,
   Diagonal,
   LineOrDiagonal,
@@ -291,12 +292,12 @@ public static class PieceDefinitions
     PieceType.Archer,
     "Arc",
     Pack.Base,
-    ((3, 3), Shape.Straight),
+    ((3, 3), Shape.Circle),
     10,
     10,
     (1, 1),
     (2, 3),
-    Shape.Any,
+    Shape.Circle,
     25
   );
 
@@ -389,7 +390,7 @@ public static class PieceDefinitions
     15,
     (1, 1),
     (2, 3),
-    Shape.Straight,
+    Shape.Circle,
     55,
     "Every adjacent and diagonally adjacent unit to the target take 10 damage, including friendly units."
   );
@@ -486,7 +487,7 @@ public static class PieceDefinitions
     70,
     (1, 1),
     (1, 1),
-    Shape.Any,
+    Shape.Circle,
     0,
     "Moves (diagonally) adjacent friendly 1x1 pieces with it."
   );
@@ -527,12 +528,12 @@ public static class PieceDefinitions
     PieceType.Ninja,
     "Nj",
     Pack.Dynasty,
-    ((4, 4), Shape.Straight),
+    ((4, 4), Shape.Circle),
     5,
     10,
     (1, 1),
     (2, 4),
-    Shape.Straight,
+    Shape.Circle,
     40,
     "May attack up to three times per turn."
   );
@@ -617,7 +618,7 @@ public static class PieceDefinitions
     PieceType.Adventurer,
     "Adv",
     Pack.Fantasy,
-    ((3, 3), Shape.Straight),
+    ((3, 3), Shape.Circle),
     10,
     20,
     (1, 1),
@@ -637,7 +638,7 @@ public static class PieceDefinitions
     (2, 4),
     Shape.Any,
     35,
-    "Shoots a fireball exploding in a 3x3 area dealing 15 damage to all enemies not in the middle of the explosion."
+    "Deals damage in a 3x3 area centred on the unit it attacks."
   );
 
   public static readonly PieceDefinition Dragonborn = new(
@@ -698,25 +699,21 @@ public static class PieceDefinitions
     0,
     "This unit cannot be bought. After one turn, transform into Zombie."
   );
-
-  /*
-   * The PDF lists Ghoul's Health as "—", so there is no grounded numeric
-   * value to put into PieceDefinition.Health yet.
-   *
-   * public static readonly PieceDefinition Ghoul = new(
-   *   PieceType.Ghoul,
-   *   "Gou",
-   *   Pack.Undead,
-   *   ((2, 2), Shape.Any),
-   *   15,
-   *   ???,
-   *   (1, 1),
-   *   (1, 1),
-   *   Shape.Straight,
-   *   35,
-   *   "Dies after 4 turns."
-   * );
-   */
+  
+   public static readonly PieceDefinition Ghoul = new(
+     PieceType.Ghoul,
+     "Gou",
+     Pack.Undead,
+     ((2, 2), Shape.Any),
+     15,
+     9999,
+     (1, 1),
+     (1, 1),
+     Shape.Straight,
+     35,
+     "Dies after 4 turns."
+   );
+   
 
   public static readonly PieceDefinition Phantom = new(
     PieceType.Phantom,
@@ -767,7 +764,7 @@ public static class PieceDefinitions
     PieceType.Zeus,
     "ZEU",
     Pack.Greek,
-    ((2, 2), Shape.Any),
+    ((2, 2), Shape.Circle),
     15,
     75,
     (1, 1),
@@ -834,7 +831,7 @@ public static class PieceDefinitions
     PieceType.Pegasus,
     "Peg",
     Pack.Greek,
-    ((2, 4), Shape.Straight),
+    ((2, 4), Shape.Circle),
     10,
     25,
     (1, 1),

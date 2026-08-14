@@ -187,6 +187,24 @@ internal static class ShapeFuncs
     return validSquares;
   }
 
+  internal static List<(int x, int y)> CircleShape(int range)
+  {
+    List<(int x, int y)> validSquares = new();
+
+    for (int x = -range; x <= range; x++)
+    {
+      for (int y = -range; y <= range; y++)
+      {
+        if (x * x + y * y <= range * range)
+        {
+          validSquares.Add((x, y));
+        }
+      }
+    }
+
+    return validSquares;
+  }
+
   internal static List<(int x, int y)> OrthogonalStepDirections()
   {
     return [(1, 0), (-1, 0), (0, 1), (0, -1)];
