@@ -20,8 +20,6 @@ public sealed class ShapeGeometryTests
     Assert.False(UnitRules.CanAttackOffset(RuleShape.Straight, 1, 3, NetworkTeam.Red, 2, 2));
     Assert.True(Actions.IsValidMovementDestination(soldier, (2, 1)));
     Assert.False(Actions.IsValidMovementDestination(soldier, (2, 2)));
-    Assert.True(Actions.CanAttackSquare(bombard, (6, 6)));
-    Assert.False(Actions.CanAttackSquare(bombard, (7, 7)));
   }
 
   [Fact]
@@ -33,6 +31,37 @@ public sealed class ShapeGeometryTests
     Assert.False(UnitRules.CanMove(any, 0, 0, 4, 0));
     Assert.True(UnitRules.CanAttackOffset(RuleShape.Any, 1, 3, NetworkTeam.Red, 3, 3));
     Assert.False(UnitRules.CanAttackOffset(RuleShape.Any, 1, 3, NetworkTeam.Red, 4, 0));
+  }
+
+  [Fact]
+  public void CircleRange_UsesEuclideanDistance()
+  {
+    UnitRule circle = CreateRule(RuleShape.Circle, 3);
+    Piece archer = new(PieceDefinitions.Archer, (0, 0), TeamName.Red);
+
+    Assert.True(UnitRules.CanMove(circle, 0, 0, 2, 2));
+    Assert.True(UnitRules.CanMove(circle, 0, 0, 3, 0));
+    Assert.False(UnitRules.CanMove(circle, 0, 0, 3, 1));
+    Assert.False(UnitRules.CanMove(circle, 0, 0, 3, 3));
+
+    Assert.True(UnitRules.CanAttackOffset(RuleShape.Circle, 1, 3, NetworkTeam.Red, 2, 2));
+    Assert.False(UnitRules.CanAttackOffset(RuleShape.Circle, 1, 3, NetworkTeam.Red, 3, 1));
+
+    Assert.Contains((2, 2), ShapeFuncs.CircleShape(3));
+    Assert.DoesNotContain((3, 1), ShapeFuncs.CircleShape(3));
+    Assert.True(Actions.CanAttackSquare(archer, (2, 2)));
+    Assert.False(Actions.CanAttackSquare(archer, (3, 1)));
+  }
+
+  [Fact]
+  public void MinimumCircleMovementRange_ExcludesNearDestinations()
+  {
+    UnitRule circle = CreateRule(RuleShape.Circle, 6) with { MinimumMoveRange = 4 };
+
+    Assert.False(UnitRules.CanMove(circle, 0, 0, 3, 0));
+    Assert.True(UnitRules.CanMove(circle, 0, 0, 4, 0));
+    Assert.True(UnitRules.CanMove(circle, 0, 0, 4, 4));
+    Assert.False(UnitRules.CanMove(circle, 0, 0, 5, 4));
   }
 
   [Fact]
