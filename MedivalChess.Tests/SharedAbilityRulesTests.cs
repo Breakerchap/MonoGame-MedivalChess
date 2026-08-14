@@ -79,6 +79,32 @@ public sealed class SharedAbilityRulesTests
   }
 
   [Fact]
+  public void Ox_AttachmentRulesComeFromSharedAbilityRules()
+  {
+    UnitRule ox = UnitRules.GetRequired(nameof(PieceType.Ox));
+    UnitRule soldier = UnitRules.GetRequired(nameof(PieceType.Soldier));
+
+    Assert.True(AbilityRules.CanOxAttach(ox, soldier, false, false));
+    Assert.Equal(2, AbilityRules.GetAttachmentMovementBonus(nameof(PieceType.Ox)));
+    Assert.True(AbilityRules.SharesIncomingDamageWithHost(nameof(PieceType.Ox)));
+  }
+
+  [Fact]
+  public void ElephantAndSleipnir_UseTheSameSharedTerrainAndTraversalRules()
+  {
+    UnitRule elephant = UnitRules.GetRequired(nameof(PieceType.Elephant));
+    UnitRule sleipnir = UnitRules.GetRequired(nameof(PieceType.Sleipnir));
+
+    Assert.Equal(1, AbilityRules.ApplyTerrainMovementCost(elephant, 2));
+    Assert.Equal(1, AbilityRules.ApplyTerrainMovementCost(sleipnir, 2));
+    Assert.True(AbilityRules.CanTravelThroughUnit(elephant, NetworkTeam.Red, NetworkTeam.Blue));
+    Assert.False(AbilityRules.CanTravelThroughUnit(elephant, NetworkTeam.Red, NetworkTeam.Red));
+    Assert.True(AbilityRules.CanTravelThroughUnit(sleipnir, NetworkTeam.Red, NetworkTeam.Red));
+    Assert.True(AbilityRules.IgnoresRivers(elephant));
+    Assert.True(AbilityRules.IgnoresRivers(sleipnir));
+  }
+
+  [Fact]
   public void BombardPlan_UsesSharedTwentyDamageSplashIncludingFriendlies()
   {
     AbilityUnitSnapshot attacker = new("bomb", nameof(PieceType.Bombard), NetworkTeam.Red, 0, 0, 1, 1);
