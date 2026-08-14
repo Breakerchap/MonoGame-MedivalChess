@@ -6,6 +6,7 @@ on:
     paths:
       - tools/apply_unit_ability_refactor.py
       - tools/cleanup_shared_ability_duplicates.py
+      - tools/cleanup_shared_ability_duplicates_v2.py
 
 permissions:
   contents: write
@@ -20,7 +21,9 @@ jobs:
       - name: Apply checked source transformation
         shell: bash
         run: |
-          if [ -f tools/cleanup_shared_ability_duplicates.py ]; then
+          if [ -f tools/cleanup_shared_ability_duplicates_v2.py ]; then
+            python3 tools/cleanup_shared_ability_duplicates_v2.py
+          elif [ -f tools/cleanup_shared_ability_duplicates.py ]; then
             python3 tools/cleanup_shared_ability_duplicates.py
           else
             python3 tools/apply_unit_ability_refactor.py
