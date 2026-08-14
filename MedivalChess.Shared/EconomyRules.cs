@@ -14,6 +14,21 @@ public readonly record struct UnitUpkeepResult(
   UnpaidUnitUpkeepEffect UnpaidEffect
 );
 
+public readonly record struct UnitUpkeepRequest(string UnitId, string UnitType);
+
+public readonly record struct UnitUpkeepDecision(
+  string UnitId,
+  string UnitType,
+  int Cost,
+  bool Paid,
+  UnpaidUnitUpkeepEffect UnpaidEffect
+);
+
+public sealed record UnitUpkeepSequenceResult(
+  int RemainingMoney,
+  IReadOnlyList<UnitUpkeepDecision> Decisions
+);
+
 /// <summary>Shared price and upkeep calculations used by local, CPU and authoritative matches.</summary>
 public static class EconomyRules
 {
@@ -41,8 +56,8 @@ public static class EconomyRules
   }
 
   /// <summary>
-  /// Resolves the mandatory per-owner-turn upkeep attached to a unit ability. Ordinary units
-  /// return a zero-cost paid result. The runtime applies the returned unpaid effect to its own state.
+  /// Resolves the mandatory per-owner-turn upkeep attached to one unit. Ordinary units return a
+  /// zero-cost paid result. The runtime applies the returned unpaid effect to its own state.
   /// </summary>
   public static UnitUpkeepResult ResolveAbilityUpkeep(string unitType, int currentMoney)
   {
@@ -69,5 +84,49 @@ public static class EconomyRules
     }
 
     return new UnitUpkeepResult(cost, (int)Math.Clamp((long)currentMoney - cost, int.MinValue, int.MaxValue), true, UnpaidUnitUpkeepEffect.None);
+  }
+
+  /// <summary>
+  /// Resolves all ability upkeep for a team in a deterministic order. Royal-preserving President
+  /// upkeep is paid before Mercenaries, so an optional mercenary wage can never consume the money
+  /// needed to keep the President alive. Every runtime must use this sequence rather than choosing
+  /// its own payment order.
+  /// </summary>
+  public static UnitUpkeepSequenceResult ResolveAbilityUpkeepSequence(
+    int currentMoney,
+    IEnumerable<UnitUpkeepRequest> units
+  )
+  {
+    UnitUpkeepRequest[] ordered = units
+      .Where(unit => unit.UnitType is nameof(PieceType.President) or nameof(PieceType.Mercenary))
+      .OrderBy(unit => unit.UnitType == nameof(PieceType.President) ? 0 : 1)
+      .ThenBy(unit => unit.UnitId, StringComparer.Ordinal)
+      .ToArray();
+
+    int money = currentMoney;
+    List<UnitUpkeepDecision> decisions = [];
+    foreach (UnitUpkeepRequest unit in ordered)
+    {
+      UnitUpkeepResult result = ResolveAbilityUpkeep(unit.UnitType, money);
+      decisions.Add(new(
+        unit.UnitId,
+        unit.UnitType,
+        result.Cost,
+        result.Paid,
+        result.UnpaidEffect
+      ));
+      if (result.Paid)
+      {
+        money = result.RemainingMoney;
+      }
+      if (result.UnpaidEffect == UnpaidUnitUpkeepEffect.LoseMatch)
+      {
+        // Once a mandatory Royal upkeep cannot be paid the match is lost; later optional wages
+        // are irrelevant and must not produce different state in different runtimes.
+        break;
+      }
+    }
+
+    return new UnitUpkeepSequenceResult(money, decisions);
   }
 }
