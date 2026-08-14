@@ -282,6 +282,26 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
         }
       }
     }
+    else if (actor.Type == nameof(PieceType.Phantom))
+    {
+      if (!string.IsNullOrEmpty(actor.PossessedUnitId))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, "Unpossess", actor.PossessedUnitId, actor.X, actor.Y), actions);
+      }
+      else
+      {
+        foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team == actor.Team && piece.Id != actor.Id)
+          .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+        {
+          foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+          {
+            AddIfLegal(state, new UseAbilityAction(
+              actor.Team, actor.Id, "Possess", target.Id, targetSquare.x, targetSquare.y), actions);
+          }
+        }
+      }
+    }
     else if (actor.Type is "Guard" or "Ox")
     {
       foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team == actor.Team && piece.Id != actor.Id)

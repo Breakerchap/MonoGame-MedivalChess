@@ -195,8 +195,8 @@ public static partial class CpuGameRules
       AddMoney(state, piece.Team, CombatRules.RoundCurrencyToNearestFive(unitPrice * state.Source.Configuration.DefeatedTeamRefundMultiplier));
     }
 
-    bool wasRoyal = (UnitRules.TryGet(piece.Type, out UnitRule destroyedRule) && destroyedRule.Category == RuleCategory.Royal) ||
-      piece.IsRoyalProxy;
+    bool royalDeath = IsSharedCpuRoyalDeath(state, piece);
+    UnitRules.TryGet(piece.Type, out UnitRule destroyedRule);
     RemovePiece(state, piece.Id);
 
     foreach (AbilityDamageInstruction instruction in deathExplosion)
@@ -204,15 +204,7 @@ public static partial class CpuGameRules
       ApplySharedFixedDamage(state, instruction.TargetId, piece.Team, instruction.FixedDamage, applyCombatMitigation: true);
     }
 
-    if (!wasRoyal || state.Winner is not null)
-    {
-      return;
-    }
-
-    // Goblin Royalty is one Royal represented by four separate units. Losing one goblin is not
-    // Royal death while another Goblin Royalty unit belonging to that team remains.
-    if (piece.Type == nameof(PieceType.GoblinRoyalty) && state.Pieces.Any(candidate =>
-      candidate.Team == piece.Team && candidate.Type == nameof(PieceType.GoblinRoyalty)))
+    if (!royalDeath || state.Winner is not null)
     {
       return;
     }

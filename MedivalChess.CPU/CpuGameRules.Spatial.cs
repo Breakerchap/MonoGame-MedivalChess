@@ -14,7 +14,7 @@ public static partial class CpuGameRules
   {
     rule = GetEffectiveMovementRule(source, pieces, piece, rule);
     bool hasPalaceSupport = HasPalaceSupport(pieces, piece);
-    return MovementRules.FindPaths(
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = MovementRules.FindPaths(
       rule,
       (piece.X, piece.Y),
       piece.Team,
@@ -25,8 +25,11 @@ public static partial class CpuGameRules
       (from, destination) => GetMovementCost(source, pieces, piece, rule, from, destination),
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         pieces, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
-      rule.MoveRange + (hasPalaceSupport ? 1 : 0)
+      rule.MoveRange + (hasPalaceSupport ? 1 : 0),
+      position => CanContinueChessPath(pieces, piece, rule, position)
     );
+    AddPawnCapturePaths(source, pieces, piece, rule, paths);
+    return paths;
   }
 
   private static UnitRule GetEffectiveMovementRule(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule)
@@ -57,8 +60,10 @@ public static partial class CpuGameRules
     UnitRule rule,
     (int x, int y) destination,
     bool mayUsePalaceSupport = false
-  ) =>
-    CanPlace(
+  )
+  {
+    if (CanChessCaptureLand(state, pieces, piece, rule, destination)) return true;
+    return CanPlace(
       state,
       pieces,
       rule,
@@ -68,6 +73,7 @@ public static partial class CpuGameRules
       AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
       null
     );
+  }
 
   private static bool CanPlace(
     CpuGameState state,
@@ -124,7 +130,8 @@ public static partial class CpuGameRules
         }
         NetworkPiece? blocker = pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id &&
           other.Type != "Farm" && UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
-        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team))
+        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
+            GetChessCaptureTarget(pieces, piece, rule, position) != blocker)
         {
           return false;
         }

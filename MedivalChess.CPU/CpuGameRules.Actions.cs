@@ -19,6 +19,8 @@ public static partial class CpuGameRules
 
     IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> paths = GetLegalMovementPaths(state.Source, state.Pieces, piece, UnitRules.GetRequired(piece.Type));
     List<(int x, int y)> path = paths[(action.DestinationX, action.DestinationY)];
+    NetworkPiece? chessCaptureTarget = GetChessCaptureTarget(
+      state.Pieces, piece, UnitRules.GetRequired(piece.Type), (action.DestinationX, action.DestinationY));
     int oldX = piece.X;
     int oldY = piece.Y;
     bool elephantDamaged = false;
@@ -35,24 +37,35 @@ public static partial class CpuGameRules
       }
     }
 
+    bool chessCaptureSurvived = false;
+    if (chessCaptureTarget is not null)
+    {
+      ResolveSharedPieceDamage(state, piece, action.Team, chessCaptureTarget.Id, null);
+      chessCaptureSurvived = FindPiece(state.Pieces, chessCaptureTarget.Id) is not null;
+    }
+
     index = FindPieceIndex(state.Pieces, action.PieceId);
     if (index < 0)
     {
       return;
     }
+    (int finalX, int finalY) = chessCaptureSurvived
+      ? ChessAbilityRules.GetFailedCaptureFallback((oldX, oldY), path)
+      : (action.DestinationX, action.DestinationY);
+    List<(int x, int y)> actualPath = chessCaptureSurvived && path.Count > 0 ? path[..^1] : path;
     piece = state.Pieces[index] with
     {
-      X = action.DestinationX,
-      Y = action.DestinationY,
+      X = finalX,
+      Y = finalY,
       HasMovedThisTurn = true,
-      HasAttackedThisTurn = elephantDamaged || state.Pieces[index].HasAttackedThisTurn,
+      HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamaged || state.Pieces[index].HasAttackedThisTurn,
       CavalierFollowUpMoveAvailable = false
     };
     state.Pieces[index] = piece;
-    state.RecordMove(action.Team, piece.Id, oldX, oldY, action.DestinationX, action.DestinationY);
+    state.RecordMove(action.Team, piece.Id, oldX, oldY, finalX, finalY);
     MoveAttachedPieces(state, piece);
     MoveEmissaryCompanions(state, piece, oldX, oldY);
-    TriggerSharedMinesAlongMovement(state, piece, path);
+    TriggerSharedMinesAlongMovement(state, piece, actualPath);
 
     NetworkPiece? moved = FindPiece(state.Pieces, piece.Id);
     if (moved is not null)
@@ -255,6 +268,9 @@ public static partial class CpuGameRules
             HasMovedThisTurn = true,
             HasAttackedThisTurn = true
           };
+          break;
+        case nameof(PieceType.Phantom):
+          ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);
           break;
         case nameof(PieceType.Phantom):
           ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);

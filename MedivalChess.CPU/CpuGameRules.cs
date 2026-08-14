@@ -291,7 +291,8 @@ public static partial class CpuGameRules
 
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
-    if (!plunderPickup && actor.Type != "Mercenary" && !CanUseActionSquare(actor, action.TargetX, action.TargetY))
+    if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") &&
+        !CanUseActionSquare(actor, action.TargetX, action.TargetY))
     {
       return false;
     }

@@ -2889,7 +2889,7 @@ internal sealed partial class Game1 : Game
   {
     UnitRule movementRule = GetEffectiveMovementRule(piece);
     bool hasPalaceSupport = GetSupportingPalace(piece) is not null;
-    return MovementPathfinder.FindPaths(
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = MovementPathfinder.FindPaths(
       piece,
       destination => CanLandPieceAt(piece, destination, hasPalaceSupport),
       (from, destination) => CanTravelThroughPosition(piece, from, destination),
@@ -2898,8 +2898,11 @@ internal sealed partial class Game1 : Game
       movementRule,
       (from, destination) => GetMovementCost(piece, from, destination),
       destination => GetMovementRangeAt(piece, movementRule, destination),
-      movementRule.MoveRange + (hasPalaceSupport ? 1 : 0)
+      movementRule.MoveRange + (hasPalaceSupport ? 1 : 0),
+      position => CanContinueLocalChessPath(piece, movementRule, position)
     );
+    AddLocalPawnCapturePaths(piece, movementRule, paths);
+    return paths;
   }
 
   private Piece GetSupportingPalace(Piece piece) => piece.Definition.Type == PieceType.Palace
@@ -2980,32 +2983,21 @@ internal sealed partial class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination, bool mayUsePalaceSupport)
   {
-    if (piece.Definition.Type != PieceType.Elephant)
+    UnitRule rule = GetEffectiveMovementRule(piece);
+    if (CanLocalChessCaptureLand(piece, rule, destination))
     {
-      if (!IsFootprintOnBoard(piece.Definition, destination) ||
-          OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey) ||
-          (!mayUsePalaceSupport && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
-      {
-        return false;
-      }
-      return pieceSetup.IsFootprintClear(piece.Definition, destination, piece);
+      return true;
     }
 
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
+      (mayUsePalaceSupport && IsPalaceAssistedMovement(piece, piece.Position, destination));
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
-        OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey))
+        OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey) ||
+        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
     {
       return false;
     }
-
-    // Elephants trample enemies rather than stopping beside them.  They may finish on a
-    // hostile footprint, but friendly units still block them like every other mover.
-    return !pieceSetup.Pieces.Any(other =>
-      other != piece &&
-      other.AttachedTo != piece &&
-      other.AttachedTo is null &&
-      other.Definition.Type != PieceType.Farm &&
-      other.Team == piece.Team &&
-      FootprintsOverlap(piece.Definition, destination, other.Definition, other.Position));
+    return pieceSetup.IsFootprintClear(piece.Definition, destination, piece);
   }
 
   private bool CanTravelThroughPosition(
@@ -3014,39 +3006,35 @@ internal sealed partial class Game1 : Game
     (int x, int y) destination
   )
   {
+    UnitRule rule = GetEffectiveMovementRule(piece);
     foreach ((int x, int y) position in PositionsBetween(from, destination))
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        bool ignoresTerrain = piece.Definition.Type == PieceType.Elephant ||
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(piece, from, destination);
-        bool terrainBlocks = !ignoresTerrain && !IsTraversableTerrainSquare(occupiedSquare);
-        if (terrainBlocks || _barricades.ContainsKey(occupiedSquare) ||
+        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) || _barricades.ContainsKey(occupiedSquare) ||
             !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
         }
 
         Piece blockingPiece = pieceSetup.GetPieceAt(occupiedSquare);
-        if (blockingPiece == null || blockingPiece == piece)
+        if (blockingPiece is null || blockingPiece == piece || blockingPiece.Definition.Type == PieceType.Farm)
         {
           continue;
         }
-
-        if (blockingPiece.Definition.Type == PieceType.Farm)
+        if (AbilityRules.CanTravelThroughUnit(rule, piece.Team.ToNetworkTeam(), blockingPiece.Team.ToNetworkTeam()))
         {
           continue;
         }
-
-        if (piece.Definition.Type == PieceType.Elephant && blockingPiece.Team != piece.Team)
+        if (GetLocalChessCaptureTarget(piece, rule, position) == blockingPiece)
         {
           continue;
         }
-
         return false;
       }
     }
-
     return true;
   }
 
@@ -3057,28 +3045,16 @@ internal sealed partial class Game1 : Game
 
   private int GetMovementCost(Piece piece, (int x, int y) from, (int x, int y) destination)
   {
-    if (piece.Definition.Type == PieceType.Elephant)
-    {
-      return 1;
-    }
+    UnitRule rule = GetEffectiveMovementRule(piece);
     int cost = 0;
     bool ignoresTerrain = IsPalaceAssistedMovement(piece, from, destination);
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       bool usesOwnedRoad = UsesRoad(piece.Team, occupiedSquare);
-      if (_terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain)
-      {
-        cost = Math.Max(cost, 2);
-      }
-      else if (usesOwnedRoad && !_terrain.IsForest(occupiedSquare))
-      {
-        // A road built along open ground costs no movement points.
-        cost = Math.Max(cost, 0);
-      }
-      else
-      {
-        cost = Math.Max(cost, 1);
-      }
+      int ordinaryCost = _terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain
+        ? 2
+        : usesOwnedRoad && !_terrain.IsForest(occupiedSquare) ? 0 : 1;
+      cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
     }
 
     return cost;
@@ -3090,7 +3066,7 @@ internal sealed partial class Game1 : Game
 
   private bool CrossesRiver(Piece piece, (int x, int y) from, (int x, int y) to)
   {
-    if (piece.Definition.Type == PieceType.Elephant || IsPalaceAssistedMovement(piece, from, to))
+    if (AbilityRules.IgnoresRivers(GetEffectiveMovementRule(piece)) || IsPalaceAssistedMovement(piece, from, to))
     {
       return false;
     }
@@ -3532,8 +3508,9 @@ internal sealed partial class Game1 : Game
       );
     }
 
+    bool royalDeath = IsSharedRoyalDeath(damagedPiece);
     pieceSetup.RemovePiece(damagedPiece);
-    if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Regicide)
+    if (royalDeath && _gameMode == GameMode.Regicide)
     {
       if (attackingTeamName is TeamName winner && winner != damagedPiece.Team)
       {
@@ -3541,11 +3518,11 @@ internal sealed partial class Game1 : Game
         _screen = Screen.GameOver;
       }
     }
-    else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Escort)
+    else if (royalDeath && _gameMode == GameMode.Escort)
     {
       RespawnEscortRoyal(damagedPiece);
     }
-    else if (damagedPiece.Definition.Category == PieceCategory.Royal && _gameMode == GameMode.Plunder &&
+    else if (royalDeath && _gameMode == GameMode.Plunder &&
       attackingTeamName is TeamName attacker && attacker != damagedPiece.Team)
     {
       ApplyPlunderRoyalKillPenalty(attacker);
@@ -3617,6 +3594,11 @@ internal sealed partial class Game1 : Game
     }
 
     if (TryPickUpTreasure(actor, targetPosition, targetPiece))
+    {
+      return true;
+    }
+
+    if (TryUseSharedRoyalAbility(actor, targetPiece))
     {
       return true;
     }
@@ -4039,6 +4021,7 @@ internal sealed partial class Game1 : Game
       movedPiece.HasAttackedThisTurn = true;
     }
 
+    destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
     MovePieceWithCompanions(movedPiece, destination);
     if (usesCavalierFollowUpMove)
     {

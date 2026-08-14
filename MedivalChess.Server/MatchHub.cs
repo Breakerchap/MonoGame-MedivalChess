@@ -381,28 +381,43 @@ public sealed partial class MatchStore
         }
       }
 
+      NetworkPiece? chessCaptureTarget = GetServerChessCaptureTarget(
+        foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY));
+      bool chessCaptureSurvived = false;
+      if (chessCaptureTarget is not null)
+      {
+        ResolvePieceDamage(foundMatch, piece, player, chessCaptureTarget.Id, null);
+        chessCaptureSurvived = foundMatch.Pieces.Any(candidate => candidate.Id == chessCaptureTarget.Id);
+      }
+
       int pieceIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
       if (pieceIndex < 0) return new(false, "That unit is no longer on the board.", foundMatch.State());
       int oldX = piece.X;
       int oldY = piece.Y;
-      piece = piece with
+      (int finalX, int finalY) = chessCaptureSurvived
+        ? ChessAbilityRules.GetFailedCaptureFallback((oldX, oldY), movementPath)
+        : (request.ToX, request.ToY);
+      List<(int x, int y)> actualMovementPath = chessCaptureSurvived && movementPath.Count > 0
+        ? movementPath[..^1]
+        : movementPath;
+      piece = foundMatch.Pieces[pieceIndex] with
       {
-        X = request.ToX,
-        Y = request.ToY,
+        X = finalX,
+        Y = finalY,
         HasMovedThisTurn = true,
-        HasAttackedThisTurn = elephantDamagedAnEnemy || piece.HasAttackedThisTurn,
+        HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamagedAnEnemy || foundMatch.Pieces[pieceIndex].HasAttackedThisTurn,
         CavalierFollowUpMoveAvailable = false
       };
       foundMatch.Pieces[pieceIndex] = piece;
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
       MoveEmissaryCompanions(foundMatch, piece, oldX, oldY);
-      TriggerMinesAlongMovement(foundMatch, piece, movementPath);
+      TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
       {
         TryDeliverTreasure(foundMatch, piece);
       }
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id) &&
-          IsEscortVictory(foundMatch, piece, request.ToX, request.ToY))
+          IsEscortVictory(foundMatch, piece, finalX, finalY))
       {
         foundMatch.Winner = piece.Team;
       }
@@ -595,7 +610,8 @@ public sealed partial class MatchStore
         return new(false, "That unit has already acted this turn.", foundMatch.State());
       }
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
-      if (!plunderPickup && actor.Type != "Mercenary" && !CanUseActionSquare(actor, request.TargetX, request.TargetY))
+      if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") &&
+          !CanUseActionSquare(actor, request.TargetX, request.TargetY))
       {
         return new(false, "That square is outside the unit's special-action range.", foundMatch.State());
       }
@@ -1211,8 +1227,10 @@ public sealed partial class MatchStore
       (from, destination) => GetMovementCost(match, piece, rule, from, destination),
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         match, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
-      rule.MoveRange + (HasPalaceSupport(match, piece) ? 1 : 0)
+      rule.MoveRange + (HasPalaceSupport(match, piece) ? 1 : 0),
+      position => CanContinueServerChessPath(match, piece, rule, position)
     );
+    AddServerPawnCapturePaths(match, piece, rule, paths);
     return paths.TryGetValue((destinationX, destinationY), out path!);
   }
 
@@ -1224,11 +1242,13 @@ public sealed partial class MatchStore
     bool mayUsePalaceSupport = false
   )
   {
+    if (CanServerChessCaptureLand(match, piece, rule, destination)) return true;
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      if ((piece.Type != "Elephant" && !mayUsePalaceSupport && match.Terrain.IsLake(square)) ||
-          match.Barricades.ContainsKey(square)) return false;
+      bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
+        (mayUsePalaceSupport && IsPalaceAssistedMovement(match, piece, rule, (piece.X, piece.Y), destination));
+      if ((!ignoresTerrain && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
     }
 
     HashSet<string> ignoredPieces = match.Pieces
@@ -1279,7 +1299,8 @@ public sealed partial class MatchStore
         NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
           UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1));
-        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team)) return false;
+        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
+            GetServerChessCaptureTarget(match, piece, rule, position) != blocker) return false;
       }
 
     return true;
