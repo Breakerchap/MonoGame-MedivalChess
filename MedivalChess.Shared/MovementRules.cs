@@ -1,6 +1,5 @@
 namespace MedivalChess.Shared;
 
-/// <summary>Terrain-aware movement search shared by the local client and authoritative server.</summary>
 public static class MovementRules
 {
   public static Dictionary<(int x, int y), List<(int x, int y)>> FindPaths(
@@ -21,10 +20,7 @@ public static class MovementRules
 
     if (unit.MovePattern == RuleShape.Line)
     {
-      return FindLinePaths(
-        unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver,
-        stepCost, movementRangeAt, maximumRange
-      );
+      return FindLinePaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver, stepCost, movementRangeAt, maximumRange);
     }
 
     Dictionary<(int x, int y), int> bestCosts = new() { [origin] = 0 };
@@ -38,13 +34,9 @@ public static class MovementRules
 
       foreach ((int x, int y) direction in GetStepDirections(unit.MovePattern, team))
       {
-        int maximumStepDistance = GetMaximumStepDistance(unit, direction);
-        for (int stepDistance = 1; stepDistance <= maximumStepDistance; stepDistance++)
+        for (int stepDistance = 1; stepDistance <= GetMaximumStepDistance(unit, direction); stepDistance++)
         {
-          var next = (
-            x: current.Position.x + direction.x * stepDistance,
-            y: current.Position.y + direction.y * stepDistance
-          );
+          var next = (x: current.Position.x + direction.x * stepDistance, y: current.Position.y + direction.y * stepDistance);
           if (!canTravelThrough(current.Position, next)) continue;
 
           int nextCost = crossesRiver(current.Position, next)
@@ -57,11 +49,8 @@ public static class MovementRules
 
           List<(int x, int y)> nextPath = [.. current.Path, next];
           bestCosts[next] = nextCost;
-          if (canLand(next)) paths[next] = nextPath;
-          if (!exceedsMovementRange)
-          {
-            frontier.Enqueue(new MovementState(next, nextCost, nextPath));
-          }
+          if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = nextPath;
+          if (!exceedsMovementRange) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
         }
       }
     }
@@ -93,10 +82,7 @@ public static class MovementRules
 
       for (int distance = 1; distance <= maximumMovementRange; distance++)
       {
-        var next = (
-          x: origin.x + direction.x * distance,
-          y: origin.y + direction.y * distance
-        );
+        var next = (x: origin.x + direction.x * distance, y: origin.y + direction.y * distance);
         if (!canTravelThrough(previous, next)) break;
 
         cost = crossesRiver(previous, next)
@@ -105,12 +91,12 @@ public static class MovementRules
         bool isInitialStep = path.Count == 0;
         if (cost > movementRangeAt(next))
         {
-          if (isInitialStep && canLand(next)) paths[next] = [next];
+          if (isInitialStep && canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = [next];
           break;
         }
 
         path.Add(next);
-        if (canLand(next)) paths[next] = [.. path];
+        if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y)) paths[next] = [.. path];
         previous = next;
       }
     }
@@ -118,19 +104,13 @@ public static class MovementRules
     return paths;
   }
 
-  /// <summary>
-  /// Crossing a river consumes at least the unit's normal movement allowance, but it must never
-  /// reduce movement already spent. This lets a genuine range bonus provide only its extra movement
-  /// instead of allowing successive river crossings to keep resetting the path cost forever.
-  /// </summary>
-  private static int GetRiverCrossingCost(int currentCost, int baseMovementRange) =>
-    Math.Max(currentCost + 1, baseMovementRange);
+  private static int GetRiverCrossingCost(int currentCost, int baseMovementRange) => Math.Max(currentCost + 1, baseMovementRange);
 
   public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
   {
     RuleShape.Straight => [(1, 0), (-1, 0), (0, 1), (0, -1)],
     RuleShape.Line => [(1, 0), (-1, 0), (0, 1), (0, -1)],
-    RuleShape.Any => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
+    RuleShape.Any or RuleShape.Circle => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
     RuleShape.Forward => [TeamRules.GetForwardDirection(team)],
     RuleShape.ForwardOrForwardDiagonal => GetForwardAndDiagonalDirections(team),
     RuleShape.AbsoluteStraightOrDiagonal => [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)],
@@ -145,10 +125,7 @@ public static class MovementRules
       : [forward, (forward.x, -1), (forward.x, 1)];
   }
 
-  private static int GetMaximumStepDistance(UnitRule unit, (int x, int y) direction)
-  {
-    return 1;
-  }
+  private static int GetMaximumStepDistance(UnitRule unit, (int x, int y) direction) => 1;
 
   private sealed record MovementState((int x, int y) Position, int Cost, List<(int x, int y)> Path);
 }
