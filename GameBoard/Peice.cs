@@ -2,6 +2,7 @@ namespace MedivalChess.GameBoard;
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MedivalChess.Player;
 using MedivalChess.Shared;
 
@@ -27,25 +28,24 @@ internal sealed class Piece
     get => _currentHealth;
     set
     {
-      if (value <= 0 && !HasRevived && Definition.Type == PieceType.Shieldbearer)
+      if (value <= 0)
       {
-        HasRevived = true;
-        _currentHealth = AbilityRules.ShieldbearerReviveHealth;
-        return;
-      }
-
-      if (value <= 0 && !HasRevived && Definition.Type == PieceType.Emperor)
-      {
-        HasRevived = true;
-        Definition = PieceDefinitions.TerracottaWarrior;
-        _currentHealth = Definition.Health;
-        return;
-      }
-
-      if (value <= 0 && Definition.Type == PieceType.Zombie)
-      {
-        TransformTo(PieceDefinitions.Flesh);
-        return;
+        LethalAbilityOutcome outcome = AbilityStateRules.ResolveLethalDamage(
+          Definition.Type.ToString(),
+          HasRevived
+        );
+        if (outcome.Kind != LethalAbilityOutcomeKind.Die)
+        {
+          HasRevived = outcome.HasRevived;
+          if (outcome.Kind == LethalAbilityOutcomeKind.Transform)
+          {
+            Definition = ResolveDefinition(outcome.ResultingType);
+            TurnsInCurrentForm = 0;
+          }
+          _currentHealth = outcome.ResultingHealth;
+          RefreshBerserkerAttack();
+          return;
+        }
       }
 
       _currentHealth = value;
@@ -73,9 +73,7 @@ internal sealed class Piece
   }
   internal bool HasAttackedThisTurn
   {
-    get => Definition.Type == PieceType.Ninja
-      ? AttacksThisTurn >= AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString())
-      : _hasAttackedThisTurn;
+    get => _hasAttackedThisTurn;
     set
     {
       if (!_turnStateInitialised)
@@ -94,17 +92,13 @@ internal sealed class Piece
         return;
       }
 
-      if (Definition.Type == PieceType.Ninja)
-      {
-        AttacksThisTurn = Math.Min(
-          AttacksThisTurn + 1,
-          AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString()));
-        _hasAttackedThisTurn = AttacksThisTurn >= AbilityRules.MaximumAttacksPerTurn(Definition.Type.ToString());
-        return;
-      }
+      AttackTurnState attackState = AbilityStateRules.RecordAttack(
+        Definition.Type.ToString(),
+        AttacksThisTurn
+      );
+      AttacksThisTurn = attackState.AttacksThisTurn;
+      _hasAttackedThisTurn = attackState.HasAttackedThisTurn;
 
-      _hasAttackedThisTurn = true;
-      AttacksThisTurn = 1;
       if (Definition.Type == PieceType.Vampire && CurrentHealth > 0)
       {
         CurrentHealth = Math.Min(Definition.Health, CurrentHealth + AbilityRules.VampireHealing);
@@ -160,29 +154,23 @@ internal sealed class Piece
 
   private void OnOwnerTurnStart()
   {
-    if (Definition.Type == PieceType.Flesh)
+    OwnerTurnState state = AbilityStateRules.AdvanceOwnerTurn(
+      Definition.Type.ToString(),
+      CurrentHealth,
+      TurnsInCurrentForm
+    );
+
+    if (state.RemovePiece)
     {
-      TransformTo(PieceDefinitions.Zombie);
+      _ownerSetup?.RemovePiece(this);
       return;
     }
 
-    if (Definition.Type == PieceType.Ghoul)
+    TurnsInCurrentForm = state.TurnsInCurrentForm;
+    if (!string.Equals(state.ResultingType, Definition.Type.ToString(), StringComparison.Ordinal))
     {
-      TurnsInCurrentForm++;
-      if (TurnsInCurrentForm >= AbilityRules.GhoulLifetimeTurns)
-      {
-        _ownerSetup?.RemovePiece(this);
-      }
-      return;
-    }
-
-    if (Definition.Type == PieceType.Tumbleweed)
-    {
-      TurnsInCurrentForm++;
-      if (TurnsInCurrentForm >= AbilityRules.TumbleweedLifetimeRounds)
-      {
-        _ownerSetup?.RemovePiece(this);
-      }
+      Definition = ResolveDefinition(state.ResultingType);
+      _currentHealth = state.ResultingHealth;
     }
   }
 
@@ -191,7 +179,7 @@ internal sealed class Piece
     if (Definition.Type != PieceType.Berserker) return;
 
     PieceDefinition source = PieceDefinitions.Berserker;
-    int attack = _currentHealth <= 20 ? 40 : source.Attack;
+    int attack = AbilityRules.GetBaseAttack(UnitRules.FromPieceDefinition(source), _currentHealth);
     if (Definition.Attack == attack) return;
 
     Definition = new PieceDefinition(
@@ -210,6 +198,13 @@ internal sealed class Piece
       source.DisplayName
     );
   }
+
+  private static PieceDefinition ResolveDefinition(string type) =>
+    PieceDefinitions.All.First(definition => string.Equals(
+      definition.Type.ToString(),
+      type,
+      StringComparison.Ordinal
+    ));
 
   internal bool Occupies((int x, int y) position)
   {
