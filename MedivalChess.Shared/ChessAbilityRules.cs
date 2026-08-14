@@ -17,7 +17,8 @@ public static class ChessAbilityRules
     NetworkTeam moverTeam,
     (int x, int y) origin,
     (int x, int y) destination,
-    NetworkTeam targetTeam)
+    NetworkTeam targetTeam
+  )
   {
     if (!IsLandingCaptureUnit(mover.Type) || targetTeam == moverTeam)
     {
@@ -42,12 +43,30 @@ public static class ChessAbilityRules
     };
   }
 
+  public static IReadOnlyList<(int x, int y)> GetAdditionalCaptureDestinations(
+    UnitRule mover,
+    NetworkTeam moverTeam,
+    (int x, int y) origin
+  )
+  {
+    if (mover.Type != nameof(PieceType.Pawn))
+    {
+      return Array.Empty<(int x, int y)>();
+    }
+
+    (int x, int y) forward = TeamRules.GetForwardDirection(moverTeam);
+    return forward.x == 0
+      ? [(origin.x - 1, origin.y + forward.y), (origin.x + 1, origin.y + forward.y)]
+      : [(origin.x + forward.x, origin.y - 1), (origin.x + forward.x, origin.y + 1)];
+  }
+
   public static bool CanContinueAfterEnteringOccupiedSquare(string unitType) =>
     !IsLandingCaptureUnit(unitType);
 
   public static (int x, int y) GetFailedCaptureFallback(
     (int x, int y) origin,
-    IReadOnlyList<(int x, int y)> path)
+    IReadOnlyList<(int x, int y)> path
+  )
   {
     if (path.Count <= 1)
     {
@@ -56,10 +75,15 @@ public static class ChessAbilityRules
     return path[^2];
   }
 
-  /// <summary>
-  /// A Chess King ignores lethal damage unless it is checkmated. The board-specific adapters
-  /// determine whether any safe legal escape remains, but the death decision itself is shared.
-  /// </summary>
+  public static bool IsCheckmated(
+    (int x, int y) kingPosition,
+    IEnumerable<(int x, int y)> candidateEscapes,
+    Func<(int x, int y), bool> canOccupy,
+    Func<(int x, int y), bool> isThreatened
+  ) => isThreatened(kingPosition) &&
+       !candidateEscapes.Any(square => canOccupy(square) && !isThreatened(square));
+
+  /// <summary>A Chess King ignores lethal damage unless it is checkmated.</summary>
   public static bool CanChessKingDie(bool isCheckmated) => isCheckmated;
 
   private static bool IsPawnCapture(NetworkTeam team, int dx, int dy)
