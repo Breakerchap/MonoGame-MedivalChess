@@ -1,5 +1,6 @@
 namespace MedivalChess.GameBoard;
 
+using System;
 using System.Collections.Generic;
 using MedivalChess.Player;
 using MedivalChess.Shared;
