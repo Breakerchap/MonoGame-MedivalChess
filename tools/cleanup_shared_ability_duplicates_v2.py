@@ -1,5 +1,7 @@
 from pathlib import Path
-import re
+
+# Tolerant second cleanup pass: each transformation is independently idempotent, then repository
+# searches and CI verify that no stale implementation remains. This file is temporary.
 
 
 def edit(path: str, transform) -> None:
@@ -11,10 +13,6 @@ def edit(path: str, transform) -> None:
         print(f"{path}: updated")
     else:
         print(f"{path}: no matching stale code")
-
-
-def replace(text: str, old: str, new: str) -> str:
-    return text.replace(old, new, 1) if old in text else text
 
 
 def remove_method_range(text: str, start_signature: str, next_signature: str) -> str:
