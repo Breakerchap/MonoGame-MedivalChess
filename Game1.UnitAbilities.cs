@@ -186,4 +186,76 @@ internal sealed partial class Game1
       }
     }
   }
+
+  private bool TryUseSharedRoyalAbility(Piece actor, Piece target)
+  {
+    if (actor.Definition.Type != PieceType.Phantom)
+    {
+      return false;
+    }
+
+    if (!string.IsNullOrEmpty(actor.PossessedUnitId))
+    {
+      Piece possessed = pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == actor.PossessedUnitId);
+      if (target != actor && target != possessed)
+      {
+        return false;
+      }
+
+      if (possessed is not null)
+      {
+        possessed.IsRoyalProxy = false;
+      }
+      PhantomPossessionState state = RoyalAbilityRules.Unpossess();
+      actor.PossessedUnitId = state.PhantomPossessedUnitId;
+      CompleteAction();
+      return true;
+    }
+
+    if (target is null || !RoyalAbilityRules.CanPhantomPossess(
+      actor.Definition.Type.ToString(),
+      actor.Team.ToNetworkTeam(),
+      actor.PossessedUnitId,
+      target.NetworkId,
+      target.Definition.Type.ToString(),
+      target.Team.ToNetworkTeam(),
+      target.IsRoyalProxy))
+    {
+      return false;
+    }
+
+    PhantomPossessionState possession = RoyalAbilityRules.Possess(target.NetworkId);
+    actor.PossessedUnitId = possession.PhantomPossessedUnitId;
+    target.IsRoyalProxy = possession.TargetIsRoyalProxy;
+    CompleteAction();
+    return true;
+  }
+
+  private bool CanPlaceSharedRoyalGroup(PieceDefinition royal, (int x, int y) anchor, TeamName team) =>
+    RoyalAbilityRules.GetRoyalSpawnOffsets(royal.Type.ToString()).All(offset =>
+      CanPlacePiece(royal, (anchor.x + offset.x, anchor.y + offset.y), team));
+
+  private void AddSharedRoyalGroup(PieceDefinition royal, (int x, int y) anchor, TeamName team)
+  {
+    foreach ((int x, int y) offset in RoyalAbilityRules.GetRoyalSpawnOffsets(royal.Type.ToString()))
+    {
+      pieceSetup.AddPiece(new Piece(royal, (anchor.x + offset.x, anchor.y + offset.y), team)
+      {
+        CurrentHealth = GetRoyalStartingHealth(royal)
+      });
+    }
+  }
+
+  private bool IsSharedRoyalDeath(Piece defeatedPiece)
+  {
+    bool sameTeamGoblinRemains = pieceSetup.Pieces.Any(piece =>
+      piece != defeatedPiece &&
+      piece.Team == defeatedPiece.Team &&
+      piece.Definition.Type == PieceType.GoblinRoyalty);
+    return RoyalAbilityRules.IsRoyalDeath(
+      defeatedPiece.Definition.Type.ToString(),
+      defeatedPiece.IsRoyal,
+      sameTeamGoblinRemains
+    );
+  }
 }
