@@ -1064,7 +1064,7 @@ public sealed class MatchStore
     {
       PresetId = string.IsNullOrWhiteSpace(configuration.PresetId) ? null : configuration.PresetId.Trim(),
       AllowedPacks = allowedPacks,
-      FarmsEnabled = configuration.FarmsEnabled && allowedPacks.Contains(Pack.Base.ToString(), StringComparer.Ordinal)
+      FarmsEnabled = configuration.FarmsEnabled
     };
     return true;
   }

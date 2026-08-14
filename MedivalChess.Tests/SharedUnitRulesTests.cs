@@ -7,6 +7,18 @@ namespace MedivalChess.Tests;
 public sealed class SharedUnitRulesTests
 {
   [Fact]
+  public void FarmsAreAvailableRegardlessOfTheSelectedUnitPack()
+  {
+    foreach (Pack pack in PackRules.All)
+    {
+      string[] selectedPack = [pack.ToString()];
+
+      Assert.True(PackRules.IsAllowed(PieceDefinitions.Farm, selectedPack));
+      Assert.True(PackRules.IsAllowed("Farm", selectedPack));
+    }
+  }
+
+  [Fact]
   public void SharedMatchRules_PlaceDominionPointsAndTreasureOnTheBoardCentre()
   {
     Board board = new("board_medium.json");
