@@ -1,95 +1,240 @@
-### Piece Shapes
+# Crown & Siege
 
-- `Straight`: Any square within the range measured by taxicab (Manhattan) distance.
-- `Line`: One or more squares in a single orthogonal straight line; it cannot turn.
-- `Diagonal`: One directly adjacent diagonal square.
-- `Any`: Any square within the range measured by chessboard distance.
-- `Forward`: In the direction of the opposing player.
-- `Absolute`: Pick one; can't mix and match.
+**Crown & Siege** is a turn-based strategy game built with C# and MonoGame. It takes the basic idea of chess-like board combat and expands it with different unit types, asymmetric abilities, terrain, an economy, multiple armies and royals, CPU opponents, and online multiplayer.
 
-Attack ranges are inclusive. Define a unit's range as `(minimum, maximum)`: `(1, 3)` allows one to three squares, and `(2, 4)` allows two to four.
+> **Status:** Crown & Siege is still in active development. Rules, balance, UI and compatibility may change frequently.
 
-## Host the match server on Render
+## Features
 
-The repository includes a Render Blueprint (`render.yaml`) and Dockerfile, so the server can be deployed without changing code.
+* Turn-based tactical combat on grid-based battlefields
+* Large selection of units with different:
 
-1. Push this project to a GitHub repository.
-2. In [Render](https://dashboard.render.com/), choose **New** > **Blueprint** and connect that repository.
-3. Render detects `render.yaml`. Create the `crown-and-siege-server` web service and wait for the deploy to finish.
-4. Open the service and copy its public URL, for example `https://crown-and-siege-server.onrender.com`. Visiting `https://your-url/health` should return a small healthy response.
-5. In the game, open **Online Multiplayer** and enter that exact URL in the **Match Server URL** field. Do not add `/gamehub`; the game adds it itself. Click either field and press **Ctrl+V** to paste. The host chooses the game mode, player count (2–4), battlefield, terrain, and economy in the in-game setup screens before the room is created. Every joining player enters the same URL and five-character room code; the match begins setup once all configured seats are filled.
+  * movement patterns
+  * attack ranges
+  * health and damage
+  * sizes
+  * costs
+  * special abilities
+* Multiple unit packs, including:
 
-## Two to four players
+  * Base
+  * Dynasty
+  * Fantasy
+  * Undead
+  * Greek
+  * Norse
+  * Modern
+  * Wild West
+  * Chess
+* Different royals with unique playstyles
+* Terrain and multiple battlefield sizes
+* Economy and unit purchasing
+* 2–4 player local multiplayer
+* Online multiplayer using a SignalR match server
+* CPU opponents
+* Campaign/custom-level support
+* Built-in level editor
+* Desktop support for Windows, Linux and macOS
+* Android client with touch controls
 
-Local and online matches support 2, 3, or 4 players. Orange and Purple start from the bottom and top edges; Green and Gold enter from the left and right edges. Each side has its own turn, economy, opening purchases, royal, and forward-facing unit direction.
+## Requirements
 
-Render provides HTTPS and supports WebSocket connections, which SignalR uses. No environment variables are required. The client automatically reconnects to the same room and side after a short connection interruption; disconnected rooms are retained for five minutes, while abandoned rooms are cleaned up in the background.
+For desktop development/building:
 
-The free Render plan can spin down when idle, so the first connection after a quiet period may take a short while. Matches are stored only in server memory: a server restart or redeploy clears open rooms and matches.
+* [Git](https://git-scm.com/)
+* [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)
 
-## Build the game
+MonoGame dependencies are restored automatically through NuGet and the repository's local .NET tools.
 
-Install the .NET 9 SDK for the architecture you are building on, then restore the local tools and project dependencies from the repository root:
+## Quick Start
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Breakerchap/MonoGame-MedivalChess.git
+cd MonoGame-MedivalChess
+```
+
+Restore dependencies and MonoGame tools:
 
 ```bash
 dotnet tool restore
 dotnet restore
 ```
 
-Publish a self-contained release for the target platform. Each command places the packaged game in `publish/<runtime>`:
+Run the desktop game:
 
-| Platform                 | Runtime identifier | Command                                                                                                     |
-| ------------------------ | ------------------ | ----------------------------------------------------------------------------------------------------------- |
-| Linux Intel/AMD 64-bit   | `linux-x64`        | `dotnet publish MedivalChess.csproj -c Release -r linux-x64 --self-contained true -o publish/linux-x64`     |
-| Linux ARM 64-bit         | `linux-arm64`      | `dotnet publish MedivalChess.csproj -c Release -r linux-arm64 --self-contained true -o publish/linux-arm64` |
-| macOS Intel              | `osx-x64`          | `dotnet publish MedivalChess.csproj -c Release -r osx-x64 --self-contained true -o publish/osx-x64`         |
-| macOS Apple silicon      | `osx-arm64`        | `dotnet publish MedivalChess.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64`     |
-| Windows Intel/AMD 64-bit | `win-x64`          | `dotnet publish MedivalChess.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64`         |
+```bash
+dotnet run --project MedivalChess.csproj
+```
 
-On Linux and macOS, make the published executable runnable before starting it:
+## Building
+
+Build the desktop game:
+
+```bash
+dotnet build MedivalChess.csproj -c Release
+```
+
+Or build the main solution, including the game, shared rules, CPU, server and tests:
+
+```bash
+dotnet build CrownAndSiege.sln -c Release
+```
+
+### Self-contained desktop builds
+
+Self-contained builds include the .NET runtime and can therefore be run on a compatible machine without separately installing .NET.
+
+| Platform            | Runtime       | Command                                                                                                     |
+| ------------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| Windows x64         | `win-x64`     | `dotnet publish MedivalChess.csproj -c Release -r win-x64 --self-contained true -o publish/win-x64`         |
+| Linux x64           | `linux-x64`   | `dotnet publish MedivalChess.csproj -c Release -r linux-x64 --self-contained true -o publish/linux-x64`     |
+| Linux ARM64         | `linux-arm64` | `dotnet publish MedivalChess.csproj -c Release -r linux-arm64 --self-contained true -o publish/linux-arm64` |
+| macOS Intel         | `osx-x64`     | `dotnet publish MedivalChess.csproj -c Release -r osx-x64 --self-contained true -o publish/osx-x64`         |
+| macOS Apple silicon | `osx-arm64`   | `dotnet publish MedivalChess.csproj -c Release -r osx-arm64 --self-contained true -o publish/osx-arm64`     |
+
+On Linux/macOS:
 
 ```bash
 chmod +x publish/<runtime>/MedivalChess
 ./publish/<runtime>/MedivalChess
 ```
 
-The game prints startup diagnostics to the terminal. It also appends diagnostics
-and any crash stack trace to `~/Library/Application Support/CrownAndSiege/startup.log`
-on macOS, which is useful when launching the executable from Finder or when no
-terminal remains open.
+On Windows:
 
-On Windows, run `publish/win-x64/MedivalChess.exe`. If MonoGame content has not already been built as part of publishing, build it with:
+```text
+publish\win-x64\MedivalChess.exe
+```
+
+If MonoGame content ever needs to be built manually:
 
 ```bash
 dotnet mgcb Content/Content.mgcb
 ```
 
+## Helper Scripts
+
+The repository also contains update/build scripts for several desktop platforms:
+
+```text
+updateAndBuildMedivalChessWin11.bat
+updateAndBuildMedivalChessLinuxIntel.sh
+updateAndBuildMedivalChessMacIntel.sh
+```
+
+These are useful for quickly updating a local copy and rebuilding the game.
+
 ## Android
 
-The Android client is in `MedivalChess.Android` and targets Android 6.0 (API 23) or newer. Install the .NET 9 Android workload once, then restore and build a signed APK from the repository root:
+The Android project is located in:
+
+```text
+MedivalChess.Android/
+```
+
+It targets **Android 6.0 / API 23 or newer**.
+
+Install the Android workload:
+
+```bash
+dotnet workload install android
+```
+
+Then restore and build:
 
 ```bash
 dotnet tool restore
-dotnet workload install android
 dotnet restore MedivalChess.Android/MedivalChess.Android.csproj
-dotnet build MedivalChess.Android/MedivalChess.Android.csproj -c Release -f net9.0-android -t:SignAndroidPackage -p:AndroidPackageFormats=apk
+
+dotnet build MedivalChess.Android/MedivalChess.Android.csproj \
+  -c Release \
+  -f net9.0-android \
+  -t:SignAndroidPackage \
+  -p:AndroidPackageFormats=apk
 ```
 
-`SignAndroidPackage` produces a `*-Signed.apk` under `MedivalChess.Android/bin/Release/net9.0-android/`. Without a release keystore configured, .NET for Android uses a generated debug-signing key, which is suitable for local sideload/testing but not a store release. To embed the current Git commit so the app can tell whether `master` has moved on, add `-p:AndroidBuildCommit=<commit-sha>` to the build command.
+The resulting APK is placed under:
 
-Android uses the same gameplay/UI code as desktop. Touch controls are:
+```text
+MedivalChess.Android/bin/Release/net9.0-android/
+```
 
-- Tap: normal/left-click action (select, move, buy, buttons).
-- Long press: secondary/right-click action (attack and special actions).
-- One-finger drag: pan the battlefield.
-- Two-finger pinch: zoom.
-- Two-finger drag: pan while zooming.
+### Android Controls
 
-The Android launcher uses a 720-pixel logical landscape height and preserves the device aspect ratio. This keeps the desktop UI layout responsive while making controls physically larger on high-DPI phones and tablets.
+* **Tap** — normal/left-click action
+* **Long press** — secondary/right-click action, including attacks and special actions
+* **One-finger drag** — pan the battlefield
+* **Pinch** — zoom
+* **Two-finger drag** — pan while zooming
 
-When the app starts with internet access it checks the latest `master` commit on GitHub without blocking startup. If the installed build embeds an older commit, Android offers to open the repository for the newer build. If the device is offline or GitHub cannot be reached, the check is skipped and the game starts normally. Android cannot safely replace a running installed APK with a literal `git pull`, so executable updates still require installing the newer APK.
+The Android version shares most gameplay and UI code with the desktop game.
 
-Current Android caveat: gameplay and menu buttons are touch-enabled, but the existing text-entry screens still consume key states directly. Until the Android software-keyboard bridge is wired in, entering/editing server URLs, room codes and other free-text/numeric fields requires a hardware/Bluetooth keyboard.
+Some text-entry screens currently still work best with a physical or Bluetooth keyboard.
 
-### Run Terrain Painter:
-` `
+## Online Multiplayer
+
+Online multiplayer uses a separate ASP.NET Core/SignalR server contained in:
+
+```text
+MedivalChess.Server/
+```
+
+Run a local server with:
+
+```bash
+dotnet run --project MedivalChess.Server/MedivalChess.Server.csproj
+```
+
+The repository also includes:
+
+```text
+render.yaml
+MedivalChess.Server/Dockerfile
+```
+
+which can be used to deploy the server to services such as Render.
+
+When connecting from the game, enter the server's base URL. The client handles the SignalR `/gamehub` path itself.
+
+Online matches support **2–4 players**.
+
+The server currently stores matches in memory, so restarting or redeploying the server clears active rooms.
+
+## Terrain Painter
+
+A separate Windows Forms tool is included for creating/editing battlefield terrain:
+
+```text
+TerrainPainter/
+```
+
+Run it on Windows with:
+
+```bash
+dotnet run --project TerrainPainter/TerrainPainter.csproj
+```
+
+Terrain files use the `.mctrn` format and are stored under:
+
+```text
+GameBoard/BoardTerrains/
+```
+
+## Tests
+
+Run the automated test suite with:
+
+```bash
+dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj
+```
+
+The tests cover areas including CPU behaviour, game rules, campaign levels, economy, movement shapes and other gameplay systems.
+
+## Repository
+
+Source code:
+
+https://github.com/Breakerchap/MonoGame-MedivalChess
+
+The repository and project names still use the historical `MedivalChess` spelling internally, while the game is called **Crown & Siege**.
