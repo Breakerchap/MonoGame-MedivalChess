@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using MedivalChess.Player;
 using MedivalChess.Shared;
 
@@ -7,51 +8,21 @@ namespace MedivalChess.GameBoard;
 
 internal static class Actions
 {
-  internal static List<(int x, int y)> ValidMovementStepDirections(Piece piece)
-  {
-    return piece.Definition.Movement.shape switch
-    {
-      Shape.Straight or Shape.Line => ShapeFuncs.OrthogonalStepDirections(),
-      Shape.Any or Shape.Circle =>
-      [
-        (1, 0), (-1, 0), (0, 1), (0, -1),
-        (1, 1), (1, -1), (-1, 1), (-1, -1)
-      ],
-      Shape.Forward => ShapeFuncs.ForwardShape(piece.Team, 1, false),
-      Shape.ForwardOrForwardDiagonal => ShapeFuncs.ForwardShape(piece.Team, 1, true),
-      Shape.AbsoluteStraightOrDiagonal => ShapeFuncs.AbsoluteStraightOrDiagonalShape(1),
-      Shape.MoveOnEnemy =>
-      [
-        (1, 0), (-1, 0), (0, 1), (0, -1),
-        (1, 1), (1, -1), (-1, 1), (-1, -1)
-      ],
-      _ => []
-    };
-  }
+  internal static List<(int x, int y)> ValidMovementStepDirections(Piece piece) =>
+    ShapeGeometryRules.GetStepDirections(
+      UnitRules.ToRuleShape(piece.Definition.Movement.shape),
+      piece.Team.ToNetworkTeam()
+    ).ToList();
 
-  internal static bool IsValidMovementDestination(Piece piece, (int x, int y) destination)
-  {
-    return ValidMovementDestinations(piece).Contains(destination);
-  }
+  internal static bool IsValidMovementDestination(Piece piece, (int x, int y) destination) =>
+    ValidMovementDestinations(piece).Contains(destination);
 
   internal static List<(int x, int y)> ValidMovementDestinations(Piece piece)
   {
-    List<(int x, int y)> destinations = [];
-
-    foreach ((int x, int y) offset in ValidActionSquares(piece, true))
-    {
-      if (offset == (0, 0))
-      {
-        continue;
-      }
-
-      destinations.Add((
-        piece.Position.x + offset.x,
-        piece.Position.y + offset.y
-      ));
-    }
-
-    return destinations;
+    return ValidActionSquares(piece, true)
+      .Where(offset => offset != (0, 0))
+      .Select(offset => (piece.Position.x + offset.x, piece.Position.y + offset.y))
+      .ToList();
   }
 
   internal static bool CanAttackSquare(Piece piece, (int x, int y) targetPosition)
@@ -72,7 +43,7 @@ internal static class Actions
     foreach ((int x, int y) origin in piece.OccupiedSquares())
     {
       if (UnitRules.CanAttackOffset(
-        ToRuleShape(piece.Definition.AttackShape.shape),
+        UnitRules.ToRuleShape(piece.Definition.AttackShape.shape),
         piece.Definition.MinimumAttackRange,
         piece.Definition.AttackShape.range,
         piece.Team.ToNetworkTeam(),
@@ -87,82 +58,16 @@ internal static class Actions
     return false;
   }
 
-  private static RuleShape ToRuleShape(Shape shape) => shape switch
-  {
-    Shape.Any => RuleShape.Any,
-    Shape.Straight => RuleShape.Straight,
-    Shape.Circle => RuleShape.Circle,
-    Shape.Line => RuleShape.Line,
-    Shape.Diagonal => RuleShape.Diagonal,
-    Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
-    Shape.ChessKnight => RuleShape.ChessKnight,
-    Shape.Forward => RuleShape.Forward,
-    Shape.ForwardLine => RuleShape.ForwardLine,
-    Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
-    Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
-    Shape.PierceStraight => RuleShape.PierceStraight,
-    _ => RuleShape.None
-  };
-
   internal static List<(int x, int y)> ValidActionSquares(Piece piece, bool isMoving)
   {
     (int range, Shape shape) action = isMoving ? piece.Definition.Movement : piece.Definition.AttackShape;
-    List<(int x, int y)> squares;
-
-    switch (action.shape)
-    {
-      case Shape.Straight:
-        squares = ShapeFuncs.StraightShape(action.range);
-        break;
-
-      case Shape.Circle:
-        squares = ShapeFuncs.CircleShape(action.range);
-        break;
-
-      case Shape.Line:
-        squares = ShapeFuncs.LineShape(action.range);
-        break;
-
-      case Shape.Any:
-        squares = ShapeFuncs.AnyShape(action.range);
-        break;
-
-      case Shape.Forward:
-      case Shape.ForwardLine:
-        squares = ShapeFuncs.ForwardShape(piece.Team, action.range, false);
-        break;
-
-      case Shape.ForwardOrForwardDiagonal:
-        squares = ShapeFuncs.ForwardShape(piece.Team, action.range, true);
-        break;
-
-      case Shape.AbsoluteStraightOrDiagonal:
-        squares = ShapeFuncs.AbsoluteStraightOrDiagonalShape(action.range);
-        break;
-
-      case Shape.PierceStraight:
-        squares = ShapeFuncs.LineShape(action.range);
-        break;
-
-      case Shape.MoveOnEnemy:
-        squares = ShapeFuncs.AnyShape(action.range);
-        break;
-
-      case Shape.None:
-        return [];
-
-      default:
-        Console.WriteLine($"Shape: `{action.shape}` not added yet");
-        return [];
-    }
-
     int minimumRange = isMoving ? piece.Definition.Movement.Minimum : piece.Definition.MinimumAttackRange;
-    if (minimumRange > 0)
-    {
-      squares.RemoveAll(square => ShapeFuncs.Distance(action.shape, square) < minimumRange);
-    }
-
-    return squares;
+    return ShapeGeometryRules.GetOffsets(
+      UnitRules.ToRuleShape(action.shape),
+      minimumRange,
+      action.range,
+      piece.Team.ToNetworkTeam()
+    );
   }
 
   internal static void Attack(Piece attackingPiece, Piece attackedPiece)
@@ -194,131 +99,5 @@ internal static class Actions
     attackingTeam.Money = (int)Math.Clamp((long)attackingTeam.Money + killerRefund, int.MinValue, int.MaxValue);
     defeatedTeam.Money = (int)Math.Clamp((long)defeatedTeam.Money + defeatedRefund, int.MinValue, int.MaxValue);
     return true;
-  }
-}
-
-internal static class ShapeFuncs
-{
-  internal static List<(int x, int y)> AnyShape(int range)
-  {
-    List<(int x, int y)> validSquares = new();
-    for (int x = -range; x <= range; x++)
-    {
-      for (int y = -range; y <= range; y++)
-      {
-        validSquares.Add((x, y));
-      }
-    }
-
-    return validSquares;
-  }
-
-  internal static List<(int x, int y)> CircleShape(int range)
-  {
-    List<(int x, int y)> validSquares = new();
-
-    for (int x = -range; x <= range; x++)
-    {
-      for (int y = -range; y <= range; y++)
-      {
-        if (x * x + y * y <= range * range)
-        {
-          validSquares.Add((x, y));
-        }
-      }
-    }
-
-    return validSquares;
-  }
-
-  internal static List<(int x, int y)> OrthogonalStepDirections()
-  {
-    return [(1, 0), (-1, 0), (0, 1), (0, -1)];
-  }
-
-  internal static List<(int x, int y)> StraightShape(int range)
-  {
-    List<(int x, int y)> validSquares = new();
-    for (int x = -range; x <= range; x++)
-    {
-      for (int y = -range; y <= range; y++)
-      {
-        if (Math.Abs(x) + Math.Abs(y) <= range)
-        {
-          validSquares.Add((x, y));
-        }
-      }
-    }
-
-    return validSquares;
-  }
-
-  internal static List<(int x, int y)> LineShape(int range)
-  {
-    List<(int x, int y)> validSquares = new();
-
-    for (int distance = 1; distance <= range; distance++)
-    {
-      validSquares.Add((distance, 0));
-      validSquares.Add((-distance, 0));
-      validSquares.Add((0, distance));
-      validSquares.Add((0, -distance));
-    }
-
-    return validSquares;
-  }
-
-  internal static List<(int x, int y)> ForwardShape(TeamName team, int range, bool includeDiagonals)
-  {
-    List<(int x, int y)> validSquares = new();
-    (int x, int y) direction = TeamRules.GetForwardDirection(team.ToNetworkTeam());
-
-    for (int distance = 1; distance <= range; distance++)
-    {
-      validSquares.Add((direction.x * distance, direction.y * distance));
-      if (includeDiagonals)
-      {
-        if (direction.x == 0)
-        {
-          validSquares.Add((-distance, direction.y * distance));
-          validSquares.Add((distance, direction.y * distance));
-        }
-        else
-        {
-          validSquares.Add((direction.x * distance, -distance));
-          validSquares.Add((direction.x * distance, distance));
-        }
-      }
-    }
-
-    return validSquares;
-  }
-
-  internal static double Distance(Shape shape, (int x, int y) offset)
-  {
-    return shape switch
-    {
-      Shape.Straight => Math.Abs(offset.x) + Math.Abs(offset.y),
-      Shape.Circle => Math.Sqrt(offset.x * offset.x + offset.y * offset.y),
-      _ => Math.Max(Math.Abs(offset.x), Math.Abs(offset.y))
-    };
-  }
-
-  internal static List<(int x, int y)> AbsoluteStraightOrDiagonalShape(int range)
-  {
-    List<(int x, int y)> validSquares = new();
-    for (int i = 1; i <= range; i++)
-    {
-      validSquares.Add((i, 0));
-      validSquares.Add((i, i));
-      validSquares.Add((i, -i));
-      validSquares.Add((-i, 0));
-      validSquares.Add((-i, i));
-      validSquares.Add((-i, -i));
-      validSquares.Add((0, i));
-      validSquares.Add((0, -i));
-    }
-
-    return validSquares;
   }
 }
