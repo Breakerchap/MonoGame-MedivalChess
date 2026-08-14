@@ -9,6 +9,7 @@ on:
       - tools/cleanup_shared_ability_duplicates.py
       - tools/cleanup_shared_ability_duplicates_v2.py
       - tools/apply_shared_royal_abilities.py
+      - tools/finalise_unit_implementations.py
 
 permissions:
   contents: write
@@ -30,6 +31,9 @@ jobs:
           if [ -f tools/apply_shared_royal_abilities.py ]; then
             python3 tools/apply_shared_royal_abilities.py
           fi
+          if [ -f tools/finalise_unit_implementations.py ]; then
+            python3 tools/finalise_unit_implementations.py
+          fi
       - name: Commit transformed sources
         shell: bash
         run: |
@@ -40,5 +44,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Apply shared Royal ability migration"
+          git commit -m "Finalise shared active-pack unit implementations"
           git push origin HEAD:unit-packs-circle
