@@ -24,6 +24,15 @@ public static class RoyalAbilityRules
   public static IReadOnlyList<(int x, int y)> GetRoyalSpawnOffsets(string royalType) =>
     royalType == nameof(PieceType.GoblinRoyalty) ? GoblinRoyaltySpawn : SingleSpawn;
 
+  public static (int width, int height) GetRoyalSpawnFootprint(string royalType)
+  {
+    IReadOnlyList<(int x, int y)> offsets = GetRoyalSpawnOffsets(royalType);
+    return (
+      offsets.Max(offset => offset.x) + 1,
+      offsets.Max(offset => offset.y) + 1
+    );
+  }
+
   public static bool IsRoyal(string unitType, bool isRoyalProxy, string? possessedUnitId)
   {
     if (isRoyalProxy) return true;
