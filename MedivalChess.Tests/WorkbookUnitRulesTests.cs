@@ -72,12 +72,18 @@ public sealed class WorkbookUnitRulesTests
   }
 
   [Fact]
-  public void ChessDefinitionsRemainAtTheirExistingValues()
+  public void ChessDefinitionsRemainAtTheirExistingValuesAndMovementSemantics()
   {
     Assert.Equal(60, PieceDefinitions.Pawn.Attack);
     Assert.Equal(5, PieceDefinitions.Pawn.Health);
     Assert.Equal(Shape.Forward, PieceDefinitions.Pawn.Movement.Shape);
     Assert.Equal(Shape.MoveOnEnemy, PieceDefinitions.Pawn.AttackPattern);
+
+    Assert.Equal(1, PieceDefinitions.ChessKnight.Movement.Minimum);
+    Assert.Equal(3, PieceDefinitions.ChessKnight.Movement.Maximum);
+    UnitRule chessKnight = UnitRules.GetRequired(nameof(PieceType.ChessKnight));
+    Assert.True(UnitRules.CanMove(chessKnight, 0, 0, 1, 2));
+    Assert.True(UnitRules.CanMove(chessKnight, 0, 0, 2, 1));
   }
 
   [Fact]
