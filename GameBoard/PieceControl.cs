@@ -62,8 +62,9 @@ internal static class Actions
     }
 
     Piece target = piece.OwnerSetup?.GetPieceAt(targetPosition);
-    if (target?.Definition.Type == PieceType.Samurai &&
-        AbilityRules.IsProjectileAttack(UnitRules.FromPieceDefinition(piece.Definition)))
+    if (target is not null && !AbilityRules.CanDamageTarget(
+      UnitRules.FromPieceDefinition(piece.Definition),
+      UnitRules.FromPieceDefinition(target.Definition)))
     {
       return false;
     }
@@ -166,8 +167,9 @@ internal static class Actions
 
   internal static void Attack(Piece attackingPiece, Piece attackedPiece)
   {
-    if (attackedPiece.Definition.Type == PieceType.Samurai &&
-        AbilityRules.IsProjectileAttack(UnitRules.FromPieceDefinition(attackingPiece.Definition)))
+    if (!AbilityRules.CanDamageTarget(
+      UnitRules.FromPieceDefinition(attackingPiece.Definition),
+      UnitRules.FromPieceDefinition(attackedPiece.Definition)))
     {
       return;
     }
