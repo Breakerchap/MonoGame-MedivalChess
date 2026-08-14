@@ -124,23 +124,24 @@ public static class UnitRules
   ) => firstX < secondX + secondWidth && firstX + firstWidth > secondX &&
        firstY < secondY + secondHeight && firstY + firstHeight > secondY;
 
-  public static bool CanMove(UnitRule rule, int fromX, int fromY, int toX, int toY)
+  public static bool CanMove(UnitRule rule, int fromX, int fromY, int toX, int toY, int? maximumRangeOverride = null)
   {
     int dx = Math.Abs(toX - fromX);
     int dy = Math.Abs(toY - fromY);
     if (dx == 0 && dy == 0) return false;
+    int maximumRange = maximumRangeOverride ?? rule.MoveRange;
 
     if (rule.MovePattern == RuleShape.Circle)
     {
       int squaredDistance = dx * dx + dy * dy;
       return squaredDistance >= rule.MinimumMoveRange * rule.MinimumMoveRange &&
-             squaredDistance <= rule.MoveRange * rule.MoveRange;
+             squaredDistance <= maximumRange * maximumRange;
     }
 
     int chessboardDistance = Math.Max(dx, dy);
     int taxicabDistance = dx + dy;
     int distance = rule.MovePattern == RuleShape.Straight ? taxicabDistance : chessboardDistance;
-    if (distance < rule.MinimumMoveRange || distance > rule.MoveRange) return false;
+    if (distance < rule.MinimumMoveRange || distance > maximumRange) return false;
 
     return rule.MovePattern switch
     {
