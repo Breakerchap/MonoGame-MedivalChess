@@ -21,6 +21,7 @@ internal sealed class Piece
   private bool _turnStateInitialised;
 
   internal PieceDefinition Definition { get; private set; }
+  internal global::MedivalChess.PieceSetup OwnerSetup => _ownerSetup;
   internal int CurrentHealth
   {
     get => _currentHealth;
