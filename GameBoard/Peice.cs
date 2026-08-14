@@ -44,6 +44,7 @@ internal sealed class Piece
       }
 
       _currentHealth = value;
+      RefreshBerserkerAttack();
     }
   }
   internal (int x, int y) Position { get; set; }
@@ -115,6 +116,31 @@ internal sealed class Piece
     Definition = definition;
     _currentHealth = definition.Health;
     TurnsInCurrentForm = 0;
+  }
+
+  private void RefreshBerserkerAttack()
+  {
+    if (Definition.Type != PieceType.Berserker) return;
+
+    PieceDefinition source = PieceDefinitions.Berserker;
+    int attack = _currentHealth <= 20 ? 40 : source.Attack;
+    if (Definition.Attack == attack) return;
+
+    Definition = new PieceDefinition(
+      source.Type,
+      source.Abbreviation ?? string.Empty,
+      source.Pack,
+      source.Movement,
+      attack,
+      source.Health,
+      source.Size,
+      source.AttackRange,
+      source.AttackPattern,
+      source.Cost,
+      source.AbilityDescription,
+      source.Identifier,
+      source.DisplayName
+    );
   }
 
   internal bool Occupies((int x, int y) position)
