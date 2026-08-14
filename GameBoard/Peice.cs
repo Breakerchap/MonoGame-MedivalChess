@@ -73,6 +73,10 @@ internal sealed class Piece
 
       _hasAttackedThisTurn = true;
       AttacksThisTurn = 1;
+      if (Definition.Type == PieceType.Vampire && CurrentHealth > 0)
+      {
+        CurrentHealth = Math.Min(Definition.Health, CurrentHealth + AbilityRules.VampireHealing);
+      }
     }
   }
   internal int AttacksThisTurn { get; set; }
