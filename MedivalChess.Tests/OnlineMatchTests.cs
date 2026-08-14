@@ -22,6 +22,21 @@ public sealed class OnlineMatchTests
   );
 
   [Fact]
+  public void ServerKeepsFarmsEnabledWhenBasePackIsNotSelected()
+  {
+    MatchStore matches = new();
+    RoomJoinResult created = matches.Create("host", new CreateGameRequest(DefaultConfiguration with
+    {
+      FarmsEnabled = true,
+      AllowedPacks = ["Fantasy"]
+    }));
+
+    Assert.True(created.Accepted);
+    Assert.True(created.State!.Configuration.FarmsEnabled);
+    Assert.Equal(["Fantasy"], created.State.Configuration.AllowedPacks);
+  }
+
+  [Fact]
   public void ChosenRoyalsSpawnOnTheDefaultMediumBoardBackRows()
   {
     MatchStore matches = new();

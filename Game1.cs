@@ -1093,7 +1093,7 @@ internal sealed partial class Game1 : Game
     }
     else
     {
-      definitions = PieceDefinitions.Purchasable.Where(definition => _allowedPacks.Contains(definition.Pack));
+      definitions = PieceDefinitions.Purchasable.Where(definition => PackRules.IsAllowed(definition, _allowedPacks.Select(pack => pack.ToString())));
     }
 
     return _farmsEnabled
@@ -7982,7 +7982,6 @@ internal sealed partial class Game1 : Game
         _allowedPacks.Add(pack);
         return;
       }
-      if (pack == Pack.Base) _farmsEnabled = false;
     }
     else
     {

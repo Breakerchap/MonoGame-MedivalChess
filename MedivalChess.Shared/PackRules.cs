@@ -54,7 +54,8 @@ public static class PackRules
     names is null || GetAllowedPacks(names).Contains(pack);
 
   public static bool IsAllowed(PieceDefinition definition, IEnumerable<string>? names) =>
-    IsAllowed(definition.Pack, names);
+    // Farms are a shared economy structure rather than a unit-pack exclusive.
+    definition.Type == PieceType.Farm || IsAllowed(definition.Pack, names);
 
   public static bool IsAllowed(string identifier, IEnumerable<string>? names)
   {
