@@ -10,7 +10,9 @@ public sealed class RuntimeAbilityStateTests
   [Fact]
   public void NinjaCanAttackThreeTimesBeforeBeingSpent()
   {
+    PieceSetup setup = new();
     Piece ninja = new(PieceDefinitions.Ninja, (0, 0), TeamName.Red);
+    setup.AddPiece(ninja);
 
     ninja.HasAttackedThisTurn = true;
     Assert.False(ninja.HasAttackedThisTurn);
@@ -27,6 +29,17 @@ public sealed class RuntimeAbilityStateTests
     ninja.HasAttackedThisTurn = false;
     Assert.False(ninja.HasAttackedThisTurn);
     Assert.Equal(0, ninja.AttacksThisTurn);
+  }
+
+  [Fact]
+  public void DetachedNinjaCanReceiveSpentNetworkStateWithoutTriggeringLocalActions()
+  {
+    Piece ninja = new(PieceDefinitions.Ninja, (0, 0), TeamName.Red);
+
+    ninja.HasAttackedThisTurn = true;
+
+    Assert.True(ninja.HasAttackedThisTurn);
+    Assert.Equal(3, ninja.AttacksThisTurn);
   }
 
   [Fact]
@@ -57,10 +70,12 @@ public sealed class RuntimeAbilityStateTests
   [Fact]
   public void VampireHealsTwentyAfterAttackingWithoutExceedingMaximumHealth()
   {
+    PieceSetup setup = new();
     Piece vampire = new(PieceDefinitions.Vampire, (0, 0), TeamName.Red)
     {
       CurrentHealth = 15
     };
+    setup.AddPiece(vampire);
 
     vampire.HasAttackedThisTurn = true;
     Assert.Equal(35, vampire.CurrentHealth);
@@ -69,6 +84,19 @@ public sealed class RuntimeAbilityStateTests
     vampire.CurrentHealth = 35;
     vampire.HasAttackedThisTurn = true;
     Assert.Equal(PieceDefinitions.Vampire.Health, vampire.CurrentHealth);
+  }
+
+  [Fact]
+  public void DetachedVampireSnapshotDoesNotHealItself()
+  {
+    Piece vampire = new(PieceDefinitions.Vampire, (0, 0), TeamName.Red)
+    {
+      CurrentHealth = 15
+    };
+
+    vampire.HasAttackedThisTurn = true;
+
+    Assert.Equal(15, vampire.CurrentHealth);
   }
 
   [Fact]
