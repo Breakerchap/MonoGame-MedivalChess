@@ -27,9 +27,10 @@ public static class RoyalAbilityRules
   public static (int width, int height) GetRoyalSpawnFootprint(string royalType)
   {
     IReadOnlyList<(int x, int y)> offsets = GetRoyalSpawnOffsets(royalType);
+    UnitRule rule = UnitRules.GetRequired(royalType);
     return (
-      offsets.Max(offset => offset.x) + 1,
-      offsets.Max(offset => offset.y) + 1
+      offsets.Max(offset => offset.x) + rule.Width,
+      offsets.Max(offset => offset.y) + rule.Height
     );
   }
 
