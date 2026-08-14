@@ -28,15 +28,16 @@ public static class ChessAbilityRules
     int dy = destination.y - origin.y;
     int absX = Math.Abs(dx);
     int absY = Math.Abs(dy);
+    int distance = Math.Max(absX, absY);
 
     return mover.Type switch
     {
       nameof(PieceType.Pawn) => IsPawnCapture(moverTeam, dx, dy),
       nameof(PieceType.ChessKnight) => (absX == 1 && absY == 2) || (absX == 2 && absY == 1),
-      nameof(PieceType.Bishop) => absX == absY && absX > 0 && absX <= mover.MoveRange,
-      nameof(PieceType.Rook) => (dx == 0 || dy == 0) && Math.Max(absX, absY) is > 0 and <= 8,
-      nameof(PieceType.Queen) => (dx == 0 || dy == 0 || absX == absY) && Math.Max(absX, absY) is > 0 and <= 8,
-      nameof(PieceType.ChessKing) => Math.Max(absX, absY) == 1,
+      nameof(PieceType.Bishop) => absX == absY && distance is > 0 && distance <= mover.MoveRange,
+      nameof(PieceType.Rook) => (dx == 0 || dy == 0) && distance is > 0 && distance <= mover.MoveRange,
+      nameof(PieceType.Queen) => (dx == 0 || dy == 0 || absX == absY) && distance is > 0 && distance <= mover.MoveRange,
+      nameof(PieceType.ChessKing) => distance == 1,
       _ => false
     };
   }
