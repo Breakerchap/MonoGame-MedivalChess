@@ -2,6 +2,10 @@ namespace MedivalChess.Shared;
 
 public static class CombatRules
 {
+  public const int BaronDamageBonus = 10;
+  public const int AuraDamageReduction = 10;
+  public const int ForestRangedDamageReduction = 10;
+
   public static int RoundCurrencyToNearestFive(float amount)
   {
     if (!float.IsFinite(amount)) return amount < 0 ? int.MinValue : int.MaxValue;
@@ -18,10 +22,10 @@ public static class CombatRules
     int forestDamageReduction
   )
   {
-    int damage = baseDamage + (hasBaronBonus ? 5 : 0);
+    int damage = baseDamage + (hasBaronBonus ? BaronDamageBonus : 0);
     if (isSpyMarked) damage *= 2;
-    if (hasDamageReduction) damage = Math.Max(5, damage - 5);
-    return isInForest ? Math.Max(1, damage - forestDamageReduction) : damage;
+    if (hasDamageReduction) damage = Math.Max(0, damage - AuraDamageReduction);
+    return isInForest ? Math.Max(0, damage - forestDamageReduction) : damage;
   }
 }
 
@@ -36,8 +40,7 @@ public static class LineOfSightRules
     Func<(int x, int y), bool> blocksDirectPath
   )
   {
-    bool ranged = attacker.Category == RuleCategory.Ranged ||
-      attacker.Type is "Princess" or "Cannon" or "Ballista";
+    bool ranged = attacker.Category == RuleCategory.Ranged || attacker.Type is "Princess" or "Cannon" or "Ballista";
 
     foreach ((int x, int y) origin in origins)
     {
@@ -52,7 +55,8 @@ public static class LineOfSightRules
       bool clear = true;
       foreach ((int x, int y) square in SquaresBetween(origin, target))
       {
-        if (isBarricade(square) || (ranged && isForest(square)) ||
+        bool forestBlocks = ranged && !AbilityRules.AttacksThroughForests(attacker) && isForest(square);
+        if (isBarricade(square) || forestBlocks ||
             (attacker.AttackPattern == RuleShape.Line && blocksDirectPath(square)))
         {
           clear = false;
