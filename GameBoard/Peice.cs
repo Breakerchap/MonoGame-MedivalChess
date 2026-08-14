@@ -98,11 +98,6 @@ internal sealed class Piece
       );
       AttacksThisTurn = attackState.AttacksThisTurn;
       _hasAttackedThisTurn = attackState.HasAttackedThisTurn;
-
-      if (Definition.Type == PieceType.Vampire && CurrentHealth > 0)
-      {
-        CurrentHealth = Math.Min(Definition.Health, CurrentHealth + AbilityRules.VampireHealing);
-      }
     }
   }
   internal int AttacksThisTurn { get; set; }
@@ -113,9 +108,9 @@ internal sealed class Piece
   internal int TurnsInCurrentForm { get; set; }
   internal bool HasRevived { get; set; }
   internal bool IsRoyalProxy { get; set; }
+  internal string PossessedUnitId { get; set; }
   internal (int x, int y) Facing { get; set; }
-  internal int PendingDamage { get; set; }
-  internal TeamName? PendingDamageSourceTeam { get; set; }
+  internal IReadOnlyList<NetworkPendingDamage> PendingDamage { get; set; } = Array.Empty<NetworkPendingDamage>();
 
   internal long NextMercenaryBid => (long)LastBid + 10;
   internal bool IsRoyal => Definition.Category == PieceCategory.Royal || IsRoyalProxy;
