@@ -24,10 +24,21 @@ internal sealed class Piece
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
   internal bool HasMovedThisTurn { get; set; }
   internal bool HasAttackedThisTurn { get; set; }
+  internal int AttacksThisTurn { get; set; }
   internal bool CavalierFollowUpMoveAvailable { get; set; }
   internal int EngineerBuildsThisTurn { get; set; }
   internal bool CannotContributeToConquestThisTurn { get; set; }
+
+  // Ability state.
+  internal int TurnsInCurrentForm { get; set; }
+  internal bool HasRevived { get; set; }
+  internal bool IsRoyalProxy { get; set; }
+  internal (int x, int y) Facing { get; set; }
+  internal int PendingDamage { get; set; }
+  internal TeamName? PendingDamageSourceTeam { get; set; }
+
   internal long NextMercenaryBid => (long)LastBid + 10;
+  internal bool IsRoyal => Definition.Category == PieceCategory.Royal || IsRoyalProxy;
 
   internal Piece(PieceDefinition definition, (int x, int y) position, TeamName team)
   {
@@ -36,6 +47,7 @@ internal sealed class Piece
     Position = position;
     Team = team;
     LastBid = definition.Cost;
+    Facing = TeamRules.GetForwardDirection(team.ToNetworkTeam());
   }
 
   internal bool Occupies((int x, int y) position)
