@@ -14,7 +14,10 @@ internal enum AttachmentKind
 internal sealed class Piece
 {
   private bool _hasAttackedThisTurn;
+  private bool _hasMovedThisTurn;
   private int _currentHealth;
+  private global::MedivalChess.PieceSetup _ownerSetup;
+  private bool _turnStateInitialised;
 
   internal PieceDefinition Definition { get; private set; }
   internal int CurrentHealth
@@ -54,7 +57,18 @@ internal sealed class Piece
   internal Piece AttachedTo { get; set; }
   internal AttachmentKind AttachmentKind { get; set; }
   internal string NetworkId { get; set; } = System.Guid.NewGuid().ToString("N");
-  internal bool HasMovedThisTurn { get; set; }
+  internal bool HasMovedThisTurn
+  {
+    get => _hasMovedThisTurn;
+    set
+    {
+      if (!value && _turnStateInitialised)
+      {
+        OnOwnerTurnStart();
+      }
+      _hasMovedThisTurn = value;
+    }
+  }
   internal bool HasAttackedThisTurn
   {
     get => Definition.Type == PieceType.Ninja
@@ -111,11 +125,54 @@ internal sealed class Piece
     Facing = TeamRules.GetForwardDirection(team.ToNetworkTeam());
   }
 
+  internal void AttachToSetup(global::MedivalChess.PieceSetup setup)
+  {
+    _ownerSetup = setup;
+    _turnStateInitialised = true;
+  }
+
+  internal void DetachFromSetup(global::MedivalChess.PieceSetup setup)
+  {
+    if (_ownerSetup == setup)
+    {
+      _ownerSetup = null;
+      _turnStateInitialised = false;
+    }
+  }
+
   internal void TransformTo(PieceDefinition definition)
   {
     Definition = definition;
     _currentHealth = definition.Health;
     TurnsInCurrentForm = 0;
+  }
+
+  private void OnOwnerTurnStart()
+  {
+    if (Definition.Type == PieceType.Flesh)
+    {
+      TransformTo(PieceDefinitions.Zombie);
+      return;
+    }
+
+    if (Definition.Type == PieceType.Ghoul)
+    {
+      TurnsInCurrentForm++;
+      if (TurnsInCurrentForm >= AbilityRules.GhoulLifetimeTurns)
+      {
+        _ownerSetup?.RemovePiece(this);
+      }
+      return;
+    }
+
+    if (Definition.Type == PieceType.Tumbleweed)
+    {
+      TurnsInCurrentForm++;
+      if (TurnsInCurrentForm >= AbilityRules.TumbleweedLifetimeRounds)
+      {
+        _ownerSetup?.RemovePiece(this);
+      }
+    }
   }
 
   private void RefreshBerserkerAttack()
