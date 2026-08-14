@@ -75,6 +75,48 @@ public static class ChessAbilityRules
     return path[^2];
   }
 
+  public static bool ThreatensSquareGeometry(
+    UnitRule attacker,
+    NetworkTeam attackerTeam,
+    (int x, int y) attackerPosition,
+    (int x, int y) targetPosition,
+    NetworkTeam targetTeam
+  )
+  {
+    if (IsLandingCaptureUnit(attacker.Type))
+    {
+      return CanCaptureByLanding(attacker, attackerTeam, attackerPosition, targetPosition, targetTeam);
+    }
+
+    for (int sourceY = 0; sourceY < attacker.Height; sourceY++)
+    for (int sourceX = 0; sourceX < attacker.Width; sourceX++)
+    {
+      if (UnitRules.CanAttackOffset(
+        attacker.AttackPattern,
+        attacker.MinimumAttackRange,
+        attacker.AttackRange,
+        attackerTeam,
+        targetPosition.x - (attackerPosition.x + sourceX),
+        targetPosition.y - (attackerPosition.y + sourceY)))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  public static bool HasClearLandingCapturePath(
+    UnitRule attacker,
+    (int x, int y) attackerPosition,
+    (int x, int y) targetPosition,
+    Func<(int x, int y), bool> blocksIntermediateSquare
+  )
+  {
+    if (attacker.Type == nameof(PieceType.ChessKnight)) return true;
+    if (attacker.Type is nameof(PieceType.Pawn) or nameof(PieceType.ChessKing)) return true;
+    return !LineOfSightRules.SquaresBetween(attackerPosition, targetPosition).Any(blocksIntermediateSquare);
+  }
+
   public static bool IsCheckmated(
     (int x, int y) kingPosition,
     IEnumerable<(int x, int y)> candidateEscapes,
