@@ -65,7 +65,8 @@ public sealed partial class MatchStore
       ? null
       : match.Pieces.FirstOrDefault(other => other.Id != king.Id && other.AttachedToId is null &&
         other.Type != nameof(PieceType.Farm) && other.Team != king.Team &&
-        UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
+        UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+        OccupiedSquares(otherRule, (other.X, other.Y)).Contains(square));
 
     foreach (NetworkPiece attacker in match.Pieces.Where(piece =>
       piece.Id != king.Id && piece.Id != capturedAtDestination?.Id && piece.AttachedToId is null &&
@@ -97,7 +98,8 @@ public sealed partial class MatchStore
         intermediate => match.Pieces.Any(other =>
           other.Id != attacker.Id && other.Id != king.Id && other.Id != capturedAtDestination?.Id &&
           other.AttachedToId is null && other.Type != nameof(PieceType.Farm) &&
-          UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, intermediate))))
+          UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+          OccupiedSquares(otherRule, (other.X, other.Y)).Contains(intermediate))))
       {
         return true;
       }
@@ -115,5 +117,6 @@ public sealed partial class MatchStore
        match.Pieces.Any(other =>
          other.Id != attacker.Id && other.Id != king.Id && other.Id != capturedAtDestination?.Id &&
          other.AttachedToId is null && other.Type != nameof(PieceType.Farm) &&
-         UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
+         UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+         OccupiedSquares(otherRule, (other.X, other.Y)).Contains(square));
 }
