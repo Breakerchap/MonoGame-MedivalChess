@@ -22,7 +22,7 @@ public static partial class CpuGameRules
     int oldX = piece.X;
     int oldY = piece.Y;
     bool elephantDamaged = false;
-    if (piece.Type == "Elephant" && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
+    if (piece.Type == nameof(PieceType.Elephant) && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
     {
       foreach (NetworkPiece crossed in state.Pieces.Where(other => other.Id != piece.Id && other.Team != piece.Team).ToArray())
       {
@@ -73,32 +73,75 @@ public static partial class CpuGameRules
   private static void ApplyAttack(CpuMutableGameState state, AttackAction action)
   {
     int attackerIndex = FindPieceIndex(state.Pieces, action.AttackerId);
-    NetworkPiece attacker = state.Pieces[attackerIndex] with
+    NetworkPiece originalAttacker = state.Pieces[attackerIndex];
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      originalAttacker.Type,
+      originalAttacker.AttacksThisTurn
+    );
+    NetworkPiece attacker = originalAttacker with
     {
-      HasAttackedThisTurn = true,
+      AttacksThisTurn = attackState.AttacksThisTurn,
+      HasAttackedThisTurn = attackState.HasAttackedThisTurn,
       CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
-        state.Pieces[attackerIndex].Type, state.Pieces[attackerIndex].HasMovedThisTurn)
+        originalAttacker.Type,
+        originalAttacker.HasMovedThisTurn)
     };
-    state.Pieces[attackerIndex] = attacker;
+
+    if (attacker.Type == nameof(PieceType.Tank))
+    {
+      TankAttackDecision tank = AbilityStateRules.ResolveTankAttackAttempt(
+        attacker.Team,
+        attacker.FacingX,
+        attacker.FacingY,
+        (attacker.X, attacker.Y),
+        (action.TargetX, action.TargetY)
+      );
+      attacker = attacker with { FacingX = tank.FacingX, FacingY = tank.FacingY };
+      state.Pieces[attackerIndex] = attacker;
+      if (!tank.MayFire)
+      {
+        if (state.Winner is null) SpendAction(state, action.Team);
+        return;
+      }
+    }
+    else
+    {
+      state.Pieces[attackerIndex] = attacker;
+    }
+
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
-    if (target is { Type: "Farm" })
+    if (target is { Type: nameof(PieceType.Farm) })
     {
       target = FindUnitOnAttackedSquare(state.Pieces, attacker, action.TargetX, action.TargetY) ?? target;
     }
+
+    AbilityAttackPlan? abilityPlan = null;
     if (target is null)
     {
       DamageBarricade(state, attacker, (action.TargetX, action.TargetY));
     }
-    else if (attacker.Type == "Bombard")
-    {
-      ResolveBombardDamage(state, attacker, action.Team, target);
-    }
     else
     {
-      ResolvePieceDamage(state, attacker, action.Team, target.Id, null);
+      AbilityUnitSnapshot[] snapshots = state.Pieces
+        .Where(piece => piece.AttachedToId is null)
+        .Select(AbilityAttackRules.Snapshot)
+        .ToArray();
+      abilityPlan = AbilityAttackRules.BuildAttackPlan(
+        AbilityAttackRules.Snapshot(attacker),
+        AbilityAttackRules.Snapshot(target),
+        snapshots
+      );
+
+      foreach (AbilityDamageInstruction instruction in abilityPlan.Damage)
+      {
+        int? damageOverride = instruction.Mode == AbilityDamageMode.Fixed
+          ? instruction.FixedDamage
+          : null;
+        ResolvePieceDamage(state, attacker, action.Team, instruction.TargetId, damageOverride);
+      }
     }
 
-    if (target is not null && attacker.Type == "Ballista" && UnitRules.TryGet(attacker.Type, out UnitRule ballistaRule))
+    if (target is not null && attacker.Type == nameof(PieceType.Ballista) && UnitRules.TryGet(attacker.Type, out UnitRule ballistaRule))
     {
       foreach ((int x, int y) position in AbilityRules.GetPiercingRay(ballistaRule, attacker.X, attacker.Y, target.X, target.Y))
       {
@@ -109,12 +152,51 @@ public static partial class CpuGameRules
         }
 
         NetworkPiece? pierced = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id && piece.Id != target.Id &&
-          piece.Team != attacker.Team && piece.Type != "Farm" && piece.AttachedToId is null &&
+          piece.Team != attacker.Team && piece.Type != nameof(PieceType.Farm) && piece.AttachedToId is null &&
           UnitRules.TryGet(piece.Type, out UnitRule rule) && Occupies(rule, piece, position));
         if (pierced is not null)
         {
           ResolvePieceDamage(state, attacker, action.Team, pierced.Id, null);
         }
+      }
+    }
+
+    if (abilityPlan?.ScheduleDragonbornBurn == true && target is not null)
+    {
+      int targetIndex = FindPieceIndex(state.Pieces, target.Id);
+      if (targetIndex >= 0)
+      {
+        NetworkPiece liveTarget = state.Pieces[targetIndex];
+        state.Pieces[targetIndex] = liveTarget with
+        {
+          PendingDamage = AbilityStateRules.AddDragonbornBurn(
+            liveTarget.PendingDamage,
+            attacker.Team,
+            attacker.Team
+          )
+        };
+      }
+    }
+
+    if (abilityPlan is { HealAttacker: > 0 })
+    {
+      attackerIndex = FindPieceIndex(state.Pieces, attacker.Id);
+      if (attackerIndex >= 0 && UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
+      {
+        NetworkPiece liveAttacker = state.Pieces[attackerIndex];
+        state.Pieces[attackerIndex] = liveAttacker with
+        {
+          Health = Math.Min(attackerRule.Health, liveAttacker.Health + abilityPlan.HealAttacker)
+        };
+      }
+    }
+
+    if (abilityPlan?.SelfDestructAfterAttack == true)
+    {
+      attackerIndex = FindPieceIndex(state.Pieces, attacker.Id);
+      if (attackerIndex >= 0)
+      {
+        HandlePieceDestroyed(state, state.Pieces[attackerIndex], null);
       }
     }
 
@@ -142,13 +224,13 @@ public static partial class CpuGameRules
     {
       switch (actor.Type)
       {
-        case "Spy":
+        case nameof(PieceType.Spy):
           state.Pieces[actorIndex] = actor with { MarkedTargetId = target!.Id };
           break;
-        case "Engineer":
+        case nameof(PieceType.Engineer):
           ApplyEngineerAbility(state, actorIndex, action);
           break;
-        case "Guard":
+        case nameof(PieceType.Guard):
           state.Pieces[actorIndex] = actor with
           {
             AttachedToId = target!.Id,
@@ -157,7 +239,7 @@ public static partial class CpuGameRules
             Y = target.Y
           };
           break;
-        case "Ox":
+        case nameof(PieceType.Ox):
           int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
           state.Pieces[targetIndex] = target with
           {
@@ -167,7 +249,7 @@ public static partial class CpuGameRules
             Y = actor.Y
           };
           break;
-        case "Mercenary":
+        case nameof(PieceType.Mercenary):
           state.Pieces[actorIndex] = actor with
           {
             Team = NetworkTeam.Neutral,
@@ -214,7 +296,7 @@ public static partial class CpuGameRules
 
   private static void ApplyPurchase(CpuMutableGameState state, PurchaseAction action)
   {
-    NetworkPiece? mercenary = state.Pieces.FirstOrDefault(piece => piece.Type == "Mercenary" &&
+    NetworkPiece? mercenary = state.Pieces.FirstOrDefault(piece => piece.Type == nameof(PieceType.Mercenary) &&
       piece.Team == NetworkTeam.Neutral && piece.X == action.X && piece.Y == action.Y);
     if (mercenary is not null)
     {
@@ -234,7 +316,7 @@ public static partial class CpuGameRules
     }
 
     UnitRule rule = UnitRules.GetRequired(action.UnitType);
-    bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true && rule.Type == "Farm";
+    bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true && rule.Type == nameof(PieceType.Farm);
     if (!openingFarmPlacement)
     {
       SpendMoney(state, action.Team, GetUnitPrice(state.Source.Configuration, rule));
