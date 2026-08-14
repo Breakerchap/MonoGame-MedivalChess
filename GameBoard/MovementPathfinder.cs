@@ -34,7 +34,8 @@ internal static class MovementPathfinder
     UnitRule movementRule = null,
     Func<(int x, int y), (int x, int y), int> stepCost = null,
     Func<(int x, int y), int> movementRangeAt = null,
-    int? maximumMovementRange = null
+    int? maximumMovementRange = null,
+    Func<(int x, int y), bool> canContinueFrom = null
   )
   {
     UnitRule rule = movementRule ?? UnitRules.FromPieceDefinition(piece.Definition);
@@ -63,7 +64,7 @@ internal static class MovementPathfinder
 
     return MovementRules.FindPaths(
       rule, piece.Position, team, canLand, canTravelThrough, landingCost, crossesRiver,
-      stepCost, movementRangeAt, maximumMovementRange
+      stepCost, movementRangeAt, maximumMovementRange, canContinueFrom
     );
   }
 
