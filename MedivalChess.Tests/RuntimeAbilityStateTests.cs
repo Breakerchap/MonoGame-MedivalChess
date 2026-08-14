@@ -53,4 +53,34 @@ public sealed class RuntimeAbilityStateTests
     Assert.Equal(PieceDefinitions.TerracottaWarrior.Health, emperor.CurrentHealth);
     Assert.True(emperor.HasRevived);
   }
+
+  [Fact]
+  public void VampireHealsTwentyAfterAttackingWithoutExceedingMaximumHealth()
+  {
+    Piece vampire = new(PieceDefinitions.Vampire, (0, 0), TeamName.Red)
+    {
+      CurrentHealth = 15
+    };
+
+    vampire.HasAttackedThisTurn = true;
+    Assert.Equal(35, vampire.CurrentHealth);
+
+    vampire.HasAttackedThisTurn = false;
+    vampire.CurrentHealth = 35;
+    vampire.HasAttackedThisTurn = true;
+    Assert.Equal(PieceDefinitions.Vampire.Health, vampire.CurrentHealth);
+  }
+
+  [Fact]
+  public void ZombieTurnsIntoFleshInsteadOfBeingRemovedByLethalDamage()
+  {
+    Piece zombie = new(PieceDefinitions.Zombie, (3, 4), TeamName.Blue);
+
+    zombie.CurrentHealth = 0;
+
+    Assert.Same(PieceDefinitions.Flesh, zombie.Definition);
+    Assert.Equal(PieceDefinitions.Flesh.Health, zombie.CurrentHealth);
+    Assert.Equal((3, 4), zombie.Position);
+    Assert.Equal(TeamName.Blue, zombie.Team);
+  }
 }
