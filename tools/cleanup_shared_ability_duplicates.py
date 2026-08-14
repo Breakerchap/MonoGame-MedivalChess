@@ -1,5 +1,8 @@
 from pathlib import Path
 
+# Temporary migration helper. Every edit below is exact-match checked so cleanup fails loudly
+# rather than silently mutating an unexpected source shape. This file is removed after migration.
+
 
 def replace_once(path: str, old: str, new: str) -> None:
     file = Path(path)
