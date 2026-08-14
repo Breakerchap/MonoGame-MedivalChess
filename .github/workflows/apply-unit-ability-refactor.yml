@@ -5,6 +5,7 @@ on:
     branches: [unit-packs-circle]
     paths:
       - tools/apply_unit_ability_refactor.py
+      - tools/cleanup_shared_ability_duplicates.py
 
 permissions:
   contents: write
@@ -17,7 +18,12 @@ jobs:
         with:
           ref: unit-packs-circle
       - name: Apply checked source transformations
-        run: python3 tools/apply_unit_ability_refactor.py
+        shell: bash
+        run: |
+          python3 tools/apply_unit_ability_refactor.py
+          if [ -f tools/cleanup_shared_ability_duplicates.py ]; then
+            python3 tools/cleanup_shared_ability_duplicates.py
+          fi
       - name: Commit transformed sources
         shell: bash
         run: |
@@ -28,5 +34,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Apply shared unit ability refactor"
+          git commit -m "Apply shared unit ability cleanup"
           git push origin HEAD:unit-packs-circle
