@@ -12,18 +12,20 @@ public static class MovementRules
     Func<(int x, int y), (int x, int y), bool> crossesRiver,
     Func<(int x, int y), (int x, int y), int>? stepCost = null,
     Func<(int x, int y), int>? movementRangeAt = null,
-    int? maximumMovementRange = null
+    int? maximumMovementRange = null,
+    Func<(int x, int y), bool>? canContinueFrom = null
   )
   {
     Func<(int x, int y), int> callerMovementRangeAt = movementRangeAt ?? (_ => unit.MoveRange);
     movementRangeAt = destination =>
       callerMovementRangeAt(destination) + AbilityRules.GetMovementRangeBonus(unit, team, origin, destination);
+    canContinueFrom ??= _ => true;
     int maximumRange = (maximumMovementRange ?? unit.MoveRange) + AbilityRules.GetMaximumMovementRangeBonus(unit);
 
     if (unit.MovePattern is RuleShape.Line or RuleShape.Diagonal or RuleShape.LineOrDiagonal)
     {
       return FindRayPaths(unit, origin, team, canLand, canTravelThrough, landingCost, crossesRiver,
-        stepCost, movementRangeAt, maximumRange);
+        stepCost, movementRangeAt, maximumRange, canContinueFrom);
     }
 
     if (unit.MovePattern == RuleShape.ChessKnight)
@@ -57,7 +59,7 @@ public static class MovementRules
         List<(int x, int y)> nextPath = [.. current.Path, next];
         bestCosts[next] = nextCost;
         if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = nextPath;
-        if (!exceedsMovementRange) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
+        if (!exceedsMovementRange && canContinueFrom(next)) frontier.Enqueue(new MovementState(next, nextCost, nextPath));
       }
     }
 
@@ -74,7 +76,8 @@ public static class MovementRules
     Func<(int x, int y), (int x, int y), bool> crossesRiver,
     Func<(int x, int y), (int x, int y), int>? stepCost,
     Func<(int x, int y), int> movementRangeAt,
-    int maximumMovementRange
+    int maximumMovementRange,
+    Func<(int x, int y), bool> canContinueFrom
   )
   {
     Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
@@ -103,6 +106,7 @@ public static class MovementRules
 
         path.Add(next);
         if (canLand(next) && UnitRules.CanMove(unit, origin.x, origin.y, next.x, next.y, effectiveRange)) paths[next] = [.. path];
+        if (!canContinueFrom(next)) break;
         previous = next;
       }
     }
