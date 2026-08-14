@@ -2,7 +2,7 @@ using MedivalChess.Shared;
 
 namespace MedivalChess.CPU;
 
-/// <summary>CPU-state adapter for the shared Phantom Royal rules.</summary>
+/// <summary>CPU-state adapter for shared Phantom and Goblin Royalty rules.</summary>
 public static partial class CpuGameRules
 {
   private static void ApplySharedPhantomAbility(
@@ -41,5 +41,23 @@ public static partial class CpuGameRules
     {
       state.Pieces[targetIndex] = target with { IsRoyalProxy = possession.TargetIsRoyalProxy };
     }
+  }
+
+  private static bool IsSharedCpuRoyalDeath(CpuMutableGameState state, NetworkPiece defeatedPiece)
+  {
+    bool sameTeamGoblinRemains = state.Pieces.Any(piece =>
+      piece.Id != defeatedPiece.Id &&
+      piece.Team == defeatedPiece.Team &&
+      piece.Type == nameof(PieceType.GoblinRoyalty));
+    bool wasRoyal = RoyalAbilityRules.IsRoyal(
+      defeatedPiece.Type,
+      defeatedPiece.IsRoyalProxy,
+      defeatedPiece.PossessedUnitId
+    );
+    return RoyalAbilityRules.IsRoyalDeath(
+      defeatedPiece.Type,
+      wasRoyal,
+      sameTeamGoblinRemains
+    );
   }
 }
