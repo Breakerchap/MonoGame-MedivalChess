@@ -57,31 +57,18 @@ public sealed record UnitRule(
 public static class UnitRules
 {
   private static readonly UnitRule[] Rules = PieceDefinitions.Encyclopedia
-    .Select(definition => new UnitRule(
-      definition.Type.ToString(),
-      (RuleCategory)definition.Category,
-      definition.Movement.range,
-      ToRuleShape(definition.Movement.shape),
-      definition.Attack,
-      definition.Health,
-      definition.Size.x,
-      definition.Size.y,
-      definition.AttackRange.Maximum,
-      ToRuleShape(definition.AttackPattern),
-      definition.Cost,
-      definition.AttackRange.Minimum,
-      definition.AbilityDescription,
-      definition.Movement.Minimum
-    ))
+    .Select(FromPieceDefinition)
     .ToArray();
 
   private static readonly Dictionary<string, UnitRule> ByType = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
 
   public static IReadOnlyList<UnitRule> All => Rules;
-  public static IReadOnlyList<UnitRule> Purchasable { get; } = Rules.Where(rule =>
-    rule.Category != RuleCategory.Royal
-  ).ToArray();
-  public static IReadOnlyList<UnitRule> Royals { get; } = Rules.Where(rule => rule.Category == RuleCategory.Royal).ToArray();
+  public static IReadOnlyList<UnitRule> Purchasable { get; } = PieceDefinitions.Purchasable
+    .Select(FromPieceDefinition)
+    .ToArray();
+  public static IReadOnlyList<UnitRule> Royals { get; } = PieceDefinitions.Royals
+    .Select(FromPieceDefinition)
+    .ToArray();
 
   public static bool TryGet(string type, out UnitRule rule) => ByType.TryGetValue(type, out rule!);
   public static UnitRule GetRequired(string type) => TryGet(type, out UnitRule rule)
@@ -92,7 +79,6 @@ public static class UnitRules
     ? rule.AbilityDescription
     : string.Empty;
 
-  /// <summary>Builds a rules view from a runtime definition, including campaign stat overrides.</summary>
   public static UnitRule FromPieceDefinition(PieceDefinition definition)
   {
     ArgumentNullException.ThrowIfNull(definition);
