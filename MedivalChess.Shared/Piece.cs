@@ -198,7 +198,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Dragonborn = new(PieceType.Dragonborn, "Dgb", Pack.Fantasy, (2, Shape.Any), 40, 40, (1, 1), (1, 1), Shape.Any, 80, "After attacking, leaves a burn effect that deals 10 damage to the enemy attacked at the start of your next turn.");
   public static readonly PieceDefinition Commoner = new(PieceType.Commoner, "Com", Pack.Fantasy, (1, Shape.Any), 15, 10, (1, 1), (1, 1), Shape.Any, 25);
   public static readonly PieceDefinition Shieldbearer = new(PieceType.Shieldbearer, "Shd", Pack.Fantasy, (1, Shape.Any), 25, 35, (1, 1), (1, 1), Shape.Any, 65, "When dropping to 0 health, does not die and comes back on 20 health.");
-  public static readonly PieceDefinition Orc = new(PieceType.Orc, "Orc", Pack.Fantasy, (2, Shape.Straight), 15, 35, (1, 1), (1, 1), Shape.Any, 0, "When attacking, attacks all units in range. Purchase cost is blank in the workbook.");
+  public static readonly PieceDefinition Orc = new(PieceType.Orc, "Orc", Pack.Fantasy, (2, Shape.Straight), 15, 35, (1, 1), (1, 1), Shape.Any, 105, "When attacking, attacks all units in range.");
 
   // Undead
   public static readonly PieceDefinition Skeleton = new(PieceType.Skeleton, "Ske", Pack.Undead, (2, Shape.Straight), 20, 20, (1, 1), (1, 1), Shape.Straight, 30);
@@ -268,7 +268,7 @@ public static class PieceDefinitions
   [
     Soldier, Defender, Archer, Peasant, Knight, Crossbowman, Cavalier, Cannon, Catapult, Bombard, Guard, Farm,
     Elephant, Ox, Ninja, Samurai,
-    Dragon, Adventurer, Wizard, Dragonborn, Commoner, Shieldbearer,
+    Dragon, Adventurer, Wizard, Dragonborn, Commoner, Shieldbearer, Orc,
     Skeleton, Zombie, Ghoul, Vampire,
     Chariot, Ballista, Heracles, Hermes, Ares, Chimera, Pegasus, Artemis,
     Viking, Sleipnir, Raider, Berserker,
