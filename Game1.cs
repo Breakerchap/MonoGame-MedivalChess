@@ -286,6 +286,7 @@ internal sealed partial class Game1 : Game
   private string _onlineJoinCode = string.Empty;
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
   private bool _onlineIsHost;
+  private bool _onlineJoinAsSpectator;
   private bool _onlineRoyalChoicePending;
   private bool _debugTeamSwitchPending;
   private bool _onlineHostingSetup;
@@ -2073,10 +2074,13 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
-    return _onlineClient.Team is NetworkTeam team && Team.CurrentTurn == team.ToTeamName();
+    return !_onlineClient.IsSpectator &&
+      _onlineClient.Team is NetworkTeam team && Team.CurrentTurn == team.ToTeamName();
   }
 
-  private bool IsDebugOnlineMatch => _onlineClient?.IsDebugRoom == true;
+  private bool IsOnlineSpectator => _onlineClient?.IsSpectator == true;
+
+  private bool IsDebugOnlineMatch => _onlineClient?.IsDebugRoom == true && !IsOnlineSpectator;
 
   private async System.Threading.Tasks.Task SwitchDebugTeamAsync()
   {
@@ -2166,7 +2170,10 @@ internal sealed partial class Game1 : Game
     }
   }
 
-  private async System.Threading.Tasks.Task JoinOnlineMatchAsync(string requestedJoinCode = null)
+  private async System.Threading.Tasks.Task JoinOnlineMatchAsync(
+    string requestedJoinCode = null,
+    bool asSpectator = false
+  )
   {
     if (_onlineClient != null)
     {
@@ -2202,7 +2209,7 @@ internal sealed partial class Game1 : Game
       _onlineError = string.Empty;
       _onlineClient = new OnlineMatchClient(serverUrl);
       _onlineIsHost = false;
-      RoomJoinResult result = await _onlineClient.JoinAsync(joinCode);
+      RoomJoinResult result = await _onlineClient.JoinAsync(joinCode, asSpectator: asSpectator);
       if (!result.Accepted)
       {
         Console.WriteLine($"Could not join room: {result.Error}");
@@ -2213,8 +2220,12 @@ internal sealed partial class Game1 : Game
         return;
       }
 
-      _onlineStatus = $"ONLINE {result.Team}  ROOM: {result.JoinCode}";
-      Console.WriteLine($"Joined online room {result.JoinCode} as {result.Team}.");
+      _onlineStatus = asSpectator
+        ? $"SPECTATING ROOM: {result.JoinCode}"
+        : $"ONLINE {result.Team}  ROOM: {result.JoinCode}";
+      Console.WriteLine(asSpectator
+        ? $"Joined online room {result.JoinCode} as a spectator."
+        : $"Joined online room {result.JoinCode} as {result.Team}.");
     }
     catch (Exception exception)
     {
@@ -2278,6 +2289,11 @@ internal sealed partial class Game1 : Game
 
   private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
   {
+    if (IsOnlineSpectator)
+    {
+      return false;
+    }
+
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
     if (actor.HasAttackedThisTurn && !engineerDemolition)
@@ -2468,13 +2484,22 @@ internal sealed partial class Game1 : Game
 
     if (state.PlayerCount < state.Configuration.PlayerCount)
     {
-      _onlineStatus = $"WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}";
+      _onlineStatus = IsOnlineSpectator
+        ? $"SPECTATING  WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}"
+        : $"WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}";
       _screen = Screen.OnlineWaiting;
       return;
     }
 
     if (!state.MatchReady)
     {
+      if (IsOnlineSpectator)
+      {
+        _onlineStatus = $"SPECTATING  WAITING FOR ROYAL SELECTION  ROOM: {state.JoinCode}";
+        _screen = Screen.OnlineWaiting;
+        return;
+      }
+
       NetworkTeam? localTeam = _onlineClient?.Team;
       bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
         teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
@@ -2500,9 +2525,11 @@ internal sealed partial class Game1 : Game
       );
       Team.SetCurrentTurn(_initialBuyPhase.CurrentTeam);
       selectedPiece = null;
-      _isPurchaseMode = true;
+      _isPurchaseMode = !IsOnlineSpectator;
       EnsureInitialBuySelection();
-      _onlineStatus = $"ONLINE INITIAL PURCHASE  ROOM: {state.JoinCode}";
+      _onlineStatus = IsOnlineSpectator
+        ? $"SPECTATING INITIAL PURCHASE  ROOM: {state.JoinCode}"
+        : $"ONLINE INITIAL PURCHASE  ROOM: {state.JoinCode}";
       _onlineRoyalChoicePending = false;
       _screen = Screen.Playing;
       _movementAnimation = null;
@@ -2513,7 +2540,9 @@ internal sealed partial class Game1 : Game
     selectedPiece = null;
     _initialBuyPhase = null;
     _isPurchaseMode = false;
-    _onlineStatus = $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
+    _onlineStatus = IsOnlineSpectator
+      ? $"SPECTATING {state.CurrentTurn} TURN  ROOM: {state.JoinCode}"
+      : $"ONLINE {state.CurrentTurn} TURN  ROOM: {state.JoinCode}";
     _onlineRoyalChoicePending = false;
     _screen = Screen.Playing;
     BeginOnlineMovementAnimation(state.Pieces, previousPositions);
@@ -4635,6 +4664,16 @@ internal sealed partial class Game1 : Game
 
   private bool HandlePurchasePanelClick(Point mousePosition)
   {
+    if (IsOnlineSpectator && !IsPointerOverPurchaseMenu(mousePosition))
+    {
+      return false;
+    }
+
+    if (IsOnlineSpectator)
+    {
+      return true;
+    }
+
     Rectangle panel = GetPurchasePanelBounds();
     Rectangle unitListToggle = GetPurchaseUnitListToggleBounds();
     Rectangle previousPackButton = GetPurchaseUnitPackPreviousButtonBounds();
@@ -4741,6 +4780,11 @@ internal sealed partial class Game1 : Game
 
   private bool HandleMercenaryPanelClick(Point mousePosition)
   {
+    if (IsOnlineSpectator)
+    {
+      return GetSelectedPiecePanelBounds().Contains(mousePosition);
+    }
+
     if (selectedPiece?.Definition.Type != PieceType.Mercenary ||
         !GetSelectedPiecePanelBounds().Contains(mousePosition))
     {
@@ -5186,8 +5230,10 @@ internal sealed partial class Game1 : Game
     DrawMenuButton(nextButton, ">", UiButtonTone.Neutral);
     DrawMenuButton(
       purchaseButton,
-      _initialBuyPhase != null ? "BUY MODE" : _isPurchaseMode ? "CANCEL" : "BUY",
-      _initialBuyPhase != null ? UiButtonTone.Accent : _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
+      IsOnlineSpectator ? "VIEW ONLY" : _initialBuyPhase != null ? "BUY MODE" : _isPurchaseMode ? "CANCEL" : "BUY",
+      IsOnlineSpectator
+        ? UiButtonTone.Neutral
+        : _initialBuyPhase != null ? UiButtonTone.Accent : _isPurchaseMode ? UiButtonTone.Danger : UiButtonTone.Primary,
       _isPurchaseMode
     );
     DrawPurchaseUnitList();
@@ -5383,7 +5429,7 @@ internal sealed partial class Game1 : Game
   private Rectangle GetOnlinePanelBounds()
   {
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
-    return UiLayout.Centered(viewport, 560, 470, UiTheme.SpaceLg);
+    return UiLayout.Centered(viewport, 560, 530, UiTheme.SpaceLg);
   }
 
   private Rectangle GetOnlineButtonBounds(int index)
@@ -6360,6 +6406,7 @@ internal sealed partial class Game1 : Game
     }
 
     _onlineIsHost = false;
+    _onlineJoinAsSpectator = false;
     _onlineRoyalChoicePending = false;
     _royalAwaitingPlacement = null;
     _debugTeamSwitchPending = false;
@@ -6636,7 +6683,7 @@ internal sealed partial class Game1 : Game
           else if (key == Keys.Enter && _screen == Screen.OnlineJoin &&
               _onlineInputFocus == OnlineInputField.JoinCode && _onlineJoinCode.Length > 0)
           {
-            _ = JoinOnlineMatchAsync(_onlineJoinCode);
+            _ = JoinOnlineMatchAsync(_onlineJoinCode, _onlineJoinAsSpectator);
           }
           else
           {
@@ -6718,10 +6765,18 @@ internal sealed partial class Game1 : Game
         else if (GetOnlineButtonBounds(1).Contains(mousePosition))
         {
           _onlineJoinCode = string.Empty;
+          _onlineJoinAsSpectator = false;
           _onlineInputFocus = OnlineInputField.JoinCode;
           _screen = Screen.OnlineJoin;
         }
         else if (GetOnlineButtonBounds(2).Contains(mousePosition))
+        {
+          _onlineJoinCode = string.Empty;
+          _onlineJoinAsSpectator = true;
+          _onlineInputFocus = OnlineInputField.JoinCode;
+          _screen = Screen.OnlineJoin;
+        }
+        else if (GetOnlineButtonBounds(3).Contains(mousePosition))
         {
           _screen = Screen.Title;
         }
@@ -6738,7 +6793,7 @@ internal sealed partial class Game1 : Game
         }
         else if (GetOnlineJoinButtonBounds().Contains(mousePosition) && _onlineJoinCode.Length > 0)
         {
-          _ = JoinOnlineMatchAsync(_onlineJoinCode);
+          _ = JoinOnlineMatchAsync(_onlineJoinCode, _onlineJoinAsSpectator);
         }
         else if (GetOnlineBackButtonBounds().Contains(mousePosition))
         {
@@ -7903,7 +7958,7 @@ internal sealed partial class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("ONLINE MULTIPLAYER", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Enter the server link, then host a room or join one.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    _ui.Text("Enter the server link, then host, join, or spectate a room.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
     _ui.Text("Click a field, then press Ctrl+V to paste.", new Vector2(content.X, content.Y + 51), UiTheme.TextDim, 0.56f);
     DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     if (!string.IsNullOrWhiteSpace(_onlineError))
@@ -7913,7 +7968,8 @@ internal sealed partial class Game1 : Game
     _ui.Divider(content, content.Y + 158);
     DrawMenuButton(GetOnlineButtonBounds(0), "HOST NEW ROOM", UiButtonTone.Primary);
     DrawMenuButton(GetOnlineButtonBounds(1), "JOIN ROOM", UiButtonTone.Accent);
-    DrawMenuButton(GetOnlineButtonBounds(2), "BACK", UiButtonTone.Neutral);
+    DrawMenuButton(GetOnlineButtonBounds(2), "SPECTATE ROOM", UiButtonTone.Accent);
+    DrawMenuButton(GetOnlineButtonBounds(3), "BACK", UiButtonTone.Neutral);
   }
 
   private void DrawOnlineJoinScreen()
@@ -7922,8 +7978,15 @@ internal sealed partial class Game1 : Game
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     Rectangle codeBounds = GetOnlineJoinCodeBounds();
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.Text("JOIN PRIVATE ROOM", new Vector2(content.X, content.Y), UiTheme.Gold);
-    _ui.Text("Enter the same server link and room code as the host.", new Vector2(content.X, content.Y + 30), UiTheme.TextMuted, 0.7f);
+    _ui.Text(_onlineJoinAsSpectator ? "SPECTATE ROOM" : "JOIN PRIVATE ROOM", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text(
+      _onlineJoinAsSpectator
+        ? "Watch a live room without taking a player slot."
+        : "Enter the same server link and room code as the host.",
+      new Vector2(content.X, content.Y + 30),
+      UiTheme.TextMuted,
+      0.7f
+    );
     _ui.Text("Click a field, then press Ctrl+V to paste.", new Vector2(content.X, content.Y + 51), UiTheme.TextDim, 0.56f);
     DrawOnlineServerUrlField(GetOnlineServerUrlBounds());
     DrawPanel(codeBounds, UiTheme.PanelRaised, _onlineInputFocus == OnlineInputField.JoinCode ? UiTheme.Gold : UiTheme.PanelBorderSubtle);
@@ -7937,7 +8000,7 @@ internal sealed partial class Game1 : Game
       string.IsNullOrWhiteSpace(_onlineError) ? UiTheme.TextDim : UiTheme.Attack,
       0.56f
     );
-    DrawMenuButton(GetOnlineJoinButtonBounds(), "JOIN", UiButtonTone.Primary);
+    DrawMenuButton(GetOnlineJoinButtonBounds(), _onlineJoinAsSpectator ? "SPECTATE" : "JOIN", UiButtonTone.Primary);
     DrawMenuButton(GetOnlineBackButtonBounds(), "BACK", UiButtonTone.Neutral);
   }
 
@@ -7946,14 +8009,30 @@ internal sealed partial class Game1 : Game
     Rectangle panel = GetOnlinePanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     string roomCode = string.IsNullOrWhiteSpace(_onlineClient?.JoinCode) ? "-----" : _onlineClient.JoinCode;
-    string team = _onlineClient?.Team?.ToString().ToUpperInvariant() ?? "";
+    bool spectating = IsOnlineSpectator;
+    string team = spectating ? "VIEW-ONLY SPECTATOR" : _onlineClient?.Team?.ToString().ToUpperInvariant() ?? "";
     int remainingPlayers = Math.Max(0, _playerCount - 1);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.CenterText(_onlineIsHost ? "PRIVATE ROOM CREATED" : "JOINED PRIVATE ROOM", new Rectangle(content.X, content.Y, content.Width, 30), UiTheme.GoldBright, 1.05f);
-    _ui.CenterText(_onlineIsHost ? "SHARE THIS ROOM CODE" : "ROOM CODE", new Rectangle(content.X, content.Y + 64, content.Width, 22), UiTheme.TextMuted, 0.76f);
+    _ui.CenterText(
+      spectating ? "SPECTATING ROOM" : _onlineIsHost ? "PRIVATE ROOM CREATED" : "JOINED PRIVATE ROOM",
+      new Rectangle(content.X, content.Y, content.Width, 30),
+      UiTheme.GoldBright,
+      1.05f
+    );
+    _ui.CenterText(
+      spectating ? "LIVE ROOM CODE" : _onlineIsHost ? "SHARE THIS ROOM CODE" : "ROOM CODE",
+      new Rectangle(content.X, content.Y + 64, content.Width, 22),
+      UiTheme.TextMuted,
+      0.76f
+    );
     _ui.CenterText(roomCode, new Rectangle(content.X, content.Y + 94, content.Width, 52), UiTheme.GoldBright, 1.45f);
-    _ui.CenterText($"YOU WILL PLAY {team}", new Rectangle(content.X, content.Y + 166, content.Width, 24), UiTheme.TextPrimary, 0.82f);
-    _ui.CenterText($"Waiting for {remainingPlayers} more player(s) to join...", new Rectangle(content.X, content.Y + 214, content.Width, 22), UiTheme.TextMuted, 0.74f);
+    _ui.CenterText(spectating ? team : $"YOU WILL PLAY {team}", new Rectangle(content.X, content.Y + 166, content.Width, 24), UiTheme.TextPrimary, 0.82f);
+    _ui.CenterText(
+      spectating ? "Live updates will appear when the match begins." : $"Waiting for {remainingPlayers} more player(s) to join...",
+      new Rectangle(content.X, content.Y + 214, content.Width, 22),
+      UiTheme.TextMuted,
+      0.74f
+    );
     DrawMenuButton(GetOnlineWaitingCancelButtonBounds(), "CANCEL", UiButtonTone.Neutral);
   }
 
@@ -9014,7 +9093,9 @@ internal sealed partial class Game1 : Game
     {
       int buyTurnNumber = _initialBuyPhase.GetBuyTurnsUsed(Team.CurrentTurn) + 1;
       _ui.TextFitted(
-        _initialBuyPhase.IsFarmPlacementPhase ? "OPENING FARM PLACEMENT" : "INITIAL BUY PHASE",
+        IsOnlineSpectator
+          ? (_initialBuyPhase.IsFarmPlacementPhase ? "SPECTATING FARM PLACEMENT" : "SPECTATING INITIAL BUY")
+          : (_initialBuyPhase.IsFarmPlacementPhase ? "OPENING FARM PLACEMENT" : "INITIAL BUY PHASE"),
         new Vector2(content.X, content.Y),
         content.Width,
         UiTheme.Gold
@@ -9048,7 +9129,7 @@ internal sealed partial class Game1 : Game
         initialMoneyY += 36;
       }
 
-      if (_initialBuyPhase.CanStopCurrentBuyer)
+      if (!IsOnlineSpectator && _initialBuyPhase.CanStopCurrentBuyer)
       {
         DrawMenuButton(GetInitialBuyStopButtonBounds(), "STOP BUYING", UiButtonTone.Danger);
       }

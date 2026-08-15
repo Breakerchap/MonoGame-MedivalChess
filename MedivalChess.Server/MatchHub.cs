@@ -225,6 +225,12 @@ public sealed partial class MatchStore
     {
       if (match.IsDebugMatch)
       {
+        if (request.AsSpectator)
+        {
+          match.Touch();
+          return match.SpectatorResult();
+        }
+
         if (request.DebugTeam is NetworkTeam requestedTeam && !Enum.IsDefined(requestedTeam))
         {
           return new(false, "That debug side is not valid.", null, null, null, null);
@@ -248,6 +254,12 @@ public sealed partial class MatchStore
         reconnectingPlayer.DisconnectedAt = null;
         match.Touch();
         return match.ResultFor(reconnectingPlayer);
+      }
+
+      if (request.AsSpectator)
+      {
+        match.Touch();
+        return match.SpectatorResult();
       }
 
       if (match.Players.Count >= match.Configuration.PlayerCount)
@@ -2234,6 +2246,7 @@ public sealed partial class MatchStore
       ClockState()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
+    internal RoomJoinResult SpectatorResult() => new(true, null, Code, null, null, State());
   }
 
   private sealed class OpeningBuyPhase(int purchasesPerTurn, int buyTurnsPerTeam, int playerCount, bool farmsEnabled = false)

@@ -146,7 +146,8 @@ public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
 public sealed record JoinGameRequest(
   string JoinCode,
   string? ReconnectToken = null,
-  NetworkTeam? DebugTeam = null
+  NetworkTeam? DebugTeam = null,
+  bool AsSpectator = false
 );
 
 public sealed record MoveRequest(string PieceId, int ToX, int ToY);

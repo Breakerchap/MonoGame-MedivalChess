@@ -144,6 +144,44 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
+  public void SpectatorCanJoinAFullRoomWithoutTakingAPlayerSlot()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+
+    RoomJoinResult spectator = matches.Join(
+      "spectator",
+      new JoinGameRequest(host.JoinCode!, AsSpectator: true)
+    );
+
+    Assert.True(guest.Accepted);
+    Assert.True(spectator.Accepted);
+    Assert.Null(spectator.Team);
+    Assert.Null(spectator.ReconnectToken);
+    Assert.Equal(2, spectator.State!.PlayerCount);
+    Assert.Equal(DefaultConfiguration.GameMode, spectator.State.Configuration.GameMode);
+  }
+
+  [Fact]
+  public void SpectatorCannotSubmitPlayerActions()
+  {
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
+    matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    RoomJoinResult spectator = matches.Join(
+      "spectator",
+      new JoinGameRequest(host.JoinCode!, AsSpectator: true)
+    );
+
+    ActionResult move = matches.TryMove("spectator", new MoveRequest("missing", 0, 0));
+
+    Assert.False(move.Accepted);
+    Assert.Equal("Join a room first.", move.Error);
+    Assert.NotNull(spectator.State);
+  }
+
+  [Fact]
   public void DebugRoomAllowsOneConnectionToAuthoritativelyEmulateBothTeams()
   {
     MatchStore matches = new();

@@ -15,6 +15,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
   internal NetworkTeam? Team { get; private set; }
   internal string JoinCode { get; private set; }
   internal string ReconnectToken { get; private set; }
+  internal bool IsSpectator { get; private set; }
   internal bool IsDebugRoom => string.Equals(JoinCode, "DEBUG", StringComparison.OrdinalIgnoreCase);
 
   internal OnlineMatchClient(string serverUrl)
@@ -35,12 +36,16 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return result;
   }
 
-  internal async Task<RoomJoinResult> JoinAsync(string joinCode, string reconnectToken = null)
+  internal async Task<RoomJoinResult> JoinAsync(
+    string joinCode,
+    string reconnectToken = null,
+    bool asSpectator = false
+  )
   {
     await _connection.StartAsync();
     RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
       "JoinGame",
-      new JoinGameRequest(joinCode, reconnectToken, Team)
+      new JoinGameRequest(joinCode, reconnectToken, Team, asSpectator)
     );
     Accept(result);
     return result;
@@ -127,7 +132,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
 
   private async Task RejoinRoomAfterReconnectAsync(string connectionId)
   {
-    if (string.IsNullOrWhiteSpace(JoinCode) || string.IsNullOrWhiteSpace(ReconnectToken))
+    if (string.IsNullOrWhiteSpace(JoinCode) || (!IsSpectator && string.IsNullOrWhiteSpace(ReconnectToken)))
     {
       return;
     }
@@ -136,7 +141,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     {
       RoomJoinResult result = await _connection.InvokeAsync<RoomJoinResult>(
         "JoinGame",
-        new JoinGameRequest(JoinCode, ReconnectToken, Team)
+        new JoinGameRequest(JoinCode, ReconnectToken, Team, IsSpectator)
       );
       if (result.Accepted)
       {
@@ -163,6 +168,7 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     Team = result.Team;
     JoinCode = result.JoinCode;
     ReconnectToken = result.ReconnectToken;
+    IsSpectator = result.Team is null;
     if (result.State is not null)
     {
       _pendingStates.Enqueue(result.State);

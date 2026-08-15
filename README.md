@@ -198,6 +198,8 @@ which can be used to deploy the server to services such as Render.
 
 When connecting from the game, enter the server's base URL. The client handles the SignalR `/gamehub` path itself.
 
+The online lobby also includes **Spectate Room**. Enter a room code to watch a live match without taking one of its player slots; spectators receive authoritative state updates but cannot submit moves or other player actions.
+
 Online matches support **2–4 players**.
 
 The server currently stores matches in memory, so restarting or redeploying the server clears active rooms.
