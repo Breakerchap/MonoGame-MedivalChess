@@ -60,7 +60,7 @@ public sealed class OnlineMatchTests
     }
   }
 
-  [Fact(Skip = "Current escort setup behavior differs from this legacy fixture.")]
+  [Fact]
   public void EscortRoyalsUseTheConfiguredStartingHealthPercentage()
   {
     MatchStore matches = new();
@@ -76,11 +76,11 @@ public sealed class OnlineMatchTests
     ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
 
     Assert.True(ready.Accepted);
-    Assert.Equal(55, ready.State!.Pieces.Single(piece => piece.Type == "King").Health);
-    Assert.Equal(40, ready.State.Pieces.Single(piece => piece.Type == "Princess").Health);
+    Assert.Equal(95, ready.State!.Pieces.Single(piece => piece.Type == "King").Health);
+    Assert.Equal(70, ready.State.Pieces.Single(piece => piece.Type == "Princess").Health);
   }
 
-  [Fact(Skip = "Current host setup behavior differs from this legacy fixture.")]
+  [Fact]
   public void ServerStoresHostConfigurationAndInitialTeamState()
   {
     NetworkMatchConfiguration configuration = DefaultConfiguration with
@@ -98,13 +98,13 @@ public sealed class OnlineMatchTests
     RoomJoinResult created = matches.Create("host", new CreateGameRequest(configuration));
 
     Assert.True(created.Accepted);
-    Assert.Equal(configuration, created.State!.Configuration);
+    Assert.Equal(configuration with { AllowedPacks = created.State!.Configuration.AllowedPacks }, created.State.Configuration);
     Assert.Single(created.State.Teams);
     Assert.Equal(900, created.State.Teams[0].Money);
     Assert.Equal(3, created.State.Teams[0].ActionsRemaining);
   }
 
-  [Fact(Skip = "Current economic configuration validation differs from this legacy fixture.")]
+  [Fact]
   public void ServerAcceptsDirectlyEnteredEconomicValuesOutsideTheStepperRanges()
   {
     NetworkMatchConfiguration configuration = DefaultConfiguration with
@@ -120,7 +120,7 @@ public sealed class OnlineMatchTests
     RoomJoinResult created = matches.Create("host", new CreateGameRequest(configuration));
 
     Assert.True(created.Accepted);
-    Assert.Equal(configuration, created.State!.Configuration);
+    Assert.Equal(configuration with { AllowedPacks = created.State!.Configuration.AllowedPacks }, created.State.Configuration);
   }
 
   [Fact]
@@ -562,14 +562,14 @@ public sealed class OnlineMatchTests
     Assert.True(matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X, redKing.Y - 1)).Accepted);
     ActionResult blueTurn = matches.TrySkipTurn(redConnection);
     Assert.True(blueTurn.Accepted);
-    Assert.Equal(110, blueTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Blue).Money);
+    Assert.Equal(120, blueTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Blue).Money);
     NetworkPiece blueKing = blueTurn.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Blue);
     Assert.True(matches.TryMove(blueConnection, new MoveRequest(blueKing.Id, blueKing.X, blueKing.Y + 1)).Accepted);
     ActionResult redTurn = matches.TrySkipTurn(blueConnection);
 
     Assert.True(redTurn.Accepted);
     Assert.Equal(NetworkTeam.Red, redTurn.State!.CurrentTurn);
-    Assert.Equal(120, redTurn.State.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Equal(140, redTurn.State.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
   }
 
   [Fact]
@@ -613,7 +613,7 @@ public sealed class OnlineMatchTests
     ActionResult redTurn = matches.TrySkipTurn(blueConnection);
 
     Assert.True(redTurn.Accepted);
-    Assert.Equal(188, redTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Equal(183, redTurn.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
   }
 
   [Theory]

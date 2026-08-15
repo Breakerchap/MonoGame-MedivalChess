@@ -1418,8 +1418,10 @@ public sealed partial class MatchStore
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard);
     NetworkPiece damagedPiece = guard ?? target;
-    NetworkPiece? oxAttachment = match.Pieces.FirstOrDefault(piece =>
-      piece.AttachedToId == target.Id && AbilityRules.SharesIncomingDamageWithHost(piece.Type));
+    NetworkPiece? oxAttachment = target.Type == nameof(PieceType.Ox)
+      ? match.Pieces.FirstOrDefault(piece =>
+        piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)
+      : null;
     int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
     ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
     if (oxAttachment is not null && oxAttachment.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == oxAttachment.Id))

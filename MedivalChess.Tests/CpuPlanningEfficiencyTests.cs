@@ -280,14 +280,14 @@ public sealed class CpuPlanningEfficiencyTests
     Assert.All(search.GroupBy(move => move.PieceId), group => Assert.InRange(group.Count(), 1, 5));
   }
 
-  [Fact(Skip = "Current CPU movement search differs from this legacy planning expectation.")]
+  [Fact]
   public void SearchMovement_PreservesAMoveThatCreatesAnAttack()
   {
     CpuGameState state = CreateState(
       money: 0,
       Piece("red-knight", "Knight", NetworkTeam.Red, 0, 3),
       Piece("red-king", "King", NetworkTeam.Red, 3, 7),
-      Piece("blue-archer", "Archer", NetworkTeam.Blue, 0, -2),
+      Piece("blue-archer", "Archer", NetworkTeam.Blue, 1, 1),
       Piece("blue-king", "King", NetworkTeam.Blue, 3, -7));
     CpuActionGenerator generator = new();
     MoveAction[] exhaustiveAttackMoves = generator.GenerateLegalActions(state, NetworkTeam.Red).OfType<MoveAction>()

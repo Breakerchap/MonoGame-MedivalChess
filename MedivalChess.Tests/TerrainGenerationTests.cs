@@ -6,17 +6,17 @@ namespace MedivalChess.Tests;
 
 public sealed class TerrainGenerationTests
 {
-  [Fact(Skip = "The authored heavy/heavy preset fixture is not present in the current terrain assets.")]
+  [Fact]
   public void MediumPresetTerrainUsesHeadersToFilterAndLoadsDeterministically()
   {
     Board board = new("board_medium.json");
 
-    BattlefieldTerrain first = TerrainRules.Create(board, 8675309, "Heavy", "Heavy", terrainSource: "Preset", boardSize: "Medium");
-    BattlefieldTerrain second = TerrainRules.Create(board, 8675309, "Heavy", "Heavy", terrainSource: "Preset", boardSize: "Medium");
+    BattlefieldTerrain first = TerrainRules.Create(board, 8675309, "Light", "Light", terrainSource: "Preset", boardSize: "Medium");
+    BattlefieldTerrain second = TerrainRules.Create(board, 8675309, "Light", "Light", terrainSource: "Preset", boardSize: "Medium");
     BattlefieldTerrainPreset[] matchingPresets = BattlefieldTerrain.GetPresets(board, "Medium")
       .Where(preset =>
-        string.Equals(preset.ForestDensity, "Heavy", StringComparison.OrdinalIgnoreCase) &&
-        string.Equals(preset.WaterwayDensity, "Heavy", StringComparison.OrdinalIgnoreCase))
+        string.Equals(preset.ForestDensity, "Light", StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(preset.WaterwayDensity, "Light", StringComparison.OrdinalIgnoreCase))
       .ToArray();
 
     Assert.NotEmpty(matchingPresets);

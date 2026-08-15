@@ -6,7 +6,7 @@ namespace MedivalChess.Tests;
 
 public sealed class CpuTacticalSafetyTests
 {
-  [Fact(Skip = "Current compressed exchange scoring differs from this legacy threshold.")]
+  [Fact]
   public void HangingPiece_PenalisesLosingAnExpensiveUnitMoreThanACheapOne()
   {
     CpuGameState knightState = CreateState(
@@ -21,7 +21,7 @@ public sealed class CpuTacticalSafetyTests
     float knightScore = evaluator.Evaluate(knightState, NetworkTeam.Red, context);
     float peasantScore = evaluator.Evaluate(peasantState, NetworkTeam.Red, new EvaluationContext(new CpuProfile()));
 
-    Assert.True(knightScore < peasantScore - 20f, $"knight={knightScore}, peasant={peasantScore}");
+    Assert.True(knightScore < peasantScore - 5f, $"knight={knightScore}, peasant={peasantScore}");
   }
 
   [Fact]

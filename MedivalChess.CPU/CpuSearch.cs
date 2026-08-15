@@ -367,6 +367,49 @@ public sealed class CpuPlayer : ICpuPlayer
     {
       chosenActions = [immediateWin, .. chosenActions];
     }
+    else if (_candidateSelector is CpuActionCandidateSelector)
+    {
+      // A default CPU turn should finish an exposed unit before it spreads damage over a
+      // healthier target. Custom selectors are intentionally left untouched so search clients
+      // can still experiment with alternative tactical priorities.
+      AttackAction? immediateLethal = _actionGenerator.GenerateLegalActions(state, team)
+        .OfType<AttackAction>()
+        .Where(attack => attack.TargetPieceId is not null)
+        .Where(attack => state.Pieces.FirstOrDefault(piece => piece.Id == attack.AttackerId) is NetworkPiece attacker &&
+          state.Pieces.FirstOrDefault(piece => piece.Id == attack.TargetPieceId) is NetworkPiece target &&
+          CpuGameRules.EstimateAttackDamage(state, attacker, target) >= target.Health)
+        .OrderByDescending(attack => ScoreMandatoryAttack(state, attack))
+        .ThenBy(attack => attack.Describe(), StringComparer.Ordinal)
+        .FirstOrDefault();
+      if (immediateLethal is not null)
+      {
+        chosenActions = [immediateLethal];
+      }
+      else if (state.Scenario is null && state.Teams.TryGetValue(team, out CpuTeamState? teamState) && teamState.Money >= 70)
+      {
+        int friendlyCombatUnits = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null &&
+          UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Attack > 0);
+        bool hasImmediateAttack = state.Pieces
+          .Where(attacker => attacker.Team == team)
+          .Any(attacker => state.Pieces
+            .Where(target => target.Team != team && target.Team != NetworkTeam.Neutral && target.AttachedToId is null)
+            .Any(target => CpuGameRules.CanDirectlyAttack(state, attacker, target)));
+        if (friendlyCombatUnits == 1 && !hasImmediateAttack)
+        {
+          PurchaseAction? reservePurchase = _actionGenerator.GenerateLegalActions(state, team)
+            .OfType<PurchaseAction>()
+            .Where(purchase => purchase.UnitType != nameof(PieceType.Farm) &&
+              UnitRules.TryGet(purchase.UnitType, out UnitRule rule) && rule.Attack > 0)
+            .OrderByDescending(purchase => UnitRules.GetRequired(purchase.UnitType).Attack)
+            .ThenBy(purchase => purchase.Describe(), StringComparer.Ordinal)
+            .FirstOrDefault();
+          if (reservePurchase is not null)
+          {
+            chosenActions = [reservePurchase];
+          }
+        }
+      }
+    }
     IReadOnlyList<ICpuGameAction> verifiedActions = VerifyAndCompleteActionSequence(state, team, chosenActions, profile);
     return new CpuTurnPlan(verifiedActions, chosen.Score, report);
   }
@@ -890,6 +933,16 @@ public sealed class CpuPlayer : ICpuPlayer
 
     if (!Globals.ActionLimitsEnabled && state.InitialBuy is null && current.CurrentTurn == team && !current.IsFinished)
     {
+      if (_candidateSelector is not CpuActionCandidateSelector)
+      {
+        if (verified.Count == 0)
+        {
+          EndTurnAction fallbackEndTurn = new(team);
+          if (fallbackEndTurn.IsLegal(current)) verified.Add(fallbackEndTurn);
+        }
+        return verified;
+      }
+
       ForceMandatoryAttacks(ref current, team, verified);
 
       // A short beam can find a good tactical prefix without reaching every independent unit on a
@@ -917,6 +970,7 @@ public sealed class CpuPlayer : ICpuPlayer
         IReadOnlyList<ScoredAction> rankedMoves = _candidateSelector.SelectCandidates(
           current, team, moves, completionSettings, profile.Personality);
         (ScoredAction candidate, bool createsAttack)? best = rankedMoves
+          .Where(candidate => candidate.Action is MoveAction move && move.IsLegal(current))
           .Select(candidate =>
           {
             MoveAction move = (MoveAction)candidate.Action;

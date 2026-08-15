@@ -70,7 +70,7 @@ public sealed class CpuPlayerTests
     Assert.Equal("blue-knight", attack.TargetPieceId);
   }
 
-  [Theory(Skip = "Current CPU purchase-versus-move ranking differs from this legacy expectation.")]
+  [Theory]
   [InlineData(CpuDifficultyLevel.Medium)]
   [InlineData(CpuDifficultyLevel.Hard)]
   [InlineData(CpuDifficultyLevel.Best)]
@@ -238,7 +238,7 @@ public sealed class CpuPlayerTests
     Assert.Empty(plan.Actions);
   }
 
-  [Fact(Skip = "Current CPU candidate verification is pending a broader search-state fix.")]
+  [Fact]
   public void Cpu_DiscardsAnIllegalCandidateBeforeItCanBeSimulatedOrReturned()
   {
     CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
@@ -252,7 +252,7 @@ public sealed class CpuPlayerTests
     Assert.IsType<EndTurnAction>(Assert.Single(plan.Actions));
   }
 
-  [Fact(Skip = "Current purchase candidate generation differs from this legacy no-action fixture.")]
+  [Fact]
   public void Cpu_HandlesAStateWithNoAvailableAction()
   {
     CpuGameState state = CreateState(new NetworkPiece("red-farm", "Farm", NetworkTeam.Red, 0, 0, 30));

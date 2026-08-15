@@ -97,6 +97,15 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     foreach (AttackAction attack in legalActions.OfType<AttackAction>().Where(attack => attack.TargetPieceId is not null &&
       piecesById.TryGetValue(attack.TargetPieceId, out NetworkPiece? target) && IsRoyalPiece(target))) Add(attack);
 
+    // A lethal attack is also a forcing action. Do not let the quick material ranking discard a
+    // damaged target merely because a healthier, more expensive unit has a larger replacement
+    // value; finishing the damaged unit is the stronger immediate tactic.
+    foreach (AttackAction attack in legalActions.OfType<AttackAction>().Where(attack =>
+      attack.TargetPieceId is not null &&
+      piecesById.TryGetValue(attack.AttackerId, out NetworkPiece? attacker) &&
+      piecesById.TryGetValue(attack.TargetPieceId, out NetworkPiece? target) &&
+      CpuGameRules.EstimateAttackDamage(state, attacker, target) >= target.Health)) Add(attack);
+
     int attackQuota = Math.Max(6, scoringCapacity / 3);
     foreach (AttackAction attack in legalActions.OfType<AttackAction>()
       .OrderByDescending(attack => GetQuickAttackScore(attack, piecesById))
@@ -552,6 +561,18 @@ public sealed class CpuActionCandidateSelector : IActionCandidateSelector
     float score = affordability;
     if (UnitRules.TryGet(action.UnitType, out UnitRule purchasedRule) && purchasedRule.Attack > 0)
     {
+      int ownedCombatUnits = state.Pieces.Count(piece => piece.Team == action.Team &&
+        piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule ownedRule) && ownedRule.Attack > 0);
+      bool hasImmediateAttack = state.Pieces
+        .Where(attacker => attacker.Team == action.Team)
+        .Any(attacker => state.Pieces
+          .Where(target => target.Team != action.Team && target.Team != NetworkTeam.Neutral &&
+            target.AttachedToId is null)
+          .Any(target => CpuGameRules.CanDirectlyAttack(state, attacker, target)));
+      if (!hasImmediateAttack && ownedCombatUnits <= 1 && state.Teams[action.Team].Money >= 70)
+      {
+        score += 120f;
+      }
       NetworkPiece[] enemies = state.Pieces.Where(piece => piece.Team != action.Team && piece.Team != NetworkTeam.Neutral &&
         piece.AttachedToId is null).ToArray();
       int nearestEnemy = enemies.Select(piece => Distance((action.X, action.Y), (piece.X, piece.Y))).DefaultIfEmpty(12).Min();
