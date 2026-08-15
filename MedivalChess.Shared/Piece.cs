@@ -200,7 +200,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Carpenter = new(PieceType.Carpenter, "Crp", Pack.Dynasty, (3, Shape.Straight), 0, 45, (1, 1), (1, 2), Shape.Straight, 45, "As an attack, may build bridges or a watchtower. May demolish any in-range structure for free.");
   public static readonly PieceDefinition Emperor = new(PieceType.Emperor, "EMP", Pack.Dynasty, (2, Shape.Straight), 10, 80, (1, 1), (1, 1), Shape.Straight, 0, "After dying, revive in the same position as a Terracotta Warrior.");
   public static readonly PieceDefinition TerracottaWarrior = new(PieceType.TerracottaWarrior, "TW", Pack.Dynasty, (0, Shape.None), 0, 100, (1, 1), (0, 0), Shape.None, 0, "This unit cannot be bought.", displayName: "Terracotta Warrior");
-  
+
   // Fantasy
   public static readonly PieceDefinition Commoner = new(PieceType.Commoner, "Com", Pack.Fantasy, (1, Shape.Any), 15, 10, (1, 1), (1, 1), Shape.Any, 25);
   public static readonly PieceDefinition Adventurer = new(PieceType.Adventurer, "Adv", Pack.Fantasy, (3, Shape.Circle), 20, 40, (1, 1), (1, 1), Shape.Any, 50);
@@ -288,7 +288,7 @@ public static class PieceDefinitions
 
   public static readonly PieceDefinition[] All =
   [
-    Soldier, Swordsman, Defender, Archer, Peasant, Knight, Crossbowman, Cavalier, Cannon, Catapult, Bombard, Guard, Farm,
+    Swordsman, Defender, Archer, Peasant, Knight, Crossbowman, Cavalier, Cannon, Catapult, Bombard, Guard, Farm,
     King, Princess, Sorceress, Palace, Baron, Emissary, Herald,
     Elephant, Ox, Ashigaru, Ninja, Samurai, Sumo, Carpenter, Emperor, TerracottaWarrior,
     Dragon, GoblinRoyalty, Adventurer, Elf, Wizard, Witch, Dragonborn, Commoner, Shieldbearer, Spartan, Orc,
@@ -305,7 +305,7 @@ public static class PieceDefinitions
 
   public static readonly PieceDefinition[] Purchasable =
   [
-    Soldier, Swordsman, Defender, Archer, Peasant, Knight, Crossbowman, Cavalier, Cannon, Catapult, Bombard, Guard, Farm,
+    Swordsman, Defender, Archer, Peasant, Knight, Crossbowman, Cavalier, Cannon, Catapult, Bombard, Guard, Farm,
     Elephant, Ox, Ashigaru, Ninja, Samurai, Sumo, Carpenter,
     Dragon, Adventurer, Elf, Wizard, Witch, Dragonborn, Commoner, Shieldbearer, Spartan, Orc,
     Skeleton, Banshee, Zombie, Abomination, Ghoul, Vampire,

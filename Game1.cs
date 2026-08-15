@@ -177,6 +177,7 @@ internal sealed partial class Game1 : Game
   private const int purchaseUnitListHeaderHeight = 28;
   private const int purchaseUnitListPadding = 8;
   private const int purchaseUnitListGap = 4;
+  private const int purchaseUnitPackNavigationWidth = 42;
   private const int purchaseUnitListMinimumRowHeight = 18;
   private const int purchaseUnitListMaximumRowHeight = 32;
   private const int settingsControlHeight = 36;
@@ -191,6 +192,7 @@ internal sealed partial class Game1 : Game
   private bool _isPurchaseMode;
   private bool _isPurchaseUnitListExpanded;
   private int _selectedPurchaseIndex;
+  private int _selectedPurchasePackIndex;
   private EngineerAbility _selectedEngineerAbility;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
@@ -1073,6 +1075,7 @@ internal sealed partial class Game1 : Game
       if (_initialBuyPhase == null ||
           purchasablePieces[_selectedPurchaseIndex].Type != PieceType.Mercenary)
       {
+        SyncPurchasePackToSelection();
         return;
       }
     }
@@ -1105,6 +1108,7 @@ internal sealed partial class Game1 : Game
   {
     int purchaseCount = GetPurchasablePieces().Count;
     _selectedPurchaseIndex = purchaseCount == 0 ? 0 : _selectedPurchaseIndex % purchaseCount;
+    SyncPurchasePackToSelection();
   }
 
   private bool TrySelectPurchaseIndex(int index)
@@ -1123,6 +1127,7 @@ internal sealed partial class Game1 : Game
     }
 
     _selectedPurchaseIndex = index;
+    SyncPurchasePackToSelection();
     return true;
   }
 
@@ -1134,7 +1139,11 @@ internal sealed partial class Game1 : Game
     }
 
     int farmIndex = GetPurchasablePieces().ToList().FindIndex(piece => piece.Type == PieceType.Farm);
-    if (farmIndex >= 0) _selectedPurchaseIndex = farmIndex;
+    if (farmIndex >= 0)
+    {
+      _selectedPurchaseIndex = farmIndex;
+      SyncPurchasePackToSelection();
+    }
   }
 
   private void CompletePurchase()
@@ -4453,10 +4462,107 @@ internal sealed partial class Game1 : Game
     return new Rectangle(panel.X, panel.Bottom + UiTheme.SpaceSm, panel.Width, purchaseUnitListHeaderHeight);
   }
 
+  private Rectangle GetPurchaseUnitPackPreviousButtonBounds()
+  {
+    Rectangle toggle = GetPurchaseUnitListToggleBounds();
+    return new Rectangle(toggle.X, toggle.Y, purchaseUnitPackNavigationWidth, toggle.Height);
+  }
+
+  private Rectangle GetPurchaseUnitPackNextButtonBounds()
+  {
+    Rectangle toggle = GetPurchaseUnitListToggleBounds();
+    return new Rectangle(toggle.Right - purchaseUnitPackNavigationWidth, toggle.Y, purchaseUnitPackNavigationWidth, toggle.Height);
+  }
+
+  private Rectangle GetPurchaseUnitPackLabelBounds()
+  {
+    Rectangle toggle = GetPurchaseUnitListToggleBounds();
+    return new Rectangle(
+      toggle.X + purchaseUnitPackNavigationWidth,
+      toggle.Y,
+      toggle.Width - purchaseUnitPackNavigationWidth * 2,
+      toggle.Height
+    );
+  }
+
+  private IReadOnlyList<Pack> GetPurchasablePacks()
+  {
+    IReadOnlyList<PieceDefinition> pieces = GetPurchasablePieces();
+    return PackRules.All.Where(pack => pieces.Any(piece => piece.Pack == pack)).ToArray();
+  }
+
+  private void EnsurePurchasePackSelectionIsValid()
+  {
+    IReadOnlyList<Pack> packs = GetPurchasablePacks();
+    _selectedPurchasePackIndex = packs.Count == 0
+      ? 0
+      : ((_selectedPurchasePackIndex % packs.Count) + packs.Count) % packs.Count;
+  }
+
+  private void SyncPurchasePackToSelection()
+  {
+    IReadOnlyList<PieceDefinition> pieces = GetPurchasablePieces();
+    if (_selectedPurchaseIndex < 0 || _selectedPurchaseIndex >= pieces.Count)
+    {
+      EnsurePurchasePackSelectionIsValid();
+      return;
+    }
+
+    Pack selectedPack = pieces[_selectedPurchaseIndex].Pack;
+    IReadOnlyList<Pack> packs = GetPurchasablePacks();
+    for (int index = 0; index < packs.Count; index++)
+    {
+      if (packs[index] == selectedPack)
+      {
+        _selectedPurchasePackIndex = index;
+        return;
+      }
+    }
+
+    EnsurePurchasePackSelectionIsValid();
+  }
+
+  private IReadOnlyList<PieceDefinition> GetSelectedPurchasePackPieces()
+  {
+    IReadOnlyList<Pack> packs = GetPurchasablePacks();
+    if (packs.Count == 0)
+    {
+      return [];
+    }
+
+    EnsurePurchasePackSelectionIsValid();
+    Pack selectedPack = packs[_selectedPurchasePackIndex];
+    return GetPurchasablePieces().Where(piece => piece.Pack == selectedPack).ToArray();
+  }
+
+  private void CyclePurchasePack(int direction)
+  {
+    IReadOnlyList<Pack> packs = GetPurchasablePacks();
+    if (packs.Count == 0)
+    {
+      return;
+    }
+
+    EnsurePurchasePackSelectionIsValid();
+    _selectedPurchasePackIndex =
+      (_selectedPurchasePackIndex + direction + packs.Count) % packs.Count;
+
+    IReadOnlyList<PieceDefinition> pieces = GetPurchasablePieces();
+    Pack selectedPack = packs[_selectedPurchasePackIndex];
+    for (int index = 0; index < pieces.Count; index++)
+    {
+      PieceDefinition piece = pieces[index];
+      if (piece.Pack == selectedPack && TrySelectPurchaseIndex(index))
+      {
+        return;
+      }
+    }
+  }
+
   private Rectangle GetPurchaseUnitListBounds(out int columnCount, out int rowHeight)
   {
     Rectangle toggle = GetPurchaseUnitListToggleBounds();
-    int unitCount = GetPurchasablePieces().Count;
+    int unitCount = GetSelectedPurchasePackPieces().Count;
     if (unitCount == 0)
     {
       columnCount = 1;
@@ -4466,18 +4572,7 @@ internal sealed partial class Game1 : Game
 
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int availableHeight = Math.Max(1, viewport.Bottom - toggle.Y - UiTheme.SpaceLg);
-    columnCount = 4;
-    for (int columns = 2; columns <= 4; columns++)
-    {
-      int rowCount = (unitCount + columns - 1) / columns;
-      int minimumHeight = purchaseUnitListHeaderHeight + purchaseUnitListPadding * 2 +
-        rowCount * purchaseUnitListMinimumRowHeight + (rowCount - 1) * purchaseUnitListGap;
-      if (minimumHeight <= availableHeight)
-      {
-        columnCount = columns;
-        break;
-      }
-    }
+    columnCount = 2;
 
     int rows = (unitCount + columnCount - 1) / columnCount;
     int availableRowHeight = (availableHeight - purchaseUnitListHeaderHeight - purchaseUnitListPadding * 2 -
@@ -4516,6 +4611,8 @@ internal sealed partial class Game1 : Game
   {
     Rectangle panel = GetPurchasePanelBounds();
     Rectangle unitListToggle = GetPurchaseUnitListToggleBounds();
+    Rectangle previousPackButton = GetPurchaseUnitPackPreviousButtonBounds();
+    Rectangle nextPackButton = GetPurchaseUnitPackNextButtonBounds();
     bool clickedExpandedUnitList = _isPurchaseUnitListExpanded &&
       GetPurchaseUnitListBounds(out _, out _).Contains(mousePosition);
     if (!panel.Contains(mousePosition) && !unitListToggle.Contains(mousePosition) && !clickedExpandedUnitList)
@@ -4523,18 +4620,38 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
-    if (unitListToggle.Contains(mousePosition))
+    if (previousPackButton.Contains(mousePosition))
+    {
+      CyclePurchasePack(-1);
+    }
+    else if (nextPackButton.Contains(mousePosition))
+    {
+      CyclePurchasePack(1);
+    }
+    else if (unitListToggle.Contains(mousePosition))
     {
       _isPurchaseUnitListExpanded = !_isPurchaseUnitListExpanded;
     }
     else if (clickedExpandedUnitList)
     {
       IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
-      for (int index = 0; index < purchasablePieces.Count; index++)
+      IReadOnlyList<PieceDefinition> packPieces = GetSelectedPurchasePackPieces();
+      for (int index = 0; index < packPieces.Count; index++)
       {
         if (GetPurchaseUnitListItemBounds(index).Contains(mousePosition))
         {
-          TrySelectPurchaseIndex(index);
+          PieceDefinition selectedPiece = packPieces[index];
+          int globalIndex = 0;
+          while (globalIndex < purchasablePieces.Count &&
+              purchasablePieces[globalIndex].Identifier != selectedPiece.Identifier)
+          {
+            globalIndex++;
+          }
+
+          if (globalIndex < purchasablePieces.Count)
+          {
+            TrySelectPurchaseIndex(globalIndex);
+          }
           break;
         }
       }
@@ -5053,35 +5170,50 @@ internal sealed partial class Game1 : Game
   private void DrawPurchaseUnitList()
   {
     IReadOnlyList<PieceDefinition> purchasablePieces = GetPurchasablePieces();
-    Rectangle toggle = GetPurchaseUnitListToggleBounds();
-    string toggleLabel = $"UNITS {_selectedPurchaseIndex + 1}/{purchasablePieces.Count}  {(_isPurchaseUnitListExpanded ? "HIDE" : "SHOW")}";
+    IReadOnlyList<Pack> packs = GetPurchasablePacks();
+    EnsurePurchasePackSelectionIsValid();
+    Rectangle packLabel = GetPurchaseUnitPackLabelBounds();
+    Rectangle previousPackButton = GetPurchaseUnitPackPreviousButtonBounds();
+    Rectangle nextPackButton = GetPurchaseUnitPackNextButtonBounds();
+    string packText = packs.Count == 0
+      ? "NO UNITS"
+      : $"{GetPackDisplayName(packs[_selectedPurchasePackIndex])} {_selectedPurchasePackIndex + 1}/{packs.Count}";
+    string toggleLabel = $"{packText}  {(_isPurchaseUnitListExpanded ? "HIDE" : "SHOW")}";
     if (!_isPurchaseUnitListExpanded)
     {
-      DrawMenuButton(toggle, toggleLabel, UiButtonTone.Neutral, false, 0.72f);
+      DrawMenuButton(packLabel, toggleLabel, UiButtonTone.Neutral, false, 0.62f);
+      DrawMenuButton(previousPackButton, "<", UiButtonTone.Neutral, false, 0.72f);
+      DrawMenuButton(nextPackButton, ">", UiButtonTone.Neutral, false, 0.72f);
       return;
     }
 
-    Rectangle list = GetPurchaseUnitListBounds(out int columnCount, out _);
+    Rectangle list = GetPurchaseUnitListBounds(out _, out _);
     DrawPanel(list, UiTheme.PanelRaised, UiTheme.Gold);
-    DrawMenuButton(toggle, toggleLabel, UiButtonTone.Accent, true, 0.72f);
+    DrawMenuButton(packLabel, toggleLabel, UiButtonTone.Accent, true, 0.62f);
+    DrawMenuButton(previousPackButton, "<", UiButtonTone.Neutral, false, 0.72f);
+    DrawMenuButton(nextPackButton, ">", UiButtonTone.Neutral, false, 0.72f);
 
     bool farmPlacementOnly = _initialBuyPhase?.IsFarmPlacementPhase == true;
     bool initialBuyActive = _initialBuyPhase != null;
-    float labelScale = columnCount <= 2 ? 0.68f : 0.56f;
-    for (int index = 0; index < purchasablePieces.Count; index++)
+    IReadOnlyList<PieceDefinition> packPieces = GetSelectedPurchasePackPieces();
+    const float labelScale = 0.68f;
+    for (int index = 0; index < packPieces.Count; index++)
     {
-      PieceDefinition unit = purchasablePieces[index];
+      PieceDefinition unit = packPieces[index];
       bool unavailable = (farmPlacementOnly && unit.Type != PieceType.Farm) ||
         (initialBuyActive && unit.Type == PieceType.Mercenary);
       DrawMenuButton(
         GetPurchaseUnitListItemBounds(index),
         unit.DisplayName,
         unavailable ? UiButtonTone.Danger : UiButtonTone.Neutral,
-        index == _selectedPurchaseIndex,
+        purchasablePieces[_selectedPurchaseIndex].Identifier == unit.Identifier,
         labelScale
       );
     }
   }
+
+  private static string GetPackDisplayName(Pack pack) =>
+    pack == Pack.AngelsDemons ? "ANGELS & DEMONS" : pack.ToString().ToUpperInvariant();
 
   private void DrawCenteredString(string text, Rectangle bounds, Color colour)
   {
@@ -6225,6 +6357,7 @@ internal sealed partial class Game1 : Game
     _initialBuyPhase = null;
     _isPurchaseMode = false;
     _selectedPurchaseIndex = 0;
+    _selectedPurchasePackIndex = 0;
     _selectedEngineerAbility = EngineerAbility.Road;
     _startingCash = Globals.StartingCash;
     _killerRefundMultiplier = Globals.KillerDeathRefundMultiplier;
@@ -6271,6 +6404,7 @@ internal sealed partial class Game1 : Game
     _screen = Screen.Setup;
     _allowedPacks.Clear();
     _allowedPacks.Add(Pack.Base);
+    _selectedPurchasePackIndex = 0;
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
     _royalAwaitingPlacement = null;
