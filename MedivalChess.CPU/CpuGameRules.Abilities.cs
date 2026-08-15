@@ -155,7 +155,8 @@ public static partial class CpuGameRules
   private static void HandleSharedPieceDestroyed(
     CpuMutableGameState state,
     NetworkPiece piece,
-    NetworkTeam? attackingTeam
+    NetworkTeam? attackingTeam,
+    bool preservePossessedRoyalProxy = false
   )
   {
     int liveIndex = FindPieceIndex(state.Pieces, piece.Id);
@@ -178,6 +179,33 @@ public static partial class CpuGameRules
         HasAttackedThisTurn = false
       };
       return;
+    }
+
+    if (piece.Type == nameof(PieceType.Phantom))
+    {
+      if (!preservePossessedRoyalProxy && !string.IsNullOrEmpty(piece.PossessedUnitId))
+      {
+        int possessedIndex = FindPieceIndex(state.Pieces, piece.PossessedUnitId);
+        if (possessedIndex >= 0)
+        {
+          NetworkPiece possessed = state.Pieces[possessedIndex];
+          state.Pieces[possessedIndex] = possessed with { IsRoyalProxy = false };
+        }
+      }
+    }
+    else
+    {
+      NetworkPiece? possessingPhantom = state.Pieces.FirstOrDefault(candidate =>
+        candidate.Type == nameof(PieceType.Phantom) && candidate.PossessedUnitId == piece.Id);
+      if (possessingPhantom is not null)
+      {
+        HandleSharedPieceDestroyed(
+          state,
+          possessingPhantom with { Health = 0 },
+          attackingTeam,
+          preservePossessedRoyalProxy: true
+        );
+      }
     }
 
     AbilityUnitSnapshot[] deathSnapshots = state.Pieces

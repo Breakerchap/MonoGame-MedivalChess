@@ -568,7 +568,7 @@ internal sealed partial class Game1 : Game
           selectedPiece = null;
         }
       }
-      else if (selectedPiece.Occupies(targetPosition))
+      else if (selectedPiece.Occupies(targetPosition) && !wasRightClick)
       {
         selectedPiece = null;
       }
@@ -3498,11 +3498,37 @@ internal sealed partial class Game1 : Game
     HandlePieceDestroyed(target, mineOwner);
   }
 
-  private void HandlePieceDestroyed(Piece damagedPiece, TeamName? attackingTeamName)
+  private void HandlePieceDestroyed(
+    Piece damagedPiece,
+    TeamName? attackingTeamName,
+    bool preservePossessedRoyalProxy = false
+  )
   {
     if (damagedPiece.CurrentHealth > 0)
     {
       return;
+    }
+
+    if (damagedPiece.Definition.Type == PieceType.Phantom)
+    {
+      if (!preservePossessedRoyalProxy && !string.IsNullOrEmpty(damagedPiece.PossessedUnitId))
+      {
+        Piece possessed = pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == damagedPiece.PossessedUnitId);
+        if (possessed is not null)
+        {
+          possessed.IsRoyalProxy = false;
+        }
+      }
+    }
+    else
+    {
+      Piece possessingPhantom = pieceSetup.Pieces.FirstOrDefault(piece =>
+        piece.Definition.Type == PieceType.Phantom && piece.PossessedUnitId == damagedPiece.NetworkId);
+      if (possessingPhantom is not null)
+      {
+        possessingPhantom.CurrentHealth = 0;
+        HandlePieceDestroyed(possessingPhantom, attackingTeamName, preservePossessedRoyalProxy: true);
+      }
     }
 
     ApplySharedDeathExplosion(damagedPiece);

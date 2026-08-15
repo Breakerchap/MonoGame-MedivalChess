@@ -1534,11 +1534,43 @@ public sealed partial class MatchStore
     }
   }
 
-  private static void HandlePieceDestroyed(Match match, NetworkPiece defeatedPiece, PlayerSlot attackingPlayer)
+  private static void HandlePieceDestroyed(
+    Match match,
+    NetworkPiece defeatedPiece,
+    PlayerSlot attackingPlayer,
+    bool preservePossessedRoyalProxy = false
+  )
   {
     if (TryApplySharedServerLethalAbility(match, defeatedPiece))
     {
       return;
+    }
+
+    if (defeatedPiece.Type == nameof(PieceType.Phantom))
+    {
+      if (!preservePossessedRoyalProxy && !string.IsNullOrEmpty(defeatedPiece.PossessedUnitId))
+      {
+        int possessedIndex = match.Pieces.FindIndex(piece => piece.Id == defeatedPiece.PossessedUnitId);
+        if (possessedIndex >= 0)
+        {
+          NetworkPiece possessed = match.Pieces[possessedIndex];
+          match.Pieces[possessedIndex] = possessed with { IsRoyalProxy = false };
+        }
+      }
+    }
+    else
+    {
+      NetworkPiece? possessingPhantom = match.Pieces.FirstOrDefault(piece =>
+        piece.Type == nameof(PieceType.Phantom) && piece.PossessedUnitId == defeatedPiece.Id);
+      if (possessingPhantom is not null)
+      {
+        HandlePieceDestroyed(
+          match,
+          possessingPhantom with { Health = 0 },
+          attackingPlayer,
+          preservePossessedRoyalProxy: true
+        );
+      }
     }
 
     IReadOnlyList<AbilityDamageInstruction> deathExplosion = GetSharedServerDeathExplosion(match, defeatedPiece);
