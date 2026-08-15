@@ -198,7 +198,7 @@ internal sealed class LevelEditorScreen
     // Right click is deliberately immediate and context-free: it is the fast erase gesture.
     if (wasRightClick && layout.Canvas.Contains(point))
     {
-      DeleteAt(GetPositionAt(layout, point));
+      DeleteAt(layout, point);
       return;
     }
 
@@ -253,14 +253,14 @@ internal sealed class LevelEditorScreen
   private void DrawToolPanel(EditorLayout layout)
   {
     _ui.Panel(layout.Tools, UiTheme.Panel, UiTheme.PanelBorder);
-    _ui.TextFitted("BUILD", new Vector2(layout.Tools.X + layout.PanelPadding, layout.Tools.Y + 9), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.76f, 0.44f);
+    _ui.TextFitted("TOOLS", new Vector2(layout.Tools.X + layout.PanelPadding, layout.Tools.Y + 9), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.76f, 0.44f);
     foreach ((EditorTool tool, string label, Rectangle bounds) in layout.ToolButtons)
     {
       _ui.Button(bounds, label, tool == EditorTool.Delete ? UiButtonTone.Danger : UiButtonTone.Neutral, State.ActiveTool == tool, layout.ToolButtonScale);
     }
     _ui.Button(layout.UndoButton, "UNDO", UiButtonTone.Neutral, false, layout.ToolButtonScale);
     _ui.Button(layout.RedoButton, "REDO", UiButtonTone.Neutral, false, layout.ToolButtonScale);
-    _ui.Button(layout.NewButton, "NEW LEVEL", UiButtonTone.Accent, false, layout.ToolButtonScale);
+    _ui.Button(layout.NewButton, "NEW", UiButtonTone.Accent, false, layout.ToolButtonScale);
     _ui.Button(layout.BoardSmallerButton, "-", UiButtonTone.Neutral);
     _ui.Button(layout.BoardLargerButton, "+", UiButtonTone.Neutral);
     _ui.CenterTextFitted($"BOARD: {State.Level.Board.Width} x {State.Level.Board.Height}", layout.BoardSizeLabel, UiTheme.TextMuted, layout.SmallControlScale, 0.42f, 2);
@@ -268,39 +268,80 @@ internal sealed class LevelEditorScreen
     _ui.Button(layout.BoardBasePrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.BoardBaseNext, ">", UiButtonTone.Neutral);
     _ui.CenterTextFitted($"BASE: {BoardBaseNames[_boardBaseIndex]}".ToUpperInvariant(), layout.BoardBaseLabel, UiTheme.TextMuted, layout.SmallControlScale, 0.42f, 2);
-    _ui.Button(layout.BoardBaseApply, "USE DEFAULT BOARD", UiButtonTone.Accent, false, layout.SmallControlScale);
+    _ui.Button(layout.BoardBaseApply, "USE DEFAULT", UiButtonTone.Accent, false, layout.SmallControlScale);
     _ui.Button(layout.FitBoardButton, "FIT BOARD", UiButtonTone.Neutral, false, layout.SmallControlScale);
 
     _ui.Divider(layout.Tools, layout.PaletteTop);
+    switch (State.ActiveTool)
+    {
+      case EditorTool.Unit:
+      case EditorTool.Move:
+        DrawUnitPlacementPalette(layout);
+        break;
+      case EditorTool.Terrain:
+        DrawToolSectionLabel(layout, "TERRAIN BRUSH");
+        _ui.Button(layout.TerrainButton, $"PAINT {_terrainPaletteType}".ToUpperInvariant(), UiButtonTone.Accent, true, layout.SmallControlScale);
+        _ui.TextWrapped("Click or drag across playable cells. Select RIVERS for edges between cells.", layout.ContextHelp, UiTheme.TextMuted, 0.52f);
+        break;
+      case EditorTool.River:
+        DrawToolSectionLabel(layout, "RIVER EDGES");
+        _ui.Button(layout.TerrainButton, $"{State.Level.Rivers.Count} SEGMENTS", UiButtonTone.Accent, true, layout.SmallControlScale);
+        _ui.TextWrapped("Click between two adjacent cells to add a river. Right-click removes the edge and its bridge.", layout.ContextHelp, UiTheme.TextMuted, 0.52f);
+        break;
+      case EditorTool.Object:
+        DrawToolSectionLabel(layout, "STRUCTURES");
+        CampaignBoardObjectType selectedObject = GetSelectedObjectType();
+        _ui.Button(layout.ObjectPrevious, "<", UiButtonTone.Neutral);
+        _ui.Button(layout.ObjectNext, ">", UiButtonTone.Neutral);
+        _ui.CenterTextFitted(GetBoardObjectLabel(selectedObject), layout.ObjectPreview, GetBoardObjectColour(selectedObject), layout.SmallControlScale, 0.42f, 2);
+        _ui.TextWrapped(GetBoardObjectHelp(selectedObject), layout.ContextHelp, UiTheme.TextMuted, 0.52f);
+        break;
+      case EditorTool.Territory:
+        DrawToolSectionLabel(layout, "PAINT AREAS");
+        NetworkTeam[] areaOwners = [NetworkTeam.Neutral, .. State.Level.Teams.Select(team => team.Team)];
+        for (int index = 0; index < Math.Min(areaOwners.Length, layout.TerritoryButtons.Count); index++)
+        {
+          NetworkTeam owner = areaOwners[index];
+          NetworkTeam? team = owner == NetworkTeam.Neutral ? null : owner;
+          string label = CampaignTerritoryRules.GetAreaLabel(team);
+          Color toneColour = team is null ? UiTheme.NoMansLand : UiTheme.GetTeamColour(team.Value.ToTeamName());
+          _ui.Button(layout.TerritoryButtons[index], label, UiButtonTone.Neutral, _territoryOwner == owner, layout.SmallControlScale);
+          DrawOutline(layout.TerritoryButtons[index], toneColour, 1);
+        }
+        _ui.Button(layout.ResetTerritoryButton, "RESET AREAS", UiButtonTone.Neutral, false, layout.SmallControlScale);
+        break;
+      default:
+        _ui.TextWrapped(GetToolHelp(State.ActiveTool), layout.ContextHelp, UiTheme.TextMuted, 0.56f);
+        break;
+    }
+  }
+
+  private void DrawUnitPlacementPalette(EditorLayout layout)
+  {
     IReadOnlyList<(string identifier, PieceDefinition definition)> unitPalette = GetUnitPalette();
-    (string selectedUnitId, PieceDefinition selectedUnit) = unitPalette[_unitPaletteIndex % unitPalette.Count];
-    _ui.TextFitted("UNIT", new Vector2(layout.Tools.X + layout.PanelPadding, layout.PaletteTop + 4), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.65f, 0.42f);
+    (string _, PieceDefinition selectedUnit) = unitPalette[_unitPaletteIndex % unitPalette.Count];
+    DrawToolSectionLabel(layout, State.ActiveTool == EditorTool.Move ? "MOVE UNIT" : "PLACE UNIT");
     _ui.Button(layout.UnitPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.UnitNext, ">", UiButtonTone.Neutral);
     _ui.PiecePreview(layout.UnitPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), selectedUnit.DisplayName);
     _ui.Button(layout.TeamPrevious, "<", UiButtonTone.Neutral);
     _ui.Button(layout.TeamNext, ">", UiButtonTone.Neutral);
-    _ui.CenterTextFitted($"PLACE FOR {_placementTeam}".ToUpperInvariant(), layout.TeamPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), layout.SmallControlScale, 0.42f, 2);
-
-    CampaignBoardObjectType selectedObject = (CampaignBoardObjectType)(_objectPaletteIndex % Enum.GetValues<CampaignBoardObjectType>().Length);
-    _ui.TextFitted("OBJECT / TERRAIN", new Vector2(layout.Tools.X + layout.PanelPadding, layout.ObjectPaletteTop + 4), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.62f, 0.40f);
-    _ui.Button(layout.ObjectPrevious, "<", UiButtonTone.Neutral);
-    _ui.Button(layout.ObjectNext, ">", UiButtonTone.Neutral);
-    _ui.CenterTextFitted(selectedObject.ToString().ToUpperInvariant(), layout.ObjectPreview, UiTheme.TextPrimary, layout.SmallControlScale, 0.42f, 2);
-    _ui.Button(layout.TerrainButton, $"PAINT {_terrainPaletteType}".ToUpperInvariant(), UiButtonTone.Accent, State.ActiveTool == EditorTool.Terrain, layout.SmallControlScale);
-    _ui.TextFitted("PAINT AREAS", new Vector2(layout.Tools.X + layout.PanelPadding, layout.TerritoryTop), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.62f, 0.40f);
-    NetworkTeam[] areaOwners = [NetworkTeam.Neutral, .. State.Level.Teams.Select(team => team.Team)];
-    for (int index = 0; index < Math.Min(areaOwners.Length, layout.TerritoryButtons.Count); index++)
-    {
-      NetworkTeam owner = areaOwners[index];
-      NetworkTeam? team = owner == NetworkTeam.Neutral ? null : owner;
-      string label = CampaignTerritoryRules.GetAreaLabel(team);
-      Color toneColour = team is null ? UiTheme.NoMansLand : UiTheme.GetTeamColour(team.Value.ToTeamName());
-      _ui.Button(layout.TerritoryButtons[index], label, UiButtonTone.Neutral, State.ActiveTool == EditorTool.Territory && _territoryOwner == owner, layout.SmallControlScale);
-      DrawOutline(layout.TerritoryButtons[index], toneColour, 1);
-    }
-    _ui.Button(layout.ResetTerritoryButton, "RESET AREAS", UiButtonTone.Neutral, false, layout.SmallControlScale);
+    _ui.CenterTextFitted($"{_placementTeam} TEAM", layout.TeamPreview, UiTheme.GetTeamColour(_placementTeam.ToTeamName()), layout.SmallControlScale, 0.42f, 2);
+    _ui.TextWrapped(State.ActiveTool == EditorTool.Move
+      ? "Select a unit on the board, then click its destination."
+      : "Choose a unit and team, then click or drag to place it.", layout.ContextHelp, UiTheme.TextMuted, 0.52f);
   }
+
+  private void DrawToolSectionLabel(EditorLayout layout, string label) =>
+    _ui.TextFitted(label, new Vector2(layout.Tools.X + layout.PanelPadding, layout.PaletteTop + 4), Math.Max(1, layout.Tools.Width - layout.PanelPadding * 2), UiTheme.GoldBright, 0.65f, 0.42f);
+
+  private static string GetToolHelp(EditorTool tool) => tool switch
+  {
+    EditorTool.Select => "Click a unit, terrain tile, river edge or structure to inspect it.",
+    EditorTool.Tile => "Click or drag to add playable cells. Right-click removes a cell.",
+    EditorTool.Delete => "Click any unit, terrain tile, river edge or structure to remove it.",
+    _ => "Choose a tool to edit the board."
+  };
 
   private void DrawBoard(EditorLayout layout)
   {
@@ -335,21 +376,37 @@ internal sealed class LevelEditorScreen
       }
     }
 
+    foreach (CampaignRiverDefinition river in State.Level.Rivers)
+    {
+      if (river.First is null || river.Second is null) continue;
+      TileEdge edge = TileEdge.Between((river.First.X, river.First.Y), (river.Second.X, river.Second.Y));
+      Rectangle first = GetTileBounds(layout, new CampaignCoordinate(edge.First.x, edge.First.y));
+      Rectangle second = GetTileBounds(layout, new CampaignCoordinate(edge.Second.x, edge.Second.y));
+      int riverWidth = Math.Max(3, (int)MathF.Round(5f * _zoom));
+      Rectangle segment = edge.First.x != edge.Second.x
+        ? new Rectangle(Math.Min(first.Right, second.Right) - riverWidth / 2, first.Y, riverWidth, first.Height)
+        : new Rectangle(first.X, Math.Min(first.Bottom, second.Bottom) - riverWidth / 2, first.Width, riverWidth);
+      DrawCanvasRectangle(layout, segment, UiTheme.River);
+      if (State.ActiveTool == EditorTool.River) DrawCanvasOutline(layout, segment, UiTheme.SelectionOutline, 1);
+    }
+
     foreach (CampaignBoardObjectDefinition boardObject in State.Level.Objects)
     {
+      Color colour = GetBoardObjectColour(boardObject.Type);
+      if (boardObject.Type == CampaignBoardObjectType.Bridge)
+      {
+        DrawBridgeObject(layout, boardObject, colour);
+        continue;
+      }
       Rectangle tile = GetTileBounds(layout, boardObject.Position);
       if (!tile.Intersects(layout.Canvas)) continue;
-      Color colour = boardObject.Type switch
-      {
-        CampaignBoardObjectType.Road => UiTheme.Road,
-        CampaignBoardObjectType.Barrier => UiTheme.Barricade,
-        CampaignBoardObjectType.Mine => UiTheme.Attack,
-        CampaignBoardObjectType.Bridge => UiTheme.Bridge,
-        CampaignBoardObjectType.Treasure => UiTheme.GoldBright,
-        _ => UiTheme.TextMuted
-      };
       Rectangle marker = new(tile.Center.X - Math.Max(3, tile.Width / 5), tile.Center.Y - Math.Max(3, tile.Height / 5), Math.Max(6, tile.Width * 2 / 5), Math.Max(6, tile.Height * 2 / 5));
       DrawCanvasRectangle(layout, marker, colour);
+      if (tile.Width >= 28) _ui.CenterTextFitted(GetBoardObjectLabel(boardObject.Type), marker, UiTheme.TextPrimary, 0.42f, 0.34f, 2);
+      if (State.Selection.Kind == EditorSelectionKind.Object && State.Selection.Id == boardObject.Id)
+      {
+        DrawCanvasOutline(layout, tile, UiTheme.SelectionOutline, 2);
+      }
     }
 
     foreach (CampaignUnitDefinition unit in State.Level.Units)
@@ -376,10 +433,63 @@ internal sealed class LevelEditorScreen
     DrawObjectiveGuides(layout);
     string help = State.ActiveTool == EditorTool.Territory
       ? $"Painting: {CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner)}. Drag to paint; right-click erases."
-      : "Drag to paint. Right-click deletes. WASD / arrows pan. Q / E zoom. Home or Fit Board recentres.";
+      : State.ActiveTool == EditorTool.River
+        ? "Click between cells to add a river edge. Right-click an edge to remove it."
+        : "Click or drag to edit. Right-click deletes. WASD / arrows pan. Q / E zoom. Home refits.";
     Rectangle helpBounds = new(layout.Canvas.X + 8, layout.Canvas.Bottom - Math.Min(42, layout.Canvas.Height / 4), Math.Max(1, layout.Canvas.Width - 16), Math.Min(34, layout.Canvas.Height / 4));
     _spriteBatch.Draw(_pixel, helpBounds, new Color(8, 13, 20, 196));
     _ui.TextWrapped(help, new Rectangle(helpBounds.X + 5, helpBounds.Y + 3, Math.Max(1, helpBounds.Width - 10), Math.Max(1, helpBounds.Height - 6)), UiTheme.TextMuted, 0.52f);
+  }
+
+  private static Color GetBoardObjectColour(CampaignBoardObjectType type) => type switch
+  {
+    CampaignBoardObjectType.Road => UiTheme.Road,
+    CampaignBoardObjectType.Barrier => UiTheme.Barricade,
+    CampaignBoardObjectType.Mine => UiTheme.Attack,
+    CampaignBoardObjectType.Bridge => UiTheme.Bridge,
+    CampaignBoardObjectType.Treasure => UiTheme.GoldBright,
+    CampaignBoardObjectType.SpawnPoint => UiTheme.Health,
+    CampaignBoardObjectType.ObjectiveMarker => UiTheme.Move,
+    _ => UiTheme.TextMuted
+  };
+
+  private static string GetBoardObjectLabel(CampaignBoardObjectType type) => type switch
+  {
+    CampaignBoardObjectType.ObjectiveMarker => "OBJECTIVE",
+    CampaignBoardObjectType.SpawnPoint => "SPAWN",
+    _ => type.ToString().ToUpperInvariant()
+  };
+
+  private static string GetBoardObjectHelp(CampaignBoardObjectType type) => type switch
+  {
+    CampaignBoardObjectType.Bridge => "Bridge snaps to an existing river edge. Click near the edge you want to cross.",
+    CampaignBoardObjectType.Mine => "Mines are owned by the selected placement team.",
+    CampaignBoardObjectType.Barrier => $"Barriers start at {AbilityRules.EngineerBarrierHealth} HP.",
+    CampaignBoardObjectType.Treasure => "Only one treasure can be authored in a level.",
+    _ => "Click or drag across playable cells to place this structure."
+  };
+
+  private CampaignBoardObjectType GetSelectedObjectType() =>
+    Enum.GetValues<CampaignBoardObjectType>()[_objectPaletteIndex % Enum.GetValues<CampaignBoardObjectType>().Length];
+
+  private void DrawBridgeObject(EditorLayout layout, CampaignBoardObjectDefinition boardObject, Color colour)
+  {
+    bool vertical = string.Equals((boardObject.Properties ?? []).GetValueOrDefault("direction"), "vertical", StringComparison.OrdinalIgnoreCase);
+    CampaignCoordinate firstPosition = boardObject.Position;
+    CampaignCoordinate secondPosition = vertical
+      ? new CampaignCoordinate(firstPosition.X, firstPosition.Y + 1)
+      : new CampaignCoordinate(firstPosition.X + 1, firstPosition.Y);
+    Rectangle first = GetTileBounds(layout, firstPosition);
+    Rectangle second = GetTileBounds(layout, secondPosition);
+    int width = Math.Max(6, (int)MathF.Round(10f * _zoom));
+    Rectangle bridge = vertical
+      ? new Rectangle(first.X, Math.Min(first.Bottom, second.Bottom) - width / 2, first.Width, width)
+      : new Rectangle(Math.Min(first.Right, second.Right) - width / 2, first.Y, width, first.Height);
+    DrawCanvasRectangle(layout, bridge, colour);
+    if (State.Selection.Kind == EditorSelectionKind.Object && State.Selection.Id == boardObject.Id)
+    {
+      DrawCanvasOutline(layout, bridge, UiTheme.SelectionOutline, 2);
+    }
   }
 
   private void DrawProperties(EditorLayout layout)
@@ -722,7 +832,8 @@ internal sealed class LevelEditorScreen
         EditorTool.Move => "Select a unit, then click a valid destination to move it.",
         EditorTool.Tile => "Drag across empty space to paint playable tiles. Right-click erases.",
         EditorTool.Terrain => "Choose Forest or Lake, then drag across the board to paint terrain.",
-        EditorTool.Object => "Choose an object, then click or drag to place it.",
+        EditorTool.River => "Click between adjacent playable tiles to place river edges. Right-click removes them.",
+        EditorTool.Object => "Choose a structure, then click or drag to place it. Bridges snap to rivers.",
         EditorTool.Territory => "Choose No-Man's-Land or a team area, then paint the playable board.",
         EditorTool.Delete => "Drag across content to erase it. Right-click also erases.",
         _ => "Click a unit, terrain tile, or object to inspect it."
@@ -745,36 +856,43 @@ internal sealed class LevelEditorScreen
       return true;
     }
     if (layout.FitBoardButton.Contains(point)) { _fitBoardRequested = true; _status = "Board fitted to the canvas."; return true; }
-    int paletteCount = GetUnitPalette().Count;
-    if (layout.UnitPrevious.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex - 1 + paletteCount) % paletteCount; return true; }
-    if (layout.UnitNext.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex + 1) % paletteCount; return true; }
-    if (layout.TeamPrevious.Contains(point)) { CyclePlacementTeam(-1); return true; }
-    if (layout.TeamNext.Contains(point)) { CyclePlacementTeam(1); return true; }
-    if (layout.ObjectPrevious.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex - 1 + Enum.GetValues<CampaignBoardObjectType>().Length) % Enum.GetValues<CampaignBoardObjectType>().Length; return true; }
-    if (layout.ObjectNext.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex + 1) % Enum.GetValues<CampaignBoardObjectType>().Length; return true; }
-    if (layout.TerrainButton.Contains(point))
+    if (State.ActiveTool is EditorTool.Unit or EditorTool.Move)
+    {
+      int paletteCount = GetUnitPalette().Count;
+      if (layout.UnitPrevious.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex - 1 + paletteCount) % paletteCount; return true; }
+      if (layout.UnitNext.Contains(point)) { _unitPaletteIndex = (_unitPaletteIndex + 1) % paletteCount; return true; }
+      if (layout.TeamPrevious.Contains(point)) { CyclePlacementTeam(-1); return true; }
+      if (layout.TeamNext.Contains(point)) { CyclePlacementTeam(1); return true; }
+    }
+    if (State.ActiveTool == EditorTool.Object)
+    {
+      int objectCount = Enum.GetValues<CampaignBoardObjectType>().Length;
+      if (layout.ObjectPrevious.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex - 1 + objectCount) % objectCount; return true; }
+      if (layout.ObjectNext.Contains(point)) { _objectPaletteIndex = (_objectPaletteIndex + 1) % objectCount; return true; }
+    }
+    if (State.ActiveTool == EditorTool.Terrain && layout.TerrainButton.Contains(point))
     {
       _terrainPaletteType = _terrainPaletteType == CampaignTerrainType.Forest ? CampaignTerrainType.Lake : CampaignTerrainType.Forest;
-      State.ActiveTool = EditorTool.Terrain;
       _status = $"Terrain brush: {_terrainPaletteType}. Drag across playable tiles to paint it.";
       return true;
     }
-    NetworkTeam[] areaOwners = [NetworkTeam.Neutral, .. State.Level.Teams.Select(team => team.Team)];
-    for (int index = 0; index < Math.Min(areaOwners.Length, layout.TerritoryButtons.Count); index++)
+    if (State.ActiveTool == EditorTool.Territory)
     {
-      if (!layout.TerritoryButtons[index].Contains(point)) continue;
-      _territoryOwner = areaOwners[index];
-      State.ActiveTool = EditorTool.Territory;
-      _status = $"Territory brush: {CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner)}. Drag across the board to paint it.";
-      return true;
-    }
-    if (layout.ResetTerritoryButton.Contains(point))
-    {
-      State.UseAutomaticTerritories();
-      State.ActiveTool = EditorTool.Territory;
-      _territoryOwner = NetworkTeam.Neutral;
-      _status = "Areas reset to the game's automatic territories. Paint a square to begin a custom map.";
-      return true;
+      NetworkTeam[] areaOwners = [NetworkTeam.Neutral, .. State.Level.Teams.Select(team => team.Team)];
+      for (int index = 0; index < Math.Min(areaOwners.Length, layout.TerritoryButtons.Count); index++)
+      {
+        if (!layout.TerritoryButtons[index].Contains(point)) continue;
+        _territoryOwner = areaOwners[index];
+        _status = $"Territory brush: {CampaignTerritoryRules.GetAreaLabel(_territoryOwner == NetworkTeam.Neutral ? null : _territoryOwner)}. Drag across the board to paint it.";
+        return true;
+      }
+      if (layout.ResetTerritoryButton.Contains(point))
+      {
+        State.UseAutomaticTerritories();
+        _territoryOwner = NetworkTeam.Neutral;
+        _status = "Areas reset to the game's automatic territories. Paint a square to begin a custom map.";
+        return true;
+      }
     }
     return false;
   }
@@ -1016,6 +1134,21 @@ internal sealed class LevelEditorScreen
   private void HandleBoardClick(EditorLayout layout, Point point)
   {
     CampaignCoordinate position = GetPositionAt(layout, point);
+    if (State.ActiveTool == EditorTool.River)
+    {
+      if (!TryGetRiverEdgeAt(layout, point, out TileEdge edge))
+      {
+        _status = "Aim at the boundary between two adjacent playable cells.";
+        return;
+      }
+      if (State.PaintRiver(
+        new CampaignCoordinate(edge.First.x, edge.First.y),
+        new CampaignCoordinate(edge.Second.x, edge.Second.y)))
+      {
+        _status = "River edge placed. Add a bridge from STRUCTURES when needed.";
+      }
+      return;
+    }
     bool hasTile = State.Level.Board.Tiles.Any(tile => tile == position);
     if (State.ActiveTool == EditorTool.Tile)
     {
@@ -1025,7 +1158,7 @@ internal sealed class LevelEditorScreen
     if (!hasTile) { _status = "Add a playable tile before placing content here."; return; }
     if (_objectiveTargetMode != ObjectiveTargetMode.None) { SelectAt(position); return; }
     if (State.ActiveTool == EditorTool.Select) { SelectAt(position); return; }
-    if (State.ActiveTool == EditorTool.Delete) { DeleteAt(position); return; }
+    if (State.ActiveTool == EditorTool.Delete) { DeleteAt(layout, point); return; }
     if (State.ActiveTool == EditorTool.Unit)
     {
       (string unitType, PieceDefinition unit) = GetUnitPalette()[_unitPaletteIndex % GetUnitPalette().Count];
@@ -1064,21 +1197,48 @@ internal sealed class LevelEditorScreen
     }
     if (State.ActiveTool == EditorTool.Object)
     {
-      CampaignBoardObjectType type = (CampaignBoardObjectType)(_objectPaletteIndex % Enum.GetValues<CampaignBoardObjectType>().Length);
-      if (State.Level.Objects.Any(boardObject => boardObject.Type == type && boardObject.Position == position)) return;
+      CampaignBoardObjectType type = GetSelectedObjectType();
+      CampaignCoordinate objectPosition = position;
+      Dictionary<string, string> properties = [];
+      if (type == CampaignBoardObjectType.Bridge)
+      {
+        if (!TryGetRiverEdgeAt(layout, point, out TileEdge edge) || !HasRiver(edge))
+        {
+          _status = "Place a river first, then click its edge to add a bridge.";
+          return;
+        }
+        objectPosition = new CampaignCoordinate(edge.First.x, edge.First.y);
+        properties["direction"] = edge.First.x == edge.Second.x ? "vertical" : "horizontal";
+        if (State.Level.Objects.Any(boardObject => boardObject.Type == CampaignBoardObjectType.Bridge && IsBridgeOnEdge(boardObject, edge)))
+        {
+          _status = "That river edge already has a bridge.";
+          return;
+        }
+      }
+      else if (State.Level.Objects.Any(boardObject => boardObject.Type == type && boardObject.Position == objectPosition))
+      {
+        return;
+      }
+      if (type == CampaignBoardObjectType.Treasure && State.Level.Objects.Any(boardObject => boardObject.Type == type))
+      {
+        _status = "A level can contain only one treasure.";
+        return;
+      }
       State.AddObject(new CampaignBoardObjectDefinition
       {
         Type = type,
-        Position = position,
+        Position = objectPosition,
         Owner = type == CampaignBoardObjectType.Mine ? _placementTeam : null,
-        Health = type == CampaignBoardObjectType.Barrier ? 20 : null
+        Health = type == CampaignBoardObjectType.Barrier ? AbilityRules.EngineerBarrierHealth : null,
+        Properties = properties
       });
+      _status = $"Placed {GetBoardObjectLabel(type)}.";
     }
   }
 
   private bool CanPaintContinuously() =>
     _objectiveTargetMode == ObjectiveTargetMode.None &&
-    State.ActiveTool is EditorTool.Tile or EditorTool.Terrain or EditorTool.Object or EditorTool.Territory or EditorTool.Delete;
+    State.ActiveTool is EditorTool.Tile or EditorTool.Terrain or EditorTool.River or EditorTool.Object or EditorTool.Territory or EditorTool.Delete;
 
   private void SelectAt(CampaignCoordinate position)
   {
@@ -1146,14 +1306,60 @@ internal sealed class LevelEditorScreen
     _status = "Nothing selected.";
   }
 
-  private void DeleteAt(CampaignCoordinate position)
+  private void DeleteAt(EditorLayout layout, Point point)
   {
+    if (TryGetRiverEdgeAt(layout, point, out TileEdge edge) &&
+        (State.ActiveTool == EditorTool.River || State.ActiveTool == EditorTool.Delete || HasRiver(edge)))
+    {
+      if (State.DeleteRiver(
+        new CampaignCoordinate(edge.First.x, edge.First.y),
+        new CampaignCoordinate(edge.Second.x, edge.Second.y))) return;
+    }
+    CampaignCoordinate position = GetPositionAt(layout, point);
     CampaignUnitDefinition? unit = State.Level.Units.LastOrDefault(candidate => UnitOccupies(candidate, position));
     if (unit is not null) { State.DeleteUnit(unit.Id); return; }
     CampaignBoardObjectDefinition? boardObject = State.Level.Objects.LastOrDefault(candidate => candidate.Position == position);
     if (boardObject is not null) { State.DeleteObject(boardObject.Id); return; }
     if (State.Level.Terrain.Any(terrain => terrain.Position == position)) { State.DeleteTerrain(position); return; }
     State.RemoveTile(position);
+  }
+
+  private bool HasRiver(TileEdge edge) => State.Level.Rivers.Any(river => river.First is not null && river.Second is not null &&
+    TileEdge.Between((river.First.X, river.First.Y), (river.Second.X, river.Second.Y)) == edge);
+
+  private static bool IsBridgeOnEdge(CampaignBoardObjectDefinition boardObject, TileEdge edge)
+  {
+    bool vertical = string.Equals((boardObject.Properties ?? []).GetValueOrDefault("direction"), "vertical", StringComparison.OrdinalIgnoreCase);
+    (int x, int y) first = (boardObject.Position.X, boardObject.Position.Y);
+    (int x, int y) second = vertical ? (first.x, first.y + 1) : (first.x + 1, first.y);
+    return TileEdge.Between(first, second) == edge;
+  }
+
+  private bool TryGetRiverEdgeAt(EditorLayout layout, Point point, out TileEdge edge)
+  {
+    edge = default;
+    CampaignCoordinate position = GetPositionAt(layout, point);
+    if (!State.Level.Board.Tiles.Contains(position)) return false;
+    Rectangle tile = GetTileBounds(layout, position);
+    float left = MathF.Abs(point.X - tile.Left);
+    float right = MathF.Abs(point.X - tile.Right);
+    float top = MathF.Abs(point.Y - tile.Top);
+    float bottom = MathF.Abs(point.Y - tile.Bottom);
+    (TileEdge edge, float distance)[] candidates =
+    [
+      (TileEdge.Between((position.X - 1, position.Y), (position.X, position.Y)), left),
+      (TileEdge.Between((position.X, position.Y), (position.X + 1, position.Y)), right),
+      (TileEdge.Between((position.X, position.Y - 1), (position.X, position.Y)), top),
+      (TileEdge.Between((position.X, position.Y), (position.X, position.Y + 1)), bottom)
+    ];
+    (TileEdge edge, float distance) best = candidates
+      .Where(candidate => State.Level.Board.Tiles.Contains(new CampaignCoordinate(candidate.edge.First.x, candidate.edge.First.y)) &&
+        State.Level.Board.Tiles.Contains(new CampaignCoordinate(candidate.edge.Second.x, candidate.edge.Second.y)))
+      .OrderBy(candidate => candidate.distance)
+      .FirstOrDefault();
+    if (best.edge == default || best.distance > Math.Max(10f, tile.Width * 0.32f)) return false;
+    edge = best.edge;
+    return true;
   }
 
   private void AdjustSelectedHealth(string unitId, int delta)
@@ -1936,6 +2142,7 @@ internal sealed class LevelEditorScreen
     internal Rectangle ObjectNext { get; }
     internal Rectangle ObjectPreview { get; }
     internal Rectangle TerrainButton { get; }
+    internal Rectangle ContextHelp { get; }
     internal int TerritoryTop { get; }
     internal IReadOnlyList<Rectangle> TerritoryButtons { get; }
     internal Rectangle ResetTerritoryButton { get; }
@@ -2064,25 +2271,25 @@ internal sealed class LevelEditorScreen
       int innerX = Tools.X + PanelPadding;
       int innerWidth = Math.Max(1, Tools.Width - PanelPadding * 2);
       int territoryRows = (Math.Max(1, teamCount) + 2) / 2;
-      int rowHeight = Math.Clamp((Tools.Height - 116) / Math.Max(1, 16 + territoryRows), 16, 24);
+      int rowHeight = Math.Clamp((Tools.Height - 106) / 15, 18, 26);
       int toolGap = Math.Max(2, rowHeight / 7);
-      int columnGap = Math.Max(2, PanelPadding / 2);
-      int columnWidth = Math.Max(1, (innerWidth - columnGap) / 2);
+      int columnGap = Math.Max(3, PanelPadding / 2);
+      int columnWidth = Math.Max(1, (innerWidth - columnGap * 2) / 3);
       int y = Tools.Y + 32;
       (EditorTool tool, string label)[] tools =
       [
-        (EditorTool.Select, "SELECT"), (EditorTool.Tile, "PAINT TILE"), (EditorTool.Unit, "PLACE UNIT"),
-        (EditorTool.Move, "MOVE UNIT"), (EditorTool.Terrain, "TERRAIN"), (EditorTool.Object, "OBJECT"),
-        (EditorTool.Territory, "PAINT AREAS"), (EditorTool.Delete, "DELETE")
+        (EditorTool.Select, "SELECT"), (EditorTool.Tile, "TILES"), (EditorTool.Unit, "UNITS"),
+        (EditorTool.Move, "MOVE"), (EditorTool.Terrain, "TERRAIN"), (EditorTool.River, "RIVERS"),
+        (EditorTool.Object, "STRUCTURES"), (EditorTool.Territory, "AREAS"), (EditorTool.Delete, "ERASE")
       ];
       ToolButtons = tools.Select((tool, index) =>
       {
-        int x = innerX + index % 2 * (columnWidth + columnGap);
-        int width = index % 2 == 0 ? columnWidth : Math.Max(1, innerX + innerWidth - x);
-        return (tool.tool, tool.label, new Rectangle(x, y + index / 2 * (rowHeight + toolGap), width, rowHeight));
+        int x = innerX + index % 3 * (columnWidth + columnGap);
+        int width = index % 3 == 2 ? Math.Max(1, innerX + innerWidth - x) : columnWidth;
+        return (tool.tool, tool.label, new Rectangle(x, y + index / 3 * (rowHeight + toolGap), width, rowHeight));
       }).ToArray();
-      y += rowHeight * 4 + toolGap * 3 + 6;
-      UndoButton = new Rectangle(innerX, y, columnWidth, rowHeight);
+      y += rowHeight * 3 + toolGap * 2 + 6;
+      UndoButton = new Rectangle(innerX, y, Math.Max(1, (innerWidth - columnGap) / 2), rowHeight);
       RedoButton = new Rectangle(UndoButton.Right + columnGap, y, Math.Max(1, innerX + innerWidth - UndoButton.Right - columnGap), rowHeight);
       y += rowHeight + toolGap;
       NewButton = new Rectangle(innerX, y, innerWidth, rowHeight);
@@ -2101,38 +2308,32 @@ internal sealed class LevelEditorScreen
       BoardBaseApply = new Rectangle(innerX, y, innerWidth, rowHeight);
       y += rowHeight + toolGap;
       FitBoardButton = new Rectangle(innerX, y, innerWidth, rowHeight);
-      y += rowHeight + 5;
+      y += rowHeight + 6;
       PaletteTop = y;
-      y += 15;
-      UnitPrevious = new Rectangle(innerX, y, arrowWidth, rowHeight);
-      UnitPreview = new Rectangle(UnitPrevious.Right + columnGap, y, Math.Max(1, innerWidth - arrowWidth * 2 - columnGap * 2), rowHeight);
+      ObjectPaletteTop = PaletteTop;
+      TerritoryTop = PaletteTop;
+      int paletteY = PaletteTop + 22;
+      UnitPrevious = new Rectangle(innerX, paletteY, arrowWidth, rowHeight);
+      UnitPreview = new Rectangle(UnitPrevious.Right + columnGap, paletteY, Math.Max(1, innerWidth - arrowWidth * 2 - columnGap * 2), rowHeight);
       UnitName = UnitPreview;
-      UnitNext = new Rectangle(UnitPreview.Right + columnGap, y, Math.Max(1, innerX + innerWidth - UnitPreview.Right - columnGap), rowHeight);
-      y += rowHeight + toolGap;
-      TeamPrevious = new Rectangle(innerX, y, arrowWidth, rowHeight);
-      TeamPreview = new Rectangle(TeamPrevious.Right + columnGap, y, Math.Max(1, innerWidth - arrowWidth * 2 - columnGap * 2), rowHeight);
-      TeamNext = new Rectangle(TeamPreview.Right + columnGap, y, Math.Max(1, innerX + innerWidth - TeamPreview.Right - columnGap), rowHeight);
-      y += rowHeight + 5;
-      ObjectPaletteTop = y;
-      y += 15;
-      ObjectPrevious = new Rectangle(innerX, y, arrowWidth, rowHeight);
-      ObjectPreview = new Rectangle(ObjectPrevious.Right + columnGap, y, Math.Max(1, innerWidth - arrowWidth * 2 - columnGap * 2), rowHeight);
-      ObjectNext = new Rectangle(ObjectPreview.Right + columnGap, y, Math.Max(1, innerX + innerWidth - ObjectPreview.Right - columnGap), rowHeight);
-      y += rowHeight + toolGap;
-      TerrainButton = new Rectangle(innerX, y, innerWidth, rowHeight);
-      y += rowHeight + 5;
-      TerritoryTop = y;
-      y += 15;
+      UnitNext = new Rectangle(UnitPreview.Right + columnGap, paletteY, Math.Max(1, innerX + innerWidth - UnitPreview.Right - columnGap), rowHeight);
+      TeamPrevious = new Rectangle(innerX, paletteY + rowHeight + toolGap, arrowWidth, rowHeight);
+      TeamPreview = new Rectangle(TeamPrevious.Right + columnGap, TeamPrevious.Y, Math.Max(1, innerWidth - arrowWidth * 2 - columnGap * 2), rowHeight);
+      TeamNext = new Rectangle(TeamPreview.Right + columnGap, TeamPreview.Y, Math.Max(1, innerX + innerWidth - TeamPreview.Right - columnGap), rowHeight);
+      ObjectPrevious = UnitPrevious;
+      ObjectPreview = UnitPreview;
+      ObjectNext = UnitNext;
+      TerrainButton = UnitPreview;
       List<Rectangle> territoryButtons = [];
       for (int index = 0; index < teamCount + 1; index++)
       {
         int x = innerX + index % 2 * (columnWidth + columnGap);
         int width = index % 2 == 0 ? columnWidth : Math.Max(1, innerX + innerWidth - x);
-        territoryButtons.Add(new Rectangle(x, y + index / 2 * (rowHeight + toolGap), width, rowHeight));
+        territoryButtons.Add(new Rectangle(x, paletteY + index / 2 * (rowHeight + toolGap), width, rowHeight));
       }
       TerritoryButtons = territoryButtons;
-      y += territoryRows * rowHeight + Math.Max(0, territoryRows - 1) * toolGap + toolGap;
-      ResetTerritoryButton = new Rectangle(innerX, y, innerWidth, rowHeight);
+      ResetTerritoryButton = new Rectangle(innerX, paletteY + territoryRows * rowHeight + Math.Max(0, territoryRows - 1) * toolGap + toolGap, innerWidth, rowHeight);
+      ContextHelp = new Rectangle(innerX, ResetTerritoryButton.Bottom + toolGap, innerWidth, Math.Max(30, Tools.Bottom - ResetTerritoryButton.Bottom - toolGap * 2));
 
       int propertyX = Properties.X + PanelPadding;
       int fieldWidth = Math.Max(1, Properties.Width - PanelPadding * 2);

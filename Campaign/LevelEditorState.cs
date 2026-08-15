@@ -15,6 +15,7 @@ public enum EditorTool
   Unit,
   Move,
   Terrain,
+  River,
   Object,
   Territory,
   Delete
@@ -390,6 +391,55 @@ public sealed class LevelEditorState
     if (!Level.Terrain.Any(terrain => terrain.Position == position)) return;
     Change("Delete terrain", level => level.Terrain.RemoveAll(terrain => terrain.Position == position));
     if (Selection.Kind == EditorSelectionKind.Terrain && Selection.Position == position) Selection = EditorSelection.None;
+  }
+
+  /// <summary>Paints one river edge. Rivers are stored between adjacent playable tiles.</summary>
+  public bool PaintRiver(CampaignCoordinate first, CampaignCoordinate second)
+  {
+    if (!AreAdjacentPlayableTiles(first, second)) return false;
+    TileEdge edge = TileEdge.Between((first.X, first.Y), (second.X, second.Y));
+    if (Level.Rivers.Any(river => river.First is not null && river.Second is not null &&
+        TileEdge.Between((river.First.X, river.First.Y), (river.Second.X, river.Second.Y)) == edge)) return false;
+
+    Change("Paint river", level => level.Rivers.Add(new CampaignRiverDefinition
+    {
+      First = new CampaignCoordinate(edge.First.x, edge.First.y),
+      Second = new CampaignCoordinate(edge.Second.x, edge.Second.y)
+    }));
+    return true;
+  }
+
+  /// <summary>Removes a river edge and any authored bridge attached to that edge.</summary>
+  public bool DeleteRiver(CampaignCoordinate first, CampaignCoordinate second)
+  {
+    if (!AreAdjacentPlayableTiles(first, second)) return false;
+    TileEdge edge = TileEdge.Between((first.X, first.Y), (second.X, second.Y));
+    bool hasRiver = Level.Rivers.Any(river => river.First is not null && river.Second is not null &&
+      TileEdge.Between((river.First.X, river.First.Y), (river.Second.X, river.Second.Y)) == edge);
+    bool hasBridge = Level.Objects.Any(boardObject => boardObject.Type == CampaignBoardObjectType.Bridge &&
+      IsBridgeOnEdge(boardObject, edge));
+    if (!hasRiver && !hasBridge) return false;
+
+    Change("Delete river", level =>
+    {
+      level.Rivers.RemoveAll(river => river.First is not null && river.Second is not null &&
+        TileEdge.Between((river.First.X, river.First.Y), (river.Second.X, river.Second.Y)) == edge);
+      level.Objects.RemoveAll(boardObject => boardObject.Type == CampaignBoardObjectType.Bridge && IsBridgeOnEdge(boardObject, edge));
+    });
+    return true;
+  }
+
+  private bool AreAdjacentPlayableTiles(CampaignCoordinate first, CampaignCoordinate second) =>
+    Level.Board.Tiles.Contains(first) && Level.Board.Tiles.Contains(second) &&
+    Math.Abs(first.X - second.X) + Math.Abs(first.Y - second.Y) == 1;
+
+  private static bool IsBridgeOnEdge(CampaignBoardObjectDefinition boardObject, TileEdge edge)
+  {
+    if (boardObject.Position is null) return false;
+    (int x, int y) first = (boardObject.Position.X, boardObject.Position.Y);
+    bool vertical = string.Equals((boardObject.Properties ?? []).GetValueOrDefault("direction"), "vertical", StringComparison.OrdinalIgnoreCase);
+    (int x, int y) second = vertical ? (first.x, first.y + 1) : (first.x + 1, first.y);
+    return TileEdge.Between(first, second) == edge;
   }
 
   /// <summary>Paints an explicit team area or No-Man's-Land. The first stroke copies the game's

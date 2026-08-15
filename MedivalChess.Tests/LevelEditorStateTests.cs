@@ -125,6 +125,52 @@ public sealed class LevelEditorStateTests
   }
 
   [Fact]
+  public void RiverBrushStoresOnlyAdjacentPlayableEdgesAndRemovesAttachedBridges()
+  {
+    LevelEditorState editor = LevelEditorState.CreateNew(4, 4);
+    CampaignCoordinate first = new(1, 1);
+    CampaignCoordinate second = new(2, 1);
+
+    Assert.True(editor.PaintRiver(first, second));
+    Assert.False(editor.PaintRiver(second, first));
+    Assert.False(editor.PaintRiver(first, new CampaignCoordinate(3, 3)));
+
+    editor.AddObject(new CampaignBoardObjectDefinition
+    {
+      Type = CampaignBoardObjectType.Bridge,
+      Position = first,
+      Properties = new Dictionary<string, string> { ["direction"] = "horizontal" }
+    });
+
+    Assert.True(editor.DeleteRiver(first, second));
+    Assert.Empty(editor.Level.Rivers);
+    Assert.Empty(editor.Level.Objects);
+  }
+
+  [Fact]
+  public void BridgeCanBeConvertedFromAnAuthoredRiverEdge()
+  {
+    CampaignLevelDefinition level = CampaignLevelDefinition.CreateNew(4, 4);
+    level.Rivers.Add(new CampaignRiverDefinition
+    {
+      First = new CampaignCoordinate(1, 1),
+      Second = new CampaignCoordinate(2, 1)
+    });
+    level.Objects.Add(new CampaignBoardObjectDefinition
+    {
+      Id = "bridge",
+      Type = CampaignBoardObjectType.Bridge,
+      Position = new CampaignCoordinate(1, 1),
+      Properties = new Dictionary<string, string> { ["direction"] = "horizontal" }
+    });
+
+    CampaignPlayableStateResult result = CampaignLevelConverter.CreatePlayableState(level);
+
+    Assert.True(result.IsSuccess);
+    Assert.Contains(TileEdge.Between((1, 1), (2, 1)), result.State!.RiverBridges);
+  }
+
+  [Fact]
   public void UnitPlacementRejectsImpossibleFootprintsBeforeTheyReachValidation()
   {
     LevelEditorState editor = LevelEditorState.CreateNew(4, 4);
