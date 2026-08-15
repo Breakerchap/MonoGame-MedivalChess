@@ -70,7 +70,7 @@ public sealed class SharedAbilityRulesTests
       ]
     );
 
-    Assert.Equal(15, result.RemainingMoney);
+    Assert.Equal(20, result.RemainingMoney);
     Assert.Equal("pres", result.Decisions[0].UnitId);
     Assert.True(result.Decisions[0].Paid);
     Assert.Equal("merc", result.Decisions[1].UnitId);
@@ -157,11 +157,11 @@ public sealed class SharedAbilityRulesTests
   [Fact]
   public void ChessPack_UsesCurrentWorkbookCombatAndPurchaseValues()
   {
-    Assert.Equal((120, 20), (PieceDefinitions.Pawn.Attack, PieceDefinitions.Pawn.Cost));
-    Assert.Equal((120, 60), (PieceDefinitions.ChessKnight.Attack, PieceDefinitions.ChessKnight.Cost));
-    Assert.Equal((120, 60), (PieceDefinitions.Bishop.Attack, PieceDefinitions.Bishop.Cost));
-    Assert.Equal((120, 100), (PieceDefinitions.Rook.Attack, PieceDefinitions.Rook.Cost));
-    Assert.Equal((120, 180), (PieceDefinitions.Queen.Attack, PieceDefinitions.Queen.Cost));
+    Assert.Equal((120, 10), (PieceDefinitions.Pawn.Attack, PieceDefinitions.Pawn.Cost));
+    Assert.Equal((120, 30), (PieceDefinitions.ChessKnight.Attack, PieceDefinitions.ChessKnight.Cost));
+    Assert.Equal((120, 30), (PieceDefinitions.Bishop.Attack, PieceDefinitions.Bishop.Cost));
+    Assert.Equal((120, 50), (PieceDefinitions.Rook.Attack, PieceDefinitions.Rook.Cost));
+    Assert.Equal((120, 90), (PieceDefinitions.Queen.Attack, PieceDefinitions.Queen.Cost));
     Assert.Equal(120, PieceDefinitions.ChessKing.Attack);
   }
 

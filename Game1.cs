@@ -2997,7 +2997,11 @@ internal sealed partial class Game1 : Game
     {
       return false;
     }
-    return pieceSetup.IsFootprintClear(piece.Definition, destination, piece);
+    return pieceSetup.IsFootprintClear(
+      piece.Definition,
+      destination,
+      piece,
+      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null);
   }
 
   private bool CanTravelThroughPosition(
@@ -3458,6 +3462,8 @@ internal sealed partial class Game1 : Game
 
   private void ApplyDamageToPiece(Piece attacker, Piece damagedPiece, int unmitigatedDamage)
   {
+    UnitRule attackerRule = UnitRules.FromPieceDefinition(attacker.Definition);
+    UnitRule targetRule = UnitRules.FromPieceDefinition(damagedPiece.Definition);
     int damage = CombatRules.CalculateDamage(
       unmitigatedDamage,
       false,
@@ -3466,6 +3472,11 @@ internal sealed partial class Game1 : Game
       IsPieceInForest(damagedPiece),
       _terrain.ForestDamageReduction
     );
+    damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
+      attackerRule,
+      targetRule,
+      attacker.Position,
+      damagedPiece.Position));
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
     HandlePieceDestroyed(damagedPiece, attacker.Team);
@@ -3896,13 +3907,16 @@ internal sealed partial class Game1 : Game
       y: destination.y - piece.Position.y
     );
     List<Piece> companions = [];
-    if (piece.Definition.Type == PieceType.Emissary)
+    if (piece.Definition.Type is PieceType.Emissary or PieceType.Herald)
     {
       foreach (Piece candidate in pieceSetup.Pieces)
       {
         if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null && !IsTreasureCarrier(candidate) &&
-            AbilityRules.IsEmissaryCompanion(
-              UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position))
+            (piece.Definition.Type == PieceType.Emissary
+              ? AbilityRules.IsEmissaryCompanion(
+                UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position)
+              : AbilityRules.IsHeraldCompanion(
+                UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position)))
         {
           companions.Add(candidate);
         }
@@ -4264,7 +4278,7 @@ internal sealed partial class Game1 : Game
       {
         Piece blockingPiece = pieceSetup.GetPieceAt(square);
         return blockingPiece is not null && blockingPiece.Definition.Type != PieceType.Farm &&
-          !(attacker.Definition.Type == PieceType.Princess && blockingPiece.Team == attacker.Team);
+          !((attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress) && blockingPiece.Team == attacker.Team);
       }
     );
   }
@@ -4286,7 +4300,7 @@ internal sealed partial class Game1 : Game
   {
     bool isRangedAttacker =
       attacker.Definition.Category == PieceCategory.Ranged ||
-      attacker.Definition.Type is PieceType.Princess or PieceType.Cannon or PieceType.Ballista;
+      attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress or PieceType.Cannon or PieceType.Ballista;
     if (!isRangedAttacker)
     {
       return true;
@@ -4385,7 +4399,7 @@ internal sealed partial class Game1 : Game
 
         Piece blockingPiece = pieceSetup.GetPieceAt(position);
         if (blockingPiece != null &&
-            !(attacker.Definition.Type == PieceType.Princess && blockingPiece.Team == attacker.Team))
+            !((attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress) && blockingPiece.Team == attacker.Team))
         {
           isClear = false;
           break;

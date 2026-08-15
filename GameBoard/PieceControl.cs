@@ -79,7 +79,14 @@ internal static class Actions
       return;
     }
 
-    attackedPiece.CurrentHealth -= attackingPiece.Definition.Attack;
+    UnitRule attackerRule = UnitRules.FromPieceDefinition(attackingPiece.Definition);
+    UnitRule targetRule = UnitRules.FromPieceDefinition(attackedPiece.Definition);
+    int damage = Math.Max(0, attackingPiece.Definition.Attack - AbilityRules.GetTargetDamageReduction(
+      attackerRule,
+      targetRule,
+      attackingPiece.Position,
+      attackedPiece.Position));
+    attackedPiece.CurrentHealth -= damage;
   }
 
   internal static bool HandlePieceDeath(

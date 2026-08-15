@@ -417,7 +417,7 @@ public static partial class CpuGameRules
 
   private static void MoveEmissaryCompanions(CpuMutableGameState state, NetworkPiece emissary, int oldX, int oldY)
   {
-    if (emissary.Type != "Emissary")
+    if (emissary.Type is not ("Emissary" or "Herald"))
     {
       return;
     }
@@ -427,7 +427,9 @@ public static partial class CpuGameRules
     List<string> companionIds = state.Pieces
       .Where(piece => piece.Id != emissary.Id && piece.Id != state.TreasureCarrierId && piece.Team == emissary.Team &&
         piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        AbilityRules.IsEmissaryCompanion(rule, (oldX, oldY), (piece.X, piece.Y)))
+        (emissary.Type == "Emissary"
+          ? AbilityRules.IsEmissaryCompanion(rule, (oldX, oldY), (piece.X, piece.Y))
+          : AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (piece.X, piece.Y))))
       .Select(piece => piece.Id)
       .ToList();
     foreach (string companionId in companionIds)

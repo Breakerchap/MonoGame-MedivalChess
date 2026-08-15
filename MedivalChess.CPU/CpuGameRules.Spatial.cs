@@ -71,7 +71,7 @@ public static partial class CpuGameRules
       destination.y,
       piece.Id,
       AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
-      null
+      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
     );
   }
 

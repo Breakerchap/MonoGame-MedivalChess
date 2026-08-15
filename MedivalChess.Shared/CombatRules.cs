@@ -40,7 +40,7 @@ public static class LineOfSightRules
     Func<(int x, int y), bool> blocksDirectPath
   )
   {
-    bool ranged = attacker.Category == RuleCategory.Ranged || attacker.Type is "Princess" or "Cannon" or "Ballista";
+    bool ranged = attacker.Category == RuleCategory.Ranged || attacker.Type is "Princess" or "Sorceress" or "Cannon" or "Ballista";
 
     foreach ((int x, int y) origin in origins)
     {

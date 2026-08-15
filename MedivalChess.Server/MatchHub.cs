@@ -1257,6 +1257,7 @@ public sealed partial class MatchStore
       .ToHashSet(StringComparer.Ordinal);
     if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
       (rule.Type == "Farm" || other.Type != "Farm") &&
+      (!AbilityRules.IsTrampleAttacker(rule) || other.Team == piece.Team) &&
       NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
 
     return true;
@@ -1382,7 +1383,7 @@ public sealed partial class MatchStore
       match.Terrain.IsForest,
       match.Barricades.ContainsKey,
       square => match.Pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null && other.Type != "Farm" &&
-        !(attacker.Type == "Princess" && other.Team == attacker.Team) &&
+        !((attacker.Type is "Princess" or "Sorceress") && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
         UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1))
     );
@@ -1444,6 +1445,8 @@ public sealed partial class MatchStore
     int unmitigatedDamage
   )
   {
+    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    UnitRule targetRule = UnitRules.GetRequired(damagedPiece.Type);
     int damage = CombatRules.CalculateDamage(
       unmitigatedDamage,
       false,
@@ -1452,6 +1455,11 @@ public sealed partial class MatchStore
       IsInForest(match, damagedPiece),
       match.Terrain.ForestDamageReduction
     );
+    damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
+      attackerRule,
+      targetRule,
+      (attacker.X, attacker.Y),
+      (damagedPiece.X, damagedPiece.Y)));
     int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
     if (damagedIndex < 0)
     {
@@ -1649,14 +1657,16 @@ public sealed partial class MatchStore
 
   private static void MoveEmissaryCompanions(Match match, NetworkPiece emissary, int oldEmissaryX, int oldEmissaryY)
   {
-    if (emissary.Type != "Emissary") return;
+    if (emissary.Type is not ("Emissary" or "Herald")) return;
     int deltaX = emissary.X - oldEmissaryX;
     int deltaY = emissary.Y - oldEmissaryY;
     List<int> companions = match.Pieces
       .Select((piece, index) => (piece, index))
       .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Id != match.TreasureCarrierId && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
         UnitRules.TryGet(entry.piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        AbilityRules.IsEmissaryCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y)))
+        (emissary.Type == "Emissary"
+          ? AbilityRules.IsEmissaryCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y))
+          : AbilityRules.IsHeraldCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y))))
       .Select(entry => entry.index).ToList();
     foreach (int index in companions)
     {

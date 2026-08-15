@@ -19,7 +19,7 @@ public static class PackRules
     HashSet<Pack> allowed = [];
     foreach (string? name in names)
     {
-      if (!string.IsNullOrWhiteSpace(name) && Enum.TryParse(name.Trim(), true, out Pack pack) && Enum.IsDefined(pack))
+      if (TryParsePack(name, out Pack pack))
       {
         allowed.Add(pack);
       }
@@ -38,7 +38,7 @@ public static class PackRules
     HashSet<Pack> parsed = [];
     foreach (string? name in names)
     {
-      if (string.IsNullOrWhiteSpace(name) || !Enum.TryParse(name.Trim(), true, out Pack pack) || !Enum.IsDefined(pack))
+      if (!TryParsePack(name, out Pack pack))
       {
         normalised = [];
         return false;
@@ -62,5 +62,19 @@ public static class PackRules
     PieceDefinition? definition = PieceDefinitions.All.FirstOrDefault(candidate =>
       string.Equals(candidate.Identifier, identifier, StringComparison.Ordinal));
     return definition is not null && IsAllowed(definition, names);
+  }
+
+  private static bool TryParsePack(string? name, out Pack pack)
+  {
+    pack = default;
+    if (string.Equals(name?.Trim(), "Angels & Demons", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(name?.Trim(), "AngelsAndDemons", StringComparison.OrdinalIgnoreCase))
+    {
+      pack = Pack.AngelsDemons;
+      return true;
+    }
+
+    return !string.IsNullOrWhiteSpace(name) &&
+      Enum.TryParse(name.Trim(), true, out pack) && Enum.IsDefined(pack);
   }
 }

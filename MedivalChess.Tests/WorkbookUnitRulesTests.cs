@@ -33,13 +33,17 @@ public sealed class WorkbookUnitRulesTests
   {
     Assert.Contains(Pack.Norse, PackRules.All);
     Assert.Contains(Pack.WildWest, PackRules.All);
+    Assert.Contains(Pack.AngelsDemons, PackRules.All);
+    Assert.Contains(PieceDefinitions.Swordsman, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Herald, PieceDefinitions.Royals);
+    Assert.Contains(PieceDefinitions.Fiend, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Viking, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Cowboy, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Vampire, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Artemis, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.President, PieceDefinitions.Royals);
-    Assert.DoesNotContain(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
-    Assert.DoesNotContain(UnitRules.Purchasable, rule => rule.Type == nameof(PieceType.Orc));
+    Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
+    Assert.Contains(UnitRules.Purchasable, rule => rule.Type == nameof(PieceType.Orc));
   }
 
   [Fact]
@@ -47,7 +51,7 @@ public sealed class WorkbookUnitRulesTests
   {
     Assert.Equal(20, PieceDefinitions.Soldier.Attack);
     Assert.Equal(30, PieceDefinitions.Soldier.Health);
-    Assert.Equal(40, PieceDefinitions.Soldier.Cost);
+    Assert.Equal(35, PieceDefinitions.Swordsman.Cost);
 
     Assert.Equal(Shape.Circle, PieceDefinitions.Archer.Movement.Shape);
     Assert.Equal(new AttackRange(2, 3), PieceDefinitions.Archer.AttackRange);
@@ -62,22 +66,27 @@ public sealed class WorkbookUnitRulesTests
     Assert.Equal(110, PieceDefinitions.Chimera.Cost);
     Assert.Equal(new MovementDefinition(2, 4, Shape.Circle), PieceDefinitions.Pegasus.Movement);
     Assert.Equal(new AttackRange(2, 3), PieceDefinitions.Artemis.AttackRange);
-    Assert.Equal(new AttackRange(2, 4), PieceDefinitions.Gunman.AttackRange);
+    Assert.Equal(new AttackRange(3, 4), PieceDefinitions.Gunman.AttackRange);
     Assert.Equal(new AttackRange(2, 4), PieceDefinitions.Tank.AttackRange);
 
     Assert.Equal(10, Globals.FarmIncomePerTurn);
-    Assert.Equal(20, AbilityRules.BombardSplashDamage);
+    Assert.Equal(25, AbilityRules.BombardSplashDamage);
     Assert.Equal(40, AbilityRules.EngineerBarrierHealth);
-    Assert.Equal(20, AbilityRules.MercenaryPayroll);
+    Assert.Equal(25, AbilityRules.MercenaryPayroll);
   }
 
   [Fact]
-  public void ChessDefinitionsRemainAtTheirExistingValuesAndMovementSemantics()
+  public void ChessDefinitionsUseTheSuppliedCombatValuesAndMovementSemantics()
   {
-    Assert.Equal(60, PieceDefinitions.Pawn.Attack);
+    Assert.Equal(120, PieceDefinitions.Pawn.Attack);
     Assert.Equal(5, PieceDefinitions.Pawn.Health);
+    Assert.Equal(10, PieceDefinitions.Pawn.Cost);
     Assert.Equal(Shape.Forward, PieceDefinitions.Pawn.Movement.Shape);
     Assert.Equal(Shape.MoveOnEnemy, PieceDefinitions.Pawn.AttackPattern);
+    Assert.Equal(30, PieceDefinitions.ChessKnight.Cost);
+    Assert.Equal(30, PieceDefinitions.Bishop.Cost);
+    Assert.Equal(50, PieceDefinitions.Rook.Cost);
+    Assert.Equal(90, PieceDefinitions.Queen.Cost);
 
     Assert.Equal(1, PieceDefinitions.ChessKnight.Movement.Minimum);
     Assert.Equal(3, PieceDefinitions.ChessKnight.Movement.Maximum);

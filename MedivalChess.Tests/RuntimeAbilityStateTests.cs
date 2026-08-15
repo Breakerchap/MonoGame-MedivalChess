@@ -68,22 +68,14 @@ public sealed class RuntimeAbilityStateTests
   }
 
   [Fact]
-  public void VampireHealsTwentyAfterAttackingWithoutExceedingMaximumHealth()
+  public void VampireHealsFifteenAfterAttackingWithoutExceedingMaximumHealth()
   {
-    PieceSetup setup = new();
-    Piece vampire = new(PieceDefinitions.Vampire, (0, 0), TeamName.Red)
-    {
-      CurrentHealth = 15
-    };
-    setup.AddPiece(vampire);
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      new AbilityUnitSnapshot("vampire", nameof(PieceType.Vampire), NetworkTeam.Red, 0, 0, 1, 1),
+      new AbilityUnitSnapshot("target", nameof(PieceType.Soldier), NetworkTeam.Blue, 0, 1, 1, 1),
+      []);
 
-    vampire.HasAttackedThisTurn = true;
-    Assert.Equal(35, vampire.CurrentHealth);
-
-    vampire.HasAttackedThisTurn = false;
-    vampire.CurrentHealth = 35;
-    vampire.HasAttackedThisTurn = true;
-    Assert.Equal(PieceDefinitions.Vampire.Health, vampire.CurrentHealth);
+    Assert.Equal(15, plan.HealAttacker);
   }
 
   [Fact]

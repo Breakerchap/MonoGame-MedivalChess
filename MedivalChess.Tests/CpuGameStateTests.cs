@@ -53,7 +53,7 @@ public sealed class CpuGameStateTests
     Assert.True(attack.IsLegal(state));
     CpuGameState afterAttack = attack.Apply(state);
 
-    Assert.Equal(20, afterAttack.Pieces.Single(piece => piece.Id == "blue-farm").Health);
+    Assert.Equal(10, afterAttack.Pieces.Single(piece => piece.Id == "blue-farm").Health);
   }
 
   [Fact]
@@ -118,8 +118,8 @@ public sealed class CpuGameStateTests
     Assert.True(attack.IsLegal(state));
     CpuGameState afterAttack = attack.Apply(state);
 
-    Assert.Equal(15, afterAttack.Pieces.Single(piece => piece.Id == "blue-ox").Health);
-    Assert.Equal(20, afterAttack.Pieces.Single(piece => piece.Id == "blue-cargo").Health);
+    Assert.Equal(5, afterAttack.Pieces.Single(piece => piece.Id == "blue-ox").Health);
+    Assert.Equal(10, afterAttack.Pieces.Single(piece => piece.Id == "blue-cargo").Health);
   }
 
   [Fact]
@@ -133,7 +133,7 @@ public sealed class CpuGameStateTests
       CreateConfiguration(),
       [
         new NetworkPiece("red-elephant", "Elephant", NetworkTeam.Red, 0, 0, 60),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 2, 0, 30)
+        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 2, 0, 60)
       ],
       [
         new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
@@ -151,7 +151,7 @@ public sealed class CpuGameStateTests
     NetworkPiece elephant = moved.Pieces.Single(piece => piece.Id == "red-elephant");
     NetworkPiece soldier = moved.Pieces.Single(piece => piece.Id == "blue-soldier");
     Assert.Equal((1, 0), (elephant.X, elephant.Y));
-    Assert.Equal(15, soldier.Health);
+    Assert.Equal(30, soldier.Health);
     Assert.True(UnitRules.FootprintsOverlap(elephant.X, elephant.Y, 2, 2, soldier.X, soldier.Y, 1, 1));
   }
 

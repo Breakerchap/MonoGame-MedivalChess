@@ -25,6 +25,7 @@
   * Norse
   * Modern
   * Wild West
+  * Angels & Demons
   * Chess
 * Different royals with unique playstyles
 * Terrain and multiple battlefield sizes

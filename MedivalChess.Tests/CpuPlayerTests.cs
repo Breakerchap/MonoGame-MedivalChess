@@ -29,7 +29,7 @@ public sealed class CpuPlayerTests
     CpuGameState state = CreateState(
       new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 0, 0, 30),
       new NetworkPiece("blue-damaged-soldier", "Soldier", NetworkTeam.Blue, 0, -1, 10),
-      new NetworkPiece("blue-healthy-knight", "Knight", NetworkTeam.Blue, 1, 1, 30)
+      new NetworkPiece("blue-healthy-knight", "Knight", NetworkTeam.Blue, 1, 1, 60)
     );
     CpuProfile profile = new()
     {

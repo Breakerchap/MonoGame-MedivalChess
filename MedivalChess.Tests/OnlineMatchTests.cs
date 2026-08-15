@@ -343,13 +343,13 @@ public sealed class OnlineMatchTests
     Assert.True(matches.StopInitialBuying(redConnection).Accepted);
     Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
 
-    ActionResult purchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Soldier", 0, 8));
+    ActionResult purchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Swordsman", 0, 8));
 
     Assert.True(purchase.Accepted);
     NetworkTeamState redTeam = purchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red);
-    Assert.Equal(80, redTeam.Money);
+    Assert.Equal(65, redTeam.Money);
     Assert.Equal(MatchRules.ActionsPerTurn, redTeam.ActionsRemaining);
-    Assert.Contains(purchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+    Assert.Contains(purchase.State.Pieces, piece => piece.Type == "Swordsman" && piece.Team == NetworkTeam.Red);
   }
 
   [Fact]
@@ -413,7 +413,7 @@ public sealed class OnlineMatchTests
   {
     NetworkMatchConfiguration configuration = DefaultConfiguration with
     {
-      StartingCash = 25,
+      StartingCash = 45,
       ForestDensity = "Light",
       WaterwayDensity = "Light"
     };
@@ -552,11 +552,11 @@ public sealed class OnlineMatchTests
     Assert.True(farmsPlaced.Accepted);
     Assert.Equal(100, farmsPlaced.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
     Assert.Equal(2, farmsPlaced.State.Pieces.Count(piece => piece.Type == "Farm" && piece.Team == NetworkTeam.Red));
-    Assert.All(farmsPlaced.State.Pieces.Where(piece => piece.Type == "Farm"), farm => Assert.Equal(30, farm.Health));
+    Assert.All(farmsPlaced.State.Pieces.Where(piece => piece.Type == "Farm"), farm => Assert.Equal(60, farm.Health));
     Assert.True(matches.StopInitialBuying(redConnection).Accepted);
     ActionResult openingComplete = matches.StopInitialBuying(blueConnection);
     Assert.True(openingComplete.Accepted);
-    Assert.Equal(110, openingComplete.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Equal(120, openingComplete.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
 
     NetworkPiece redKing = openingComplete.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Red);
     Assert.True(matches.TryMove(redConnection, new MoveRequest(redKing.Id, redKing.X, redKing.Y - 1)).Accepted);
@@ -601,11 +601,11 @@ public sealed class OnlineMatchTests
     Assert.True(matches.StopInitialBuying(redConnection).Accepted);
     Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
 
-    // Farms are pass-through structures, so the Soldier may be bought onto this farm.
-    ActionResult soldierPurchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Soldier", 1, 8));
+    // Farms are pass-through structures, so the Swordsman may be bought onto this farm.
+    ActionResult soldierPurchase = matches.PurchaseUnit(redConnection, new PurchaseRequest("Swordsman", 1, 8));
     Assert.True(soldierPurchase.Accepted);
-    Assert.Equal(180, soldierPurchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
-    NetworkPiece purchasedSoldier = soldierPurchase.State.Pieces.Single(piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+    Assert.Equal(167, soldierPurchase.State!.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    NetworkPiece purchasedSoldier = soldierPurchase.State.Pieces.Single(piece => piece.Type == "Swordsman" && piece.Team == NetworkTeam.Red);
     Assert.False(matches.TryMove(redConnection, new MoveRequest(purchasedSoldier.Id, 1, 7)).Accepted);
     Assert.True(matches.TrySkipTurn(redConnection).Accepted);
     NetworkPiece blueKing = soldierPurchase.State.Pieces.Single(piece => piece.Type == "King" && piece.Team == NetworkTeam.Blue);

@@ -37,7 +37,7 @@ public static class AbilityStateRules
 {
   public static LethalAbilityOutcome ResolveLethalDamage(string unitType, bool hasRevived)
   {
-    if (unitType == nameof(PieceType.Shieldbearer) && !hasRevived)
+    if ((unitType is nameof(PieceType.Shieldbearer) or nameof(PieceType.Spartan)) && !hasRevived)
     {
       return new(
         LethalAbilityOutcomeKind.Survive,

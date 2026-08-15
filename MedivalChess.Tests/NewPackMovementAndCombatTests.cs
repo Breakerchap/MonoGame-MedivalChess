@@ -28,7 +28,7 @@ public sealed class NewPackMovementAndCombatTests
   }
 
   [Fact]
-  public void SamuraiCannotBeTargetedOrDamagedByProjectileAttacks()
+  public void SamuraiTakesFifteenLessDamageFromLongRangeAttacks()
   {
     PieceSetup setup = new();
     Piece archer = new(PieceDefinitions.Archer, (0, 0), TeamName.Red);
@@ -36,11 +36,11 @@ public sealed class NewPackMovementAndCombatTests
     setup.AddPiece(archer);
     setup.AddPiece(samurai);
 
-    Assert.False(Actions.CanAttackSquare(archer, samurai.Position));
+    Assert.True(Actions.CanAttackSquare(archer, samurai.Position));
 
     int startingHealth = samurai.CurrentHealth;
     Actions.Attack(archer, samurai);
-    Assert.Equal(startingHealth, samurai.CurrentHealth);
+    Assert.Equal(startingHealth - 5, samurai.CurrentHealth);
   }
 
   [Fact]

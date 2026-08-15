@@ -36,7 +36,8 @@ internal sealed class PieceSetup
   internal bool IsFootprintClear(
     PieceDefinition definition,
     (int x, int y) position,
-    Piece ignoredPiece = null
+    Piece ignoredPiece = null,
+    TeamName? teamWhoseEnemiesMayBeOverlapped = null
   )
   {
     for (int y = 0; y < definition.Size.y; y++)
@@ -45,6 +46,7 @@ internal sealed class PieceSetup
       {
         Piece occupiedPiece = GetPieceAt((position.x + x, position.y + y));
         if (occupiedPiece != null && occupiedPiece != ignoredPiece &&
+            (!teamWhoseEnemiesMayBeOverlapped.HasValue || occupiedPiece.Team == teamWhoseEnemiesMayBeOverlapped.Value) &&
             (definition.Type == PieceType.Farm || occupiedPiece.Definition.Type != PieceType.Farm))
         {
           return false;

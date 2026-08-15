@@ -92,6 +92,11 @@ public static partial class CpuGameRules
       IsInForest(state, damaged),
       state.Source.Terrain.ForestDamageReduction
     );
+    damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
+      attackerRule,
+      damagedRule,
+      (attacker.X, attacker.Y),
+      (damaged.X, damaged.Y)));
     int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
     if (damagedIndex < 0)
     {

@@ -726,6 +726,7 @@ Greek
 Norse
 Modern
 WildWest
+AngelsDemons
 Chess
 ```
 

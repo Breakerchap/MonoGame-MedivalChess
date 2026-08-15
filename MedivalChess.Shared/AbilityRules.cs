@@ -6,18 +6,18 @@ namespace MedivalChess.Shared;
 /// </summary>
 public static class AbilityRules
 {
-  public const int BombardSplashDamage = 20;
+  public const int BombardSplashDamage = 25;
   public const int ElephantTrampleDamage = 30;
   public const int EngineerBarrierHealth = 40;
   public const int EngineerMineDamage = 30;
   public const int EngineerBuildsPerTurn = 2;
-  public const int MercenaryPayroll = 20;
+  public const int MercenaryPayroll = 25;
   public const int PresidentPayroll = 5;
   public const int DragonbornBurnDamage = 10;
-  public const int VampireHealing = 20;
+  public const int VampireHealing = 15;
   public const int ZeusChainDamage = 10;
-  public const int ArtemisForestBonus = 10;
-  public const int ChimeraRearBonus = 20;
+  public const int ArtemisForestBonus = 5;
+  public const int ChimeraRearBonus = 15;
   public const int ShieldbearerReviveHealth = 20;
   public const int GhoulLifetimeTurns = 4;
   public const int TumbleweedLifetimeRounds = 3;
@@ -27,6 +27,7 @@ public static class AbilityRules
   public const int BerserkerEnrageHealth = 20;
   public const int BerserkerEnragedDamage = 40;
   public const int CavalierFollowUpMovement = 2;
+  public const int SamuraiLongRangeDamageReduction = 15;
 
   public static bool IsTerrainImmune(UnitRule unit) =>
     unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
@@ -73,10 +74,10 @@ public static class AbilityRules
     attachmentType == nameof(PieceType.Ox);
 
   public static bool AttacksOverObstacles(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess);
+    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess) or nameof(PieceType.Sorceress);
 
   public static bool AttacksThroughForests(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess);
+    unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess) or nameof(PieceType.Sorceress);
 
   public static bool IsProjectileAttack(UnitRule attacker) => attacker.Type is
     nameof(PieceType.Archer) or nameof(PieceType.Crossbowman) or nameof(PieceType.Ninja) or
@@ -85,13 +86,27 @@ public static class AbilityRules
     nameof(PieceType.Sniper) or nameof(PieceType.Cowboy);
 
   public static bool CanDamageTarget(UnitRule attacker, UnitRule target) =>
-    !(target.Type == nameof(PieceType.Samurai) && IsProjectileAttack(attacker));
+    true;
+
+  public static int GetTargetDamageReduction(
+    UnitRule attacker,
+    UnitRule target,
+    (int x, int y) attackerPosition,
+    (int x, int y) targetPosition
+  )
+  {
+    if (target.Type != nameof(PieceType.Samurai)) return 0;
+    return IsWithinSquareRadius(attacker, attackerPosition, target, targetPosition, 1)
+      ? 0
+      : SamuraiLongRangeDamageReduction;
+  }
 
   public static int MaximumAttacksPerTurn(string unitType) =>
-    unitType == nameof(PieceType.Ninja) ? NinjaAttacksPerTurn : 1;
+    unitType == nameof(PieceType.Ninja) ? NinjaAttacksPerTurn :
+    unitType == nameof(PieceType.Sherrif) ? 2 : 1;
 
   public static int GetBaseAttack(UnitRule attacker, int currentHealth) =>
-    attacker.Type == nameof(PieceType.Berserker) && currentHealth <= BerserkerEnrageHealth
+    (attacker.Type is nameof(PieceType.Berserker) or nameof(PieceType.Beserker)) && currentHealth <= BerserkerEnrageHealth
       ? BerserkerEnragedDamage
       : attacker.Attack;
 
@@ -155,6 +170,10 @@ public static class AbilityRules
     unit.Width == 1 && unit.Height == 1 &&
     Math.Abs(unitPosition.x - emissaryPosition.x) == 1 &&
     Math.Abs(unitPosition.y - emissaryPosition.y) == 1;
+
+  public static bool IsHeraldCompanion(UnitRule unit, (int x, int y) heraldPosition, (int x, int y) unitPosition) =>
+    unit.Width == 1 && unit.Height == 1 &&
+    Math.Max(Math.Abs(unitPosition.x - heraldPosition.x), Math.Abs(unitPosition.y - heraldPosition.y)) == 1;
 
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
