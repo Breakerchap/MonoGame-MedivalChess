@@ -17,13 +17,7 @@ public static partial class CpuGameRules
       other.Id != mover.Id && other.AttachedToId is null && other.Type != nameof(PieceType.Farm) &&
       UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, destination));
     return target is not null && ChessAbilityRules.CanCaptureByLanding(
-      moverRule,
-      mover.Team,
-      (mover.X, mover.Y),
-      destination,
-      target.Team)
-      ? target
-      : null;
+      moverRule, mover.Team, (mover.X, mover.Y), destination, target.Team) ? target : null;
   }
 
   private static bool CanChessCaptureLand(

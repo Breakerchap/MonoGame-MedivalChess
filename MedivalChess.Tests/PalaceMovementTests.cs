@@ -8,7 +8,7 @@ public sealed class PalaceMovementTests
   [Fact]
   public void PalaceBonus_QualifiesWholeDestinationsButNotSinglePathSteps()
   {
-    UnitRule unit = CreateRule("Soldier", 2, RuleShape.Any);
+    UnitRule unit = CreateRule("Swordsman", 2, RuleShape.Any);
     UnitRule palace = CreateRule("Palace", 0, RuleShape.Straight, 3, 2);
 
     Assert.False(AbilityRules.MovesTowardPalace(unit, (0, 0), (0, -1), palace, (0, -5)));
@@ -19,7 +19,7 @@ public sealed class PalaceMovementTests
   [Fact]
   public void PalaceBonus_DoesNotPermitTravelThroughLake()
   {
-    UnitRule unit = CreateRule("Soldier", 1, RuleShape.Straight);
+    UnitRule unit = CreateRule("Swordsman", 1, RuleShape.Straight);
     UnitRule palace = CreateRule("Palace", 0, RuleShape.Straight, 3, 2);
     (int x, int y) origin = (0, 0);
     (int x, int y) palacePosition = (0, -5);
@@ -45,7 +45,7 @@ public sealed class PalaceMovementTests
   [Fact]
   public void PalaceBonus_DoesNotAllowRiverCrossingsToResetMovementForever()
   {
-    UnitRule unit = CreateRule("Soldier", 2, RuleShape.Straight);
+    UnitRule unit = CreateRule("Swordsman", 2, RuleShape.Straight);
     UnitRule palace = CreateRule("Palace", 0, RuleShape.Straight, 3, 2);
     (int x, int y) origin = (0, 0);
     (int x, int y) palacePosition = (0, -5);
@@ -70,7 +70,7 @@ public sealed class PalaceMovementTests
   [Fact]
   public void PalaceBonus_StillProvidesOneExtraStepAfterCrossingRiverTowardPalace()
   {
-    UnitRule unit = CreateRule("Soldier", 2, RuleShape.Straight);
+    UnitRule unit = CreateRule("Swordsman", 2, RuleShape.Straight);
     UnitRule palace = CreateRule("Palace", 0, RuleShape.Straight, 3, 2);
     (int x, int y) origin = (0, 0);
     (int x, int y) palacePosition = (0, -5);

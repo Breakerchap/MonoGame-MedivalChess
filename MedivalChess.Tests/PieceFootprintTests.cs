@@ -26,7 +26,7 @@ public class PieceFootprintTests
     setup.AddPiece(cannon);
 
     Assert.Same(cannon, setup.GetPieceAt((2, 4)));
-    Assert.False(setup.IsFootprintClear(PieceDefinitions.Soldier, (2, 4)));
+    Assert.False(setup.IsFootprintClear(PieceDefinitions.Swordsman, (2, 4)));
     Assert.True(setup.IsFootprintClear(PieceDefinitions.Cannon, (2, 3), cannon));
   }
 

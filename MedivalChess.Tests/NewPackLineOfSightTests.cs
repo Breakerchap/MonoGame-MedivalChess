@@ -34,12 +34,12 @@ public sealed class NewPackLineOfSightTests
   }
 
   [Fact]
-  public void PrincessAttacksOverUnitsTerrainAndBarricades()
+  public void SorceressAttacksOverUnitsTerrainAndBarricades()
   {
-    UnitRule princess = UnitRules.GetRequired(nameof(PieceType.Princess));
+    UnitRule sorceress = UnitRules.GetRequired(nameof(PieceType.Sorceress));
 
     bool clear = LineOfSightRules.HasClearAttackPath(
-      princess,
+      sorceress,
       [(0, 0)],
       (0, 3),
       _ => true,

@@ -199,7 +199,7 @@ internal sealed partial class Game1 : Game
   private int _selectedRoyalIndex;
   private PieceDefinition _royalAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
-  private readonly HashSet<Pack> _allowedPacks = [Pack.Base];
+  private readonly HashSet<Pack> _allowedPacks = [Pack.Medival];
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
@@ -524,10 +524,12 @@ internal sealed partial class Game1 : Game
       wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
+    bool clickedCarryThrowPanel =
+      wasLeftClick && HandleCarryThrowPanelClick(ToUiPoint(mouse.Position));
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -616,7 +618,8 @@ internal sealed partial class Game1 : Game
             else
             {
               if (selectedPiece.AttachedTo != null &&
-                  selectedPiece.AttachmentKind == AttachmentKind.Carried)
+                  selectedPiece.AttachmentKind == AttachmentKind.Carried &&
+                  selectedPiece.Definition.Type == PieceType.Ox)
               {
                 pieceSetup.Detach(selectedPiece);
               }
@@ -1769,7 +1772,8 @@ internal sealed partial class Game1 : Game
           {
             return false;
           }
-          if (piece.AttachedTo is not null && piece.AttachmentKind == AttachmentKind.Carried)
+          if (piece.AttachedTo is not null && piece.AttachmentKind == AttachmentKind.Carried &&
+              piece.Definition.Type == PieceType.Ox)
           {
             pieceSetup.Detach(piece);
           }
@@ -2302,6 +2306,24 @@ internal sealed partial class Game1 : Game
     }
 
     bool plunderTreasureTarget = target is null && CanPickUpTreasure(actor, targetPosition);
+    Piece carriedUnit = GetCarriedUnit(actor);
+    bool carryThrowTarget = AbilityRules.IsCarryThrowUnit(actor.Definition.Type.ToString()) &&
+      (carriedUnit is not null
+        ? target is null && IsFootprintOnBoard(carriedUnit.Definition, targetPosition) &&
+          AbilityRules.CanThrow(
+            UnitRules.FromPieceDefinition(actor.Definition),
+            UnitRules.FromPieceDefinition(carriedUnit.Definition),
+            actor.Position,
+            targetPosition) && CanPlacePiece(carriedUnit.Definition, targetPosition, null, carriedUnit)
+        : target is not null && target != actor && target.AttachedTo is null && target.Definition.Type != PieceType.Farm &&
+          AbilityRules.CanCarry(
+            UnitRules.FromPieceDefinition(actor.Definition),
+            actor.Position,
+            UnitRules.FromPieceDefinition(target.Definition),
+            target.Position,
+            actor.AttachedTo is not null,
+            target.AttachedTo is not null,
+            false));
     bool isSpecialTarget = plunderTreasureTarget || actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
@@ -2313,12 +2335,15 @@ internal sealed partial class Game1 : Game
       PieceType.Mercenary => targetPosition == actor.Position,
       _ => false
     };
+    isSpecialTarget |= carryThrowTarget;
     if (!isSpecialTarget)
     {
       return false;
     }
 
-    string ability = plunderTreasureTarget
+    string ability = carryThrowTarget
+      ? carriedUnit is null ? "Carry" : "Throw"
+      : plunderTreasureTarget
       ? "PickUpTreasure"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
@@ -2983,8 +3008,10 @@ internal sealed partial class Game1 : Game
       : rule;
   }
 
-  private static bool CanMoveThisTurn(Piece piece) => !piece.HasMovedThisTurn ||
-    AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable);
+  private static bool CanMoveThisTurn(Piece piece) =>
+    (piece.AttachedTo is null || piece.AttachmentKind != AttachmentKind.Carried || piece.Definition.Type == PieceType.Ox) &&
+    (!piece.HasMovedThisTurn ||
+      AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable));
 
   private bool TryGetMovementPathAt(
     Piece piece,
@@ -3070,7 +3097,7 @@ internal sealed partial class Game1 : Game
         {
           continue;
         }
-        if (GetLocalChessCaptureTarget(piece, rule, position) == blockingPiece)
+        if (GetLocalChessCaptureTarget(piece, rule, destination) == blockingPiece)
         {
           continue;
         }
@@ -3208,6 +3235,29 @@ internal sealed partial class Game1 : Game
       return highlightedSquares;
     }
 
+    if (AbilityRules.IsCarryThrowUnit(piece.Definition.Type.ToString()))
+    {
+      Piece cargo = GetCarriedUnit(piece);
+      foreach ((int x, int y) boardPosition in _board.Cells)
+      {
+        Piece target = GetUnattachedPieceAt(boardPosition);
+        bool valid = cargo is not null
+          ? target is null && IsFootprintOnBoard(cargo.Definition, boardPosition) &&
+            AbilityRules.CanThrow(
+              UnitRules.FromPieceDefinition(piece.Definition),
+              UnitRules.FromPieceDefinition(cargo.Definition),
+              piece.Position,
+              boardPosition) && CanPlacePiece(cargo.Definition, boardPosition, null, cargo)
+          : target is not null && target != piece && target.AttachedTo is null && target.Definition.Type != PieceType.Farm &&
+            AbilityRules.CanCarry(
+              UnitRules.FromPieceDefinition(piece.Definition), piece.Position,
+              UnitRules.FromPieceDefinition(target.Definition), target.Position,
+              piece.AttachedTo is not null, target.AttachedTo is not null, false);
+        if (valid) highlightedSquares.Add(boardPosition);
+      }
+      return highlightedSquares;
+    }
+
     if (piece.Definition.Type == PieceType.Elephant)
     {
       movementPaths ??= GetMovementPaths(piece);
@@ -3283,6 +3333,7 @@ internal sealed partial class Game1 : Game
     foreach ((int x, int y) targetPosition in targets)
     {
       if (piece.Definition.Type is PieceType.Elephant or PieceType.Engineer ||
+          AbilityRules.IsCarryThrowUnit(piece.Definition.Type.ToString()) ||
           _barricades.ContainsKey(targetPosition) ||
           CanPickUpTreasure(piece, targetPosition) ||
           GetUnattachedHostilePieceAt(targetPosition, piece.Team) is not null)
@@ -3515,6 +3566,7 @@ internal sealed partial class Game1 : Game
       targetRule,
       attacker.Position,
       damagedPiece.Position));
+    damage = ApplyLocalChessKingDeathRule(damagedPiece, damage);
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
     HandlePieceDestroyed(damagedPiece, attacker.Team);
@@ -3522,8 +3574,9 @@ internal sealed partial class Game1 : Game
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
   {
-    target.CurrentHealth -= AbilityRules.EngineerMineDamage;
-    Console.WriteLine($"Mine dealt {AbilityRules.EngineerMineDamage} damage to {target.Definition.Type}.");
+    int damage = ApplyLocalChessKingDeathRule(target, AbilityRules.EngineerMineDamage);
+    target.CurrentHealth -= damage;
+    Console.WriteLine($"Mine dealt {damage} damage to {target.Definition.Type}.");
     HandlePieceDestroyed(target, mineOwner);
   }
 
@@ -3678,6 +3731,11 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (AbilityRules.IsCarryThrowUnit(actor.Definition.Type.ToString()))
+    {
+      return TryUseGiantOrCyclopsAbility(actor, targetPosition, targetPiece);
+    }
+
     if (actor.Definition.Type == PieceType.Spy &&
         targetPiece != null &&
         targetPiece.Team != actor.Team &&
@@ -3731,6 +3789,56 @@ internal sealed partial class Game1 : Game
     }
 
     return false;
+  }
+
+  private Piece GetCarriedUnit(Piece carrier) =>
+    pieceSetup.GetAttachedPiece(carrier, AttachmentKind.Carried);
+
+  private bool TryUseGiantOrCyclopsAbility(Piece carrier, (int x, int y) targetPosition, Piece targetPiece)
+  {
+    UnitRule carrierRule = UnitRules.FromPieceDefinition(carrier.Definition);
+    Piece cargo = GetCarriedUnit(carrier);
+    if (cargo is not null)
+    {
+      if (targetPiece is not null || !IsFootprintOnBoard(cargo.Definition, targetPosition) ||
+          !AbilityRules.CanThrow(carrierRule, UnitRules.FromPieceDefinition(cargo.Definition), carrier.Position, targetPosition) ||
+          !CanPlacePiece(cargo.Definition, targetPosition, null, cargo))
+      {
+        return false;
+      }
+
+      pieceSetup.Detach(cargo);
+      cargo.Position = targetPosition;
+      cargo.Facing = carrier.Facing;
+      cargo.HasMovedThisTurn = true;
+      pieceSetup.RefreshOccupancy();
+      carrier.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (targetPiece is null || targetPiece == carrier || targetPiece.AttachedTo is not null ||
+        targetPiece.Definition.Type == PieceType.Farm ||
+        !AbilityRules.CanCarry(
+          carrierRule,
+          carrier.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition),
+          targetPiece.Position,
+          carrier.AttachedTo is not null,
+          targetPiece.AttachedTo is not null,
+          false))
+    {
+      return false;
+    }
+
+    if (!pieceSetup.Attach(targetPiece, carrier, AttachmentKind.Carried))
+    {
+      return false;
+    }
+
+    carrier.HasAttackedThisTurn = true;
+    CompleteAction();
+    return true;
   }
 
   private bool TryPickUpTreasure(Piece actor, (int x, int y) targetPosition, Piece targetPiece)
@@ -3971,16 +4079,15 @@ internal sealed partial class Game1 : Game
       y: destination.y - piece.Position.y
     );
     List<Piece> companions = [];
-    if (piece.Definition.Type is PieceType.Emissary or PieceType.Herald)
+
+    if (piece.Definition.Type == PieceType.Herald)
     {
       foreach (Piece candidate in pieceSetup.Pieces)
       {
-        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null && !IsTreasureCarrier(candidate) &&
-            (piece.Definition.Type == PieceType.Emissary
-              ? AbilityRules.IsEmissaryCompanion(
-                UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position)
-              : AbilityRules.IsHeraldCompanion(
-                UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position)))
+        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
+            !IsTreasureCarrier(candidate) &&
+            AbilityRules.IsHeraldCompanion(
+              UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position))
         {
           companions.Add(candidate);
         }
@@ -4342,7 +4449,7 @@ internal sealed partial class Game1 : Game
       {
         Piece blockingPiece = pieceSetup.GetPieceAt(square);
         return blockingPiece is not null && blockingPiece.Definition.Type != PieceType.Farm &&
-          !((attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress) && blockingPiece.Team == attacker.Team);
+          !(attacker.Definition.Type == PieceType.Sorceress && blockingPiece.Team == attacker.Team);
       }
     );
   }
@@ -4364,7 +4471,7 @@ internal sealed partial class Game1 : Game
   {
     bool isRangedAttacker =
       attacker.Definition.Category == PieceCategory.Ranged ||
-      attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress or PieceType.Cannon or PieceType.Ballista;
+      attacker.Definition.Type is PieceType.Sorceress or PieceType.Cannon or PieceType.Ballista;
     if (!isRangedAttacker)
     {
       return true;
@@ -4463,7 +4570,7 @@ internal sealed partial class Game1 : Game
 
         Piece blockingPiece = pieceSetup.GetPieceAt(position);
         if (blockingPiece != null &&
-            !((attacker.Definition.Type is PieceType.Princess or PieceType.Sorceress) && blockingPiece.Team == attacker.Team))
+            !((attacker.Definition.Type == PieceType.Sorceress) && blockingPiece.Team == attacker.Team))
         {
           isClear = false;
           break;
@@ -4755,6 +4862,22 @@ internal sealed partial class Game1 : Game
       SelectPiece(cargo, true);
     }
 
+    return true;
+  }
+
+  private bool HandleCarryThrowPanelClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type is not (PieceType.Giant or PieceType.Cyclops) ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    Piece cargo = GetCarriedUnit(selectedPiece);
+    if (cargo is not null && GetCarryThrowButtonBounds().Contains(mousePosition))
+    {
+      SelectPiece(cargo, true);
+    }
     return true;
   }
 
@@ -6476,7 +6599,7 @@ internal sealed partial class Game1 : Game
     _cpuMatchVariationSeed = Random.Shared.Next();
     _screen = Screen.Setup;
     _allowedPacks.Clear();
-    _allowedPacks.Add(Pack.Base);
+    _allowedPacks.Add(Pack.Medival);
     _selectedPurchasePackIndex = 0;
     SetPlayerCount(2);
     _selectedRoyalIndex = 0;
@@ -9005,7 +9128,7 @@ internal sealed partial class Game1 : Game
     Rectangle viewport = UiLayout.Viewport(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height);
     int desiredHeight = selectedPiece == null
       ? 124
-      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox or PieceType.Guard ? 520 : 400;
+      : selectedPiece.Definition.Type is PieceType.Engineer or PieceType.Ox or PieceType.Guard or PieceType.Giant or PieceType.Cyclops ? 520 : 400;
     int height = Math.Min(desiredHeight, Math.Max(1, viewport.Bottom - status.Bottom - UiTheme.SpaceLg * 2));
     return new Rectangle(status.X, status.Bottom + UiTheme.SpaceMd, status.Width, height);
   }
@@ -9021,6 +9144,20 @@ internal sealed partial class Game1 : Game
     Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
     int height = Math.Min(122, Math.Max(80, content.Height - 280));
     return new Rectangle(content.X, content.Bottom - height, content.Width, height);
+  }
+
+  private Rectangle GetCarryThrowControlBounds()
+  {
+    Rectangle content = UiLayout.Inset(GetSelectedPiecePanelBounds(), UiTheme.SpaceMd);
+    int height = Math.Min(122, Math.Max(80, content.Height - 280));
+    return new Rectangle(content.X, content.Bottom - height, content.Width, height);
+  }
+
+  private Rectangle GetCarryThrowButtonBounds()
+  {
+    Rectangle control = GetCarryThrowControlBounds();
+    return new Rectangle(control.X + UiTheme.SpaceSm, control.Bottom - UiTheme.ButtonHeight - UiTheme.SpaceSm,
+      control.Width - UiTheme.SpaceSm * 2, UiTheme.ButtonHeight);
   }
 
   private Rectangle GetGuardControlBounds()
@@ -9393,6 +9530,7 @@ internal sealed partial class Game1 : Game
       PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
+      PieceType.Giant or PieceType.Cyclops => GetCarryThrowButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Mercenary => GetMercenaryFireButtonBounds().Y - UiTheme.SpaceSm,
       _ => content.Bottom - UiTheme.SpaceSm
     };
@@ -9413,6 +9551,12 @@ internal sealed partial class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.Ox)
     {
       DrawOxCarryControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type is PieceType.Giant or PieceType.Cyclops)
+    {
+      DrawCarryThrowControls();
       return;
     }
 
@@ -9455,6 +9599,31 @@ internal sealed partial class Game1 : Game
       0.56f
     );
     DrawMenuButton(button, "SELECT HOST", UiButtonTone.Accent);
+  }
+
+  private void DrawCarryThrowControls()
+  {
+    Piece cargo = GetCarriedUnit(selectedPiece);
+    Rectangle control = GetCarryThrowControlBounds();
+    DrawPanel(control, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+    if (cargo is null)
+    {
+      _ui.Text("CARRIED UNIT: NONE", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.68f);
+      _ui.TextWrapped(
+        "RIGHT-CLICK a directly adjacent 1 x 1 unit to carry it. The carried unit cannot move itself, but may attack its carrier if in range.",
+        new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, control.Height - 36)),
+        UiTheme.TextMuted, 0.58f);
+      return;
+    }
+
+    Rectangle button = GetCarryThrowButtonBounds();
+    string pattern = selectedPiece.Definition.Type == PieceType.Cyclops ? "2-3 DIAMOND" : "2-3 CIRCLE";
+    _ui.Text($"CARRYING: {cargo.Definition.Type.ToString().ToUpperInvariant()}", new Vector2(control.X + UiTheme.SpaceSm, control.Y + UiTheme.SpaceSm), UiTheme.Gold, 0.68f);
+    _ui.TextWrapped(
+      $"The unit moves with the {selectedPiece.Definition.Type}. RIGHT-CLICK an empty {pattern} square to throw it.",
+      new Rectangle(control.X + UiTheme.SpaceSm, control.Y + 30, control.Width - UiTheme.SpaceSm * 2, Math.Max(0, button.Y - control.Y - 34)),
+      UiTheme.TextMuted, 0.58f);
+    DrawMenuButton(button, "SELECT CARRIED UNIT", UiButtonTone.Accent);
   }
 
   private void DrawGuardControls()
@@ -9561,6 +9730,9 @@ internal sealed partial class Game1 : Game
       PieceType.Ox => GetOxCargo(piece) == null
         ? "RIGHT-CLICK friendly 1 x 1 unit to attach"
         : "ATTACHED - HOST GAINS +2 MOVE",
+      PieceType.Giant or PieceType.Cyclops => GetCarriedUnit(piece) is null
+        ? "RIGHT-CLICK directly adjacent 1 x 1 unit to carry"
+        : $"CARRYING - RIGHT-CLICK empty 2-3 {(piece.Definition.Type == PieceType.Cyclops ? "DIAMOND" : "CIRCLE")} square to throw",
       PieceType.Spy => "RIGHT-CLICK to use special",
       PieceType.Mercenary => "RIGHT-CLICK this unit to fire; enemies to attack",
       _ => "RIGHT-CLICK red to attack"

@@ -14,25 +14,24 @@ public static class CpuStrategicHeuristics
   // purchase selection, and headless simulations alike.
   private static readonly IReadOnlyDictionary<string, string[]> GoodAgainst = new Dictionary<string, string[]>(StringComparer.Ordinal)
   {
-    ["Soldier"] = ["Peasant", "Archer", "Spy", "Engineer", "Bombard", "Cannon"],
-    ["Defender"] = ["Soldier", "Peasant", "Spearman", "Guard", "Mercenary"],
-    ["Archer"] = ["Defender", "Peasant", "Spearman", "Engineer", "Spy"],
-    ["Spearman"] = ["Soldier", "Cavalier", "Knight", "Chariot"],
+    ["Swordsman"] = ["Peasant", "Archer", "Spy", "Engineer", "Bombard", "Cannon"],
+    ["Defender"] = ["Swordsman", "Peasant", "Guard", "Mercenary"],
+    ["Archer"] = ["Defender", "Peasant", "Engineer", "Spy"],
     ["Peasant"] = ["#DamagedExpensive"],
-    ["Knight"] = ["Archer", "Spy", "Engineer", "Bombard", "Cannon", "Catapult", "Ballista", "Cavalier", "Soldier", "Defender", "Peasant", "Mercenary"],
-    ["Crossbowman"] = ["Soldier", "Spearman", "Archer", "Spy", "Bombard", "Engineer", "Mercenary"],
+    ["Knight"] = ["Archer", "Spy", "Engineer", "Bombard", "Cannon", "Catapult", "Ballista", "Cavalier", "Swordsman", "Defender", "Peasant", "Mercenary"],
+    ["Crossbowman"] = ["Swordsman", "Archer", "Spy", "Bombard", "Engineer", "Mercenary"],
     ["Cavalier"] = ["Archer", "Crossbowman", "Spy", "Engineer", "Bombard", "Cannon", "Catapult"],
     ["Chariot"] = ["Archer", "Crossbowman", "Spy", "Engineer", "Bombard"],
     ["Cannon"] = ["Knight", "Defender", "Guard", "$Mechanical", "$Large"],
-    ["Spy"] = ["King", "Princess", "Palace", "Baron", "Emissary", "Elephant", "Knight", "Guard", "$Mechanical", "#HighHealth"],
-    ["Catapult"] = ["Archer", "Crossbowman", "Spearman", "Cannon", "Ballista", "Bombard", "Engineer", "Princess", "Palace", "Baron", "Emissary"],
+    ["Spy"] = ["King", "Sorceress", "Palace", "Baron", "Elephant", "Knight", "Guard", "$Mechanical", "#HighHealth"],
+    ["Catapult"] = ["Archer", "Crossbowman", "Cannon", "Ballista", "Bombard", "Engineer", "Sorceress", "Palace", "Baron"],
     ["Bombard"] = ["#Clustered"],
-    ["Ballista"] = ["Defender", "Baron", "Emissary", "$Mechanical", "$Large", "#Aligned"],
+    ["Ballista"] = ["Defender", "Baron", "$Mechanical", "$Large", "#Aligned"],
     ["Elephant"] = ["Peasant", "Defender", "#Barricade"],
     ["Mercenary"] = ["Archer", "Spy", "Engineer", "Bombard"],
-    ["King"] = ["Peasant", "Soldier", "Defender", "Spearman", "Mercenary"],
-    ["Princess"] = ["Archer", "Spearman", "Defender"],
-    ["Baron"] = ["Peasant", "Soldier", "Defender"]
+    ["King"] = ["Peasant", "Swordsman", "Defender", "Mercenary"],
+    ["Sorceress"] = ["Archer", "Defender"],
+    ["Baron"] = ["Peasant", "Swordsman", "Defender"]
   };
 
   // The original table expressed only what each unit likes to fight. Combos.md also gives the
@@ -40,16 +39,15 @@ public static class CpuStrategicHeuristics
   // must still be rejected when it will be immediately countered by the enemy formation.
   private static readonly IReadOnlyDictionary<string, string[]> BadAgainst = new Dictionary<string, string[]>(StringComparer.Ordinal)
   {
-    ["Soldier"] = ["Knight", "Crossbowman", "Chariot", "Cannon", "Defender"],
+    ["Swordsman"] = ["Knight", "Crossbowman", "Chariot", "Cannon", "Defender"],
     ["Defender"] = ["Cannon", "Crossbowman", "Ballista", "Bombard", "Spy"],
-    ["Archer"] = ["Knight", "Cavalier", "Chariot", "Crossbowman", "Catapult", "Princess"],
-    ["Spearman"] = ["Archer", "Crossbowman", "Catapult", "Princess"],
+    ["Archer"] = ["Knight", "Cavalier", "Chariot", "Crossbowman", "Catapult", "Sorceress"],
     ["Peasant"] = ["Bombard", "Ballista", "Elephant"],
     ["Knight"] = ["Cannon", "Crossbowman", "Ballista", "Spy"],
     ["Crossbowman"] = ["Knight", "Cavalier", "Chariot", "Catapult", "Defender"],
-    ["Cavalier"] = ["Spearman", "Knight", "Defender"],
-    ["Chariot"] = ["Spearman", "Cannon", "Catapult", "Ballista"],
-    ["Cannon"] = ["Knight", "Cavalier", "Chariot", "Soldier", "Peasant"],
+    ["Cavalier"] = ["Knight", "Defender"],
+    ["Chariot"] = ["Cannon", "Catapult", "Ballista"],
+    ["Cannon"] = ["Knight", "Cavalier", "Chariot", "Swordsman", "Peasant"],
     ["Spy"] = ["Archer", "Knight", "Cavalier", "Chariot", "Crossbowman"],
     ["Catapult"] = ["Knight", "Cavalier", "Chariot"],
     ["Bombard"] = ["Knight", "Cavalier", "Chariot", "Crossbowman"],
@@ -61,10 +59,9 @@ public static class CpuStrategicHeuristics
     ["Mercenary"] = ["Defender", "Knight", "Crossbowman"],
     ["Farm"] = ["Knight", "Cavalier", "Chariot", "Cannon", "Catapult", "Ballista", "Bombard"],
     ["King"] = ["Cannon", "Ballista", "Spy"],
-    ["Princess"] = ["Knight", "Cavalier", "Chariot", "Cannon", "Catapult", "Ballista"],
+    ["Sorceress"] = ["Knight", "Cavalier", "Chariot", "Cannon", "Catapult", "Ballista"],
     ["Palace"] = ["Cannon", "Catapult", "Ballista"],
     ["Baron"] = ["Bombard", "Ballista", "Catapult"],
-    ["Emissary"] = ["Bombard", "Ballista"]
   };
 
   private static readonly HashSet<string> ValuableRanged = new(StringComparer.Ordinal)
@@ -262,7 +259,7 @@ public static class CpuStrategicHeuristics
       "Cannon" or "Catapult" or "Ballista" when ActivePieces(state, action.Team).Any(piece => piece.Type == "Engineer" || piece.Type == "Defender" || piece.Type == "Guard" || piece.Type == "Ox") => 12f,
       "Spy" when ActivePieces(state, action.Team).Any(piece => piece.Type is "Cannon" or "Ballista" or "Crossbowman") => 10f,
       "Guard" => Math.Clamp(GetBestUnguardedGuardPriority(state, action.Team) * 0.22f, 0f, 34f),
-      "Defender" when ActivePieces(state, action.Team).Any(piece => ValuableRanged.Contains(piece.Type) || piece.Type is "Bombard" or "Princess") => 9f,
+      "Defender" when ActivePieces(state, action.Team).Any(piece => ValuableRanged.Contains(piece.Type) || piece.Type is "Bombard" or "Sorceress") => 9f,
       "Peasant" when ActivePieces(state, action.Team).Any(piece => ValuableRanged.Contains(piece.Type)) => 6f,
       "Engineer" when ActivePieces(state, action.Team).Any(piece => Artillery.Contains(piece.Type) || piece.Type == "Bombard") => 9f,
       _ => 0f
@@ -309,7 +306,7 @@ public static class CpuStrategicHeuristics
 
     // Baron and King operate through adjacency.  This evaluates the actual radius, not merely
     // ownership of the royal, and therefore encourages the stated local formations.
-    foreach (NetworkPiece royal in friendly.Where(piece => piece.Type is "Baron" or "King" or "Princess" or "Emissary"))
+    foreach (NetworkPiece royal in friendly.Where(piece => piece.Type is "Baron" or "King" or "Sorceress"))
     {
       foreach (NetworkPiece ally in friendly.Where(piece => piece.Id != royal.Id && Distance(piece, royal) <= 1))
       {
@@ -317,12 +314,10 @@ public static class CpuStrategicHeuristics
         {
           ("Baron", "Peasant") => 17f,
           ("Baron", "Defender") => 13f,
-          ("Baron", "Soldier") => 11f,
+          ("Baron", "Swordsman") => 11f,
           ("King", "Defender") => 13f,
           ("King", "Guard") => 10f,
-          ("Princess", "Defender") => 12f,
-          ("Emissary", _) when UnitRules.TryGet(ally.Type, out UnitRule rule) &&
-            (rule.Category == RuleCategory.Melee || rule.Category == RuleCategory.Mechanical) => 7f,
+          ("Sorceress", "Defender") => 12f,
           _ => 0f
         };
       }
@@ -468,9 +463,8 @@ public static class CpuStrategicHeuristics
       ("Cannon", "Ox") or ("Catapult", "Ox") or ("Ballista", "Ox") => 13f,
       ("Cannon", "Engineer") or ("Catapult", "Engineer") or ("Ballista", "Engineer") or ("Bombard", "Engineer") => 13f,
       ("Bombard", "Elephant") => 10f,
-      ("Archer", "Cavalier") or ("Cavalier", "Crossbowman") or ("Cannon", "Cavalier") or ("Cavalier", "Princess") => 8f,
+      ("Archer", "Cavalier") or ("Cavalier", "Crossbowman") or ("Cannon", "Cavalier") or ("Cavalier", "Sorceress") => 8f,
       ("Archer", "Knight") => 10f,
-      ("Archer", "Spearman") => 11f,
       ("Crossbowman", "Peasant") or ("Cannon", "Peasant") or ("Catapult", "Peasant") or ("Ballista", "Peasant") => 7f,
       ("Archer", "Elephant") or ("Crossbowman", "Elephant") or ("Catapult", "Elephant") or ("Ballista", "Elephant") => 8f,
       _ => 0f
@@ -481,8 +475,8 @@ public static class CpuStrategicHeuristics
     HasRoyalSupport(first, second) || HasRoyalSupport(second, first);
 
   private static bool HasRoyalSupport(string royal, string ally) =>
-    (royal, ally) is ("Baron", "Peasant" or "Defender" or "Soldier") or ("King", "Defender" or "Guard") or
-      ("Princess", "Defender") or ("Emissary", _);
+    (royal, ally) is ("Baron", "Peasant" or "Defender" or "Swordsman") or ("King", "Defender" or "Guard") or
+      ("Sorceress", "Defender");
 
   private static IEnumerable<NetworkPiece> ActivePieces(CpuGameState state, NetworkTeam team) => state.Pieces.Where(piece =>
     piece.Team == team && piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out _));

@@ -11,7 +11,7 @@ public sealed class CpuSearchBehaviourTests
   {
     CpuGameState state = CreateState(
       "Regicide",
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 3, 1, 30),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -6, 110)
@@ -31,8 +31,8 @@ public sealed class CpuSearchBehaviourTests
   {
     CpuGameState state = CreateState(
       "Regicide",
-      new NetworkPiece("red-soldier-a", "Soldier", NetworkTeam.Red, -2, 1, 15),
-      new NetworkPiece("red-soldier-b", "Soldier", NetworkTeam.Red, 2, 1, 15),
+      new NetworkPiece("red-soldier-a", "Swordsman", NetworkTeam.Red, -2, 1, 15),
+      new NetworkPiece("red-soldier-b", "Swordsman", NetworkTeam.Red, 2, 1, 15),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -6, 110)
     );
     SingleMoveSelector selector = new();
@@ -55,7 +55,7 @@ public sealed class CpuSearchBehaviourTests
   {
     CpuGameState state = CreateState(
       "Conquest",
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 3, 1, 30),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -1, 110)
     );

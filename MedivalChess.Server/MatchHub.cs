@@ -361,10 +361,14 @@ public sealed partial class MatchStore
       {
         return new(false, "An attached Guard moves only with the unit it protects.", foundMatch.State());
       }
-      if (piece.AttachedToId is not null)
+      if (piece.AttachedToId is not null && piece.AttachmentKind == NetworkAttachmentKind.Carried &&
+          piece.Type == nameof(PieceType.Ox))
       {
-        // Carrying is voluntary: moving the cargo itself dismounts it.
         piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
+      }
+      else if (piece.AttachedToId is not null)
+      {
+        return new(false, "An attached unit moves only with its carrier.", foundMatch.State());
       }
 
       if (!CanLandAt(
@@ -378,6 +382,9 @@ public sealed partial class MatchStore
       {
         return new(false, "That move is blocked by the board, terrain, or unit movement rule.", foundMatch.State());
       }
+
+      NetworkPiece? chessCaptureTarget = GetServerChessCaptureTarget(
+        foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY));
 
       bool elephantDamagedAnEnemy = false;
       if (piece.Type == "Elephant" && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
@@ -393,8 +400,6 @@ public sealed partial class MatchStore
         }
       }
 
-      NetworkPiece? chessCaptureTarget = GetServerChessCaptureTarget(
-        foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY));
       bool chessCaptureSurvived = false;
       if (chessCaptureTarget is not null)
       {
@@ -422,7 +427,7 @@ public sealed partial class MatchStore
       };
       foundMatch.Pieces[pieceIndex] = piece;
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
-      MoveEmissaryCompanions(foundMatch, piece, oldX, oldY);
+      MoveHeraldCompanions(foundMatch, piece, oldX, oldY);
       TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
       {
@@ -513,6 +518,12 @@ public sealed partial class MatchStore
       (int x, int y) targetPosition = target is null
         ? (request.TargetX!.Value, request.TargetY!.Value)
         : (target.X, target.Y);
+      bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried &&
+        target is not null && attacker.AttachedToId == target.Id && target.Team != attacker.Team;
+      if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
+      {
+        return new(false, "An attached unit may only attack its carrier.", foundMatch.State());
+      }
       if (target is not null &&
           (target.Team == attacker.Team || target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
       {
@@ -622,7 +633,10 @@ public sealed partial class MatchStore
         return new(false, "That unit has already acted this turn.", foundMatch.State());
       }
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
-      if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") &&
+      bool carryThrow = AbilityRules.IsCarryThrowUnit(actor.Type) &&
+        (string.Equals(request.Ability, "Carry", StringComparison.OrdinalIgnoreCase) ||
+         string.Equals(request.Ability, "Throw", StringComparison.OrdinalIgnoreCase));
+      if (!plunderPickup && !carryThrow && actor.Type is not ("Mercenary" or "Phantom") &&
           !CanUseActionSquare(actor, request.TargetX, request.TargetY))
       {
         return new(false, "That square is outside the unit's special-action range.", foundMatch.State());
@@ -636,6 +650,8 @@ public sealed partial class MatchStore
           "Engineer" => TryUseEngineerSpecial(foundMatch, actorIndex, request.Ability, request.TargetX, request.TargetY, target),
           "Guard" => TryAttachGuard(foundMatch, actorIndex, targetIndex),
           "Ox" => TryAttachOxCargo(foundMatch, actorIndex, targetIndex),
+          nameof(PieceType.Giant) or nameof(PieceType.Cyclops) =>
+            TryCarryOrThrow(foundMatch, actorIndex, targetIndex, request.Ability, request.TargetX, request.TargetY),
           "Phantom" => TryUseSharedServerPhantomAbility(foundMatch, actorIndex, targetIndex, request.Ability),
           "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
           _ => false
@@ -1240,8 +1256,8 @@ public sealed partial class MatchStore
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         match, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
       rule.MoveRange + (HasPalaceSupport(match, piece) ? 1 : 0),
-      position => CanContinueServerChessPath(match, piece, rule, position)
-    );
+        position => CanContinueServerChessPath(match, piece, rule, position)
+      );
     AddServerPawnCapturePaths(match, piece, rule, paths);
     return paths.TryGetValue((destinationX, destinationY), out path!);
   }
@@ -1395,7 +1411,7 @@ public sealed partial class MatchStore
       match.Terrain.IsForest,
       match.Barricades.ContainsKey,
       square => match.Pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null && other.Type != "Farm" &&
-        !((attacker.Type is "Princess" or "Sorceress") && other.Team == attacker.Team) &&
+        !((attacker.Type is "Sorceress" or "Sorceress") && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
         UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1))
     );
@@ -1474,6 +1490,7 @@ public sealed partial class MatchStore
       targetRule,
       (attacker.X, attacker.Y),
       (damagedPiece.X, damagedPiece.Y)));
+    damage = ApplyServerChessKingDeathRule(match, damagedPiece, damage);
     int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
     if (damagedIndex < 0)
     {
@@ -1536,9 +1553,10 @@ public sealed partial class MatchStore
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
-    if (target.Health > AbilityRules.EngineerMineDamage)
+    int damage = ApplyServerChessKingDeathRule(match, target, AbilityRules.EngineerMineDamage);
+    if (target.Health > damage)
     {
-      match.Pieces[index] = target with { Health = target.Health - AbilityRules.EngineerMineDamage };
+      match.Pieces[index] = target with { Health = target.Health - damage };
     }
     else
     {
@@ -1701,31 +1719,6 @@ public sealed partial class MatchStore
     return true;
   }
 
-  private static void MoveEmissaryCompanions(Match match, NetworkPiece emissary, int oldEmissaryX, int oldEmissaryY)
-  {
-    if (emissary.Type is not ("Emissary" or "Herald")) return;
-    int deltaX = emissary.X - oldEmissaryX;
-    int deltaY = emissary.Y - oldEmissaryY;
-    List<int> companions = match.Pieces
-      .Select((piece, index) => (piece, index))
-      .Where(entry => entry.piece.Id != emissary.Id && entry.piece.Id != match.TreasureCarrierId && entry.piece.Team == emissary.Team && entry.piece.AttachedToId is null &&
-        UnitRules.TryGet(entry.piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        (emissary.Type == "Emissary"
-          ? AbilityRules.IsEmissaryCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y))
-          : AbilityRules.IsHeraldCompanion(rule, (oldEmissaryX, oldEmissaryY), (entry.piece.X, entry.piece.Y))))
-      .Select(entry => entry.index).ToList();
-    foreach (int index in companions)
-    {
-      NetworkPiece companion = match.Pieces[index];
-      var destination = (x: companion.X + deltaX, y: companion.Y + deltaY);
-      if (UnitRules.TryGet(companion.Type, out UnitRule companionRule) &&
-          CanLandAt(match, companion, companionRule, destination))
-      {
-        match.Pieces[index] = companion with { X = destination.x, Y = destination.y, HasMovedThisTurn = true };
-      }
-    }
-  }
-
   private static void MoveAttachedPieces(Match match, NetworkPiece host, int oldHostX, int oldHostY)
   {
     for (int index = 0; index < match.Pieces.Count; index++)
@@ -1738,6 +1731,31 @@ public sealed partial class MatchStore
         Y = host.Y,
         HasMovedThisTurn = true
       };
+    }
+  }
+
+  private static void MoveHeraldCompanions(Match match, NetworkPiece herald, int oldX, int oldY)
+  {
+    if (herald.Type != nameof(PieceType.Herald)) return;
+    int deltaX = herald.X - oldX;
+    int deltaY = herald.Y - oldY;
+    List<int> companions = match.Pieces
+      .Select((piece, index) => (piece, index))
+      .Where(entry => entry.piece.Id != herald.Id && entry.piece.Id != match.TreasureCarrierId &&
+        entry.piece.Team == herald.Team && entry.piece.AttachedToId is null &&
+        UnitRules.TryGet(entry.piece.Type, out UnitRule rule) &&
+        AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (entry.piece.X, entry.piece.Y)))
+      .Select(entry => entry.index)
+      .ToList();
+    foreach (int index in companions)
+    {
+      NetworkPiece companion = match.Pieces[index];
+      if (!UnitRules.TryGet(companion.Type, out UnitRule rule)) continue;
+      (int x, int y) destination = (companion.X + deltaX, companion.Y + deltaY);
+      if (CanLandAt(match, companion, rule, destination))
+      {
+        match.Pieces[index] = companion with { X = destination.x, Y = destination.y, HasMovedThisTurn = true };
+      }
     }
   }
 
@@ -1887,6 +1905,72 @@ public sealed partial class MatchStore
       X = target.X,
       Y = target.Y
     };
+    return true;
+  }
+
+  private static bool TryCarryOrThrow(
+    Match match,
+    int actorIndex,
+    int targetIndex,
+    string ability,
+    int targetX,
+    int targetY
+  )
+  {
+    NetworkPiece carrier = match.Pieces[actorIndex];
+    if (!AbilityRules.IsCarryThrowUnit(carrier.Type) || carrier.AttachedToId is not null ||
+        !UnitRules.TryGet(carrier.Type, out UnitRule carrierRule)) return false;
+
+    if (string.Equals(ability, "Carry", StringComparison.OrdinalIgnoreCase))
+    {
+      if (targetIndex < 0) return false;
+      NetworkPiece target = match.Pieces[targetIndex];
+      if (target.Type == nameof(PieceType.Farm) || target.AttachedToId is not null ||
+          !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+          !AbilityRules.CanCarry(carrierRule, (carrier.X, carrier.Y), targetRule, (target.X, target.Y),
+            carrier.AttachedToId is not null, target.AttachedToId is not null,
+            match.Pieces.Any(piece => piece.AttachedToId == carrier.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)))
+      {
+        return false;
+      }
+
+      match.Pieces[targetIndex] = target with
+      {
+        AttachedToId = carrier.Id,
+        AttachmentKind = NetworkAttachmentKind.Carried,
+        X = carrier.X,
+        Y = carrier.Y,
+        FacingX = carrier.FacingX,
+        FacingY = carrier.FacingY
+      };
+      match.Pieces[actorIndex] = carrier with { HasAttackedThisTurn = true };
+      return true;
+    }
+
+    if (!string.Equals(ability, "Throw", StringComparison.OrdinalIgnoreCase) || targetIndex >= 0)
+    {
+      return false;
+    }
+
+    int cargoIndex = match.Pieces.FindIndex(piece => piece.AttachedToId == carrier.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Carried);
+    if (cargoIndex < 0 || !NetworkBoardRules.Contains(match.Configuration, targetX, targetY)) return false;
+    NetworkPiece cargo = match.Pieces[cargoIndex];
+    if (!UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) ||
+        !AbilityRules.CanThrow(carrierRule, cargoRule, (carrier.X, carrier.Y), (targetX, targetY)) ||
+        !CanLandAt(match, cargo, cargoRule, (targetX, targetY))) return false;
+
+    match.Pieces[cargoIndex] = cargo with
+    {
+      AttachedToId = null,
+      AttachmentKind = NetworkAttachmentKind.None,
+      X = targetX,
+      Y = targetY,
+      HasMovedThisTurn = true,
+      FacingX = carrier.FacingX,
+      FacingY = carrier.FacingY
+    };
+    match.Pieces[actorIndex] = carrier with { HasAttackedThisTurn = true };
     return true;
   }
 

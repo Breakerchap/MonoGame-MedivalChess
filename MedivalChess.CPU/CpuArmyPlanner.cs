@@ -273,9 +273,8 @@ internal sealed class CpuArmyPlanner
     "Engineer" when _friendly.Any(piece => piece.Type is "Cannon" or "Catapult" or "Ballista" or "Bombard") => 10f,
     "Ox" when _friendly.Any(piece => piece.Type is "Cannon" or "Catapult" or "Ballista") => 9f,
     "Peasant" when _friendly.Any(IsValuableRanged) => 6f,
-    "Cavalier" when _friendly.Any(piece => piece.Type is "Archer" or "Crossbowman" or "Cannon" or "Princess") => 7f,
+    "Cavalier" when _friendly.Any(piece => piece.Type is "Archer" or "Crossbowman" or "Cannon" or "Sorceress") => 7f,
     "Knight" when _friendly.Any(piece => piece.Type == "Archer") => 7f,
-    "Spearman" when _friendly.Any(piece => piece.Type == "Archer") => 8f,
     "Bombard" when _friendly.Any(piece => piece.Type is "Defender" or "Elephant" or "Engineer") => 8f,
     _ => 0f
   };

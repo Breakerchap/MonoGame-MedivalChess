@@ -11,7 +11,7 @@ public static partial class CpuGameRules
     NetworkPiece piece = state.Pieces[index];
     bool usesCavalierFollowUpMove = AbilityRules.CanUseCavalierFollowUpMove(
       piece.Type, piece.CavalierFollowUpMoveAvailable);
-    if (piece.AttachedToId is not null)
+    if (piece.AttachedToId is not null && piece.Type == nameof(PieceType.Ox))
     {
       piece = piece with { AttachedToId = null, AttachmentKind = NetworkAttachmentKind.None };
       state.Pieces[index] = piece;
@@ -37,6 +37,11 @@ public static partial class CpuGameRules
       }
     }
 
+    index = FindPieceIndex(state.Pieces, action.PieceId);
+    if (index < 0)
+    {
+      return;
+    }
     bool chessCaptureSurvived = false;
     if (chessCaptureTarget is not null)
     {
@@ -45,10 +50,7 @@ public static partial class CpuGameRules
     }
 
     index = FindPieceIndex(state.Pieces, action.PieceId);
-    if (index < 0)
-    {
-      return;
-    }
+    if (index < 0) return;
     (int finalX, int finalY) = chessCaptureSurvived
       ? ChessAbilityRules.GetFailedCaptureFallback((oldX, oldY), path)
       : (action.DestinationX, action.DestinationY);
@@ -64,7 +66,7 @@ public static partial class CpuGameRules
     state.Pieces[index] = piece;
     state.RecordMove(action.Team, piece.Id, oldX, oldY, finalX, finalY);
     MoveAttachedPieces(state, piece);
-    MoveEmissaryCompanions(state, piece, oldX, oldY);
+    MoveHeraldCompanions(state, piece, oldX, oldY);
     TriggerSharedMinesAlongMovement(state, piece, actualPath);
 
     NetworkPiece? moved = FindPiece(state.Pieces, piece.Id);
@@ -174,23 +176,6 @@ public static partial class CpuGameRules
       }
     }
 
-    if (abilityPlan?.ScheduleDragonbornBurn == true && target is not null)
-    {
-      int targetIndex = FindPieceIndex(state.Pieces, target.Id);
-      if (targetIndex >= 0)
-      {
-        NetworkPiece liveTarget = state.Pieces[targetIndex];
-        state.Pieces[targetIndex] = liveTarget with
-        {
-          PendingDamage = AbilityStateRules.AddDragonbornBurn(
-            liveTarget.PendingDamage,
-            attacker.Team,
-            attacker.Team
-          )
-        };
-      }
-    }
-
     if (abilityPlan is { HealAttacker: > 0 })
     {
       attackerIndex = FindPieceIndex(state.Pieces, attacker.Id);
@@ -260,6 +245,39 @@ public static partial class CpuGameRules
             X = target.X,
             Y = target.Y
           };
+          break;
+        case nameof(PieceType.Giant):
+        case nameof(PieceType.Cyclops):
+          if (string.Equals(action.Ability, "Carry", StringComparison.OrdinalIgnoreCase))
+          {
+            int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+            NetworkPiece cargo = state.Pieces[targetIndex];
+            state.Pieces[targetIndex] = cargo with
+            {
+              AttachedToId = actor.Id,
+              AttachmentKind = NetworkAttachmentKind.Carried,
+              X = actor.X,
+              Y = actor.Y,
+              FacingX = actor.FacingX,
+              FacingY = actor.FacingY
+            };
+          }
+          else
+          {
+            int cargoIndex = FindPieceIndex(state.Pieces, GetCarriedUnit(state.Freeze(), actor)!.Id);
+            NetworkPiece cargo = state.Pieces[cargoIndex];
+            state.Pieces[cargoIndex] = cargo with
+            {
+              AttachedToId = null,
+              AttachmentKind = NetworkAttachmentKind.None,
+              X = action.TargetX,
+              Y = action.TargetY,
+              HasMovedThisTurn = true,
+              FacingX = actor.FacingX,
+              FacingY = actor.FacingY
+            };
+          }
+          state.Pieces[actorIndex] = state.Pieces[actorIndex] with { HasAttackedThisTurn = true };
           break;
         case nameof(PieceType.Mercenary):
           state.Pieces[actorIndex] = actor with

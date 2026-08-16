@@ -21,7 +21,6 @@ internal static class UiText
     }
     return definition.Type switch
     {
-      PieceType.Soldier => "So",
       PieceType.Defender => "Df",
       PieceType.Archer => "Ar",
       PieceType.Peasant => "Pe",
@@ -41,10 +40,8 @@ internal static class UiText
       PieceType.Mercenary => "Mc",
       PieceType.Farm => "Fm",
       PieceType.King => "KI",
-      PieceType.Princess => "PR",
       PieceType.Palace => "PA",
       PieceType.Baron => "BR",
-      PieceType.Emissary => "EM",
       _ => "??"
     };
   }
@@ -99,7 +96,6 @@ internal static class UiText
       Shape.ForwardOrForwardDiagonal => "Fwd/Diag",
       Shape.ForwardLine => "Forward Line",
       Shape.PierceStraight => "Pierce",
-      Shape.MoveOnEnemy => "Enemy",
       _ => shape.ToString()
     };
   }

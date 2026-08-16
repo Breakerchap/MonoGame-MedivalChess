@@ -11,7 +11,7 @@ public sealed class ShapeGeometryTests
   public void StraightRange_UsesTaxicabDistanceForMovementAndAttacks()
   {
     UnitRule straight = CreateRule(RuleShape.Straight, 3);
-    Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (0, 0), TeamName.Red);
     Piece bombard = new(PieceDefinitions.Bombard, (5, 5), TeamName.Red);
 
     Assert.True(UnitRules.CanMove(straight, 0, 0, 2, 1));

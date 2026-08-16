@@ -9,9 +9,9 @@ public class UiTextTests
   public void PieceLabels_PreserveAllThreeAbbreviationCharacters()
   {
     PieceDefinition definition = new(
-      PieceType.Soldier,
+      PieceType.Swordsman,
       "abc",
-      Pack.Base,
+      Pack.Medival,
       (1, Shape.Any),
       1,
       1,

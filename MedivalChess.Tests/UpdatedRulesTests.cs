@@ -11,7 +11,7 @@ public class UpdatedRulesTests
   public void GuardAndTransportAttachments_MoveWithTheirHostAndDetachOnDeath()
   {
     PieceSetup setup = new();
-    Piece soldier = new(PieceDefinitions.Soldier, (4, 4), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (4, 4), TeamName.Red);
     Piece guard = new(PieceDefinitions.Guard, (4, 3), TeamName.Red);
     Piece secondGuard = new(PieceDefinitions.Guard, (3, 4), TeamName.Red);
     Piece ox = new(PieceDefinitions.Ox, (8, 4), TeamName.Red);
@@ -43,7 +43,7 @@ public class UpdatedRulesTests
   {
     PieceSetup setup = new();
     Piece ox = new(PieceDefinitions.Ox, (4, 4), TeamName.Red);
-    Piece soldier = new(PieceDefinitions.Soldier, (4, 3), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (4, 3), TeamName.Red);
     Piece knight = new(PieceDefinitions.Knight, (3, 4), TeamName.Red);
     setup.AddPiece(ox);
     setup.AddPiece(soldier);

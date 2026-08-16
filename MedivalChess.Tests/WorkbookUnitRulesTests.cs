@@ -29,28 +29,34 @@ public sealed class WorkbookUnitRulesTests
   }
 
   [Fact]
-  public void NonChessPacksAndNewUnitsAreRegistered()
+  public void CanonicalPacksAndNewUnitsAreRegistered()
   {
     Assert.Contains(Pack.Norse, PackRules.All);
     Assert.Contains(Pack.WildWest, PackRules.All);
-    Assert.Contains(Pack.AngelsDemons, PackRules.All);
+    Assert.Contains(Pack.Medival, PackRules.All);
     Assert.Contains(PieceDefinitions.Swordsman, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Herald, PieceDefinitions.Royals);
-    Assert.Contains(PieceDefinitions.Fiend, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Atlas, PieceDefinitions.Royals);
+    Assert.Contains(PieceDefinitions.Stagecoach, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Viking, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Cowboy, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Vampire, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.Artemis, PieceDefinitions.Purchasable);
     Assert.Contains(PieceDefinitions.President, PieceDefinitions.Royals);
     Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
+    Assert.Contains(Pack.AngelsDemons, PackRules.All);
+    Assert.Contains(Pack.Chess, PackRules.All);
+    Assert.Contains(PieceDefinitions.Giant, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Cyclops, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Herald, PieceDefinitions.Royals);
+    Assert.Contains(PieceDefinitions.ChessKing, PieceDefinitions.Royals);
     Assert.Contains(UnitRules.Purchasable, rule => rule.Type == nameof(PieceType.Orc));
   }
 
   [Fact]
   public void WorkbookStatsAreUsedForRepresentativeUnits()
   {
-    Assert.Equal(20, PieceDefinitions.Soldier.Attack);
-    Assert.Equal(30, PieceDefinitions.Soldier.Health);
+    Assert.Equal(20, PieceDefinitions.Swordsman.Attack);
+    Assert.Equal(30, PieceDefinitions.Swordsman.Health);
     Assert.Equal(35, PieceDefinitions.Swordsman.Cost);
 
     Assert.Equal(Shape.Circle, PieceDefinitions.Archer.Movement.Shape);
@@ -73,35 +79,26 @@ public sealed class WorkbookUnitRulesTests
     Assert.Equal(25, AbilityRules.BombardSplashDamage);
     Assert.Equal(40, AbilityRules.EngineerBarrierHealth);
     Assert.Equal(25, AbilityRules.MercenaryPayroll);
-  }
 
-  [Fact]
-  public void ChessDefinitionsUseTheSuppliedCombatValuesAndMovementSemantics()
-  {
-    Assert.Equal(120, PieceDefinitions.Pawn.Attack);
-    Assert.Equal(5, PieceDefinitions.Pawn.Health);
-    Assert.Equal(10, PieceDefinitions.Pawn.Cost);
-    Assert.Equal(Shape.Forward, PieceDefinitions.Pawn.Movement.Shape);
-    Assert.Equal(Shape.MoveOnEnemy, PieceDefinitions.Pawn.AttackPattern);
-    Assert.Equal(30, PieceDefinitions.ChessKnight.Cost);
-    Assert.Equal(30, PieceDefinitions.Bishop.Cost);
-    Assert.Equal(50, PieceDefinitions.Rook.Cost);
-    Assert.Equal(90, PieceDefinitions.Queen.Cost);
-
-    Assert.Equal(1, PieceDefinitions.ChessKnight.Movement.Minimum);
-    Assert.Equal(3, PieceDefinitions.ChessKnight.Movement.Maximum);
-    UnitRule chessKnight = UnitRules.GetRequired(nameof(PieceType.ChessKnight));
-    Assert.True(UnitRules.CanMove(chessKnight, 0, 0, 1, 2));
-    Assert.True(UnitRules.CanMove(chessKnight, 0, 0, 2, 1));
+    Assert.Equal(20, PieceDefinitions.Giant.Attack);
+    Assert.Equal(70, PieceDefinitions.Giant.Health);
+    Assert.Equal((2, 2), PieceDefinitions.Giant.Size);
+    Assert.Equal(new AttackRange(1, 1), PieceDefinitions.Giant.AttackRange);
+    Assert.Equal(115, PieceDefinitions.Giant.Cost);
+    Assert.Equal(35, PieceDefinitions.Cyclops.Attack);
+    Assert.Equal(85, PieceDefinitions.Cyclops.Health);
+    Assert.Equal(125, PieceDefinitions.Cyclops.Cost);
+    Assert.Equal(RuleShape.ChessKnight, UnitRules.GetRequired(nameof(PieceType.ChessKnight)).MovePattern);
+    Assert.Equal(RuleShape.ForwardDiagonal, UnitRules.GetRequired(nameof(PieceType.Pawn)).AttackPattern);
   }
 
   [Fact]
   public void SharedAbilityHelpersMatchWorkbookRules()
   {
     Assert.Equal(3, AbilityRules.MaximumAttacksPerTurn(nameof(PieceType.Ninja)));
-    Assert.Equal(1, AbilityRules.MaximumAttacksPerTurn(nameof(PieceType.Soldier)));
+    Assert.Equal(1, AbilityRules.MaximumAttacksPerTurn(nameof(PieceType.Swordsman)));
 
-    UnitRule berserker = UnitRules.GetRequired(nameof(PieceType.Berserker));
+    UnitRule berserker = UnitRules.GetRequired(nameof(PieceType.Beserker));
     Assert.Equal(20, AbilityRules.GetBaseAttack(berserker, 40));
     Assert.Equal(40, AbilityRules.GetBaseAttack(berserker, 20));
 

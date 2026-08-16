@@ -28,7 +28,7 @@ public sealed class LevelEditorStateTests
     CampaignUnitDefinition unit = new()
     {
       Id = "editor-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0)
     };
@@ -53,7 +53,7 @@ public sealed class LevelEditorStateTests
     editor.PlaceUnit(new CampaignUnitDefinition
     {
       Id = "snapshot-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0)
     });
@@ -74,7 +74,7 @@ public sealed class LevelEditorStateTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "runtime-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0),
       Health = 10
@@ -177,7 +177,7 @@ public sealed class LevelEditorStateTests
     CampaignUnitDefinition first = new()
     {
       Id = "first-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(1, 1)
     };
@@ -185,7 +185,7 @@ public sealed class LevelEditorStateTests
     Assert.True(editor.TryPlaceUnit(first, out string firstReason), firstReason);
     Assert.False(editor.TryPlaceUnit(new CampaignUnitDefinition
     {
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Blue,
       Position = new CampaignCoordinate(1, 1)
     }, out string overlapReason));

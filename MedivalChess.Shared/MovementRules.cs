@@ -66,6 +66,31 @@ public static class MovementRules
     return paths;
   }
 
+  private static Dictionary<(int x, int y), List<(int x, int y)>> FindKnightPaths(
+    UnitRule unit,
+    (int x, int y) origin,
+    NetworkTeam team,
+    Func<(int x, int y), bool> canLand,
+    Func<(int x, int y), (int x, int y), bool> canTravelThrough,
+    Func<(int x, int y), int> landingCost,
+    Func<(int x, int y), int> movementRangeAt
+  )
+  {
+    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
+    foreach ((int x, int y) offset in ShapeGeometryRules.GetStepDirections(RuleShape.ChessKnight, team))
+    {
+      var destination = (x: origin.x + offset.x, y: origin.y + offset.y);
+      if (!canTravelThrough(destination, destination) || !canLand(destination)) continue;
+      int effectiveRange = movementRangeAt(destination);
+      if (landingCost(destination) <= effectiveRange &&
+          UnitRules.CanMove(unit, origin.x, origin.y, destination.x, destination.y, effectiveRange))
+      {
+        paths[destination] = [destination];
+      }
+    }
+    return paths;
+  }
+
   private static Dictionary<(int x, int y), List<(int x, int y)>> FindRayPaths(
     UnitRule unit,
     (int x, int y) origin,
@@ -111,32 +136,6 @@ public static class MovementRules
       }
     }
 
-    return paths;
-  }
-
-  private static Dictionary<(int x, int y), List<(int x, int y)>> FindKnightPaths(
-    UnitRule unit,
-    (int x, int y) origin,
-    NetworkTeam team,
-    Func<(int x, int y), bool> canLand,
-    Func<(int x, int y), (int x, int y), bool> canTravelThrough,
-    Func<(int x, int y), int> landingCost,
-    Func<(int x, int y), int> movementRangeAt
-  )
-  {
-    Dictionary<(int x, int y), List<(int x, int y)>> paths = [];
-    foreach ((int x, int y) offset in ShapeGeometryRules.GetStepDirections(RuleShape.ChessKnight, team))
-    {
-      var destination = (x: origin.x + offset.x, y: origin.y + offset.y);
-      // A knight jumps intervening units/terrain, but its landing square must itself be valid.
-      if (!canTravelThrough(destination, destination) || !canLand(destination)) continue;
-      int effectiveRange = movementRangeAt(destination);
-      if (landingCost(destination) <= effectiveRange &&
-          UnitRules.CanMove(unit, origin.x, origin.y, destination.x, destination.y, effectiveRange))
-      {
-        paths[destination] = [destination];
-      }
-    }
     return paths;
   }
 

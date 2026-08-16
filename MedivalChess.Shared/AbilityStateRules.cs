@@ -37,12 +37,12 @@ public static class AbilityStateRules
 {
   public static LethalAbilityOutcome ResolveLethalDamage(string unitType, bool hasRevived)
   {
-    if ((unitType is nameof(PieceType.Shieldbearer) or nameof(PieceType.Spartan)) && !hasRevived)
+    if (unitType == nameof(PieceType.Spartan) && !hasRevived)
     {
       return new(
         LethalAbilityOutcomeKind.Survive,
         unitType,
-        AbilityRules.ShieldbearerReviveHealth,
+        AbilityRules.SpartanReviveHealth,
         true
       );
     }
@@ -97,11 +97,6 @@ public static class AbilityStateRules
       return new(unitType, currentHealth, nextTurns, nextTurns >= AbilityRules.GhoulLifetimeTurns);
     }
 
-    if (unitType == nameof(PieceType.Tumbleweed))
-    {
-      return new(unitType, currentHealth, nextTurns, nextTurns >= AbilityRules.TumbleweedLifetimeRounds);
-    }
-
     return new(unitType, currentHealth, turnsInCurrentForm, false);
   }
 
@@ -133,17 +128,6 @@ public static class AbilityStateRules
     return desired == facing
       ? new(true, facing.x, facing.y)
       : new(false, desired.x, desired.y);
-  }
-
-  public static IReadOnlyList<NetworkPendingDamage> AddDragonbornBurn(
-    IReadOnlyList<NetworkPendingDamage>? existing,
-    NetworkTeam triggerTeam,
-    NetworkTeam sourceTeam
-  )
-  {
-    List<NetworkPendingDamage> result = existing is null ? [] : [.. existing];
-    result.Add(new NetworkPendingDamage(triggerTeam, sourceTeam, AbilityRules.DragonbornBurnDamage));
-    return result;
   }
 
   public static (IReadOnlyList<NetworkPendingDamage> Triggered, IReadOnlyList<NetworkPendingDamage> Remaining)

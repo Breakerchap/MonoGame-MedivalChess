@@ -99,6 +99,7 @@ public static partial class CpuGameRules
       damagedRule,
       (attacker.X, attacker.Y),
       (damaged.X, damaged.Y)));
+    damage = ApplyCpuChessKingDeathRule(state, damaged, damage);
     int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
     if (damagedIndex < 0)
     {
@@ -142,6 +143,7 @@ public static partial class CpuGameRules
     int index = FindPieceIndex(state.Pieces, target.Id);
     if (index < 0) return;
     NetworkPiece live = state.Pieces[index];
+    appliedDamage = ApplyCpuChessKingDeathRule(state, live, appliedDamage);
     if (live.Health > appliedDamage)
     {
       state.Pieces[index] = live with { Health = live.Health - appliedDamage };

@@ -49,7 +49,7 @@ public sealed class OnlineMatchTests
     Assert.True(joined.Accepted);
 
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    ActionResult completedSetup = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+    ActionResult completedSetup = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress"));
     Assert.True(completedSetup.Accepted);
     Assert.True(completedSetup.State!.MatchReady);
 
@@ -73,11 +73,11 @@ public sealed class OnlineMatchTests
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
 
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress"));
 
     Assert.True(ready.Accepted);
     Assert.Equal(95, ready.State!.Pieces.Single(piece => piece.Type == "King").Health);
-    Assert.Equal(70, ready.State.Pieces.Single(piece => piece.Type == "Princess").Health);
+    Assert.Equal(70, ready.State.Pieces.Single(piece => piece.Type == "Sorceress").Health);
   }
 
   [Fact]
@@ -196,12 +196,12 @@ public sealed class OnlineMatchTests
     Assert.True(matches.ChooseRoyal("debug-client", new RoyalSelectionRequest("King")).Accepted);
     Assert.True(matches.SelectDebugTeam("debug-client", new DebugTeamSelectionRequest(NetworkTeam.Blue)).Accepted);
 
-    ActionResult setupCompleted = matches.ChooseRoyal("debug-client", new RoyalSelectionRequest("Princess"));
+    ActionResult setupCompleted = matches.ChooseRoyal("debug-client", new RoyalSelectionRequest("Sorceress"));
 
     Assert.True(setupCompleted.Accepted);
     Assert.True(setupCompleted.State!.MatchReady);
     Assert.Contains(setupCompleted.State.Teams, team => team.Team == NetworkTeam.Red && team.ChosenRoyal == "King");
-    Assert.Contains(setupCompleted.State.Teams, team => team.Team == NetworkTeam.Blue && team.ChosenRoyal == "Princess");
+    Assert.Contains(setupCompleted.State.Teams, team => team.Team == NetworkTeam.Blue && team.ChosenRoyal == "Sorceress");
   }
 
   [Fact]
@@ -335,19 +335,19 @@ public sealed class OnlineMatchTests
     }));
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess"));
+    ActionResult ready = matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress"));
     Assert.True(ready.State!.InitialBuy is { IsComplete: false });
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
-    ActionResult redPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Soldier", 0, 8));
+    ActionResult redPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Swordsman", 0, 8));
     ActionResult bluePurchase = matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Archer", 0, -8));
 
     Assert.True(guest.Accepted);
     Assert.True(redPurchase.Accepted);
     Assert.True(bluePurchase.Accepted);
     Assert.True(bluePurchase.State!.InitialBuy!.IsComplete);
-    Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+    Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Swordsman" && piece.Team == NetworkTeam.Red);
     Assert.Contains(bluePurchase.State.Pieces, piece => piece.Type == "Archer" && piece.Team == NetworkTeam.Blue);
   }
 
@@ -358,7 +358,7 @@ public sealed class OnlineMatchTests
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress")).Accepted);
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     ActionResult result = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Teacher", 0, 8));
@@ -374,7 +374,7 @@ public sealed class OnlineMatchTests
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration with { StartingCash = 100 }));
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress")).Accepted);
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
@@ -503,17 +503,17 @@ public sealed class OnlineMatchTests
     }));
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress")).Accepted);
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";
-    Assert.True(matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Soldier", 0, 8)).Accepted);
+    Assert.True(matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Swordsman", 0, 8)).Accepted);
     ActionResult redGuardPurchase = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Guard", 1, 8));
     Assert.True(redGuardPurchase.Accepted);
-    Assert.True(matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Soldier", 0, -8)).Accepted);
+    Assert.True(matches.PurchaseInitialUnit(blueConnection, new PurchaseRequest("Swordsman", 0, -8)).Accepted);
     Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
 
-    NetworkPiece soldier = redGuardPurchase.State!.Pieces.Single(piece => piece.Type == "Soldier" && piece.Team == NetworkTeam.Red);
+    NetworkPiece soldier = redGuardPurchase.State!.Pieces.Single(piece => piece.Type == "Swordsman" && piece.Team == NetworkTeam.Red);
     NetworkPiece guard = redGuardPurchase.State.Pieces.Single(piece => piece.Type == "Guard" && piece.Team == NetworkTeam.Red);
     ActionResult attached = matches.TrySpecial(redConnection, new SpecialActionRequest(
       guard.Id, string.Empty, soldier.Id, soldier.X, soldier.Y
@@ -546,7 +546,7 @@ public sealed class OnlineMatchTests
     }));
     RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
     Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("King")).Accepted);
-    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Princess")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress")).Accepted);
 
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     string blueConnection = host.Team == NetworkTeam.Blue ? "host" : "guest";

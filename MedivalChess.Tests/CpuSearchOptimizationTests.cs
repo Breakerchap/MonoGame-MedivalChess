@@ -10,7 +10,7 @@ public sealed class CpuSearchOptimizationTests
   [Fact]
   public void TacticalMacroAction_AppliesMoveThenAttackAsOrdinaryActions()
   {
-    NetworkPiece soldier = Piece("soldier", "Soldier", NetworkTeam.Red, 0, 0);
+    NetworkPiece soldier = Piece("soldier", "Swordsman", NetworkTeam.Red, 0, 0);
     NetworkPiece peasant = Piece("peasant", "Peasant", NetworkTeam.Blue, 2, 0);
     CpuGameState state = CreateState(soldier, peasant);
     MoveAction move = new(NetworkTeam.Red, soldier.Id, 1, 0);
@@ -32,7 +32,7 @@ public sealed class CpuSearchOptimizationTests
   [Fact]
   public void CpuSearch_UsesIterativeDeepeningMacrosAndCandidateCache()
   {
-    NetworkPiece soldier = Piece("soldier", "Soldier", NetworkTeam.Red, 0, 0);
+    NetworkPiece soldier = Piece("soldier", "Swordsman", NetworkTeam.Red, 0, 0);
     NetworkPiece peasant = Piece("peasant", "Peasant", NetworkTeam.Blue, 2, 0);
     CpuGameState state = CreateState(soldier, peasant);
     CpuProfile profile = new()
@@ -71,7 +71,7 @@ public sealed class CpuSearchOptimizationTests
   public void EvaluationCache_SharesOneThreatMapAcrossParallelWorkers()
   {
     CpuGameState state = CreateState(
-      Piece("red", "Soldier", NetworkTeam.Red, 0, 0),
+      Piece("red", "Swordsman", NetworkTeam.Red, 0, 0),
       Piece("blue", "Peasant", NetworkTeam.Blue, 1, 0));
     CpuEvaluationCache cache = new();
     CountingThreatMapBuilder builder = new();

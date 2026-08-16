@@ -13,14 +13,12 @@ public static class AbilityRules
   public const int EngineerBuildsPerTurn = 2;
   public const int MercenaryPayroll = 25;
   public const int PresidentPayroll = 5;
-  public const int DragonbornBurnDamage = 10;
   public const int VampireHealing = 15;
-  public const int ZeusChainDamage = 10;
-  public const int ArtemisForestBonus = 5;
+  public const int ZeusChainDamage = 20;
+  public const int ArtemisForestBonus = 10;
   public const int ChimeraRearBonus = 15;
-  public const int ShieldbearerReviveHealth = 20;
+  public const int SpartanReviveHealth = 20;
   public const int GhoulLifetimeTurns = 4;
-  public const int TumbleweedLifetimeRounds = 3;
   public const int NinjaAttacksPerTurn = 3;
   public const int RaiderForwardMovementBonus = 2;
   public const int OxHostMovementBonus = 2;
@@ -74,10 +72,10 @@ public static class AbilityRules
     attachmentType == nameof(PieceType.Ox);
 
   public static bool AttacksOverObstacles(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Princess) or nameof(PieceType.Sorceress);
+    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Sorceress);
 
   public static bool AttacksThroughForests(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Princess) or nameof(PieceType.Sorceress);
+    unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Sorceress);
 
   public static bool IsProjectileAttack(UnitRule attacker) => attacker.Type is
     nameof(PieceType.Archer) or nameof(PieceType.Crossbowman) or nameof(PieceType.Ninja) or
@@ -106,7 +104,7 @@ public static class AbilityRules
     unitType == nameof(PieceType.Sherrif) ? 2 : 1;
 
   public static int GetBaseAttack(UnitRule attacker, int currentHealth) =>
-    (attacker.Type is nameof(PieceType.Berserker) or nameof(PieceType.Beserker)) && currentHealth <= BerserkerEnrageHealth
+    attacker.Type == nameof(PieceType.Beserker) && currentHealth <= BerserkerEnrageHealth
       ? BerserkerEnragedDamage
       : attacker.Attack;
 
@@ -165,15 +163,6 @@ public static class AbilityRules
     int dy = to.y - from.y;
     return dx * forward.x + dy * forward.y > 0;
   }
-
-  public static bool IsEmissaryCompanion(UnitRule unit, (int x, int y) emissaryPosition, (int x, int y) unitPosition) =>
-    unit.Width == 1 && unit.Height == 1 &&
-    Math.Abs(unitPosition.x - emissaryPosition.x) == 1 &&
-    Math.Abs(unitPosition.y - emissaryPosition.y) == 1;
-
-  public static bool IsHeraldCompanion(UnitRule unit, (int x, int y) heraldPosition, (int x, int y) unitPosition) =>
-    unit.Width == 1 && unit.Height == 1 &&
-    Math.Max(Math.Abs(unitPosition.x - heraldPosition.x), Math.Abs(unitPosition.y - heraldPosition.y)) == 1;
 
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
@@ -253,6 +242,66 @@ public static class AbilityRules
   public static bool CanOxAttach(UnitRule ox, UnitRule target, bool oxIsAlreadyAttached, bool targetAlreadyHasOx) =>
     ox.Type == nameof(PieceType.Ox) && !oxIsAlreadyAttached && !targetAlreadyHasOx &&
     target.Width == 1 && target.Height == 1;
+
+  public static bool IsCarryThrowUnit(string unitType) =>
+    unitType is nameof(PieceType.Giant) or nameof(PieceType.Cyclops);
+
+  public static RuleShape GetCarryThrowPattern(string unitType) =>
+    unitType == nameof(PieceType.Cyclops) ? RuleShape.Straight : RuleShape.Circle;
+
+  public static bool CanCarry(
+    UnitRule carrier,
+    UnitRule target,
+    bool carrierIsAttached,
+    bool targetIsAttached,
+    bool carrierAlreadyHasCargo
+  ) => IsCarryThrowUnit(carrier.Type) && !carrierIsAttached && !targetIsAttached &&
+       !carrierAlreadyHasCargo && target.Width == 1 && target.Height == 1;
+
+  public static bool CanCarry(
+    UnitRule carrier,
+    (int x, int y) carrierPosition,
+    UnitRule target,
+    (int x, int y) targetPosition,
+    bool carrierIsAttached,
+    bool targetIsAttached,
+    bool carrierAlreadyHasCargo
+  ) => CanCarry(carrier, target, carrierIsAttached, targetIsAttached, carrierAlreadyHasCargo) &&
+       AreAdjacent(carrier, carrierPosition, target, targetPosition);
+
+  public static bool CanThrow(
+    UnitRule carrier,
+    UnitRule cargo,
+    (int x, int y) carrierPosition,
+    (int x, int y) destination
+  )
+  {
+    if (!IsCarryThrowUnit(carrier.Type) || cargo.Width != 1 || cargo.Height != 1)
+    {
+      return false;
+    }
+
+    for (int sourceY = 0; sourceY < carrier.Height; sourceY++)
+    for (int sourceX = 0; sourceX < carrier.Width; sourceX++)
+    {
+      if (UnitRules.CanAttackOffset(
+        GetCarryThrowPattern(carrier.Type), 2, 3, NetworkTeam.Red,
+        destination.x - (carrierPosition.x + sourceX),
+        destination.y - (carrierPosition.y + sourceY)))
+      {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  public static bool IsHeraldCompanion(
+    UnitRule unit,
+    (int x, int y) heraldPosition,
+    (int x, int y) unitPosition
+  ) => unit.Width == 1 && unit.Height == 1 &&
+       Math.Max(Math.Abs(unitPosition.x - heraldPosition.x), Math.Abs(unitPosition.y - heraldPosition.y)) == 1;
 
   public static bool IsEngineerBuild(string ability) =>
     string.Equals(ability, "Road", StringComparison.OrdinalIgnoreCase) ||

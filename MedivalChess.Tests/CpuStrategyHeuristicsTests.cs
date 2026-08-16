@@ -10,7 +10,7 @@ public sealed class CpuStrategyHeuristicsTests
   public void CounterTable_FavoursSoldierAgainstArcherAndWarnsArcherAgainstSoldier()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-archer", "Archer", NetworkTeam.Red, 2, 0, 10)
     );
     NetworkPiece soldier = state.Pieces.Single(piece => piece.Id == "red-soldier");
@@ -45,13 +45,13 @@ public sealed class CpuStrategyHeuristicsTests
   public void AntiComboEvaluation_PenalisesAClusterThatBombardCanHit()
   {
     CpuGameState clustered = CreateState(
-      new NetworkPiece("red-target", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-target", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-peasant-a", "Peasant", NetworkTeam.Red, 1, 0, 5),
       new NetworkPiece("red-peasant-b", "Peasant", NetworkTeam.Red, -1, 0, 5),
       new NetworkPiece("blue-bombard", "Bombard", NetworkTeam.Blue, 0, -3, 15)
     );
     CpuGameState spread = CreateState(
-      new NetworkPiece("red-target", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-target", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-peasant-a", "Peasant", NetworkTeam.Red, 4, 0, 5),
       new NetworkPiece("red-peasant-b", "Peasant", NetworkTeam.Red, -4, 0, 5),
       new NetworkPiece("blue-bombard", "Bombard", NetworkTeam.Blue, 0, -3, 15)

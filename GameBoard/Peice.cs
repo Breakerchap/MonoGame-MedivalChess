@@ -175,11 +175,9 @@ internal sealed class Piece
 
   private void RefreshBerserkerAttack()
   {
-    if (Definition.Type is not (PieceType.Berserker or PieceType.Beserker)) return;
+    if (Definition.Type != PieceType.Beserker) return;
 
-    PieceDefinition source = Definition.Type == PieceType.Beserker
-      ? PieceDefinitions.Beserker
-      : PieceDefinitions.Berserker;
+    PieceDefinition source = PieceDefinitions.Beserker;
     int attack = AbilityRules.GetBaseAttack(UnitRules.FromPieceDefinition(source), _currentHealth);
     if (Definition.Attack == attack) return;
 

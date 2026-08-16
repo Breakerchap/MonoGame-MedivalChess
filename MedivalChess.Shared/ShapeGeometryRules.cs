@@ -16,7 +16,6 @@ public static class ShapeGeometryRules
     (1, 2), (2, 1), (-1, 2), (-2, 1),
     (1, -2), (2, -1), (-1, -2), (-2, -1)
   ];
-
   public static IReadOnlyList<(int x, int y)> GetStepDirections(RuleShape shape, NetworkTeam team) => shape switch
   {
     RuleShape.Straight or RuleShape.Line => OrthogonalDirections,

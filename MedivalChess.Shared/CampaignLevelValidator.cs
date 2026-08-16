@@ -234,8 +234,7 @@ public static class CampaignLevelValidator
     {
       problems.Add(CampaignValidationProblem.Error(code, "Maximum attack range cannot be lower than minimum attack range."));
     }
-    if (overrides.MovePattern is Shape.MoveOnEnemy or Shape.PierceStraight ||
-        overrides.AttackPattern is Shape.MoveOnEnemy)
+    if (overrides.MovePattern is Shape.PierceStraight)
     {
       problems.Add(CampaignValidationProblem.Error(code, "That pattern is reserved for built-in unit behaviour."));
     }

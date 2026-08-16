@@ -26,7 +26,7 @@ public sealed class CampaignLevelTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "red-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0),
       Health = 12
@@ -41,7 +41,7 @@ public sealed class CampaignLevelTests
     Assert.Single(result.Level.Terrain);
     Assert.Single(result.Level.Objects);
     CampaignUnitDefinition unit = Assert.Single(result.Level.Units);
-    Assert.Equal("Soldier", unit.UnitType);
+    Assert.Equal("Swordsman", unit.UnitType);
     Assert.Equal(12, unit.Health);
   }
 
@@ -98,7 +98,7 @@ public sealed class CampaignLevelTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "outside",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(99, 99)
     });
@@ -132,7 +132,7 @@ public sealed class CampaignLevelTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "blue-soldier",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Blue,
       Position = new CampaignCoordinate(5, 5)
     });
@@ -161,7 +161,7 @@ public sealed class CampaignLevelTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "runner",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0)
     });
@@ -189,7 +189,7 @@ public sealed class CampaignLevelTests
     level.Units.Add(new CampaignUnitDefinition
     {
       Id = "stable-unit",
-      UnitType = "Soldier",
+      UnitType = "Swordsman",
       Team = NetworkTeam.Red,
       Position = new CampaignCoordinate(0, 0)
     });
@@ -201,7 +201,7 @@ public sealed class CampaignLevelTests
     Assert.DoesNotContain("\"health\"", json, StringComparison.OrdinalIgnoreCase);
     Assert.True(loaded.IsSuccess, FormatProblems(loaded.Problems));
     Assert.Null(Assert.Single(loaded.Level!.Units).Health);
-    Assert.Equal("Soldier", loaded.Level.Units[0].UnitType);
+    Assert.Equal("Swordsman", loaded.Level.Units[0].UnitType);
   }
 
   [Fact]
@@ -235,7 +235,7 @@ public sealed class CampaignLevelTests
     {
       Id = "siege-scout",
       Name = "Siege Scout",
-      BaseUnitType = "Soldier",
+      BaseUnitType = "Swordsman",
       AbilitySourceUnitType = "Ballista",
       StatOverrides = new CampaignUnitStatOverrides { MoveRange = 5, Attack = 7, Cost = 42 }
     });
@@ -264,10 +264,10 @@ public sealed class CampaignLevelTests
     CampaignLevelDefinition level = CreateValidLevel();
     level.CustomUnits.Add(new CampaignCustomUnitDefinition
     {
-      Id = "Soldier",
+      Id = "Swordsman",
       Name = "Not a Soldier",
-      BaseUnitType = "Soldier",
-      AbilitySourceUnitType = "Soldier"
+      BaseUnitType = "Swordsman",
+      AbilitySourceUnitType = "Swordsman"
     });
 
     CampaignValidationResult result = CampaignLevelValidator.Validate(level);

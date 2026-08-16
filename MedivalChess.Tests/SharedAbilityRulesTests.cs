@@ -8,7 +8,7 @@ public sealed class SharedAbilityRulesTests
   [Fact]
   public void LethalAbilities_AreResolvedBySharedStateRules()
   {
-    LethalAbilityOutcome shield = AbilityStateRules.ResolveLethalDamage(nameof(PieceType.Shieldbearer), false);
+    LethalAbilityOutcome shield = AbilityStateRules.ResolveLethalDamage(nameof(PieceType.Spartan), false);
     Assert.Equal(LethalAbilityOutcomeKind.Survive, shield.Kind);
     Assert.Equal(20, shield.ResultingHealth);
     Assert.True(shield.HasRevived);
@@ -82,7 +82,7 @@ public sealed class SharedAbilityRulesTests
   public void Ox_AttachmentRulesComeFromSharedAbilityRules()
   {
     UnitRule ox = UnitRules.GetRequired(nameof(PieceType.Ox));
-    UnitRule soldier = UnitRules.GetRequired(nameof(PieceType.Soldier));
+    UnitRule soldier = UnitRules.GetRequired(nameof(PieceType.Swordsman));
 
     Assert.True(AbilityRules.CanOxAttach(ox, soldier, false, false));
     Assert.Equal(2, AbilityRules.GetAttachmentMovementBonus(nameof(PieceType.Ox)));
@@ -108,9 +108,9 @@ public sealed class SharedAbilityRulesTests
   public void BombardPlan_UsesSharedTwentyDamageSplashIncludingFriendlies()
   {
     AbilityUnitSnapshot attacker = new("bomb", nameof(PieceType.Bombard), NetworkTeam.Red, 0, 0, 1, 1);
-    AbilityUnitSnapshot target = new("target", nameof(PieceType.Soldier), NetworkTeam.Blue, 3, 0, 1, 1);
-    AbilityUnitSnapshot friendlySplash = new("friendly", nameof(PieceType.Soldier), NetworkTeam.Red, 3, 1, 1, 1);
-    AbilityUnitSnapshot distant = new("distant", nameof(PieceType.Soldier), NetworkTeam.Blue, 8, 8, 1, 1);
+    AbilityUnitSnapshot target = new("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 3, 0, 1, 1);
+    AbilityUnitSnapshot friendlySplash = new("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 3, 1, 1, 1);
+    AbilityUnitSnapshot distant = new("distant", nameof(PieceType.Swordsman), NetworkTeam.Blue, 8, 8, 1, 1);
 
     AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
       attacker,
@@ -131,10 +131,10 @@ public sealed class SharedAbilityRulesTests
   public void ZeusPlan_ChainsOnlyThroughOrthogonallyAdjacentEnemies()
   {
     AbilityUnitSnapshot zeus = new("zeus", nameof(PieceType.Zeus), NetworkTeam.Red, 0, 0, 1, 1);
-    AbilityUnitSnapshot target = new("a", nameof(PieceType.Soldier), NetworkTeam.Blue, 2, 2, 1, 1);
-    AbilityUnitSnapshot next = new("b", nameof(PieceType.Soldier), NetworkTeam.Blue, 3, 2, 1, 1);
-    AbilityUnitSnapshot chained = new("c", nameof(PieceType.Soldier), NetworkTeam.Blue, 4, 2, 1, 1);
-    AbilityUnitSnapshot diagonalOnly = new("d", nameof(PieceType.Soldier), NetworkTeam.Blue, 1, 1, 1, 1);
+    AbilityUnitSnapshot target = new("a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 2, 1, 1);
+    AbilityUnitSnapshot next = new("b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 3, 2, 1, 1);
+    AbilityUnitSnapshot chained = new("c", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 2, 1, 1);
+    AbilityUnitSnapshot diagonalOnly = new("d", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 1, 1, 1);
 
     AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
       zeus,
@@ -154,60 +154,4 @@ public sealed class SharedAbilityRulesTests
     Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
   }
 
-  [Fact]
-  public void ChessPack_UsesCurrentWorkbookCombatAndPurchaseValues()
-  {
-    Assert.Equal((120, 10), (PieceDefinitions.Pawn.Attack, PieceDefinitions.Pawn.Cost));
-    Assert.Equal((120, 30), (PieceDefinitions.ChessKnight.Attack, PieceDefinitions.ChessKnight.Cost));
-    Assert.Equal((120, 30), (PieceDefinitions.Bishop.Attack, PieceDefinitions.Bishop.Cost));
-    Assert.Equal((120, 50), (PieceDefinitions.Rook.Attack, PieceDefinitions.Rook.Cost));
-    Assert.Equal((120, 90), (PieceDefinitions.Queen.Attack, PieceDefinitions.Queen.Cost));
-    Assert.Equal(120, PieceDefinitions.ChessKing.Attack);
-  }
-
-  [Fact]
-  public void ChessLandingCaptureRules_HandlePawnAndFailedCaptureFallback()
-  {
-    UnitRule pawn = UnitRules.GetRequired(nameof(PieceType.Pawn));
-    (int x, int y) forward = TeamRules.GetForwardDirection(NetworkTeam.Red);
-    var origin = (x: 5, y: 5);
-    var diagonal = forward.x == 0
-      ? (x: origin.x + 1, y: origin.y + forward.y)
-      : (x: origin.x + forward.x, y: origin.y + 1);
-    var straight = (x: origin.x + forward.x, y: origin.y + forward.y);
-
-    Assert.True(ChessAbilityRules.CanCaptureByLanding(
-      pawn, NetworkTeam.Red, origin, diagonal, NetworkTeam.Blue));
-    Assert.False(ChessAbilityRules.CanCaptureByLanding(
-      pawn, NetworkTeam.Red, origin, straight, NetworkTeam.Blue));
-    Assert.Equal(origin, ChessAbilityRules.GetFailedCaptureFallback(origin, [diagonal]));
-    Assert.Equal((6, 5), ChessAbilityRules.GetFailedCaptureFallback(origin, [(6, 5), (7, 5)]));
-  }
-
-  [Fact]
-  public void SharedMovementRules_HandleChessRaysAndKnightJumps()
-  {
-    static Dictionary<(int x, int y), List<(int x, int y)>> Paths(UnitRule rule) =>
-      MovementRules.FindPaths(
-        rule,
-        (0, 0),
-        NetworkTeam.Red,
-        _ => true,
-        (_, _) => true,
-        _ => 1,
-        (_, _) => false
-      );
-
-    Dictionary<(int x, int y), List<(int x, int y)>> bishop = Paths(UnitRules.GetRequired(nameof(PieceType.Bishop)));
-    Assert.Contains((3, 3), bishop.Keys);
-    Assert.DoesNotContain((2, 1), bishop.Keys);
-
-    Dictionary<(int x, int y), List<(int x, int y)>> queen = Paths(UnitRules.GetRequired(nameof(PieceType.Queen)));
-    Assert.Contains((3, 0), queen.Keys);
-    Assert.Contains((3, 3), queen.Keys);
-
-    Dictionary<(int x, int y), List<(int x, int y)>> knight = Paths(UnitRules.GetRequired(nameof(PieceType.ChessKnight)));
-    Assert.Contains((2, 1), knight.Keys);
-    Assert.DoesNotContain((1, 1), knight.Keys);
-  }
 }

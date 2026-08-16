@@ -43,16 +43,16 @@ public sealed class RuntimeAbilityStateTests
   }
 
   [Fact]
-  public void ShieldbearerSurvivesFirstLethalHitAtTwentyHealth()
+  public void SpartanSurvivesFirstLethalHitAtTwentyHealth()
   {
-    Piece shieldbearer = new(PieceDefinitions.Shieldbearer, (0, 0), TeamName.Red);
+    Piece spartan = new(PieceDefinitions.Spartan, (0, 0), TeamName.Red);
 
-    shieldbearer.CurrentHealth = 0;
-    Assert.Equal(AbilityRules.ShieldbearerReviveHealth, shieldbearer.CurrentHealth);
-    Assert.True(shieldbearer.HasRevived);
+    spartan.CurrentHealth = 0;
+    Assert.Equal(AbilityRules.SpartanReviveHealth, spartan.CurrentHealth);
+    Assert.True(spartan.HasRevived);
 
-    shieldbearer.CurrentHealth = 0;
-    Assert.Equal(0, shieldbearer.CurrentHealth);
+    spartan.CurrentHealth = 0;
+    Assert.Equal(0, spartan.CurrentHealth);
   }
 
   [Fact]
@@ -72,7 +72,7 @@ public sealed class RuntimeAbilityStateTests
   {
     AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
       new AbilityUnitSnapshot("vampire", nameof(PieceType.Vampire), NetworkTeam.Red, 0, 0, 1, 1),
-      new AbilityUnitSnapshot("target", nameof(PieceType.Soldier), NetworkTeam.Blue, 0, 1, 1, 1),
+      new AbilityUnitSnapshot("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 1, 1),
       []);
 
     Assert.Equal(15, plan.HealAttacker);
@@ -128,24 +128,9 @@ public sealed class RuntimeAbilityStateTests
   }
 
   [Fact]
-  public void TumbleweedExpiresAfterThreeOwnerRounds()
-  {
-    PieceSetup setup = new();
-    Piece tumbleweed = new(PieceDefinitions.Tumbleweed, (0, 0), TeamName.Red);
-    setup.AddPiece(tumbleweed);
-
-    tumbleweed.HasMovedThisTurn = false;
-    tumbleweed.HasMovedThisTurn = false;
-    Assert.Contains(tumbleweed, setup.Pieces);
-
-    tumbleweed.HasMovedThisTurn = false;
-    Assert.DoesNotContain(tumbleweed, setup.Pieces);
-  }
-
-  [Fact]
   public void BerserkerDoublesItsAttackAtTwentyHealthOrLess()
   {
-    Piece berserker = new(PieceDefinitions.Berserker, (0, 0), TeamName.Red);
+    Piece berserker = new(PieceDefinitions.Beserker, (0, 0), TeamName.Red);
 
     Assert.Equal(20, berserker.Definition.Attack);
     berserker.CurrentHealth = 20;

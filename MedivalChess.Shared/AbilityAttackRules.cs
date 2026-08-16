@@ -25,7 +25,6 @@ public readonly record struct AbilityDamageInstruction(
 public sealed record AbilityAttackPlan(
   IReadOnlyList<AbilityDamageInstruction> Damage,
   bool SelfDestructAfterAttack = false,
-  bool ScheduleDragonbornBurn = false,
   int HealAttacker = 0
 );
 
@@ -88,7 +87,6 @@ public static class AbilityAttackRules
     return new AbilityAttackPlan(
       damage,
       SelfDestructAfterAttack: attacker.Type == nameof(PieceType.Terrorist),
-      ScheduleDragonbornBurn: attacker.Type == nameof(PieceType.Dragonborn),
       HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0
     );
   }

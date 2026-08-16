@@ -15,6 +15,7 @@ public enum RuleShape
   LineOrDiagonal,
   ChessKnight,
   Forward,
+  ForwardDiagonal,
   AbsoluteStraightOrDiagonal,
   ForwardOrForwardDiagonal,
   ForwardLine,
@@ -110,6 +111,7 @@ public static class UnitRules
     Shape.LineOrDiagonal => RuleShape.LineOrDiagonal,
     Shape.ChessKnight => RuleShape.ChessKnight,
     Shape.Forward => RuleShape.Forward,
+    Shape.ForwardDiagonal => RuleShape.ForwardDiagonal,
     Shape.AbsoluteStraightOrDiagonal => RuleShape.AbsoluteStraightOrDiagonal,
     Shape.ForwardOrForwardDiagonal => RuleShape.ForwardOrForwardDiagonal,
     Shape.ForwardLine => RuleShape.ForwardLine,
@@ -218,6 +220,7 @@ public static class UnitRules
       RuleShape.LineOrDiagonal or RuleShape.AbsoluteStraightOrDiagonal => dx == 0 || dy == 0 || absX == absY,
       RuleShape.ChessKnight => (absX == 1 && absY == 2) || (absX == 2 && absY == 1),
       RuleShape.Forward => IsForwardOffset(team, dx, dy, distance),
+      RuleShape.ForwardDiagonal => IsForwardDiagonalOffset(team, dx, dy, distance),
       RuleShape.ForwardLine => IsForwardOffset(team, dx, dy, distance),
       RuleShape.ForwardOrForwardDiagonal => IsForwardOrDiagonalOffset(team, dx, dy, distance),
       _ => false
@@ -236,5 +239,13 @@ public static class UnitRules
     return forward.x == 0
       ? dy == forward.y * distance && Math.Abs(dx) <= distance
       : dx == forward.x * distance && Math.Abs(dy) <= distance;
+  }
+
+  private static bool IsForwardDiagonalOffset(NetworkTeam team, int dx, int dy, int distance)
+  {
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    return forward.x == 0
+      ? dy == forward.y * distance && Math.Abs(dx) == distance
+      : dx == forward.x * distance && Math.Abs(dy) == distance;
   }
 }

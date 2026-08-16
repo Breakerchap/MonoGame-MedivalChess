@@ -11,7 +11,7 @@ public sealed class CpuAdvancedTests
   public void ThreatMap_ReportsImmediateLethalThreatAndThreatenedSquare()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
 
@@ -112,7 +112,7 @@ public sealed class CpuAdvancedTests
     };
     CpuGameState state = CreateState([], configuration, scenario: scenario);
 
-    Assert.False(new PurchaseAction(NetworkTeam.Red, "Soldier", redSquare.x, redSquare.y).IsLegal(state));
+    Assert.False(new PurchaseAction(NetworkTeam.Red, "Swordsman", redSquare.x, redSquare.y).IsLegal(state));
     Assert.True(new PurchaseAction(NetworkTeam.Red, "Peasant", redSquare.x, redSquare.y).IsLegal(state));
   }
 
@@ -174,7 +174,7 @@ public sealed class CpuAdvancedTests
     CpuGameState state = CreateState(
       [
         new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 2, 2, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 2, 2, 15),
         new NetworkPiece("blue-mercenary", "Mercenary", NetworkTeam.Blue, 0, 1, 20),
         new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
       ],
@@ -264,7 +264,7 @@ public sealed class CpuAdvancedTests
   public void CandidateSelection_RetainsAttackMoveAndPurchaseOptionsInANarrowBeam()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
     IReadOnlyList<ScoredAction> candidates = new CpuActionCandidateSelector().SelectCandidates(
@@ -284,9 +284,9 @@ public sealed class CpuAdvancedTests
     NetworkMatchConfiguration configuration = CreateConfiguration(farmsEnabled: true);
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
         new NetworkPiece("red-farm", "Farm", NetworkTeam.Red, 0, 4, 30),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, 3, 15)
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, 3, 15)
       ],
       configuration,
       redMoney: 0
@@ -318,7 +318,7 @@ public sealed class CpuAdvancedTests
   {
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
         new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
         new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -2, 5)
       ],
@@ -355,14 +355,14 @@ public sealed class CpuAdvancedTests
     );
     IReadOnlyDictionary<string, PurchaseAction> options = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
       .OfType<PurchaseAction>()
-      .Where(action => action.UnitType is "Peasant" or "Ballista" or "Mercenary" or "Soldier")
+      .Where(action => action.UnitType is "Peasant" or "Ballista" or "Mercenary" or "Swordsman")
       .GroupBy(action => action.UnitType)
       .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
 
     IReadOnlyList<ScoredAction> ranked = new CpuActionCandidateSelector().SelectCandidates(
       state,
       NetworkTeam.Red,
-      [options["Peasant"], options["Ballista"], options["Mercenary"], options["Soldier"]],
+      [options["Peasant"], options["Ballista"], options["Mercenary"], options["Swordsman"]],
       new CpuSearchSettings { CandidatesPerNode = 4 });
 
     Assert.Equal("Ballista", Assert.IsType<PurchaseAction>(ranked[0].Action).UnitType);
@@ -387,16 +387,16 @@ public sealed class CpuAdvancedTests
     );
     IReadOnlyDictionary<string, PurchaseAction> options = new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red)
       .OfType<PurchaseAction>()
-      .Where(action => action.UnitType is "Peasant" or "Defender" or "Soldier")
+      .Where(action => action.UnitType is "Peasant" or "Defender" or "Swordsman")
       .GroupBy(action => action.UnitType)
       .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
 
     IReadOnlyList<ScoredAction> ranked = new CpuActionCandidateSelector().SelectCandidates(
       state, NetworkTeam.Red,
-      [options["Peasant"], options["Defender"], options["Soldier"]],
+      [options["Peasant"], options["Defender"], options["Swordsman"]],
       new CpuSearchSettings { CandidatesPerNode = 3, PromisingCandidatesPerNode = 3 });
 
-    float soldier = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Soldier" }).Score;
+    float soldier = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Swordsman" }).Score;
     float defender = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Defender" }).Score;
     float peasant = ranked.Single(candidate => candidate.Action is PurchaseAction { UnitType: "Peasant" }).Score;
     Assert.True(soldier > defender, $"soldier={soldier}, defender={defender}");
@@ -499,8 +499,8 @@ public sealed class CpuAdvancedTests
     CpuGameState state = new(
       configuration,
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -2, 15)
       ],
       [
         new CpuTeamState(NetworkTeam.Red, 100, MatchRules.ActionsPerTurn),
@@ -549,7 +549,7 @@ public sealed class CpuAdvancedTests
     CpuScenarioDefinition scenario = CpuScenarioDefinition.ForMatch(CreateConfiguration());
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
         new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 8, 110),
         new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -2, 5)
       ],
@@ -583,8 +583,8 @@ public sealed class CpuAdvancedTests
   {
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -2, 15)
       ],
       redMoney: 0
     );
@@ -636,7 +636,7 @@ public sealed class CpuAdvancedTests
   [Fact]
   public void CancelledSearch_ReturnsDiagnosticWithoutIllegalAction()
   {
-    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15));
     using CancellationTokenSource source = new();
     source.Cancel();
 
@@ -666,8 +666,8 @@ public sealed class CpuAdvancedTests
   public void Search_NodeBudgetBoundsWorkBeforeTheWallClockLimit()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
-      new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -3, 15)
     );
     CpuProfile profile = new()
     {
@@ -699,7 +699,7 @@ public sealed class CpuAdvancedTests
     CpuMoveRecord reversal = new(NetworkTeam.Red, "red-soldier", 0, 0, 0, 1, 3);
     CpuGameState state = new(
       configuration,
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 1, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 1, 15)],
       [
         new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
         new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
@@ -794,7 +794,7 @@ public sealed class CpuAdvancedTests
       BoardRules.CanPlaceForTeam(configuration, NetworkTeam.Red, position.x, position.y, 1, 1));
     CpuGameState state = new(
       configuration,
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, redStart.x, redStart.y, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, redStart.x, redStart.y, 15)],
       [
         new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
         new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn),
@@ -820,9 +820,9 @@ public sealed class CpuAdvancedTests
   {
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, -1, 2, 15),
-        new NetworkPiece("red-right", "Soldier", NetworkTeam.Red, 1, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+        new NetworkPiece("red-left", "Swordsman", NetworkTeam.Red, -1, 2, 15),
+        new NetworkPiece("red-right", "Swordsman", NetworkTeam.Red, 1, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -3, 15)
       ],
       redMoney: 0
     );
@@ -884,7 +884,7 @@ public sealed class CpuAdvancedTests
       VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15)],
       scenario: scenario
     );
 
@@ -904,7 +904,7 @@ public sealed class CpuAdvancedTests
       VictoryGoals = [goal]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("red-capturer", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [new NetworkPiece("red-capturer", "Swordsman", NetworkTeam.Red, 0, 0, 15)],
       scenario: scenario
     );
     EvaluationContext context = new(CpuProfile.Normal(45), [], new CpuEvaluationCache());
@@ -943,7 +943,7 @@ public sealed class CpuAdvancedTests
       VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15)],
       scenario: scenario
     );
     EvaluationContext context = new(CpuProfile.Normal(44), [], new CpuEvaluationCache());
@@ -961,7 +961,7 @@ public sealed class CpuAdvancedTests
       VictoryGoals = [new CaptureLocationsGoal([(0, 0)])]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("capturer", "Soldier", NetworkTeam.Red, 0, 1, 15)],
+      [new NetworkPiece("capturer", "Swordsman", NetworkTeam.Red, 0, 1, 15)],
       scenario: scenario
     );
     CpuProfile profile = new()
@@ -994,9 +994,9 @@ public sealed class CpuAdvancedTests
   {
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("escort", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("escort", "Swordsman", NetworkTeam.Red, 0, 0, 15),
         new NetworkPiece("protected", "Peasant", NetworkTeam.Red, 1, 0, 5),
-        new NetworkPiece("runner", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+        new NetworkPiece("runner", "Swordsman", NetworkTeam.Blue, 0, -2, 15)
       ],
       scenario: new CpuScenarioDefinition()
     );
@@ -1023,8 +1023,8 @@ public sealed class CpuAdvancedTests
     (int x, int y) exit = board.Cells.First(position => position.y == board.MinY);
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("capturer", "Soldier", NetworkTeam.Red, 0, 0, 15),
-        new NetworkPiece("runner", "Soldier", NetworkTeam.Red, exit.x, exit.y, 15)
+        new NetworkPiece("capturer", "Swordsman", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("runner", "Swordsman", NetworkTeam.Red, exit.x, exit.y, 15)
       ],
       configuration: configuration,
       scenario: new CpuScenarioDefinition()
@@ -1046,7 +1046,7 @@ public sealed class CpuAdvancedTests
       VictoryGoals = [new EscortUnitGoal("escort", (0, -2))]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("escort", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      [new NetworkPiece("escort", "Swordsman", NetworkTeam.Red, 0, 2, 15)],
       scenario: scenario,
       redMoney: 0
     );
@@ -1073,7 +1073,7 @@ public sealed class CpuAdvancedTests
       DefeatConditions = [new PreventEscapeGoal([(0, -3)])]
     };
     CpuGameState state = CreateState(
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15)],
       scenario: scenario,
       redMoney: 0
     );
@@ -1147,8 +1147,8 @@ public sealed class CpuAdvancedTests
     };
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -2, 15)
       ],
       redMoney: 0
     );
@@ -1202,8 +1202,8 @@ public sealed class CpuAdvancedTests
     };
     CpuGameState state = CreateState(
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -3, 15)
       ],
       scenario: scenario
     );
@@ -1225,7 +1225,7 @@ public sealed class CpuAdvancedTests
   public void DebugFormatter_ExplainsTermsIntentionsAndChosenSequence()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
 
@@ -1251,13 +1251,13 @@ public sealed class CpuAdvancedTests
       [
         new NetworkPiece("red-king", "King", NetworkTeam.Red, 0, 5, 110),
         new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -5, 110),
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15)
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -2, 15)
       ]
       :
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -2, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15),
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -2, 15),
         new NetworkPiece("red-king", "King", NetworkTeam.Red, 1, 5, 110),
         new NetworkPiece("blue-king", "King", NetworkTeam.Blue, -1, -5, 110)
       ];

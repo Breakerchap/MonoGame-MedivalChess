@@ -247,7 +247,7 @@ public static partial class CpuGameRules
       state.Terrain.IsForest,
       barricades.ContainsKey,
       square => pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null &&
-        other.Type != "Farm" && !(attacker.Type == "Princess" && other.Team == attacker.Team) &&
+        other.Type != "Farm" && !(attacker.Type == "Sorceress" && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square))
     );
   }

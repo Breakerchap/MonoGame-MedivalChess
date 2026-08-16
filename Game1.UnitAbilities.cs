@@ -61,15 +61,6 @@ internal sealed partial class Game1
       ResolveDamage(attacker, target, fixedDamage);
     }
 
-    if (plan.ScheduleDragonbornBurn && pieceSetup.Pieces.Contains(selectedTarget))
-    {
-      selectedTarget.PendingDamage = AbilityStateRules.AddDragonbornBurn(
-        selectedTarget.PendingDamage,
-        attacker.Team.ToNetworkTeam(),
-        attacker.Team.ToNetworkTeam()
-      );
-    }
-
     if (plan.HealAttacker > 0 && pieceSetup.Pieces.Contains(attacker) && attacker.CurrentHealth > 0)
     {
       attacker.CurrentHealth = Math.Min(

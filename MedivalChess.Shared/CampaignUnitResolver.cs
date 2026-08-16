@@ -108,7 +108,7 @@ public static class CampaignUnitResolver
   {
     if (string.Equals(identifier, "None", StringComparison.OrdinalIgnoreCase))
     {
-      definition = PieceDefinitions.Soldier;
+      definition = PieceDefinitions.Swordsman;
       return true;
     }
     if (string.IsNullOrWhiteSpace(identifier))

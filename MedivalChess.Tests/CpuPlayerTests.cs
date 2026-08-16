@@ -11,7 +11,7 @@ public sealed class CpuPlayerTests
   public void Cpu_IncludesAnImmediateLethalAttackInItsTurn()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
 
@@ -28,7 +28,7 @@ public sealed class CpuPlayerTests
   {
     CpuGameState state = CreateState(
       new NetworkPiece("red-knight", "Knight", NetworkTeam.Red, 0, 0, 30),
-      new NetworkPiece("blue-damaged-soldier", "Soldier", NetworkTeam.Blue, 0, -1, 10),
+      new NetworkPiece("blue-damaged-soldier", "Swordsman", NetworkTeam.Blue, 0, -1, 10),
       new NetworkPiece("blue-healthy-knight", "Knight", NetworkTeam.Blue, 1, 1, 60)
     );
     CpuProfile profile = new()
@@ -59,7 +59,7 @@ public sealed class CpuPlayerTests
   public void MediumAndStrongerCpu_AttackAnAvailableEnemyBeforeTakingQuietActions(CpuDifficultyLevel difficulty)
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-knight", "Knight", NetworkTeam.Blue, 0, -1, 30)
     );
 
@@ -77,7 +77,7 @@ public sealed class CpuPlayerTests
   public void MediumAndStrongerCpu_DeployCombatUnitsWhenItHasLargeUnusedReserves(CpuDifficultyLevel difficulty)
   {
     CpuGameState baseState = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 5, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 5, 15),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
     );
     CpuGameState state = new(
@@ -105,8 +105,8 @@ public sealed class CpuPlayerTests
   public void MediumAndStrongerCpu_UsesEveryAvailableAttackBeforeEndingAnUnlimitedTurn(CpuDifficultyLevel difficulty)
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, 0, 0, 15),
-      new NetworkPiece("red-right", "Soldier", NetworkTeam.Red, 2, 0, 15),
+      new NetworkPiece("red-left", "Swordsman", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-right", "Swordsman", NetworkTeam.Red, 2, 0, 15),
       new NetworkPiece("blue-left", "Knight", NetworkTeam.Blue, 0, -1, 30),
       new NetworkPiece("blue-right", "Knight", NetworkTeam.Blue, 2, -1, 30)
     );
@@ -127,7 +127,7 @@ public sealed class CpuPlayerTests
   public void MediumAndStrongerCpu_MovesAvailablePiecesBeforeEndingAnUnlimitedTurn(CpuDifficultyLevel difficulty)
   {
     CpuGameState baseState = CreateState(
-      new NetworkPiece("red-left", "Soldier", NetworkTeam.Red, 0, 5, 15),
+      new NetworkPiece("red-left", "Swordsman", NetworkTeam.Red, 0, 5, 15),
       new NetworkPiece("red-right", "Defender", NetworkTeam.Red, 2, 5, 25),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -8, 110)
     );
@@ -156,10 +156,10 @@ public sealed class CpuPlayerTests
   public void Cpu_ReturnsOnlyActionsThatRemainLegalAsItsPlanIsApplied()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("red-archer", "Archer", NetworkTeam.Red, 1, 1, 10),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5),
-      new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+      new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -3, 15)
     );
 
     Assert.NotEmpty(new CpuActionGenerator().GenerateSearchActions(state, NetworkTeam.Red, 48));
@@ -179,7 +179,7 @@ public sealed class CpuPlayerTests
   public void FixedSeed_ReproducesTheSameDecision()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
     CpuProfile profile = CpuProfile.Easy(913);
@@ -194,8 +194,8 @@ public sealed class CpuPlayerTests
   public void Search_ReportsAndRespectsAConservativeTimeLimit()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
-      new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -3, 15)
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -3, 15)
     );
     CpuProfile profile = new()
     {
@@ -224,7 +224,7 @@ public sealed class CpuPlayerTests
     );
     CpuGameState state = new(
       configuration,
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15)],
       [
         new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
         new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
@@ -241,7 +241,7 @@ public sealed class CpuPlayerTests
   [Fact]
   public void Cpu_DiscardsAnIllegalCandidateBeforeItCanBeSimulatedOrReturned()
   {
-    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15));
     IllegalCandidateSelector selector = new();
 
     CpuTurnPlan plan = new CpuPlayer(candidateSelector: selector).ChooseTurn(
@@ -317,7 +317,7 @@ public sealed class CpuPlayerTests
   public void BestProfile_IsDeterministicAcrossSeeds()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
 
@@ -331,11 +331,11 @@ public sealed class CpuPlayerTests
   public void StrategicEvaluation_ValuesStagingCloserToAnEnemyRoyal()
   {
     CpuGameState distant = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 4, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 4, 15),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -4, 110)
     );
     CpuGameState staged = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, -1, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, -1, 15),
       new NetworkPiece("blue-king", "King", NetworkTeam.Blue, 0, -4, 110)
     );
     EvaluationContext context = new(CpuProfile.Best(17));

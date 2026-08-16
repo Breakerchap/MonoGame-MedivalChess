@@ -35,8 +35,6 @@ MonoGame-MedivalChess/
 │
 ├── Game1.cs
 ├── Game1.UnitAbilities.cs
-├── Game1.ChessAbilities.cs
-├── Game1.ChessCheckmate.cs
 │
 ├── UiLayout.cs
 ├── UiRenderer.cs
@@ -119,7 +117,6 @@ Circle
 Line
 Diagonal
 LineOrDiagonal
-ChessKnight
 Forward
 ForwardLine
 ...
@@ -146,7 +143,6 @@ AbilityAttackRules.cs
 AbilityRules.cs
 AbilityStateRules.cs
 BoardRules.cs
-ChessAbilityRules.cs
 CombatRules.cs
 EconomyRules.cs
 MatchRules.cs
@@ -190,8 +186,6 @@ Some functionality has already been split into partial files:
 
 ```text
 Game1.UnitAbilities.cs
-Game1.ChessAbilities.cs
-Game1.ChessCheckmate.cs
 ```
 
 ## UI

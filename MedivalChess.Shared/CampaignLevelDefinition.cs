@@ -257,7 +257,7 @@ public sealed class CampaignUnitDefinition
 {
   public string Id { get; set; } = Guid.NewGuid().ToString("N");
   /// <summary>Stable UnitRules identifier; balance values remain owned by the game.</summary>
-  public string UnitType { get; set; } = "Soldier";
+  public string UnitType { get; set; } = "Swordsman";
   public NetworkTeam Team { get; set; }
   public CampaignCoordinate Position { get; set; } = new(0, 0);
   /// <summary>Null uses the unit's current default health from UnitRules.</summary>
@@ -290,9 +290,9 @@ public sealed class CampaignCustomUnitDefinition
   public string Name { get; set; } = "Custom Unit";
   public string Abbreviation { get; set; } = "CU";
   /// <summary>The standard unit whose category and baseline stats are used before applying overrides.</summary>
-  public string BaseUnitType { get; set; } = "Soldier";
+  public string BaseUnitType { get; set; } = "Swordsman";
   /// <summary>The standard unit whose special ability behaviour is copied.</summary>
-  public string AbilitySourceUnitType { get; set; } = "Soldier";
+  public string AbilitySourceUnitType { get; set; } = "Swordsman";
   public CampaignUnitStatOverrides StatOverrides { get; set; } = new();
   public bool Purchasable { get; set; } = true;
 }
@@ -300,11 +300,11 @@ public sealed class CampaignCustomUnitDefinition
 /// <summary>Editable level-local version of a built-in unit. Its ID is always a native unit identifier.</summary>
 public sealed class CampaignUnitTemplateOverrideDefinition
 {
-  public string UnitType { get; set; } = "Soldier";
-  public string Name { get; set; } = "Soldier";
+  public string UnitType { get; set; } = "Swordsman";
+  public string Name { get; set; } = "Swordsman";
   public string Abbreviation { get; set; } = "So";
   /// <summary>A built-in unit whose special behaviour is borrowed, or <c>None</c> for no special ability.</summary>
-  public string AbilitySourceUnitType { get; set; } = "Soldier";
+  public string AbilitySourceUnitType { get; set; } = "Swordsman";
   public CampaignUnitStatOverrides StatOverrides { get; set; } = new();
   public bool Purchasable { get; set; } = true;
 }

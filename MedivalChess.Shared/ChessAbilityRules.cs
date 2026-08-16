@@ -66,14 +66,7 @@ public static class ChessAbilityRules
   public static (int x, int y) GetFailedCaptureFallback(
     (int x, int y) origin,
     IReadOnlyList<(int x, int y)> path
-  )
-  {
-    if (path.Count <= 1)
-    {
-      return origin;
-    }
-    return path[^2];
-  }
+  ) => path.Count <= 1 ? origin : path[^2];
 
   public static bool ThreatensSquareGeometry(
     UnitRule attacker,

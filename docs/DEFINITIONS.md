@@ -308,16 +308,7 @@ For example:
 
 ---
 
-## `ChessKnight`
 
-The standard chess Knight offsets:
-
-```text
-(±1, ±2)
-(±2, ±1)
-```
-
----
 
 ## `Forward`
 
@@ -718,7 +709,7 @@ A **Pack** is a group of units associated with a particular theme or ruleset.
 Current code-level pack names include:
 
 ```text
-Base
+Medival
 Dynasty
 Fantasy
 Undead
@@ -726,8 +717,6 @@ Greek
 Norse
 Modern
 WildWest
-AngelsDemons
-Chess
 ```
 
 Use the actual pack definition rather than inferring a unit's pack purely from its historical/theme inspiration.
@@ -903,7 +892,6 @@ but not diagonally and not with a turn.
 | `Line`                | Single orthogonal line                      |
 | `Diagonal`            | Single diagonal line                        |
 | `LineOrDiagonal`      | Single orthogonal or diagonal line          |
-| `ChessKnight`         | Chess Knight movement                       |
 | `Adjacent`            | Any of the 8 surrounding squares            |
 | `Directly adjacent`   | Any of the 4 orthogonal surrounding squares |
 | `Diagonally adjacent` | Any of the 4 diagonal surrounding squares   |

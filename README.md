@@ -17,7 +17,6 @@
   * special abilities
 * Multiple unit packs, including:
 
-  * Base
   * Dynasty
   * Fantasy
   * Undead
@@ -25,8 +24,6 @@
   * Norse
   * Modern
   * Wild West
-  * Angels & Demons
-  * Chess
 * Different royals with unique playstyles
 * Terrain and multiple battlefield sizes
 * Economy and unit purchasing

@@ -104,7 +104,7 @@ public sealed class SharedUnitRulesTests
   public void SharedRules_ApplyTheSameAttackGeometryToLargeUnits()
   {
     UnitRule archer = UnitRules.GetRequired("Archer");
-    UnitRule soldier = UnitRules.GetRequired("Soldier");
+    UnitRule soldier = UnitRules.GetRequired("Swordsman");
     UnitRule ballista = UnitRules.GetRequired("Ballista");
 
     Assert.False(UnitRules.CanAttack(archer, 0, 0, NetworkTeam.Red, soldier, 1, 0));
@@ -132,7 +132,7 @@ public sealed class SharedUnitRulesTests
   public void SharedAbilityRules_KeepGuardAndOxAttachmentRestrictionsConsistent()
   {
     UnitRule guard = UnitRules.GetRequired("Guard");
-    UnitRule soldier = UnitRules.GetRequired("Soldier");
+    UnitRule soldier = UnitRules.GetRequired("Swordsman");
     UnitRule king = UnitRules.GetRequired("King");
     UnitRule ox = UnitRules.GetRequired("Ox");
     UnitRule cannon = UnitRules.GetRequired("Cannon");

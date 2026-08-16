@@ -74,7 +74,8 @@ public static partial class CpuGameRules
   {
     if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || (piece.HasMovedThisTurn &&
         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
-        piece.AttachmentKind == NetworkAttachmentKind.Guard)
+        piece.AttachmentKind is NetworkAttachmentKind.Guard ||
+        (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
       return new Dictionary<(int x, int y), List<(int x, int y)>>();
     }
@@ -85,7 +86,8 @@ public static partial class CpuGameRules
   /// <summary>Checks whether a unit can directly attack a target using shared attack geometry and line of sight.</summary>
   public static bool CanDirectlyAttack(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
   {
-    return attacker.AttachedToId is null && attacker.Team != target.Team && target.AttachedToId is null &&
+    bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target.Id;
+    return (attacker.AttachedToId is null || carriedCargoMayAttackHost) && attacker.Team != target.Team && target.AttachedToId is null &&
       UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
       attackerRule.Attack > 0 && !attacker.HasAttackedThisTurn &&
@@ -169,7 +171,8 @@ public static partial class CpuGameRules
     NetworkPiece? piece = FindPiece(state.Pieces, action.PieceId);
     if (piece is null || piece.Team != action.Team || (piece.HasMovedThisTurn &&
         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
-        piece.AttachmentKind == NetworkAttachmentKind.Guard)
+        piece.AttachmentKind == NetworkAttachmentKind.Guard ||
+        (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
       return false;
     }
@@ -180,13 +183,18 @@ public static partial class CpuGameRules
   private static bool IsLegalAttack(CpuGameState state, AttackAction action)
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
-    if (attacker is null || attacker.Team != action.Team || attacker.AttachedToId is not null || attacker.HasAttackedThisTurn ||
+    if (attacker is null || attacker.Team != action.Team || attacker.HasAttackedThisTurn ||
         !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || attackerRule.Attack <= 0)
     {
       return false;
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target?.Id;
+    if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
+    {
+      return false;
+    }
     if (target is { Type: "Farm" })
     {
       target = FindUnitOnAttackedSquare(state.Pieces, attacker, action.TargetX, action.TargetY) ?? target;
@@ -291,7 +299,8 @@ public static partial class CpuGameRules
 
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
-    if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") &&
+    bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
+    if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") && !isCarryThrowUnit &&
         !CanUseActionSquare(actor, action.TargetX, action.TargetY))
     {
       return false;
@@ -320,6 +329,11 @@ public static partial class CpuGameRules
         UnitRules.TryGet(target.Type, out UnitRule oxTargetRule) && UnitRules.TryGet(actor.Type, out UnitRule oxRule) &&
         AbilityRules.CanOxAttach(oxRule, oxTargetRule, actor.AttachedToId is not null,
           state.Pieces.Any(piece => piece.AttachedToId == target.Id && piece.Type == nameof(PieceType.Ox))),
+      nameof(PieceType.Giant) or nameof(PieceType.Cyclops) =>
+        string.Equals(action.Ability, "Carry", StringComparison.OrdinalIgnoreCase)
+          ? target is not null && CanCarryUnit(state, actor, target)
+          : string.Equals(action.Ability, "Throw", StringComparison.OrdinalIgnoreCase) &&
+            target is null && CanThrowUnit(state, actor, action.TargetX, action.TargetY),
       "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
         actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
         action.TargetX == actor.X && action.TargetY == actor.Y,
@@ -331,6 +345,28 @@ public static partial class CpuGameRules
             target.Id, target.Type, target.Team, target.IsRoyalProxy),
       _ => false
     };
+  }
+
+  internal static NetworkPiece? GetCarriedUnit(CpuGameState state, NetworkPiece carrier) =>
+    state.Pieces.FirstOrDefault(piece => piece.AttachedToId == carrier.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Carried);
+
+  private static bool CanCarryUnit(CpuGameState state, NetworkPiece carrier, NetworkPiece target)
+  {
+    return target.Id != carrier.Id && target.AttachedToId is null && target.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(carrier.Type, out UnitRule carrierRule) && UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
+      AbilityRules.CanCarry(carrierRule, (carrier.X, carrier.Y), targetRule, (target.X, target.Y),
+        carrier.AttachedToId is not null, target.AttachedToId is not null, GetCarriedUnit(state, carrier) is not null);
+  }
+
+  private static bool CanThrowUnit(CpuGameState state, NetworkPiece carrier, int targetX, int targetY)
+  {
+    NetworkPiece? cargo = GetCarriedUnit(state, carrier);
+    return cargo is not null && UnitRules.TryGet(carrier.Type, out UnitRule carrierRule) &&
+      UnitRules.TryGet(cargo.Type, out UnitRule cargoRule) &&
+      BoardRules.Contains(state.Board, targetX, targetY) &&
+      AbilityRules.CanThrow(carrierRule, cargoRule, (carrier.X, carrier.Y), (targetX, targetY)) &&
+      CanPlace(state, state.Pieces, cargoRule, targetX, targetY, cargo.Id);
   }
 
   private static bool IsLegalEngineerAbility(CpuGameState state, NetworkPiece actor, UseAbilityAction action, NetworkPiece? target)
@@ -415,35 +451,27 @@ public static partial class CpuGameRules
     }
   }
 
-  private static void MoveEmissaryCompanions(CpuMutableGameState state, NetworkPiece emissary, int oldX, int oldY)
+  private static void MoveHeraldCompanions(CpuMutableGameState state, NetworkPiece herald, int oldX, int oldY)
   {
-    if (emissary.Type is not ("Emissary" or "Herald"))
-    {
-      return;
-    }
-
-    int deltaX = emissary.X - oldX;
-    int deltaY = emissary.Y - oldY;
+    if (herald.Type != nameof(PieceType.Herald)) return;
+    int deltaX = herald.X - oldX;
+    int deltaY = herald.Y - oldY;
     List<string> companionIds = state.Pieces
-      .Where(piece => piece.Id != emissary.Id && piece.Id != state.TreasureCarrierId && piece.Team == emissary.Team &&
-        piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && rule.Width == 1 && rule.Height == 1 &&
-        (emissary.Type == "Emissary"
-          ? AbilityRules.IsEmissaryCompanion(rule, (oldX, oldY), (piece.X, piece.Y))
-          : AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (piece.X, piece.Y))))
+      .Where(piece => piece.Id != herald.Id && piece.Id != state.TreasureCarrierId && piece.Team == herald.Team &&
+        piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (piece.X, piece.Y)))
       .Select(piece => piece.Id)
       .ToList();
     foreach (string companionId in companionIds)
     {
       int index = FindPieceIndex(state.Pieces, companionId);
-      if (index < 0 || !UnitRules.TryGet(state.Pieces[index].Type, out UnitRule rule))
-      {
-        continue;
-      }
-
+      if (index < 0 || !UnitRules.TryGet(state.Pieces[index].Type, out UnitRule rule)) continue;
       NetworkPiece companion = state.Pieces[index];
-      if (CanPlace(state.Source, state.Pieces, rule, companion.X + deltaX, companion.Y + deltaY, companion.Id))
+      int destinationX = companion.X + deltaX;
+      int destinationY = companion.Y + deltaY;
+      if (CanPlace(state.Source, state.Pieces, rule, destinationX, destinationY, companion.Id))
       {
-        state.Pieces[index] = companion with { X = companion.X + deltaX, Y = companion.Y + deltaY, HasMovedThisTurn = true };
+        state.Pieces[index] = companion with { X = destinationX, Y = destinationY, HasMovedThisTurn = true };
       }
     }
   }

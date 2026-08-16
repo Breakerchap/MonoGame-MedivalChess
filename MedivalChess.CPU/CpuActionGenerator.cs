@@ -313,6 +313,27 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
         }
       }
     }
+    else if (AbilityRules.IsCarryThrowUnit(actor.Type))
+    {
+      NetworkPiece? cargo = CpuGameRules.GetCarriedUnit(state, actor);
+      if (cargo is null)
+      {
+        foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Id != actor.Id &&
+          piece.AttachedToId is null && piece.Type != nameof(PieceType.Farm) &&
+          UnitRules.TryGet(piece.Type, out UnitRule targetRule) && targetRule.Width == 1 && targetRule.Height == 1)
+          .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+        {
+          AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Carry", target.Id, target.X, target.Y), actions);
+        }
+      }
+      else
+      {
+        foreach ((int x, int y) position in state.Board.Cells.OrderBy(position => position.y).ThenBy(position => position.x))
+        {
+          AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Throw", null, position.x, position.y), actions);
+        }
+      }
+    }
 
     if (state.TreasurePosition is (int x, int y) treasure)
     {

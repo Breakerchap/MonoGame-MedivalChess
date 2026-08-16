@@ -67,14 +67,15 @@ public static class PackRules
   private static bool TryParsePack(string? name, out Pack pack)
   {
     pack = default;
-    if (string.Equals(name?.Trim(), "Angels & Demons", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(name?.Trim(), "AngelsAndDemons", StringComparison.OrdinalIgnoreCase))
+    string trimmed = name?.Trim() ?? string.Empty;
+    if (string.Equals(trimmed, "Angels & Demons", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(trimmed, "AngelsAndDemons", StringComparison.OrdinalIgnoreCase))
     {
       pack = Pack.AngelsDemons;
       return true;
     }
 
     return !string.IsNullOrWhiteSpace(name) &&
-      Enum.TryParse(name.Trim(), true, out pack) && Enum.IsDefined(pack);
+      Enum.TryParse(trimmed, true, out pack) && Enum.IsDefined(pack);
   }
 }

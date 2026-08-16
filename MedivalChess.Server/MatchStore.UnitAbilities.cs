@@ -114,23 +114,6 @@ public sealed partial class MatchStore
       ResolvePieceDamage(match, attacker, attackingPlayer, instruction.TargetId, damageOverride);
     }
 
-    if (plan.ScheduleDragonbornBurn)
-    {
-      int targetIndex = match.Pieces.FindIndex(piece => piece.Id == selectedTarget.Id);
-      if (targetIndex >= 0)
-      {
-        NetworkPiece target = match.Pieces[targetIndex];
-        match.Pieces[targetIndex] = target with
-        {
-          PendingDamage = AbilityStateRules.AddDragonbornBurn(
-            target.PendingDamage,
-            attacker.Team,
-            attacker.Team
-          )
-        };
-      }
-    }
-
     if (plan.HealAttacker > 0 && UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
     {
       int liveAttackerIndex = match.Pieces.FindIndex(piece => piece.Id == attacker.Id);

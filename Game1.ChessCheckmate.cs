@@ -52,8 +52,7 @@ internal sealed partial class Game1
       king.Team.ToNetworkTeam(),
       king.Position,
       destination,
-      occupant.Team.ToNetworkTeam()
-    );
+      occupant.Team.ToNetworkTeam());
   }
 
   private bool IsLocalChessKingSquareThreatened(Piece king, (int x, int y) square)

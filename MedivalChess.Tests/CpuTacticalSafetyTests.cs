@@ -11,10 +11,10 @@ public sealed class CpuTacticalSafetyTests
   {
     CpuGameState knightState = CreateState(
       Piece("target", "Knight", NetworkTeam.Red, 0, 0, health: 1),
-      Piece("attacker", "Soldier", NetworkTeam.Blue, 1, 0));
+      Piece("attacker", "Swordsman", NetworkTeam.Blue, 1, 0));
     CpuGameState peasantState = CreateState(
       Piece("target", "Peasant", NetworkTeam.Red, 0, 0, health: 1),
-      Piece("attacker", "Soldier", NetworkTeam.Blue, 1, 0));
+      Piece("attacker", "Swordsman", NetworkTeam.Blue, 1, 0));
     HangingPieceEvaluation evaluator = new();
     EvaluationContext context = new(new CpuProfile());
 
@@ -29,11 +29,11 @@ public sealed class CpuTacticalSafetyTests
   {
     CpuGameState undefended = CreateState(
       Piece("target", "Knight", NetworkTeam.Red, 0, 0, health: 1),
-      Piece("attacker", "Soldier", NetworkTeam.Blue, 1, 0));
+      Piece("attacker", "Swordsman", NetworkTeam.Blue, 1, 0));
     CpuGameState defended = CreateState(
       Piece("target", "Knight", NetworkTeam.Red, 0, 0, health: 1),
-      Piece("attacker", "Soldier", NetworkTeam.Blue, 1, 0),
-      Piece("defender", "Soldier", NetworkTeam.Red, 2, 0));
+      Piece("attacker", "Swordsman", NetworkTeam.Blue, 1, 0),
+      Piece("defender", "Swordsman", NetworkTeam.Red, 2, 0));
     HangingPieceEvaluation evaluator = new();
 
     float undefendedScore = evaluator.Evaluate(undefended, NetworkTeam.Red, new EvaluationContext(new CpuProfile()));
@@ -47,7 +47,7 @@ public sealed class CpuTacticalSafetyTests
   {
     CpuGameState state = CreateState(
       Piece("target", "Knight", NetworkTeam.Red, 0, 0, health: 1),
-      Piece("attacker", "Soldier", NetworkTeam.Blue, 1, 0),
+      Piece("attacker", "Swordsman", NetworkTeam.Blue, 1, 0),
       currentTurn: NetworkTeam.Blue);
     CpuProfile profile = CpuProfile.Hard();
 
@@ -64,7 +64,7 @@ public sealed class CpuTacticalSafetyTests
   {
     CpuGameState state = CreateState(
       Piece("red", "Knight", NetworkTeam.Red, 0, 0),
-      Piece("blue", "Soldier", NetworkTeam.Blue, 8, 8),
+      Piece("blue", "Swordsman", NetworkTeam.Blue, 8, 8),
       currentTurn: NetworkTeam.Blue);
     CpuProfile profile = CpuProfile.Hard();
 

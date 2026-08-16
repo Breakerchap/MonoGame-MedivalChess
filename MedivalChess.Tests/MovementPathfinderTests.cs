@@ -10,7 +10,7 @@ public class MovementPathfinderTests
   [Fact]
   public void StraightThree_UsesOrthogonalStepsAndCannotReturnToStart()
   {
-    Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (0, 0), TeamName.Red);
 
     var paths = MovementPathfinder.FindPaths(
       soldier,
@@ -30,7 +30,7 @@ public class MovementPathfinderTests
   [Fact]
   public void BlockedOrForestStepPreventsReachingPastItWithinMovementBudget()
   {
-    Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (0, 0), TeamName.Red);
 
     var blockedPaths = MovementPathfinder.FindPaths(
       soldier,
@@ -73,7 +73,7 @@ public class MovementPathfinderTests
   [Fact]
   public void CrossingARiver_UsesTheRemainingMovementForThatPath()
   {
-    Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (0, 0), TeamName.Red);
 
     var paths = MovementPathfinder.FindPaths(
       soldier,
@@ -90,7 +90,7 @@ public class MovementPathfinderTests
   [Fact]
   public void RepeatedRiverEdges_CannotBeUsedToMoveIndefinitely()
   {
-    Piece soldier = new(PieceDefinitions.Soldier, (0, 0), TeamName.Red);
+    Piece soldier = new(PieceDefinitions.Swordsman, (0, 0), TeamName.Red);
 
     var paths = MovementPathfinder.FindPaths(
       soldier,

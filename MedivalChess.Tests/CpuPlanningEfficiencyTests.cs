@@ -15,7 +15,7 @@ public sealed class CpuPlanningEfficiencyTests
     {
       CpuGameState state = CreateState(
         money: 500,
-        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0),
+        Piece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0),
         Piece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 1));
       CpuProfile profile = new()
       {
@@ -116,17 +116,17 @@ public sealed class CpuPlanningEfficiencyTests
   {
     CpuGameState state = CreateState(
       money: 500,
-      Piece("red", "Soldier", NetworkTeam.Red, 0, 0),
-      Piece("blue", "Soldier", NetworkTeam.Blue, 8, 8));
+      Piece("red", "Swordsman", NetworkTeam.Red, 0, 0),
+      Piece("blue", "Swordsman", NetworkTeam.Blue, 8, 8));
     CpuActionGenerator generator = new();
 
     PurchaseAction[] exhaustive = generator.GenerateLegalActions(state, NetworkTeam.Red)
       .OfType<PurchaseAction>()
-      .Where(action => action.UnitType == "Soldier")
+      .Where(action => action.UnitType == "Swordsman")
       .ToArray();
     PurchaseAction[] search = generator.GenerateSearchActions(state, NetworkTeam.Red, 96)
       .OfType<PurchaseAction>()
-      .Where(action => action.UnitType == "Soldier")
+      .Where(action => action.UnitType == "Swordsman")
       .ToArray();
 
     Assert.True(exhaustive.Length > search.Length,
@@ -140,8 +140,8 @@ public sealed class CpuPlanningEfficiencyTests
   {
     CpuGameState state = CreateFarmState(
       money: 500,
-      Piece("red", "Soldier", NetworkTeam.Red, 0, 0),
-      Piece("blue", "Soldier", NetworkTeam.Blue, 8, 8));
+      Piece("red", "Swordsman", NetworkTeam.Red, 0, 0),
+      Piece("blue", "Swordsman", NetworkTeam.Blue, 8, 8));
     CpuActionGenerator generator = new();
     PurchaseAction[] farms = generator.GenerateLegalActions(state, NetworkTeam.Red)
       .OfType<PurchaseAction>()
@@ -178,7 +178,7 @@ public sealed class CpuPlanningEfficiencyTests
     {
       CpuGameState state = CreateState(
         money: 0,
-        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0),
+        Piece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0),
         Piece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 1));
       ActionEfficiencyEvaluation term = new();
       EvaluationContext context = new(CpuProfile.Hard(17));
@@ -204,8 +204,8 @@ public sealed class CpuPlanningEfficiencyTests
     {
       CpuGameState state = CreateState(
         money: 0,
-        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 5),
-        Piece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -5));
+        Piece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 5),
+        Piece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -5));
       ActionEfficiencyEvaluation term = new();
       EvaluationContext context = new(CpuProfile.Hard(18));
       float idle = term.Evaluate(state, NetworkTeam.Red, context);
@@ -233,8 +233,8 @@ public sealed class CpuPlanningEfficiencyTests
     {
       CpuGameState state = CreateState(
         money: 0,
-        Piece("red-soldier-one", "Soldier", NetworkTeam.Red, 0, 0),
-        Piece("red-soldier-two", "Soldier", NetworkTeam.Red, 2, 0),
+        Piece("red-soldier-one", "Swordsman", NetworkTeam.Red, 0, 0),
+        Piece("red-soldier-two", "Swordsman", NetworkTeam.Red, 2, 0),
         Piece("blue-defender-one", "Defender", NetworkTeam.Blue, 0, 1),
         Piece("blue-defender-two", "Defender", NetworkTeam.Blue, 2, 1));
       CpuProfile profile = CpuProfile.Hard(19);
@@ -270,7 +270,7 @@ public sealed class CpuPlanningEfficiencyTests
       money: 0,
       Piece("red-knight", "Knight", NetworkTeam.Red, 0, 5),
       Piece("red-archer", "Archer", NetworkTeam.Red, 2, 5),
-      Piece("red-soldier", "Soldier", NetworkTeam.Red, -2, 5),
+      Piece("red-soldier", "Swordsman", NetworkTeam.Red, -2, 5),
       Piece("blue-king", "King", NetworkTeam.Blue, 0, -8));
     CpuActionGenerator generator = new();
     MoveAction[] exhaustive = generator.GenerateLegalActions(state, NetworkTeam.Red).OfType<MoveAction>().ToArray();
@@ -323,12 +323,12 @@ public sealed class CpuPlanningEfficiencyTests
         money: 0,
         Piece("red-knight", "Knight", NetworkTeam.Red, -2, 5),
         Piece("red-archer", "Archer", NetworkTeam.Red, 2, 5),
-        Piece("red-soldier", "Soldier", NetworkTeam.Red, 0, 4),
+        Piece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 4),
         Piece("red-defender", "Defender", NetworkTeam.Red, -1, 6),
         Piece("red-king", "King", NetworkTeam.Red, 0, 8),
         Piece("blue-knight", "Knight", NetworkTeam.Blue, 2, -5),
         Piece("blue-archer", "Archer", NetworkTeam.Blue, -2, -5),
-        Piece("blue-soldier", "Soldier", NetworkTeam.Blue, 0, -4),
+        Piece("blue-soldier", "Swordsman", NetworkTeam.Blue, 0, -4),
         Piece("blue-defender", "Defender", NetworkTeam.Blue, 1, -6),
         Piece("blue-king", "King", NetworkTeam.Blue, 0, -8));
       CpuTurnPlan plan = new CpuPlayer().ChooseTurn(state, NetworkTeam.Red, CpuProfile.Hard(812), CancellationToken.None);

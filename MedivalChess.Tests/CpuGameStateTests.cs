@@ -10,7 +10,7 @@ public sealed class CpuGameStateTests
   public void SimulatedAttack_DoesNotMutateTheOriginalSnapshot()
   {
     CpuGameState original = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
     AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-peasant", 0, -1);
@@ -28,7 +28,7 @@ public sealed class CpuGameStateTests
   public void AttackingAFarmSquareDamagesTheUnitBeforeTheFarm()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-farm", "Farm", NetworkTeam.Blue, 0, -1, 30),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
@@ -45,7 +45,7 @@ public sealed class CpuGameStateTests
   public void AttackingAnUncoveredFarmDamagesTheFarm()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-farm", "Farm", NetworkTeam.Blue, 0, -1, 30)
     );
     AttackAction attack = new(NetworkTeam.Red, "red-soldier", "blue-farm", 0, -1);
@@ -59,7 +59,7 @@ public sealed class CpuGameStateTests
   [Fact]
   public void CloneAndSimulatedMovement_LeaveTheAuthoritativeSnapshotUntouched()
   {
-    CpuGameState original = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    CpuGameState original = CreateState(new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15));
     CpuGameState clone = original.Clone();
     MoveAction move = new(NetworkTeam.Red, "red-soldier", 0, -1);
 
@@ -106,7 +106,7 @@ public sealed class CpuGameStateTests
   public void AttackingAnOx_AlsoDamagesItsCarriedUnit()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-ox", "Ox", NetworkTeam.Blue, 0, -1, 25),
       new NetworkPiece(
         "blue-cargo", "Knight", NetworkTeam.Blue, 0, -1, 30,
@@ -133,7 +133,7 @@ public sealed class CpuGameStateTests
       CreateConfiguration(),
       [
         new NetworkPiece("red-elephant", "Elephant", NetworkTeam.Red, 0, 0, 60),
-        new NetworkPiece("blue-soldier", "Soldier", NetworkTeam.Blue, 2, 0, 60)
+        new NetworkPiece("blue-soldier", "Swordsman", NetworkTeam.Blue, 2, 0, 60)
       ],
       [
         new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
@@ -161,7 +161,7 @@ public sealed class CpuGameStateTests
     Board campaignBoard = new(new[] { (0, 0) });
     CpuGameState state = new(
       CreateConfiguration(),
-      [new NetworkPiece("campaign-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15)],
+      [new NetworkPiece("campaign-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15)],
       [
         new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
         new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
@@ -180,7 +180,7 @@ public sealed class CpuGameStateTests
   public void LegalActionGenerator_ReturnsOnlyActionsThatApplyToTheCurrentTeam()
   {
     CpuGameState state = CreateState(
-      new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
       new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
     );
 
@@ -198,7 +198,7 @@ public sealed class CpuGameStateTests
   [Fact]
   public void EndTurn_IsAvailableImmediatelyWhenActionLimitsAreDisabled()
   {
-    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15));
+    CpuGameState state = CreateState(new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15));
     MoveAction move = new(NetworkTeam.Red, "red-soldier", 0, 1);
 
     EndTurnAction endTurn = new(NetworkTeam.Red);
@@ -316,7 +316,7 @@ public sealed class CpuGameStateTests
     CpuGameState state = new(
       configuration,
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 1, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 1, 15),
         new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, 0, 5)
       ],
       [
@@ -336,7 +336,7 @@ public sealed class CpuGameStateTests
   {
     CpuGameState state = new(
       CreateConfiguration(),
-      [new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 2, 15)],
+      [new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 2, 15)],
       [
         new CpuTeamState(NetworkTeam.Red, 0, MatchRules.ActionsPerTurn),
         new CpuTeamState(NetworkTeam.Blue, 0, MatchRules.ActionsPerTurn)
@@ -483,7 +483,7 @@ public sealed class CpuGameStateTests
   [Fact]
   public void AttackGeneration_TargetsTheReachableSquareOfALargePiece()
   {
-    NetworkPiece soldier = new("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15);
+    NetworkPiece soldier = new("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15);
     NetworkPiece farm = new("blue-farm", "Farm", NetworkTeam.Blue, -1, -3, 30);
     CpuGameState state = new(
       CreateConfiguration(),
@@ -509,7 +509,7 @@ public sealed class CpuGameStateTests
     CpuGameState state = new(
       CreateConfiguration(),
       [
-        new NetworkPiece("red-soldier", "Soldier", NetworkTeam.Red, 0, 0, 15),
+        new NetworkPiece("red-soldier", "Swordsman", NetworkTeam.Red, 0, 0, 15),
         new NetworkPiece("red-guard", "Guard", NetworkTeam.Red, 0, 0, 25,
           AttachedToId: "red-soldier", AttachmentKind: NetworkAttachmentKind.Guard),
         new NetworkPiece("blue-peasant", "Peasant", NetworkTeam.Blue, 0, -1, 5)
