@@ -282,7 +282,7 @@ internal sealed partial class Game1 : Game
   private CpuDecisionReport _lastCpuDecisionReport;
   private float _cpuActionDelaySeconds;
   private string _onlineStatus = "OFFLINE";
-  private string _onlineServerUrl = "https://crown-and-siege-server.onrender.com";
+  private string _onlineServerUrl = "tail0edd92.ts.net";
   private string _onlineJoinCode = string.Empty;
   private OnlineInputField _onlineInputFocus = OnlineInputField.ServerUrl;
   private bool _onlineIsHost;
@@ -3446,8 +3446,8 @@ internal sealed partial class Game1 : Game
   {
     HashSet<(int x, int y)> squares = [];
     foreach ((int x, int y) destination in destinations)
-    for (int y = 0; y < piece.Definition.Size.y; y++)
-    for (int x = 0; x < piece.Definition.Size.x; x++) squares.Add((destination.x + x, destination.y + y));
+      for (int y = 0; y < piece.Definition.Size.y; y++)
+        for (int x = 0; x < piece.Definition.Size.x; x++) squares.Add((destination.x + x, destination.y + y));
     return squares;
   }
 
@@ -5473,48 +5473,48 @@ internal sealed partial class Game1 : Game
     GraphicsDevice.Clear(Color.Transparent);
     _spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.AlphaBlend, SamplerState.PointClamp);
     for (int y = 0; y < _board.BoardArray.GetLength(0); y++)
-    for (int x = 0; x < _board.BoardArray.GetLength(1); x++)
-    {
-      if (_board.BoardArray[y, x] != 1) continue;
-      var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
-      Rectangle cellBounds = new(x * 64, y * 64, 64, 64);
-      Color baseCellColour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
-      TeamName? squareOwner = GetSquareOwner(boardPosition);
-      Color territoryColour = squareOwner.HasValue ? UiTheme.GetTeamColour(squareOwner.Value) : UiTheme.NoMansLand;
-      DrawWorldRectangle(cellBounds, Color.Lerp(baseCellColour, territoryColour, territoryTintAmount), 0f);
+      for (int x = 0; x < _board.BoardArray.GetLength(1); x++)
+      {
+        if (_board.BoardArray[y, x] != 1) continue;
+        var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
+        Rectangle cellBounds = new(x * 64, y * 64, 64, 64);
+        Color baseCellColour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
+        TeamName? squareOwner = GetSquareOwner(boardPosition);
+        Color territoryColour = squareOwner.HasValue ? UiTheme.GetTeamColour(squareOwner.Value) : UiTheme.NoMansLand;
+        DrawWorldRectangle(cellBounds, Color.Lerp(baseCellColour, territoryColour, territoryTintAmount), 0f);
 
-      if (_gameMode == GameMode.Conquest && IsConquestSquare(boardPosition))
-      {
-        DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0f);
-        DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0f);
-      }
-      else if (_gameMode == GameMode.Dominion && MatchRules.GetDominionControlPoints(_board).Contains(boardPosition))
-      {
-        Rectangle objective = new(cellBounds.Center.X - 13, cellBounds.Center.Y - 13, 26, 26);
-        DrawWorldRectangle(objective, new Color(218, 180, 91, 150), 0f);
-        DrawWorldOutline(objective, UiTheme.GoldBright, 0f);
-      }
+        if (_gameMode == GameMode.Conquest && IsConquestSquare(boardPosition))
+        {
+          DrawWorldRectangle(cellBounds, new Color(218, 180, 91, 46), 0f);
+          DrawWorldOutline(cellBounds, new Color(246, 214, 123, 170), 0f);
+        }
+        else if (_gameMode == GameMode.Dominion && MatchRules.GetDominionControlPoints(_board).Contains(boardPosition))
+        {
+          Rectangle objective = new(cellBounds.Center.X - 13, cellBounds.Center.Y - 13, 26, 26);
+          DrawWorldRectangle(objective, new Color(218, 180, 91, 150), 0f);
+          DrawWorldOutline(objective, UiTheme.GoldBright, 0f);
+        }
 
-      if (_terrain.IsLake(boardPosition))
-      {
-        DrawWorldRectangle(cellBounds, UiTheme.Lake, 0f);
-        DrawWorldRectangle(new Rectangle(cellBounds.X + 11, cellBounds.Y + 14, cellBounds.Width - 28, 3), UiTheme.LakeHighlight, 0f);
-        DrawWorldRectangle(new Rectangle(cellBounds.X + 24, cellBounds.Y + 35, cellBounds.Width - 34, 3), UiTheme.LakeHighlight, 0f);
-      }
-      else if (_terrain.IsForest(boardPosition))
-      {
-        DrawWorldRectangle(cellBounds, UiTheme.Forest, 0f);
-        DrawWorldRectangle(new Rectangle(cellBounds.X + 12, cellBounds.Y + 10, 14, 24), UiTheme.ForestDark, 0f);
-        DrawWorldRectangle(new Rectangle(cellBounds.Right - 26, cellBounds.Bottom - 34, 14, 24), UiTheme.ForestDark, 0f);
-      }
+        if (_terrain.IsLake(boardPosition))
+        {
+          DrawWorldRectangle(cellBounds, UiTheme.Lake, 0f);
+          DrawWorldRectangle(new Rectangle(cellBounds.X + 11, cellBounds.Y + 14, cellBounds.Width - 28, 3), UiTheme.LakeHighlight, 0f);
+          DrawWorldRectangle(new Rectangle(cellBounds.X + 24, cellBounds.Y + 35, cellBounds.Width - 34, 3), UiTheme.LakeHighlight, 0f);
+        }
+        else if (_terrain.IsForest(boardPosition))
+        {
+          DrawWorldRectangle(cellBounds, UiTheme.Forest, 0f);
+          DrawWorldRectangle(new Rectangle(cellBounds.X + 12, cellBounds.Y + 10, 14, 24), UiTheme.ForestDark, 0f);
+          DrawWorldRectangle(new Rectangle(cellBounds.Right - 26, cellBounds.Bottom - 34, 14, 24), UiTheme.ForestDark, 0f);
+        }
 
-      var rightPosition = (x: boardPosition.x + 1, y: boardPosition.y);
-      var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
-      if (_terrain.HasRiverBetween(boardPosition, rightPosition))
-        DrawWorldRectangle(new Rectangle(cellBounds.Right - 3, cellBounds.Y, 6, cellBounds.Height), UiTheme.River, 0f);
-      if (_terrain.HasRiverBetween(boardPosition, belowPosition))
-        DrawWorldRectangle(new Rectangle(cellBounds.X, cellBounds.Bottom - 3, cellBounds.Width, 6), UiTheme.River, 0f);
-    }
+        var rightPosition = (x: boardPosition.x + 1, y: boardPosition.y);
+        var belowPosition = (x: boardPosition.x, y: boardPosition.y + 1);
+        if (_terrain.HasRiverBetween(boardPosition, rightPosition))
+          DrawWorldRectangle(new Rectangle(cellBounds.Right - 3, cellBounds.Y, 6, cellBounds.Height), UiTheme.River, 0f);
+        if (_terrain.HasRiverBetween(boardPosition, belowPosition))
+          DrawWorldRectangle(new Rectangle(cellBounds.X, cellBounds.Bottom - 3, cellBounds.Width, 6), UiTheme.River, 0f);
+      }
     _spriteBatch.End();
     GraphicsDevice.SetRenderTarget(null);
   }
