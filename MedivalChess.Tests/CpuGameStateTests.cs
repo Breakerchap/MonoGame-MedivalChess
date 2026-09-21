@@ -867,6 +867,132 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void PalaceGrantsIncomeAndOnlyAssistsMovementTowardIt()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    UnitRule swordsmanRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    int assistedY = swordsmanRule.MoveRange + 1;
+    int palaceY = assistedY + 2;
+    CpuGameState movementState = new(
+      configuration,
+      [
+        new NetworkPiece("palace", nameof(PieceType.Palace), NetworkTeam.Red, 0, palaceY, 230),
+        new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(lakes: [(0, assistedY), (0, -1)])
+    );
+
+    IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> paths =
+      CpuGameRules.GetLegalMovementPaths(movementState, movementState.Pieces.Single(piece => piece.Id == "soldier"));
+    Assert.Contains((0, assistedY), paths.Keys);
+    Assert.DoesNotContain((0, -1), paths.Keys);
+
+    CpuGameState economyState = new(
+      configuration,
+      [
+        new NetworkPiece("palace", nameof(PieceType.Palace), NetworkTeam.Red, 0, 5, 230),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 0, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    CpuGameState redTurn = new EndTurnAction(NetworkTeam.Blue).Apply(economyState);
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    Assert.Equal(210, redTurn.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void EmperorTransformsIntoTerracottaThenTerracottaDeathLosesRegicide()
+  {
+    CpuGameState emperorState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("emperor", nameof(PieceType.Emperor), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Emperor)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction killEmperor = new(NetworkTeam.Blue, "attacker", "emperor", 0, 0);
+    Assert.True(killEmperor.IsLegal(emperorState));
+
+    CpuGameState transformed = killEmperor.Apply(emperorState);
+    NetworkPiece terracotta = transformed.Pieces.Single(piece => piece.Id == "emperor");
+    Assert.Equal(nameof(PieceType.TerracottaWarrior), terracotta.Type);
+    Assert.Equal(PieceDefinitions.TerracottaWarrior.Health, terracotta.Health);
+    Assert.Null(transformed.Winner);
+
+    CpuGameState terracottaState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("terracotta", nameof(PieceType.TerracottaWarrior), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Emperor)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuGameState defeated = new AttackAction(NetworkTeam.Blue, "attacker", "terracotta", 0, 0).Apply(terracottaState);
+    Assert.Equal(NetworkTeam.Blue, defeated.Winner);
+  }
+
+  [Fact]
+  public void GiantAndCyclopsCarryAndUseTheirDistinctThrowPatterns()
+  {
+    CpuGameState carryState = CreateState(
+      new NetworkPiece("giant", nameof(PieceType.Giant), NetworkTeam.Red, 0, 0, 70),
+      new NetworkPiece("cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+    );
+    UseAbilityAction carry = new(NetworkTeam.Red, "giant", "Carry", "cargo", 0, -1);
+    Assert.True(carry.IsLegal(carryState));
+    CpuGameState carried = carry.Apply(carryState);
+    NetworkPiece carriedCargo = carried.Pieces.Single(piece => piece.Id == "cargo");
+    Assert.Equal("giant", carriedCargo.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Carried, carriedCargo.AttachmentKind);
+
+    CpuGameState giantThrowState = CreateState(
+      new NetworkPiece("giant", nameof(PieceType.Giant), NetworkTeam.Red, 0, 0, 70),
+      new NetworkPiece(
+        "cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 0, 30,
+        AttachedToId: "giant", AttachmentKind: NetworkAttachmentKind.Carried)
+    );
+    UseAbilityAction giantThrow = new(NetworkTeam.Red, "giant", "Throw", null, 3, -2);
+    Assert.True(giantThrow.IsLegal(giantThrowState));
+    CpuGameState giantThrown = giantThrow.Apply(giantThrowState);
+    NetworkPiece giantCargo = giantThrown.Pieces.Single(piece => piece.Id == "cargo");
+    Assert.Equal((3, -2), (giantCargo.X, giantCargo.Y));
+    Assert.Null(giantCargo.AttachedToId);
+
+    CpuGameState cyclopsThrowState = CreateState(
+      new NetworkPiece("cyclops", nameof(PieceType.Cyclops), NetworkTeam.Red, 0, 0, 85),
+      new NetworkPiece(
+        "cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 0, 30,
+        AttachedToId: "cyclops", AttachmentKind: NetworkAttachmentKind.Carried)
+    );
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "cyclops", "Throw", null, 3, -2).IsLegal(cyclopsThrowState));
+    UseAbilityAction cyclopsThrow = new(NetworkTeam.Red, "cyclops", "Throw", null, 3, -1);
+    Assert.True(cyclopsThrow.IsLegal(cyclopsThrowState));
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
