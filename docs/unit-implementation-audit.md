@@ -33,8 +33,8 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.harvester` | Verified | Harvest is wired in server, CPU, offline local, and online client flows; it destroys in-range terrain, grants 15 gold, consumes the attack, preserves simulation snapshots, and has regression coverage. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
-| `dynasty.terracotta_warrior` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `dynasty.palace` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `dynasty.terracotta_warrior` | Verified | Emperor lethal damage transforms into the unchoosable Terracotta Warrior second form in local/server/CPU; Terracotta remains the Royal and its death loses Regicide. Runtime coverage verifies transform then final defeat. |
+| `dynasty.palace` | Verified | Local/server/CPU now grant +10 gold at owner-turn start and use the shared Palace movement rule for +1 Move and terrain-cost bypass only when moving closer. CPU regression coverage checks both income and toward-vs-away terrain handling. |
 | `fantasy.commoner` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.adventurer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.elf` | Verified | Forest movement costs are ignored in shared local, server, and CPU pathfinding. |
@@ -43,7 +43,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.wizard` | Verified | Wizard attacks flow through the shared local/server/CPU attack plan and damage every other unit in the 3×3 area centred on the selected target, including friendlies; regression coverage verifies area targeting. |
 | `fantasy.witch` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.druid` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `fantasy.giant` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.giant` | Verified | Local/server/CPU carry/throw flow is wired: directly-adjacent 1×1 units can be carried, carried units move with the Giant and cannot move independently, and throws use the 2–3 Circle pattern. Runtime coverage verifies carry and Circle-only throw geometry. |
 | `fantasy.summoned_golem` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.dragon` | Partial | Its Forward-Line multi-target attack is wired through the shared local/server/CPU attack plan and has regression coverage. Fire immunity remains tied to the pending Fire movement/effect implementation. |
 | `fantasy.gargoyle` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
@@ -80,7 +80,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
-| `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
