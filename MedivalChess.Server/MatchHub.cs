@@ -1432,8 +1432,7 @@ public sealed partial class MatchStore
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
-      bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-        (mayUsePalaceSupport && IsPalaceAssistedMovement(match, piece, rule, (piece.X, piece.Y), destination));
+      bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
       if ((!ignoresTerrain && match.Terrain.IsLake(square)) ||
           (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
           match.AbilityEntities.Any(entity =>
@@ -1483,8 +1482,7 @@ public sealed partial class MatchStore
     foreach ((int x, int y) position in PositionsBetween(from, destination))
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-          IsPalaceAssistedMovement(match, piece, rule, from, destination);
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
             (!ignoresTerrain && match.Terrain.IsLake(square)) ||
             (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
@@ -1537,7 +1535,7 @@ public sealed partial class MatchStore
     (int x, int y) to
   )
   {
-    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(match, piece, rule, from, to)) return false;
+    if (AbilityRules.IgnoresRivers(rule)) return false;
     foreach ((int x, int y) fromSquare in OccupiedSquares(rule, from))
     {
       var toSquare = (fromSquare.x + to.x - from.x, fromSquare.y + to.y - from.y);
