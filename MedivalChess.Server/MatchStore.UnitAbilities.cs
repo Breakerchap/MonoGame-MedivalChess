@@ -162,9 +162,10 @@ public sealed partial class MatchStore
       }
 
       (int x, int y) start = (moving.X, moving.Y);
-      (int x, int y) destination = DisplacementRules.GetFurthestLegalPositionAwayFrom(
-        (instruction.AwayFromX, instruction.AwayFromY),
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPosition(
         start,
+        instruction.DirectionX,
+        instruction.DirectionY,
         instruction.MaximumDistance,
         candidate => CanDisplaceServerPieceTo(match, moving, rule, candidate));
       if (destination == start) continue;
