@@ -385,6 +385,8 @@ public static partial class CpuGameRules
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
     bool rangeIndependentCodexAbility =
       string.Equals(action.Ability, "ReloadHwacha", StringComparison.OrdinalIgnoreCase) ||
+      (actor.Type == nameof(PieceType.Demolitionist) &&
+       string.Equals(action.Ability, "Detonate", StringComparison.OrdinalIgnoreCase)) ||
       actor.Type is nameof(PieceType.Fafnir);
     if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
         actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse) or

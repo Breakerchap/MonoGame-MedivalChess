@@ -1848,7 +1848,9 @@ public sealed class CpuGameStateTests
     CpuGameState nextOwnerTurn = new(
       CreateConfiguration(),
       placed.Pieces.Select(piece => piece.Id == demo.Id ? piece with { HasAttackedThisTurn = false } : piece),
-      placed.Teams.Values,
+      placed.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+        ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+        : team),
       NetworkTeam.Red,
       terrain: placed.Terrain,
       board: placed.Board,
@@ -1869,10 +1871,10 @@ public sealed class CpuGameStateTests
       new NetworkPiece("thor", nameof(PieceType.Thor), NetworkTeam.Red, 0, 0, 160)
     );
 
-    for (int index = 0; index < 3; index++)
+    (int x, int y)[] stormPositions = [(1, 0), (2, 0), (0, 1)];
+    foreach ((int x, int y) in stormPositions)
     {
-      int x = index + 1;
-      UseAbilityAction create = new(NetworkTeam.Red, "thor", "Thunderstorm", null, x, 0);
+      UseAbilityAction create = new(NetworkTeam.Red, "thor", "Thunderstorm", null, x, y);
       Assert.True(create.IsLegal(state));
       state = create.Apply(state);
       NetworkPiece thor = state.Pieces.Single(piece => piece.Id == "thor");
@@ -1885,7 +1887,9 @@ public sealed class CpuGameStateTests
             AbilityState = (piece.AbilityState ?? new UnitAbilityState()) with { UsedThisTurn = false }
           }
           : piece),
-        state.Teams.Values,
+        state.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+          ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+          : team),
         NetworkTeam.Red,
         terrain: state.Terrain,
         board: state.Board,
