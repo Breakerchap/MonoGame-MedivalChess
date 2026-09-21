@@ -1879,7 +1879,13 @@ internal sealed partial class Game1 : Game
       ? null
       : pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == action.TargetPieceId);
     var targetPosition = (action.TargetX, action.TargetY);
-    bool isValidAttack = attacker is not null && !attacker.HasAttackedThisTurn && attacker.Definition.Attack > 0 &&
+    bool isValidAttack = attacker is not null &&
+      AdvancedAbilityRules.CanAttack(
+        attacker.Definition.Type.ToString(),
+        attacker.AbilityState,
+        attacker.HasAttackedThisTurn,
+        target?.NetworkId) &&
+      attacker.Definition.Attack > 0 &&
       Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
       ((target is not null && target.Team != attacker.Team) || (target is null && _barricades.ContainsKey(targetPosition)));
     if (!isValidAttack)
@@ -1901,6 +1907,10 @@ internal sealed partial class Game1 : Game
     }
 
     attacker.HasAttackedThisTurn = true;
+    attacker.AbilityState = AdvancedAbilityRules.RecordAttack(
+      attacker.Definition.Type.ToString(),
+      attacker.AbilityState,
+      target?.NetworkId);
     attacker.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
       attacker.Definition.Type.ToString(), attacker.HasMovedThisTurn);
     if (_screen == Screen.Playing)
