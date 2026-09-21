@@ -276,7 +276,9 @@ public static partial class CpuGameRules
       return false;
     }
 
-    if (!openingFarmPlacement && buyer.Money < GetUnitPrice(state.Configuration, rule))
+    if (!openingFarmPlacement &&
+        buyer.Money < (long)GetUnitPrice(state.Configuration, rule) +
+          AdvancedAbilityRules.GetImmediateGoldUpkeep(rule.Type))
     {
       return false;
     }
@@ -322,7 +324,8 @@ public static partial class CpuGameRules
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
-    if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") && !isCarryThrowUnit &&
+    if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
+        actor.Type != nameof(PieceType.Phantom) && !isCarryThrowUnit &&
         !CanUseActionSquare(actor, action.TargetX, action.TargetY))
     {
       return false;
@@ -359,7 +362,8 @@ public static partial class CpuGameRules
           ? target is not null && CanCarryUnit(state, actor, target)
           : string.Equals(action.Ability, "Throw", StringComparison.OrdinalIgnoreCase) &&
             target is null && CanThrowUnit(state, actor, action.TargetX, action.TargetY),
-      "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
+      nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun) =>
+        string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
         actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
         action.TargetX == actor.X && action.TargetY == actor.Y,
       "Phantom" => string.Equals(action.Ability, "Unpossess", StringComparison.OrdinalIgnoreCase)
@@ -693,27 +697,43 @@ public static partial class CpuGameRules
     money = ClampCurrency((long)money +
       farms * (long)state.Source.Configuration.FarmIncomePerTurn +
       palaces * (long)AdvancedAbilityRules.PalaceIncome);
-    for (int index = 0; index < state.Pieces.Count; index++)
+    UnitUpkeepSequenceResult abilityUpkeep = EconomyRules.ResolveAbilityUpkeepSequence(
+      money,
+      state.Pieces
+        .Where(piece => piece.Team == team && piece.AttachedToId is null)
+        .Select(piece => new UnitUpkeepRequest(piece.Id, piece.Type))
+    );
+    money = abilityUpkeep.RemainingMoney;
+    foreach (UnitUpkeepDecision decision in abilityUpkeep.Decisions)
     {
-      NetworkPiece mercenary = state.Pieces[index];
-      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
+      if (decision.Paid) continue;
+      if (decision.UnpaidEffect == UnpaidUnitUpkeepEffect.FireUnit)
       {
-        continue;
-      }
-
-      const int mercenaryPayroll = 10;
-      if (money < mercenaryPayroll)
-      {
-        state.Pieces[index] = mercenary with
+        int index = FindPieceIndex(state.Pieces, decision.UnitId);
+        if (index >= 0)
         {
-          Team = NetworkTeam.Neutral,
-          HasMovedThisTurn = true,
-          HasAttackedThisTurn = true
-        };
-        continue;
+          NetworkPiece unit = state.Pieces[index];
+          state.Pieces[index] = unit with
+          {
+            Team = NetworkTeam.Neutral,
+            HasMovedThisTurn = true,
+            HasAttackedThisTurn = true,
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(unit.Type),
+            AbilityState = (unit.AbilityState ?? new UnitAbilityState()) with
+            {
+              CannotActThisTurn = true,
+              CannotMoveThisTurn = true
+            }
+          };
+        }
       }
-
-      money = ClampCurrency((long)money - mercenaryPayroll);
+      else if (decision.UnpaidEffect == UnpaidUnitUpkeepEffect.LoseMatch)
+      {
+        state.Teams[team] = current with { Money = money };
+        state.Winner = TeamRules.GetActiveTeams(state.Source.Configuration.PlayerCount)
+          .First(candidate => candidate != team);
+        return;
+      }
     }
     if (state.Source.Configuration.UnitMaintenanceEnabled && state.Source.Configuration.UnitMaintenancePercent > 0)
     {

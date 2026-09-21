@@ -687,7 +687,9 @@ public sealed partial class MatchStore
       bool carryThrow = AbilityRules.IsCarryThrowUnit(actor.Type) &&
         (string.Equals(request.Ability, "Carry", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(request.Ability, "Throw", StringComparison.OrdinalIgnoreCase));
-      if (!plunderPickup && !carryThrow && actor.Type is not ("Mercenary" or "Phantom") &&
+      if (!plunderPickup && !carryThrow &&
+          !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
+          actor.Type != nameof(PieceType.Phantom) &&
           !CanUseActionSquare(actor, request.TargetX, request.TargetY))
       {
         return new(false, "That square is outside the unit's special-action range.", foundMatch.State());
@@ -704,7 +706,8 @@ public sealed partial class MatchStore
           nameof(PieceType.Giant) or nameof(PieceType.Cyclops) =>
             TryCarryOrThrow(foundMatch, actorIndex, targetIndex, request.Ability, request.TargetX, request.TargetY),
           "Phantom" => TryUseSharedServerPhantomAbility(foundMatch, actorIndex, targetIndex, request.Ability),
-          "Mercenary" => TryFireMercenary(foundMatch, actorIndex, request.Ability),
+          nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun) =>
+            TryFireUpkeepUnit(foundMatch, actorIndex, request.Ability),
           _ => false
         };
       if (!applied) return new(false, "That special action has no valid target.", foundMatch.State());
@@ -948,13 +951,18 @@ public sealed partial class MatchStore
       }
 
       bool isOpeningFarmPlacement = buyPhase.IsFarmPlacementPhase && unit.Type == "Farm";
-      if ((!isOpeningFarmPlacement && player.Money < unit.Cost) ||
+      int immediateUpkeep = isOpeningFarmPlacement ? 0 :
+        AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
+      if ((!isOpeningFarmPlacement && player.Money < (long)unit.Cost + immediateUpkeep) ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: true))
       {
         return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
       }
 
-      if (!isOpeningFarmPlacement) player.Money = ClampCurrency((long)player.Money - unit.Cost);
+      if (!isOpeningFarmPlacement)
+      {
+        player.Money = ClampCurrency((long)player.Money - unit.Cost - immediateUpkeep);
+      }
       foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
       buyPhase.RecordPurchase();
       if (buyPhase.IsComplete)
@@ -1042,13 +1050,14 @@ public sealed partial class MatchStore
         return new(false, "That unit is not available for purchase.", foundMatch.State());
       }
 
-      if (player.Money < unit.Cost ||
+      int immediateUpkeep = AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
+      if (player.Money < (long)unit.Cost + immediateUpkeep ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: false))
       {
         return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
       }
 
-      player.Money = ClampCurrency((long)player.Money - unit.Cost);
+      player.Money = ClampCurrency((long)player.Money - unit.Cost - immediateUpkeep);
       foundMatch.Pieces.Add(new NetworkPiece(
         Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health,
         HasMovedThisTurn: true,
@@ -2055,16 +2064,22 @@ public sealed partial class MatchStore
     return true;
   }
 
-  private static bool TryFireMercenary(Match match, int actorIndex, string ability)
+  private static bool TryFireUpkeepUnit(Match match, int actorIndex, string ability)
   {
     if (!string.Equals(ability, "Fire", StringComparison.OrdinalIgnoreCase)) return false;
-    NetworkPiece mercenary = match.Pieces[actorIndex];
-    if (mercenary.Type != "Mercenary" || mercenary.Team == NetworkTeam.Neutral) return false;
-    match.Pieces[actorIndex] = mercenary with
+    NetworkPiece unit = match.Pieces[actorIndex];
+    if (!AdvancedAbilityRules.IsUpkeepFireUnit(unit.Type) || unit.Team == NetworkTeam.Neutral) return false;
+    match.Pieces[actorIndex] = unit with
     {
       Team = NetworkTeam.Neutral,
       HasMovedThisTurn = true,
-      HasAttackedThisTurn = true
+      HasAttackedThisTurn = true,
+      AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(unit.Type),
+      AbilityState = (unit.AbilityState ?? new UnitAbilityState()) with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      }
     };
     return true;
   }

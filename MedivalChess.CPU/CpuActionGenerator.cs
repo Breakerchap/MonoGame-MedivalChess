@@ -237,7 +237,7 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
 
   private static void GenerateAbilities(CpuGameState state, NetworkPiece actor, List<ICpuGameAction> actions)
   {
-    if (actor.Type == "Mercenary")
+    if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type))
     {
       AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Fire", null, actor.X, actor.Y), actions);
     }

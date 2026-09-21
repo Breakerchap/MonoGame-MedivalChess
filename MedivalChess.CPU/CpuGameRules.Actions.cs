@@ -366,11 +366,19 @@ public static partial class CpuGameRules
           state.Pieces[actorIndex] = state.Pieces[actorIndex] with { HasAttackedThisTurn = true };
           break;
         case nameof(PieceType.Mercenary):
+        case nameof(PieceType.SummonedGolem):
+        case nameof(PieceType.HiredGun):
           state.Pieces[actorIndex] = actor with
           {
             Team = NetworkTeam.Neutral,
             HasMovedThisTurn = true,
-            HasAttackedThisTurn = true
+            HasAttackedThisTurn = true,
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(actor.Type),
+            AbilityState = (actor.AbilityState ?? new UnitAbilityState()) with
+            {
+              CannotActThisTurn = true,
+              CannotMoveThisTurn = true
+            }
           };
           break;
         case nameof(PieceType.Phantom):
@@ -438,7 +446,11 @@ public static partial class CpuGameRules
     bool openingFarmPlacement = state.InitialBuy?.IsFarmPlacementPhase == true && rule.Type == nameof(PieceType.Farm);
     if (!openingFarmPlacement)
     {
-      SpendMoney(state, action.Team, GetUnitPrice(state.Source.Configuration, rule));
+      SpendMoney(
+        state,
+        action.Team,
+        GetUnitPrice(state.Source.Configuration, rule) +
+          AdvancedAbilityRules.GetImmediateGoldUpkeep(rule.Type));
     }
 
     state.Pieces.Add(new NetworkPiece(

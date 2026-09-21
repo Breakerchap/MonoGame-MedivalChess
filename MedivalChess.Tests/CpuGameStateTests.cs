@@ -999,6 +999,83 @@ public sealed class CpuGameStateTests
     Assert.True(cyclopsThrow.IsLegal(cyclopsThrowState));
   }
 
+  [Theory]
+  [InlineData(PieceType.SummonedGolem, AdvancedAbilityRules.SummonedGolemUpkeep)]
+  [InlineData(PieceType.HiredGun, AdvancedAbilityRules.HiredGunUpkeep)]
+  public void UpkeepUnitsPayImmediatelyThenMayBeFired(PieceType type, int immediateUpkeep)
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    UnitRule rule = UnitRules.GetRequired(type.ToString());
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) position = board.Cells.First(square =>
+      BoardRules.CanPlaceForTeam(
+        board, configuration.GameMode, configuration.PlayerCount,
+        NetworkTeam.Red, square.x, square.y, rule.Width, rule.Height));
+    int purchasePrice = EconomyRules.GetUnitPrice(rule.Cost, configuration.UnitPricePercent);
+    CpuGameState state = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, purchasePrice + immediateUpkeep, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    PurchaseAction purchase = new(NetworkTeam.Red, rule.Type, position.x, position.y);
+
+    Assert.True(purchase.IsLegal(state));
+    CpuGameState purchased = purchase.Apply(state);
+    Assert.Equal(0, purchased.Teams[NetworkTeam.Red].Money);
+    NetworkPiece unit = purchased.Pieces.Single(piece => piece.Type == rule.Type);
+
+    // Newly purchased normal-phase units cannot act until their next owner turn.
+    CpuGameState ready = new(
+      configuration,
+      [unit with { HasMovedThisTurn = false, HasAttackedThisTurn = false, AttacksThisTurn = 0 }],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    UseAbilityAction fire = new(NetworkTeam.Red, unit.Id, "Fire", null, unit.X, unit.Y);
+    Assert.True(fire.IsLegal(ready));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(ready, NetworkTeam.Red), action => action.Equals(fire));
+    CpuGameState fired = fire.Apply(ready);
+    Assert.Equal(NetworkTeam.Neutral, fired.Pieces.Single(piece => piece.Id == unit.Id).Team);
+  }
+
+  [Theory]
+  [InlineData(PieceType.SummonedGolem, AdvancedAbilityRules.SummonedGolemUpkeep)]
+  [InlineData(PieceType.HiredGun, AdvancedAbilityRules.HiredGunUpkeep)]
+  public void UpkeepUnitsBecomeNeutralWhenOwnerTurnPayrollCannotBePaid(PieceType type, int upkeep)
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    NetworkPiece unit = new("upkeep-unit", type.ToString(), NetworkTeam.Red, 0, 2, UnitRules.GetRequired(type.ToString()).Health);
+    CpuGameState state = new(
+      configuration,
+      [
+        unit,
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 0, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, upkeep - 1, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    CpuGameState redTurn = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    NetworkPiece neutral = redTurn.Pieces.Single(piece => piece.Id == unit.Id);
+    Assert.Equal(NetworkTeam.Neutral, neutral.Team);
+    Assert.Equal(upkeep - 1, redTurn.Teams[NetworkTeam.Red].Money);
+  }
+
   [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {

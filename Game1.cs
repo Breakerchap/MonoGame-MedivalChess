@@ -1042,7 +1042,8 @@ internal sealed partial class Game1 : Game
       (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
         ? CanPlaceNoMansLand(definition, targetPosition)
         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
-      (isOpeningFarmPlacement || buyingTeam.Money >= GetUnitPrice(definition));
+      (isOpeningFarmPlacement || buyingTeam.Money >=
+        (long)GetUnitPrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
     if (!canPlace)
     {
@@ -1053,7 +1054,9 @@ internal sealed partial class Game1 : Game
     }
 
     int price = isOpeningFarmPlacement ? 0 : GetUnitPrice(definition);
-    buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price);
+    int immediateUpkeep = isOpeningFarmPlacement ? 0 :
+      AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
+    buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price - immediateUpkeep);
     Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
     {
       LastBid = price,
@@ -2378,7 +2381,9 @@ internal sealed partial class Game1 : Game
       PieceType.Mercenary => targetPosition == actor.Position,
       _ => false
     };
-    isSpecialTarget |= carryThrowTarget;
+    isSpecialTarget |= carryThrowTarget ||
+      (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) &&
+       targetPosition == actor.Position);
     if (!isSpecialTarget)
     {
       return false;
@@ -2392,12 +2397,16 @@ internal sealed partial class Game1 : Game
       ? "Harvest"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
-      : actor.Definition.Type == PieceType.Mercenary
+      : AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString())
         ? "Fire"
         : actor.Definition.Type == PieceType.Phantom
           ? string.IsNullOrEmpty(actor.PossessedUnitId) ? "Possess" : "Unpossess"
           : string.Empty;
-    _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, actor.Definition.Type == PieceType.Mercenary ? actor.Position : targetPosition);
+    _ = SendOnlineSpecialAsync(
+      actor,
+      ability,
+      target?.NetworkId,
+      AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) ? actor.Position : targetPosition);
     return true;
   }
 
@@ -2962,7 +2971,8 @@ internal sealed partial class Game1 : Game
       ? true
       : isNeutralMercenaryHire
       ? buyingTeam.Money >= PieceDefinitions.NeutralMercenaryHireCost
-      : buyingTeam.Money >= GetUnitPrice(definition);
+      : buyingTeam.Money >=
+        (long)GetUnitPrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
@@ -3834,9 +3844,10 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
-    if (actor.Definition.Type == PieceType.Mercenary && targetPosition == actor.Position)
+    if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) &&
+        targetPosition == actor.Position)
     {
-      return TryFireMercenary(actor);
+      return TryFireUpkeepUnit(actor);
     }
 
     if (TryPickUpTreasure(actor, targetPosition, targetPiece))
@@ -3995,17 +4006,19 @@ internal sealed partial class Game1 : Game
       Math.Abs(actor.Position.x - position.x) + Math.Abs(actor.Position.y - position.y) == 1;
   }
 
-  private bool TryFireMercenary(Piece mercenary)
+  private bool TryFireUpkeepUnit(Piece unit)
   {
-    if (mercenary.Team != Team.CurrentTurn)
+    if (unit.Team != Team.CurrentTurn ||
+        !AdvancedAbilityRules.IsUpkeepFireUnit(unit.Definition.Type.ToString()))
     {
       return false;
     }
 
-    mercenary.Team = TeamName.Neutral;
-    mercenary.HasMovedThisTurn = true;
-    mercenary.HasAttackedThisTurn = true;
-    Console.WriteLine("Mercenary fired and left neutral in No-Man's-Land.");
+    unit.Team = TeamName.Neutral;
+    unit.HasMovedThisTurn = true;
+    unit.HasAttackedThisTurn = true;
+    unit.AbilityState = unit.AbilityState with { CannotActThisTurn = true, CannotMoveThisTurn = true };
+    Console.WriteLine($"{unit.Definition.Type} was fired and became neutral.");
     CompleteAction();
     return true;
   }
