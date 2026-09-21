@@ -370,7 +370,7 @@ public static partial class CpuGameRules
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
     if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
-        actor.Type != nameof(PieceType.Phantom) && !isCarryThrowUnit &&
+        actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse)) && !isCarryThrowUnit &&
         !CanUseActionSquare(actor, action.TargetX, action.TargetY))
     {
       return false;
