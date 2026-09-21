@@ -91,7 +91,7 @@ public static partial class CpuGameRules
     return (attacker.AttachedToId is null || carriedCargoMayAttackHost) && attacker.Team != target.Team && target.AttachedToId is null &&
       UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
-      attackerRule.Attack > 0 && !attacker.HasAttackedThisTurn &&
+      AbilityRules.CanMakeNormalAttack(attackerRule) && !attacker.HasAttackedThisTurn &&
       UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
       HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
   }
@@ -102,7 +102,7 @@ public static partial class CpuGameRules
     string? occupiedTargetId = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id &&
       UnitRules.TryGet(piece.Type, out UnitRule targetRule) && Occupies(targetRule, piece, (targetX, targetY)))?.Id;
     return attacker.AttachedToId is null && UnitRules.TryGet(attacker.Type, out UnitRule rule) &&
-      rule.Attack > 0 && !attacker.HasAttackedThisTurn &&
+      AbilityRules.CanMakeNormalAttack(rule) && !attacker.HasAttackedThisTurn &&
       CanUseActionSquare(attacker, targetX, targetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (targetX, targetY), occupiedTargetId, state.Barricades);
   }
@@ -203,7 +203,7 @@ public static partial class CpuGameRules
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
     if (attacker is null || attacker.Team != action.Team ||
-        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || attackerRule.Attack <= 0)
+        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || !AbilityRules.CanMakeNormalAttack(attackerRule))
     {
       return false;
     }
