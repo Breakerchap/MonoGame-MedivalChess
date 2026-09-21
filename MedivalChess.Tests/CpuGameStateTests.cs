@@ -1079,6 +1079,161 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void FireDamagesMoverOnceAndIsConsumed()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("fire", AbilityEntityKind.Fire, NetworkTeam.Blue, 0, 0, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 0, -1);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(15, result.Pieces.Single(piece => piece.Id == "soldier").Health);
+    Assert.DoesNotContain(result.AbilityEntities, entity => entity.Id == "fire");
+  }
+
+  [Fact]
+  public void BrambleDamagesMoverAndItselfWhenCrossed()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("bramble", AbilityEntityKind.Bramble, NetworkTeam.Blue, 0, 0, 30)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 0, -1);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(20, result.Pieces.Single(piece => piece.Id == "soldier").Health);
+    Assert.Equal(20, result.AbilityEntities.Single(entity => entity.Id == "bramble").Health);
+    Assert.False(new MoveAction(NetworkTeam.Red, "soldier", 0, 0).IsLegal(state));
+  }
+
+  [Fact]
+  public void PhoenixMayCreateFireAfterAttackingAndPaysFiveHealth()
+  {
+    NetworkPiece phoenix = new(
+      "phoenix", nameof(PieceType.Phoenix), NetworkTeam.Red, 0, 0, 60,
+      HasAttackedThisTurn: true);
+    CpuGameState state = CreateState(phoenix);
+    UseAbilityAction fire = new(NetworkTeam.Red, "phoenix", "Fire", null, 0, -1);
+
+    Assert.True(fire.IsLegal(state));
+    CpuGameState result = fire.Apply(state);
+
+    Assert.Equal(55, result.Pieces.Single(piece => piece.Id == "phoenix").Health);
+    Assert.Contains(result.AbilityEntities, entity =>
+      entity.Kind == AbilityEntityKind.Fire && entity.X == 0 && entity.Y == -1);
+    Assert.False(fire.IsLegal(result));
+  }
+
+  [Fact]
+  public void DragonCrossesFireWithoutDamageOrConsumingIt()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("dragon", nameof(PieceType.Dragon), NetworkTeam.Red, 0, 2, 120)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("fire", AbilityEntityKind.Fire, NetworkTeam.Blue, 0, 0, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "dragon", 0, -2);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(120, result.Pieces.Single(piece => piece.Id == "dragon").Health);
+    Assert.Contains(result.AbilityEntities, entity => entity.Id == "fire");
+  }
+
+  [Fact]
+  public void WitchPoisonCloudDamagesUnitsAtOwnerTurnStartAndDiesWithSource()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("witch", nameof(PieceType.Witch), NetworkTeam.Red, 0, 0, 20),
+        new NetworkPiece("victim", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -1, 30),
+        new NetworkPiece("blue-palace", nameof(PieceType.Palace), NetworkTeam.Blue, 5, -5, 230)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    UseAbilityAction cloud = new(NetworkTeam.Red, "witch", "PoisonCloud", null, 0, -1);
+
+    Assert.True(cloud.IsLegal(state));
+    state = cloud.Apply(state);
+    Assert.Single(state.AbilityEntities.Where(entity => entity.Kind == AbilityEntityKind.PoisonCloud));
+
+    Assert.True(new EndTurnAction(NetworkTeam.Red).IsLegal(state));
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    Assert.True(new EndTurnAction(NetworkTeam.Blue).IsLegal(state));
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+
+    Assert.Equal(15, state.Pieces.Single(piece => piece.Id == "victim").Health);
+
+    CpuGameState killSourceState = new(
+      configuration,
+      [
+        new NetworkPiece("witch", nameof(PieceType.Witch), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity(
+          "cloud", AbilityEntityKind.PoisonCloud, NetworkTeam.Red, 0, -1, 0,
+          SourcePieceId: "witch")
+      ]
+    );
+    AttackAction kill = new(NetworkTeam.Blue, "attacker", "witch", 0, 0);
+    Assert.True(kill.IsLegal(killSourceState));
+    CpuGameState afterKill = kill.Apply(killSourceState);
+
+    Assert.DoesNotContain(afterKill.Pieces, piece => piece.Id == "witch");
+    Assert.DoesNotContain(afterKill.AbilityEntities, entity => entity.SourcePieceId == "witch");
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
