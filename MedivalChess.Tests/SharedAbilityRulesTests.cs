@@ -330,10 +330,10 @@ public sealed class SharedAbilityRulesTests
   [Fact]
   public void MusePatternProgressionMatchesCodex()
   {
-    Assert.Equal(RuleShape.LineOrDiagonal, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Line));
-    Assert.Equal(RuleShape.Circle, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Diagonal));
+    Assert.Equal(RuleShape.Straight, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Line));
+    Assert.Equal(RuleShape.Straight, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Diagonal));
+    Assert.Equal(RuleShape.Circle, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Straight));
     Assert.Equal(RuleShape.Any, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Circle));
-    Assert.Equal(RuleShape.Straight, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Straight));
   }
 
 
