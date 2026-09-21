@@ -47,7 +47,10 @@ public static class AbilityAttackRules
   )
   {
     List<AbilityDamageInstruction> damage = [];
-    AddUnique(damage, new(selectedTarget.Id, AbilityDamageMode.NormalAttack));
+    if (attacker.Type != nameof(PieceType.Hwacha))
+    {
+      AddUnique(damage, new(selectedTarget.Id, AbilityDamageMode.NormalAttack));
+    }
 
     switch (attacker.Type)
     {
@@ -64,7 +67,6 @@ public static class AbilityAttackRules
         break;
 
       case nameof(PieceType.Wizard):
-      case nameof(PieceType.Hwacha):
         AddSquareAreaNormalDamage(
           damage,
           selectedTarget,
@@ -73,6 +75,10 @@ public static class AbilityAttackRules
           includeSelectedTarget: false,
           enemiesOnly: false
         );
+        break;
+
+      case nameof(PieceType.Hwacha):
+        AddDirectlyAdjacentNormalDamage(damage, selectedTarget, units, attacker.Id);
         break;
 
       case nameof(PieceType.Dragon):
@@ -190,6 +196,33 @@ public static class AbilityAttackRules
         candidateRule,
         (candidate.X, candidate.Y),
         1))
+      {
+        AddUnique(damage, new(candidate.Id, AbilityDamageMode.NormalAttack));
+      }
+    }
+  }
+
+  private static void AddDirectlyAdjacentNormalDamage(
+    List<AbilityDamageInstruction> damage,
+    AbilityUnitSnapshot centre,
+    IReadOnlyList<AbilityUnitSnapshot> units,
+    string attackerId
+  )
+  {
+    UnitRule centreRule = UnitRules.GetRequired(centre.Type);
+    foreach (AbilityUnitSnapshot candidate in units)
+    {
+      if (candidate.Id == attackerId || candidate.Id == centre.Id ||
+          !UnitRules.TryGet(candidate.Type, out UnitRule candidateRule))
+      {
+        continue;
+      }
+
+      if (AbilityRules.AreDirectlyAdjacent(
+        centreRule,
+        (centre.X, centre.Y),
+        candidateRule,
+        (candidate.X, candidate.Y)))
       {
         AddUnique(damage, new(candidate.Id, AbilityDamageMode.NormalAttack));
       }
