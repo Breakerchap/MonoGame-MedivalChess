@@ -76,7 +76,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.hermes` | Verified | Two moves per owner turn are enforced in local, server, and CPU state; CPU regression coverage verifies the two-move limit. |
 | `greek.artemis` | Verified | Local/server/CPU attacks use the shared LOS and damage hooks: forests do not block Artemis and forest targets take +10 damage. Both behaviours have regression coverage. |
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
-| `greek.ballista` | Partial | Piercing attacks are wired in local/server/CPU; server/local rays now stop at forests, barricades, and attack-blocking ability entities. CPU ability-entity blocker parity and dedicated regression coverage remain. |
+| `greek.ballista` | Partial | Piercing attacks are wired in local/server/CPU and all three rays stop at forests, barricades, and attack-blocking ability entities. Dedicated regression coverage remains before verification. |
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
@@ -106,7 +106,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.pickpocket` | Partial | Attacks now steal up to 20 gold from the attacked enemy team's current money in local/server/CPU before damage resolution; consolidated runtime regression coverage remains before verification. |
+| `wild_west.pickpocket` | Partial | Theft is wired in local/server/CPU, and shared/CPU attack legality now permits its codex-required zero-damage normal attack. Server/local zero-damage attack gates and runtime regression coverage remain. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.cactus_jack` | Partial | Half-damage reflection is now wired in local/server/CPU without recursive reflection; consolidated runtime regression coverage remains before verification. |
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
