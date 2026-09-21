@@ -112,22 +112,39 @@ public static partial class CpuGameRules
   {
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
-    int unmitigated = CombatRules.CalculateDamage(
-      UnitRules.GetRequired(attacker.Type).Attack,
-      HasAdjacentUnit(state, state.Pieces, attacker, attacker.Team, "Baron"),
+    int unmitigated = UnitRules.GetRequired(attacker.Type).Attack;
+    bool selectedAttacker = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    unmitigated = AdvancedAbilityRules.ApplyBaronOutgoingBonus(unmitigated, selectedAttacker);
+    unmitigated = CombatRules.CalculateDamage(
+      unmitigated,
+      false,
       state.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
       false,
       false,
       0
     );
-    return CombatRules.CalculateDamage(
+    int damage = CombatRules.CalculateDamage(
       unmitigated,
       false,
       false,
-      HasAdjacentUnit(state, state.Pieces, damaged, damaged.Team, "Baron"),
+      false,
       IsInForest(state, damaged),
       state.Terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      damaged.Id,
+      damaged.Team);
+    return AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
   }
 
   internal static bool CanUseActionSquare(NetworkPiece actor, int targetX, int targetY)
@@ -722,15 +739,26 @@ public static partial class CpuGameRules
     }
   }
 
-  private static int GetAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target) =>
-    CombatRules.CalculateDamage(
-      UnitRules.GetRequired(attacker.Type).Attack,
-      HasAdjacentUnit(state, attacker, attacker.Team, "Baron"),
+  private static int GetAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
+  {
+    int damage = UnitRules.GetRequired(attacker.Type).Attack;
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
+    return CombatRules.CalculateDamage(
+      damage,
+      false,
       state.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
       false,
       false,
       0
     );
+  }
 
   private static bool HasAdjacentUnit(CpuMutableGameState state, NetworkPiece piece, NetworkTeam team, string type) =>
     UnitRules.TryGet(piece.Type, out UnitRule pieceRule) && state.Pieces.Any(candidate => candidate.Id != piece.Id &&
