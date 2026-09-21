@@ -652,7 +652,11 @@ internal sealed partial class Game1 : Game
             bool canSendOnlineAttack =
               (hostilePieceAtTarget is not null ||
                _barricades.ContainsKey(targetPosition)) &&
-              !selectedPiece.HasAttackedThisTurn &&
+              AdvancedAbilityRules.CanAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                selectedPiece.HasAttackedThisTurn,
+                hostilePieceAtTarget?.NetworkId) &&
               selectedPiece.Definition.Attack > 0 &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition);
@@ -683,7 +687,11 @@ internal sealed partial class Game1 : Game
 
             bool isValidAttack =
               isBoardCell &&
-              !selectedPiece.HasAttackedThisTurn &&
+              AdvancedAbilityRules.CanAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                selectedPiece.HasAttackedThisTurn,
+                hostilePieceAtTarget?.NetworkId) &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
               selectedPiece.Definition.Attack > 0 &&
@@ -706,6 +714,10 @@ internal sealed partial class Game1 : Game
               }
 
               selectedPiece.HasAttackedThisTurn = true;
+              selectedPiece.AbilityState = AdvancedAbilityRules.RecordAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                hostilePieceAtTarget?.NetworkId);
               selectedPiece.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
                 selectedPiece.Definition.Type.ToString(), selectedPiece.HasMovedThisTurn);
 
@@ -3080,7 +3092,7 @@ internal sealed partial class Game1 : Game
 
   private static bool CanMoveThisTurn(Piece piece) =>
     (piece.AttachedTo is null || piece.AttachmentKind != AttachmentKind.Carried || piece.Definition.Type == PieceType.Ox) &&
-    (!piece.HasMovedThisTurn ||
+    (AdvancedAbilityRules.CanMove(piece.Definition.Type.ToString(), piece.AbilityState, piece.HasMovedThisTurn) ||
       AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable));
 
   private bool TryGetMovementPathAt(
