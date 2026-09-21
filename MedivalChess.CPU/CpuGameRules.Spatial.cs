@@ -70,9 +70,7 @@ public static partial class CpuGameRules
       destination.x,
       destination.y,
       piece.Id,
-      AbilityRules.IgnoresImpassableTerrain(rule) ||
-        (mayUsePalaceSupport && IsPalaceAssistedMovement(
-          pieces, piece, rule, (piece.X, piece.Y), destination)),
+      AbilityRules.IgnoresImpassableTerrain(rule),
       AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
     ))
     {
@@ -133,8 +131,7 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-          IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
             (!ignoresTerrain && state.Terrain.IsLake(square)) ||
             (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)) ||
@@ -194,7 +191,7 @@ public static partial class CpuGameRules
     (int x, int y) to
   )
   {
-    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(pieces, piece, rule, from, to))
+    if (AbilityRules.IgnoresRivers(rule))
     {
       return false;
     }
