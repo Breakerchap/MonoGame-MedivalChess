@@ -1426,7 +1426,11 @@ public sealed partial class MatchStore
       bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
         (mayUsePalaceSupport && IsPalaceAssistedMovement(match, piece, rule, (piece.X, piece.Y), destination));
       if ((!ignoresTerrain && match.Terrain.IsLake(square)) ||
-          (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square))) return false;
+          (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
+            (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule)))) return false;
     }
 
     HashSet<string> ignoredPieces = match.Pieces
@@ -1474,7 +1478,11 @@ public sealed partial class MatchStore
           IsPalaceAssistedMovement(match, piece, rule, from, destination);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
             (!ignoresTerrain && match.Terrain.IsLake(square)) ||
-            (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square))) return false;
+            (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
+            match.AbilityEntities.Any(entity =>
+              entity.X == square.x && entity.Y == square.y &&
+              AbilityEntityRules.BlocksMovementFor(entity, piece.Team) &&
+              !AbilityRules.IgnoresStructures(rule))) return false;
 
         NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
@@ -1560,7 +1568,10 @@ public sealed partial class MatchStore
       OccupiedSquares(attackerRule, (attacker.X, attacker.Y)),
       targetPosition,
       match.Terrain.IsForest,
-      match.Barricades.ContainsKey,
+      square => match.Barricades.ContainsKey(square) ||
+        match.AbilityEntities.Any(entity =>
+          entity.X == square.x && entity.Y == square.y &&
+          AbilityEntityRules.BlocksAttackFor(entity, attacker.Team)),
       square => match.Pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null && other.Type != "Farm" &&
         !((attacker.Type is "Sorceress" or "Sorceress") && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
