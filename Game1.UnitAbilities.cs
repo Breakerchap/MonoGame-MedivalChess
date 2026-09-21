@@ -95,7 +95,8 @@ internal sealed partial class Game1
         instruction.DirectionX,
         instruction.DirectionY,
         instruction.MaximumDistance,
-        candidate => CanDisplaceLocalPieceTo(moving, candidate));
+        candidate => CanDisplaceLocalPieceTo(moving, candidate),
+        instruction.RequireFullDistance);
       if (destination == start) continue;
 
       moving.Position = destination;
