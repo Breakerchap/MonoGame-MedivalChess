@@ -346,6 +346,16 @@ public static partial class CpuGameRules
       nameof(PieceType.Harvester) => string.Equals(action.Ability, "Harvest", StringComparison.OrdinalIgnoreCase) &&
         target is null && (state.Terrain.IsForest((action.TargetX, action.TargetY)) ||
           state.Terrain.IsLake((action.TargetX, action.TargetY))),
+      nameof(PieceType.Witch) => string.Equals(action.Ability, "PoisonCloud", StringComparison.OrdinalIgnoreCase) &&
+        !actor.HasAttackedThisTurn,
+      nameof(PieceType.Druid) => string.Equals(action.Ability, "Bramble", StringComparison.OrdinalIgnoreCase) &&
+        !actor.HasAttackedThisTurn && target is null &&
+        Math.Max(Math.Abs(action.TargetX - actor.X), Math.Abs(action.TargetY - actor.Y)) == 1 &&
+        CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Bramble, actor.Team, action.TargetX, action.TargetY),
+      nameof(PieceType.Phoenix) => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.Health > AdvancedAbilityRules.PhoenixFireHealthCost && target is null &&
+        CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Fire, actor.Team, action.TargetX, action.TargetY),
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
       "Guard" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
@@ -424,6 +434,7 @@ public static partial class CpuGameRules
 
   private static void RemovePiece(CpuMutableGameState state, string pieceId)
   {
+    RemoveSourceBoundAbilityEntities(state, pieceId);
     foreach (int index in Enumerable.Range(0, state.Pieces.Count).Reverse())
     {
       NetworkPiece piece = state.Pieces[index];
