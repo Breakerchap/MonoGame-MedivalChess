@@ -125,7 +125,7 @@ public static class AbilityRules
   }
 
   public static int MaximumAttacksPerTurn(string unitType) =>
-    unitType == nameof(PieceType.Ninja) ? NinjaAttacksPerTurn :
+    unitType is nameof(PieceType.Ninja) or nameof(PieceType.Seraph) ? NinjaAttacksPerTurn :
     unitType == nameof(PieceType.Sherrif) ? 2 : 1;
 
   public static int GetBaseAttack(UnitRule attacker, int currentHealth) =>
