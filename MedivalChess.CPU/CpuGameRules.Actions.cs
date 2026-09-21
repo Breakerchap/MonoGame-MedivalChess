@@ -233,7 +233,8 @@ public static partial class CpuGameRules
         instruction.DirectionX,
         instruction.DirectionY,
         instruction.MaximumDistance,
-        candidate => CanDisplaceCpuPieceTo(state, moving, rule, candidate));
+        candidate => CanDisplaceCpuPieceTo(state, moving, rule, candidate),
+        instruction.RequireFullDistance);
       if (destination == start) continue;
 
       NetworkPiece displaced = moving with { X = destination.x, Y = destination.y };
