@@ -121,6 +121,8 @@ public sealed partial class MatchStore
       ResolvePieceDamage(match, attacker, attackingPlayer, instruction.TargetId, damageOverride);
     }
 
+    ApplySharedServerDisplacements(match, plan);
+
     if (plan.HealAttacker > 0 && UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
     {
       int liveAttackerIndex = match.Pieces.FindIndex(piece => piece.Id == attacker.Id);
@@ -144,6 +146,75 @@ public sealed partial class MatchStore
         HandlePieceDestroyed(match, liveAttacker, attackingPlayer);
       }
     }
+  }
+
+  private static void ApplySharedServerDisplacements(Match match, AbilityAttackPlan plan)
+  {
+    foreach (AbilityDisplacementInstruction instruction in plan.Displacements ?? Array.Empty<AbilityDisplacementInstruction>())
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == instruction.UnitId);
+      if (index < 0) continue;
+      NetworkPiece moving = match.Pieces[index];
+      if (moving.AttachedToId is not null || !DisplacementRules.CanBePushed(moving.Type) ||
+          !UnitRules.TryGet(moving.Type, out UnitRule rule))
+      {
+        continue;
+      }
+
+      (int x, int y) start = (moving.X, moving.Y);
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPositionAwayFrom(
+        (instruction.AwayFromX, instruction.AwayFromY),
+        start,
+        instruction.MaximumDistance,
+        candidate => CanDisplaceServerPieceTo(match, moving, rule, candidate));
+      if (destination == start) continue;
+
+      NetworkPiece displaced = moving with { X = destination.x, Y = destination.y };
+      match.Pieces[index] = displaced;
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == moving.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with { X = destination.x, Y = destination.y };
+        }
+      }
+    }
+  }
+
+  private static bool CanDisplaceServerPieceTo(
+    Match match,
+    NetworkPiece moving,
+    UnitRule rule,
+    (int x, int y) destination)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+      match.Configuration, destination.x, destination.y, rule.Width, rule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team)))
+      {
+        return false;
+      }
+    }
+
+    HashSet<string> ignored = match.Pieces
+      .Where(piece => piece.Id == moving.Id || piece.AttachedToId == moving.Id)
+      .Select(piece => piece.Id)
+      .ToHashSet(StringComparer.Ordinal);
+    return !match.Pieces.Any(piece =>
+      !ignored.Contains(piece.Id) && piece.AttachedToId is null && piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
   }
 
   /// <summary>Returns true when a lethal hit was consumed by a revive/transform ability.</summary>
