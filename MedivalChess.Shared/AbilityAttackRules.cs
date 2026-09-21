@@ -22,10 +22,18 @@ public readonly record struct AbilityDamageInstruction(
   int FixedDamage = 0
 );
 
+public readonly record struct AbilityDisplacementInstruction(
+  string UnitId,
+  int AwayFromX,
+  int AwayFromY,
+  int MaximumDistance
+);
+
 public sealed record AbilityAttackPlan(
   IReadOnlyList<AbilityDamageInstruction> Damage,
   bool SelfDestructAfterAttack = false,
-  int HealAttacker = 0
+  int HealAttacker = 0,
+  IReadOnlyList<AbilityDisplacementInstruction>? Displacements = null
 );
 
 /// <summary>
@@ -92,10 +100,26 @@ public static class AbilityAttackRules
         break;
     }
 
+    List<AbilityDisplacementInstruction> displacements = [];
+    if (attacker.Type is nameof(PieceType.Sumo) or nameof(PieceType.Atlas))
+    {
+      displacements.Add(new(selectedTarget.Id, attacker.X, attacker.Y, 2));
+    }
+    if (attacker.Type == nameof(PieceType.Musketeer))
+    {
+      displacements.Add(new(attacker.Id, selectedTarget.X, selectedTarget.Y, 2));
+    }
+    if (selectedTarget.Type == nameof(PieceType.Beelzebub) &&
+        DisplacementRules.CanBePushed(attacker.Type))
+    {
+      displacements.Add(new(attacker.Id, selectedTarget.X, selectedTarget.Y, 2));
+    }
+
     return new AbilityAttackPlan(
       damage,
       SelfDestructAfterAttack: attacker.Type is nameof(PieceType.Terrorist) or nameof(PieceType.Wisp),
-      HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0
+      HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0,
+      Displacements: displacements
     );
   }
 
