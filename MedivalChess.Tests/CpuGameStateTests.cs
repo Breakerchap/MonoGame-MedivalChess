@@ -702,6 +702,44 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void BeelzebubRetaliatesByPushingItsAttackerUsingFootprintCentre()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("beelzebub", nameof(PieceType.Beelzebub), NetworkTeam.Blue, 0, -3, 120)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "beelzebub", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece attacker = result.Pieces.Single(piece => piece.Id == "attacker");
+    Assert.Equal((-2, 2), (attacker.X, attacker.Y));
+    Assert.False(attacker.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void ZeusChainsThroughDiagonalAndOrthogonalEnemiesButNotFriendlies()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("zeus", nameof(PieceType.Zeus), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190),
+      new NetworkPiece("diagonal", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -3, 30),
+      new NetworkPiece("next", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, -3, 30),
+      new NetworkPiece("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -2, 30)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "zeus", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(160, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Equal(10, result.Pieces.Single(piece => piece.Id == "diagonal").Health);
+    Assert.Equal(10, result.Pieces.Single(piece => piece.Id == "next").Health);
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "friendly").Health);
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
