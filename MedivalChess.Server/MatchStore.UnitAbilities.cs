@@ -58,6 +58,7 @@ public sealed partial class MatchStore
     Match match,
     int attackerIndex,
     (int x, int y) targetPosition,
+    string? targetId,
     out NetworkPiece attacker,
     out bool mayFire
   )
@@ -73,7 +74,8 @@ public sealed partial class MatchStore
       HasAttackedThisTurn = attackState.HasAttackedThisTurn,
       CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
         attacker.Type,
-        attacker.HasMovedThisTurn)
+        attacker.HasMovedThisTurn),
+      AbilityState = AdvancedAbilityRules.RecordAttack(attacker.Type, attacker.AbilityState, targetId)
     };
 
     mayFire = true;
