@@ -70,7 +70,9 @@ public static partial class CpuGameRules
       destination.x,
       destination.y,
       piece.Id,
-      AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
+      AbilityRules.IgnoresImpassableTerrain(rule) ||
+        (mayUsePalaceSupport && IsPalaceAssistedMovement(
+          pieces, piece, rule, (piece.X, piece.Y), destination)),
       AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
     ))
     {
