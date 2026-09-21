@@ -2368,6 +2368,8 @@ internal sealed partial class Game1 : Game
     bool isSpecialTarget = plunderTreasureTarget || actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
+      PieceType.Harvester => target is null && Actions.CanAttackSquare(actor, targetPosition) &&
+        (_terrain.IsForest(targetPosition) || _terrain.IsLake(targetPosition)),
       PieceType.Engineer => true,
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
       PieceType.Phantom => !string.IsNullOrEmpty(actor.PossessedUnitId)
@@ -2386,6 +2388,8 @@ internal sealed partial class Game1 : Game
       ? carriedUnit is null ? "Carry" : "Throw"
       : plunderTreasureTarget
       ? "PickUpTreasure"
+      : actor.Definition.Type == PieceType.Harvester
+      ? "Harvest"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
       : actor.Definition.Type == PieceType.Mercenary
@@ -3848,6 +3852,18 @@ internal sealed partial class Game1 : Game
     if (AbilityRules.IsCarryThrowUnit(actor.Definition.Type.ToString()))
     {
       return TryUseGiantOrCyclopsAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Harvester &&
+        targetPiece is null &&
+        Actions.CanAttackSquare(actor, targetPosition) &&
+        _terrain.DestroyTile(targetPosition))
+    {
+      Team harvestingTeam = _teams.Find(team => team.TeamName == actor.Team);
+      harvestingTeam.Money = ClampCurrency((long)harvestingTeam.Money + AdvancedAbilityRules.HarvesterGold);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Spy &&
