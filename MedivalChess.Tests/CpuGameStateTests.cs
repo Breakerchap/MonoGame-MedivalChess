@@ -1435,6 +1435,102 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void MuseCanAttachWithoutNormalAttackRange()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("muse", nameof(PieceType.Muse), NetworkTeam.Red, 0, 0, 20),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -3, 30)
+    );
+    UseAbilityAction attach = new(NetworkTeam.Red, "muse", "Attach", "host", 0, -3);
+
+    Assert.True(attach.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action =>
+      action is UseAbilityAction { ActorId: "muse", Ability: "Attach", TargetPieceId: "host" });
+
+    CpuGameState result = attach.Apply(state);
+    NetworkPiece muse = result.Pieces.Single(piece => piece.Id == "muse");
+    Assert.Equal("host", muse.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Muse, muse.AttachmentKind);
+    Assert.True(muse.HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void ShieldsmanTakesIncomingDamageForItsHost()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece(
+          "shield", nameof(PieceType.Shieldsman), NetworkTeam.Red, 0, 0, 55,
+          AttachedToId: "host", AttachmentKind: NetworkAttachmentKind.Shieldsman),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Blue, "attacker", "host", 0, 0);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "host").Health);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "shield").Health < 55);
+  }
+
+  [Fact]
+  public void ImpBoostsHostAttackAndDrainsHealthAtOwnerTurnStart()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("imp", nameof(PieceType.Imp), NetworkTeam.Red, 0, 0, 5),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 30),
+      new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+    );
+    NetworkPiece hostBefore = state.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyBefore = state.Pieces.Single(piece => piece.Id == "enemy");
+    int damageBefore = CpuGameRules.EstimateAttackDamage(state, hostBefore, enemyBefore);
+
+    UseAbilityAction attach = new(NetworkTeam.Red, "imp", "Attach", "host", 0, -1);
+    Assert.True(attach.IsLegal(state));
+    CpuGameState attached = attach.Apply(state);
+
+    NetworkPiece hostAfter = attached.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyAfter = attached.Pieces.Single(piece => piece.Id == "enemy");
+    Assert.Equal(damageBefore + AdvancedAbilityRules.ImpAttackBonus,
+      CpuGameRules.EstimateAttackDamage(attached, hostAfter, enemyAfter));
+    NetworkPiece impAfter = attached.Pieces.Single(piece => piece.Id == "imp");
+    Assert.Equal("host", impAfter.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Imp, impAfter.AttachmentKind);
+
+    CpuGameState beforeRedTurn = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece(
+          "imp", nameof(PieceType.Imp), NetworkTeam.Red, 0, 0, 5,
+          AttachedToId: "host", AttachmentKind: NetworkAttachmentKind.Imp),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    EndTurnAction endBlueTurn = new(NetworkTeam.Blue);
+    Assert.True(endBlueTurn.IsLegal(beforeRedTurn));
+    CpuGameState redTurn = endBlueTurn.Apply(beforeRedTurn);
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    Assert.Equal(25, redTurn.Pieces.Single(piece => piece.Id == "host").Health);
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
