@@ -29,7 +29,8 @@ public static class DisplacementRules
     int directionX,
     int directionY,
     int maximumDistance,
-    Func<(int x, int y), bool> isLegal
+    Func<(int x, int y), bool> isLegal,
+    bool requireFullDistance = false
   )
   {
     ArgumentNullException.ThrowIfNull(isLegal);
@@ -54,6 +55,12 @@ public static class DisplacementRules
         break;
       }
       result = candidate;
+    }
+
+    if (requireFullDistance)
+    {
+      var required = (x: start.x + stepX * maximumDistance, y: start.y + stepY * maximumDistance);
+      return result == required ? result : start;
     }
 
     return result;
