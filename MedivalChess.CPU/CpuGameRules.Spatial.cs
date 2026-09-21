@@ -34,6 +34,7 @@ public static partial class CpuGameRules
 
   private static UnitRule GetEffectiveMovementRule(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule)
   {
+    rule = ApplyCpuAttachmentBonuses(pieces, piece, rule);
     NetworkPiece? oxAttachment = pieces.FirstOrDefault(other =>
       other.AttachedToId == piece.Id && other.Type == nameof(PieceType.Ox));
     if (oxAttachment is not null)
