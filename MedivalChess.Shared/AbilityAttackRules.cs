@@ -24,8 +24,8 @@ public readonly record struct AbilityDamageInstruction(
 
 public readonly record struct AbilityDisplacementInstruction(
   string UnitId,
-  int AwayFromX,
-  int AwayFromY,
+  int DirectionX,
+  int DirectionY,
   int MaximumDistance
 );
 
@@ -103,16 +103,19 @@ public static class AbilityAttackRules
     List<AbilityDisplacementInstruction> displacements = [];
     if (attacker.Type is nameof(PieceType.Sumo) or nameof(PieceType.Atlas))
     {
-      displacements.Add(new(selectedTarget.Id, attacker.X, attacker.Y, 2));
+      (int x, int y) direction = DirectionAwayFrom(attacker, selectedTarget);
+      displacements.Add(new(selectedTarget.Id, direction.x, direction.y, 2));
     }
     if (attacker.Type == nameof(PieceType.Musketeer))
     {
-      displacements.Add(new(attacker.Id, selectedTarget.X, selectedTarget.Y, 2));
+      (int x, int y) direction = DirectionAwayFrom(selectedTarget, attacker);
+      displacements.Add(new(attacker.Id, direction.x, direction.y, 2));
     }
     if (selectedTarget.Type == nameof(PieceType.Beelzebub) &&
         DisplacementRules.CanBePushed(attacker.Type))
     {
-      displacements.Add(new(attacker.Id, selectedTarget.X, selectedTarget.Y, 2));
+      (int x, int y) direction = DirectionAwayFrom(selectedTarget, attacker);
+      displacements.Add(new(attacker.Id, direction.x, direction.y, 2));
     }
 
     return new AbilityAttackPlan(
@@ -121,6 +124,19 @@ public static class AbilityAttackRules
       HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0,
       Displacements: displacements
     );
+  }
+
+  private static (int x, int y) DirectionAwayFrom(
+    AbilityUnitSnapshot source,
+    AbilityUnitSnapshot moving)
+  {
+    int sourceCentreX2 = source.X * 2 + source.Width - 1;
+    int sourceCentreY2 = source.Y * 2 + source.Height - 1;
+    int movingCentreX2 = moving.X * 2 + moving.Width - 1;
+    int movingCentreY2 = moving.Y * 2 + moving.Height - 1;
+    return (
+      Math.Sign(movingCentreX2 - sourceCentreX2),
+      Math.Sign(movingCentreY2 - sourceCentreY2));
   }
 
   /// <summary>Returns the Terrorist's death explosion. It damages every unit in its attack range.</summary>
