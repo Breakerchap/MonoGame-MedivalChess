@@ -29,7 +29,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.war_drum` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
-| `dynasty.hwacha` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `dynasty.hwacha` | Partial | Shared attack targeting now correctly hits the selected target plus only directly-adjacent splash units, with regression coverage. Reload/reload-assist runtime flow remains. |
 | `dynasty.harvester` | Partial | Harvest now executes in server, CPU, offline local, and online client flows, destroying in-range terrain and granting 15 gold; end-to-end regression coverage remains before verification. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
@@ -78,7 +78,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ballista` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.zeus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.zeus` | Partial | Shared chaining now follows the codex Adjacent definition (all eight surrounding squares), excludes friendlies, and has regression coverage; end-to-end runtime confirmation remains before verification. |
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
