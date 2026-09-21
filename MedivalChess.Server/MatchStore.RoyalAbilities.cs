@@ -33,7 +33,15 @@ public sealed partial class MatchStore
       }
 
       PhantomPossessionState state = RoyalAbilityRules.Unpossess();
-      match.Pieces[actorIndex] = phantom with { PossessedUnitId = state.PhantomPossessedUnitId };
+      match.Pieces[actorIndex] = phantom with
+      {
+        PossessedUnitId = state.PhantomPossessedUnitId,
+        AbilityState = phantom.AbilityState with
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      };
       return true;
     }
 
