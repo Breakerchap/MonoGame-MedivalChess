@@ -3154,7 +3154,12 @@ internal sealed partial class Game1 : Game
       (mayUsePalaceSupport && IsPalaceAssistedMovement(piece, piece.Position, destination));
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
         (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
-        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
+        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)) ||
+        OccupiedSquares(piece.Definition, destination).Any(square =>
+          _abilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team.ToNetworkTeam()) &&
+            (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule)))))
     {
       return false;
     }
@@ -3180,6 +3185,10 @@ internal sealed partial class Game1 : Game
           IsPalaceAssistedMovement(piece, from, destination);
         if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) ||
             (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(occupiedSquare)) ||
+            _abilityEntities.Any(entity =>
+              entity.X == occupiedSquare.x && entity.Y == occupiedSquare.y &&
+              AbilityEntityRules.BlocksMovementFor(entity, piece.Team.ToNetworkTeam()) &&
+              !AbilityRules.IgnoresStructures(rule)) ||
             !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
@@ -4553,7 +4562,10 @@ internal sealed partial class Game1 : Game
       attacker.OccupiedSquares(),
       targetPosition,
       _terrain.IsForest,
-      _barricades.ContainsKey,
+      square => _barricades.ContainsKey(square) ||
+        _abilityEntities.Any(entity =>
+          entity.X == square.x && entity.Y == square.y &&
+          AbilityEntityRules.BlocksAttackFor(entity, attacker.Team.ToNetworkTeam())),
       square =>
       {
         Piece blockingPiece = pieceSetup.GetPieceAt(square);
