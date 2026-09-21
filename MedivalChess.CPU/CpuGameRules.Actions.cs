@@ -69,6 +69,7 @@ public static partial class CpuGameRules
     MoveAttachedPieces(state, piece);
     MoveHeraldCompanions(state, piece, oldX, oldY);
     TriggerSharedMinesAlongMovement(state, piece, actualPath);
+    TriggerAbilityEntitiesAlongMovement(state, piece.Id, actualPath);
 
     NetworkPiece? moved = FindPiece(state.Pieces, piece.Id);
     if (moved is not null)
@@ -310,6 +311,27 @@ public static partial class CpuGameRules
           state.Terrain.DestroyTile((action.TargetX, action.TargetY));
           AddMoney(state, action.Team, AdvancedAbilityRules.HarvesterGold);
           state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          break;
+        case nameof(PieceType.Witch):
+          state.AbilityEntities.RemoveAll(entity =>
+            entity.Kind == AbilityEntityKind.PoisonCloud && entity.SourcePieceId == actor.Id);
+          state.AbilityEntities.Add(CreateCpuAbilityEntity(
+            state, AbilityEntityKind.PoisonCloud, actor.Team, action.TargetX, action.TargetY, actor.Id));
+          state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          break;
+        case nameof(PieceType.Druid):
+          state.AbilityEntities.Add(CreateCpuAbilityEntity(
+            state, AbilityEntityKind.Bramble, actor.Team, action.TargetX, action.TargetY, actor.Id));
+          state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          break;
+        case nameof(PieceType.Phoenix):
+          state.AbilityEntities.Add(CreateCpuAbilityEntity(
+            state, AbilityEntityKind.Fire, actor.Team, action.TargetX, action.TargetY, actor.Id));
+          state.Pieces[actorIndex] = actor with
+          {
+            Health = actor.Health - AdvancedAbilityRules.PhoenixFireHealthCost,
+            AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState)
+          };
           break;
         case nameof(PieceType.Engineer):
           ApplyEngineerAbility(state, actorIndex, action);
