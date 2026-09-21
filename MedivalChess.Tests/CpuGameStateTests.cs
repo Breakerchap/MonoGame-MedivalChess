@@ -630,6 +630,77 @@ public sealed class CpuGameStateTests
     Assert.False(harvest.IsLegal(simulated));
   }
 
+
+  [Fact]
+  public void SumoPushesTwoTilesAndShortensBeforeALake()
+  {
+    CpuGameState clear = CreateState(
+      new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "sumo", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(clear));
+    CpuGameState fullPush = attack.Apply(clear);
+    NetworkPiece fullyPushed = fullPush.Pieces.Single(piece => piece.Id == "target");
+    Assert.Equal((0, -3), (fullyPushed.X, fullyPushed.Y));
+    Assert.False(fullyPushed.HasMovedThisTurn);
+
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState blocked = new(
+      configuration,
+      [
+        new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+        new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(lakes: [(0, -3)])
+    );
+
+    Assert.True(attack.IsLegal(blocked));
+    CpuGameState shortPush = attack.Apply(blocked);
+    NetworkPiece partlyPushed = shortPush.Pieces.Single(piece => piece.Id == "target");
+    Assert.Equal((0, -2), (partlyPushed.X, partlyPushed.Y));
+    Assert.False(partlyPushed.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void MusketeerRetreatsWithoutSpendingItsMove()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("musketeer", nameof(PieceType.Musketeer), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "musketeer", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece musketeer = result.Pieces.Single(piece => piece.Id == "musketeer");
+    Assert.Equal((0, 2), (musketeer.X, musketeer.Y));
+    Assert.False(musketeer.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void BeelzebubCannotBePushedBySumo()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("beelzebub", nameof(PieceType.Beelzebub), NetworkTeam.Blue, 0, -3, 120)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "sumo", "beelzebub", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece beelzebub = result.Pieces.Single(piece => piece.Id == "beelzebub");
+    Assert.Equal((0, -3), (beelzebub.X, beelzebub.Y));
+  }
+
   [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
