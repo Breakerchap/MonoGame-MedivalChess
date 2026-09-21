@@ -767,6 +767,106 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void PhantomPossessionMovesRoyalIdentityAndUnpossessLocksThePhantom()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 30),
+      new NetworkPiece("enemy-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+    );
+    UseAbilityAction possess = new(NetworkTeam.Red, "phantom", "Possess", "host", 0, -1);
+
+    Assert.True(possess.IsLegal(state));
+    state = possess.Apply(state);
+
+    NetworkPiece possessedPhantom = state.Pieces.Single(piece => piece.Id == "phantom");
+    NetworkPiece host = state.Pieces.Single(piece => piece.Id == "host");
+    Assert.Equal("host", possessedPhantom.PossessedUnitId);
+    Assert.True(host.IsRoyalProxy);
+    Assert.False(RoyalAbilityRules.IsRoyal(
+      possessedPhantom.Type, possessedPhantom.IsRoyalProxy, possessedPhantom.PossessedUnitId));
+    Assert.True(RoyalAbilityRules.IsRoyal(host.Type, host.IsRoyalProxy, host.PossessedUnitId));
+
+    UseAbilityAction unpossess = new(NetworkTeam.Red, "phantom", "Unpossess", "host", 0, -1);
+    Assert.True(unpossess.IsLegal(state));
+    state = unpossess.Apply(state);
+
+    NetworkPiece releasedPhantom = state.Pieces.Single(piece => piece.Id == "phantom");
+    NetworkPiece releasedHost = state.Pieces.Single(piece => piece.Id == "host");
+    Assert.Null(releasedPhantom.PossessedUnitId);
+    Assert.False(releasedHost.IsRoyalProxy);
+    Assert.True(releasedPhantom.AbilityState?.CannotMoveThisTurn);
+    Assert.True(releasedPhantom.AbilityState?.CannotActThisTurn);
+    Assert.False(new MoveAction(NetworkTeam.Red, "phantom", 1, 0).IsLegal(state));
+  }
+
+  [Fact]
+  public void KillingPossessedRoyalProxyAlsoKillsItsPhantom()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece(
+        "phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20,
+        PossessedUnitId: "host"),
+      new NetworkPiece(
+        "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 5,
+        IsRoyalProxy: true),
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -2, 30)
+    );
+
+    state = state with { CurrentTurn = NetworkTeam.Blue };
+    AttackAction attack = new(NetworkTeam.Blue, "attacker", "host", 0, -1);
+    Assert.True(attack.IsLegal(state));
+
+    CpuGameState result = attack.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "host");
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "phantom");
+    Assert.Equal(NetworkTeam.Blue, result.Winner);
+  }
+
+  [Fact]
+  public void GoblinRoyaltyOnlyLosesWhenFinalGoblinDies()
+  {
+    CpuGameState twoGoblinState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("goblin-a", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("goblin-b", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 2, 0, 35),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.GoblinRoyalty)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction firstKill = new(NetworkTeam.Blue, "attacker", "goblin-a", 0, 0);
+    Assert.True(firstKill.IsLegal(twoGoblinState));
+    CpuGameState afterFirst = firstKill.Apply(twoGoblinState);
+    Assert.Null(afterFirst.Winner);
+    Assert.Contains(afterFirst.Pieces, piece => piece.Id == "goblin-b");
+
+    CpuGameState finalGoblinState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("goblin", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.GoblinRoyalty)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction finalKill = new(NetworkTeam.Blue, "attacker", "goblin", 0, 0);
+    Assert.True(finalKill.IsLegal(finalGoblinState));
+    CpuGameState afterFinal = finalKill.Apply(finalGoblinState);
+    Assert.Equal(NetworkTeam.Blue, afterFinal.Winner);
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
