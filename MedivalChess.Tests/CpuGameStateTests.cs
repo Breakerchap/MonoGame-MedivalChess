@@ -624,8 +624,8 @@ public sealed class CpuGameStateTests
 
     Assert.True(original.Terrain.IsForest((0, -1)));
     Assert.False(simulated.Terrain.IsForest((0, -1)));
-    Assert.Equal(200, original.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
-    Assert.Equal(215, simulated.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Equal(200, original.Teams[NetworkTeam.Red].Money);
+    Assert.Equal(215, simulated.Teams[NetworkTeam.Red].Money);
     Assert.True(simulated.Pieces.Single(piece => piece.Id == "harvester").HasAttackedThisTurn);
     Assert.False(harvest.IsLegal(simulated));
   }
