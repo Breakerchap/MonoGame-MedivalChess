@@ -2415,7 +2415,7 @@ internal sealed partial class Game1 : Game
         CanPlaceLocalAbilityEntity(targetPosition),
       PieceType.Engineer => true,
       PieceType.Muse => target is not null && target.Team == actor.Team && target != actor &&
-        target.AttachedTo is null && CanAttackSquareWithAttachments(actor, targetPosition),
+        target.AttachedTo is null,
       PieceType.Shieldsman => target is not null && target.Team == actor.Team && target != actor &&
         target.AttachedTo is null && target.Definition.Category != PieceCategory.Royal &&
         !pieceSetup.Pieces.Any(candidate =>
@@ -4061,8 +4061,7 @@ internal sealed partial class Game1 : Game
         targetPiece != null &&
         targetPiece.Team == actor.Team &&
         targetPiece != actor &&
-        targetPiece.AttachedTo is null &&
-        CanAttackSquareWithAttachments(actor, targetPosition))
+        targetPiece.AttachedTo is null)
     {
       if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Muse))
       {
