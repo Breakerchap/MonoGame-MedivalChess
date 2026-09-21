@@ -268,6 +268,136 @@ public static class AdvancedAbilityRules
     _ => 0
   };
 
+  public static bool CanUseOncePerOwnerTurn(UnitAbilityState? state) =>
+    CanUseSpecialAbility(state) && !(state?.UsedThisTurn ?? false);
+
+  public static UnitAbilityState RecordOncePerOwnerTurnUse(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { UsedThisTurn = true };
+  }
+
+  public static UnitAbilityState StartCooldown(UnitAbilityState? state, int ownerTurns)
+  {
+    state ??= new();
+    return state with
+    {
+      UsedThisTurn = true,
+      CooldownOwnerTurns = Math.Max(state.CooldownOwnerTurns, Math.Max(0, ownerTurns))
+    };
+  }
+
+  public static UnitAbilityState ReloadHwacha(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { ReloadRequired = false, ReloadedThisTurn = true };
+  }
+
+  public static bool CanReloadHwacha(UnitAbilityState? state) =>
+    CanUseSpecialAbility(state) && (state?.ReloadRequired ?? false) && !(state?.ReloadedThisTurn ?? false);
+
+  public static UnitAbilityState RefreshByWarDrum(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with
+    {
+      MovesThisTurn = 0,
+      RefreshedByWarDrumThisTurn = true,
+      CannotMoveThisTurn = false
+    };
+  }
+
+  public static bool CanBeRefreshedByWarDrum(UnitAbilityState? state, bool hasMoved) =>
+    hasMoved && !(state?.RefreshedByWarDrumThisTurn ?? false) && !(state?.CannotActThisTurn ?? false);
+
+  public static UnitAbilityState SelectTarget(UnitAbilityState? state, string? targetId)
+  {
+    state ??= new();
+    return state with { SelectedTargetId = targetId, UsedThisTurn = true };
+  }
+
+  public static UnitAbilityState SetSettled(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { Settled = true, UsedThisTurn = true };
+  }
+
+  public static UnitAbilityState SetBountyTarget(UnitAbilityState? state, string? targetId)
+  {
+    state ??= new();
+    return state with { BountyTargetId = targetId };
+  }
+
+  public static UnitAbilityState DisableAbilities(UnitAbilityState? state, int ownerTurns)
+  {
+    state ??= new();
+    return state with { DisabledOwnerTurnsRemaining = Math.Max(state.DisabledOwnerTurnsRemaining, ownerTurns) };
+  }
+
+  public static UnitAbilityState ApplyCommandCentreUpgrade(UnitAbilityState? state, string upgrade)
+  {
+    state ??= new();
+    if (state.Upgraded)
+    {
+      return state;
+    }
+
+    return upgrade.ToLowerInvariant() switch
+    {
+      "attack" => state with { Upgraded = true, AttackBonus = state.AttackBonus + CommandCentreAttackBonus },
+      "health" => state with { Upgraded = true, MaxHealthBonus = state.MaxHealthBonus + CommandCentreHealthBonus },
+      "move" => state with { Upgraded = true, MoveBonus = state.MoveBonus + CommandCentreMoveBonus },
+      _ => throw new ArgumentOutOfRangeException(nameof(upgrade), upgrade, "Unknown Command Centre upgrade.")
+    };
+  }
+
+  public static UnitAbilityState SetPetrified(UnitAbilityState? state, string? medusaId)
+  {
+    state ??= new();
+    return state with { PetrifiedById = medusaId };
+  }
+
+  public static UnitAbilityState ProtectWithOdin(UnitAbilityState? state, string odinId)
+  {
+    state ??= new();
+    return state with { OdinProtectedById = odinId, OdinProtectionAvailable = true };
+  }
+
+  public static UnitAbilityState ConsumeOdinProtection(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { OdinProtectionAvailable = false };
+  }
+
+  public static UnitAbilityState AddPendingSelection(
+    UnitAbilityState? state,
+    string ability,
+    AbilitySelection selection
+  )
+  {
+    state ??= new();
+    IReadOnlyList<AbilitySelection> existing = string.Equals(state.PendingAbility, ability, StringComparison.Ordinal)
+      ? state.PendingSelections
+      : Array.Empty<AbilitySelection>();
+    return state with
+    {
+      PendingAbility = ability,
+      PendingSelections = [.. existing, selection]
+    };
+  }
+
+  public static UnitAbilityState ClearPendingSelections(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { PendingAbility = null, PendingSelections = Array.Empty<AbilitySelection>() };
+  }
+
+  public static UnitAbilityState SetLinkedPiece(UnitAbilityState? state, string? pieceId)
+  {
+    state ??= new();
+    return state with { LinkedPieceId = pieceId };
+  }
+
   public static int ReflectCactusDamage(int incomingDamage) => Math.Max(0, incomingDamage / CactusReflectionDivisor);
 
   public static int GetRaiderKillReward(int defeatedBaseCost) =>
