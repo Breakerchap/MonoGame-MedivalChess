@@ -234,6 +234,11 @@ internal sealed class CpuMutableGameState
     Mines = source.Mines.ToDictionary(pair => pair.Key, pair => pair.Value);
     RiverBridges = [.. source.RiverBridges];
     AbilityEntities = [.. source.AbilityEntities];
+    Terrain = new BattlefieldTerrain(
+      source.Terrain.Forests,
+      source.Terrain.Lakes,
+      source.Terrain.Rivers,
+      source.Terrain.ForestDamageReduction);
     CurrentTurn = source.CurrentTurn;
     TurnNumber = source.TurnNumber;
     Winner = source.Winner;
@@ -254,6 +259,7 @@ internal sealed class CpuMutableGameState
   internal Dictionary<(int x, int y), NetworkTeam> Mines { get; }
   internal HashSet<TileEdge> RiverBridges { get; }
   internal List<AbilityEntity> AbilityEntities { get; }
+  internal BattlefieldTerrain Terrain { get; }
   internal NetworkTeam CurrentTurn { get; set; }
   internal int TurnNumber { get; set; }
   internal NetworkTeam? Winner { get; set; }
@@ -275,7 +281,7 @@ internal sealed class CpuMutableGameState
     Teams.Values,
     CurrentTurn,
     TurnNumber,
-    Source.Terrain,
+    Terrain,
     Winner,
     InitialBuy,
     ConquestScore,
