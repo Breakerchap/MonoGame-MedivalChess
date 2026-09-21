@@ -212,6 +212,24 @@ public sealed partial class MatchStore
         }
         return AdvancedSpecialResult.Rejected;
 
+      case nameof(PieceType.Muse):
+        if (!string.Equals(ability, "Attach", StringComparison.OrdinalIgnoreCase) ||
+            actor.HasAttackedThisTurn || target is null || target.Team != actor.Team ||
+            target.Id == actor.Id || target.AttachedToId is not null ||
+            !CanUseActionSquare(actor, target.X, target.Y))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+        match.Pieces[actorIndex] = actor with
+        {
+          AttachedToId = target.Id,
+          AttachmentKind = NetworkAttachmentKind.Muse,
+          X = target.X,
+          Y = target.Y,
+          HasAttackedThisTurn = true
+        };
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.Shieldsman):
         if (!string.Equals(ability, "Attach", StringComparison.OrdinalIgnoreCase) ||
             actor.HasAttackedThisTurn || target is null || target.Team != actor.Team ||
@@ -468,7 +486,7 @@ public sealed partial class MatchStore
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
-    nameof(PieceType.Daedalus) or nameof(PieceType.Shieldsman) or nameof(PieceType.Runesmith) or
+    nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or nameof(PieceType.Shieldsman) or nameof(PieceType.Runesmith) or
     nameof(PieceType.Fafnir) or nameof(PieceType.Odin) or nameof(PieceType.Thor) or
     nameof(PieceType.Demolitionist) or nameof(PieceType.CommandCentre) or nameof(PieceType.Hacker) or
     nameof(PieceType.Mashhit) or nameof(PieceType.Imp) or nameof(PieceType.Gatekeeper);
