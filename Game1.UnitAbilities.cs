@@ -13,6 +13,15 @@ namespace MedivalChess;
 /// </summary>
 internal sealed partial class Game1
 {
+  private UnitRule ApplyLocalAttachmentBonuses(Piece host, UnitRule rule)
+  {
+    bool hasImp = pieceSetup.Pieces.Any(piece =>
+      piece.AttachedTo == host && piece.AttachmentKind == AttachmentKind.Imp);
+    int museCount = pieceSetup.Pieces.Count(piece =>
+      piece.AttachedTo == host && piece.AttachmentKind == AttachmentKind.Muse);
+    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+  }
+
   private AbilityUnitSnapshot SnapshotAbilityUnit(Piece piece) => new(
     piece.NetworkId,
     piece.Definition.Type.ToString(),
@@ -138,7 +147,8 @@ internal sealed partial class Game1
 
   private int GetSharedLocalAttackDamage(Piece attacker, Piece target)
   {
-    UnitRule attackerRule = UnitRules.FromPieceDefinition(attacker.Definition);
+    UnitRule attackerRule = ApplyLocalAttachmentBonuses(
+      attacker, UnitRules.FromPieceDefinition(attacker.Definition));
     UnitRule targetRule = UnitRules.FromPieceDefinition(target.Definition);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.CurrentHealth);
     baseDamage += AbilityRules.GetAttackAbilityBonus(
@@ -169,7 +179,7 @@ internal sealed partial class Game1
 
   private bool CanSharedAttackDamage(Piece attacker, Piece target) =>
     AbilityRules.CanDamageTarget(
-      UnitRules.FromPieceDefinition(attacker.Definition),
+      ApplyLocalAttachmentBonuses(attacker, UnitRules.FromPieceDefinition(attacker.Definition)),
       UnitRules.FromPieceDefinition(target.Definition)
     );
 
@@ -221,6 +231,17 @@ internal sealed partial class Game1
         target.CurrentHealth -= damage;
         HandlePieceDestroyed(target, effect.SourceTeam.ToTeamName());
       }
+    }
+
+    foreach (Piece imp in pieceSetup.Pieces
+      .Where(piece => piece.Team == activeTeam && piece.AttachedTo is not null &&
+        piece.AttachmentKind == AttachmentKind.Imp)
+      .ToArray())
+    {
+      Piece host = imp.AttachedTo;
+      if (host is null || !pieceSetup.Pieces.Contains(host)) continue;
+      host.CurrentHealth -= AdvancedAbilityRules.ImpHealthDrain;
+      HandlePieceDestroyed(host, null);
     }
   }
 
