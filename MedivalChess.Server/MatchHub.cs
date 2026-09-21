@@ -573,7 +573,8 @@ public sealed partial class MatchStore
         return new(false, "Terrain, a barricade, or another unit blocks that attack.", foundMatch.State());
       }
 
-      if (NetworkAttackRules.GetDamage(attacker.Type) <= 0)
+      if (!UnitRules.TryGet(attacker.Type, out UnitRule directAttackRule) ||
+          !AbilityRules.CanMakeNormalAttack(directAttackRule))
       {
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
