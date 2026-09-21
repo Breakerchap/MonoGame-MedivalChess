@@ -11,6 +11,15 @@ public sealed partial class MatchStore
   private static AbilityUnitSnapshot SnapshotAbilityUnit(NetworkPiece piece) =>
     AbilityAttackRules.Snapshot(piece);
 
+  private static UnitRule ApplySharedServerAttachmentBonuses(Match match, NetworkPiece host, UnitRule rule)
+  {
+    bool hasImp = match.Pieces.Any(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
+    int museCount = match.Pieces.Count(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
+    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+  }
+
   private static bool CanSharedServerDamage(NetworkPiece attacker, NetworkPiece target) =>
     UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
     UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
@@ -24,6 +33,7 @@ public sealed partial class MatchStore
       return 0;
     }
 
+    attackerRule = ApplySharedServerAttachmentBonuses(match, attacker, attackerRule);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
     (int x, int y) targetFacing = AbilityStateRules.GetFacing(
       target.Team,
@@ -319,6 +329,31 @@ public sealed partial class MatchStore
         {
           match.Pieces[index] = live with { Health = 0 };
           HandlePieceDestroyed(match, match.Pieces[index], source);
+        }
+      }
+    }
+
+    foreach (NetworkPiece imp in match.Pieces
+      .Where(piece => piece.Team == activeTeam && piece.AttachmentKind == NetworkAttachmentKind.Imp &&
+        piece.AttachedToId is not null)
+      .ToArray())
+    {
+      int hostIndex = match.Pieces.FindIndex(piece => piece.Id == imp.AttachedToId);
+      if (hostIndex < 0) continue;
+      NetworkPiece host = match.Pieces[hostIndex];
+      int remaining = host.Health - AdvancedAbilityRules.ImpHealthDrain;
+      if (remaining > 0)
+      {
+        match.Pieces[hostIndex] = host with { Health = remaining };
+      }
+      else
+      {
+        PlayerSlot? source = match.Players.FirstOrDefault(player => player.Team != host.Team) ??
+          match.Players.FirstOrDefault(player => player.Team == host.Team);
+        match.Pieces[hostIndex] = host with { Health = 0 };
+        if (source is not null)
+        {
+          HandlePieceDestroyed(match, match.Pieces[hostIndex], source);
         }
       }
     }
