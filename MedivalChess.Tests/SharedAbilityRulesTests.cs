@@ -312,4 +312,19 @@ public sealed class SharedAbilityRulesTests
     Assert.Equal(10, AdvancedAbilityRules.ApplyBaronIncomingReduction(20, true));
   }
 
+  [Fact]
+  public void SeraphUsesThreeNormalAttackSlots()
+  {
+    Assert.Equal(3, AbilityRules.MaximumAttacksPerTurn(nameof(PieceType.Seraph)));
+
+    AttackTurnState first = AbilityStateRules.RecordAttack(nameof(PieceType.Seraph), 0);
+    AttackTurnState second = AbilityStateRules.RecordAttack(nameof(PieceType.Seraph), first.AttacksThisTurn);
+    AttackTurnState third = AbilityStateRules.RecordAttack(nameof(PieceType.Seraph), second.AttacksThisTurn);
+
+    Assert.False(first.HasAttackedThisTurn);
+    Assert.False(second.HasAttackedThisTurn);
+    Assert.True(third.HasAttackedThisTurn);
+  }
+
+
 }
