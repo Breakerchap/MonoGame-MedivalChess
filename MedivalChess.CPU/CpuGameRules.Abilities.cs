@@ -97,7 +97,7 @@ public static partial class CpuGameRules
       false,
       false,
       IsInForest(state, damaged),
-      state.Source.Terrain.ForestDamageReduction
+      state.Terrain.ForestDamageReduction
     );
     bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
       state.Pieces.Select(piece => (
@@ -151,7 +151,7 @@ public static partial class CpuGameRules
         false,
         false,
         IsInForest(state, target),
-        state.Source.Terrain.ForestDamageReduction)
+        state.Terrain.ForestDamageReduction)
       : damage;
     if (applyCombatMitigation)
     {
