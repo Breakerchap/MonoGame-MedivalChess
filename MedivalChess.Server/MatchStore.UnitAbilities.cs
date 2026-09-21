@@ -167,7 +167,8 @@ public sealed partial class MatchStore
         instruction.DirectionX,
         instruction.DirectionY,
         instruction.MaximumDistance,
-        candidate => CanDisplaceServerPieceTo(match, moving, rule, candidate));
+        candidate => CanDisplaceServerPieceTo(match, moving, rule, candidate),
+        instruction.RequireFullDistance);
       if (destination == start) continue;
 
       NetworkPiece displaced = moving with { X = destination.x, Y = destination.y };
