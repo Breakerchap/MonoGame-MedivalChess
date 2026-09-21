@@ -28,7 +28,7 @@ public static partial class CpuGameRules
       state.Pieces[actorIndex] = phantom with
       {
         PossessedUnitId = unpossessed.PhantomPossessedUnitId,
-        AbilityState = phantom.AbilityState with
+        AbilityState = (phantom.AbilityState ?? new UnitAbilityState()) with
         {
           CannotMoveThisTurn = true,
           CannotActThisTurn = true
