@@ -7,8 +7,8 @@ namespace MedivalChess.Shared;
 /// </summary>
 public enum AbilityEntityKind
 {
-  PoisonCloud, Fire, Bramble, Portal, Seal, StoneWall, Gatehouse, Bridge, Watchtower,
-  RuneAttack, RuneMovement, RuneHealth, RuneRange, Snare, Tnt, Prison, Road, Barricade
+  PoisonCloud, Fire, Bramble, Portal, Seal, StoneWall, Gatehouse, Gate, Bridge, Watchtower,
+  RuneAttack, RuneMovement, RuneHealth, RuneRange, Snare, Tnt, Prison, Thunderstorm, Road, Barricade
 }
 
 public sealed record AbilityEntity(
@@ -47,6 +47,7 @@ public static class AbilityEntityRules
       [AbilityEntityKind.Seal] = new(AbilityEntityKind.Seal, 0, true, true, LifetimeOwnerTurns: 1),
       [AbilityEntityKind.StoneWall] = new(AbilityEntityKind.StoneWall, 50, true, true),
       [AbilityEntityKind.Gatehouse] = new(AbilityEntityKind.Gatehouse, 15, true, false),
+      [AbilityEntityKind.Gate] = new(AbilityEntityKind.Gate, 30, true, false),
       [AbilityEntityKind.Bridge] = new(AbilityEntityKind.Bridge, 0, false, false),
       [AbilityEntityKind.Watchtower] = new(AbilityEntityKind.Watchtower, 15, false, false),
       [AbilityEntityKind.RuneAttack] = new(AbilityEntityKind.RuneAttack, 0, false, false),
@@ -56,6 +57,7 @@ public static class AbilityEntityRules
       [AbilityEntityKind.Snare] = new(AbilityEntityKind.Snare, 0, false, false),
       [AbilityEntityKind.Tnt] = new(AbilityEntityKind.Tnt, 0, false, false),
       [AbilityEntityKind.Prison] = new(AbilityEntityKind.Prison, 65, true, true),
+      [AbilityEntityKind.Thunderstorm] = new(AbilityEntityKind.Thunderstorm, 0, false, false, EnterDamage: AdvancedAbilityRules.ThunderstormDamage),
       [AbilityEntityKind.Road] = new(AbilityEntityKind.Road, 0, false, false),
       [AbilityEntityKind.Barricade] = new(AbilityEntityKind.Barricade, AbilityRules.EngineerBarrierHealth, true, true)
     };
@@ -69,7 +71,7 @@ public static class AbilityEntityRules
     Math.Max(Math.Abs(entity.X - x), Math.Abs(entity.Y - y)) <= GetRequired(entity.Kind).Radius;
 
   public static bool BlocksMovementFor(AbilityEntity entity, NetworkTeam mover) =>
-    entity.Kind == AbilityEntityKind.Gatehouse
+    entity.Kind is AbilityEntityKind.Gatehouse or AbilityEntityKind.Gate
       ? entity.Owner != mover
       : GetRequired(entity.Kind).BlocksMovement;
 
@@ -77,7 +79,7 @@ public static class AbilityEntityRules
     BlocksMovementFor(entity, mover) || GetRequired(entity.Kind).BlocksLanding;
 
   public static bool BlocksAttackFor(AbilityEntity entity, NetworkTeam attacker) =>
-    entity.Kind == AbilityEntityKind.Gatehouse
+    entity.Kind is AbilityEntityKind.Gatehouse or AbilityEntityKind.Gate
       ? entity.Owner != attacker
       : GetRequired(entity.Kind).BlocksAttacks;
 
