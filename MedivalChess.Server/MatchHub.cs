@@ -377,7 +377,7 @@ public sealed partial class MatchStore
       if (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
           !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable))
       {
-        return new(false, "That unit cannot move again this turn.", foundMatch.State());
+        return new(false, "That unit has already moved or cannot move again this turn.", foundMatch.State());
       }
 
       if (piece.AttachedToId is not null && piece.AttachmentKind == NetworkAttachmentKind.Guard)
