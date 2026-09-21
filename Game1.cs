@@ -663,7 +663,7 @@ internal sealed partial class Game1 : Game
                 selectedPiece.AbilityState,
                 selectedPiece.HasAttackedThisTurn,
                 normalAttackTarget?.NetworkId) &&
-              selectedPiece.Definition.Attack > 0 &&
+              AbilityRules.CanMakeNormalAttack(UnitRules.FromPieceDefinition(selectedPiece.Definition)) &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
@@ -1907,7 +1907,7 @@ internal sealed partial class Game1 : Game
         attacker.AbilityState,
         attacker.HasAttackedThisTurn,
         target?.NetworkId) &&
-      attacker.Definition.Attack > 0 &&
+      AbilityRules.CanMakeNormalAttack(UnitRules.FromPieceDefinition(attacker.Definition)) &&
       Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
       ((target is not null && target != attacker &&
         (target.Team != attacker.Team ||
