@@ -120,7 +120,9 @@ public static partial class CpuGameRules
   {
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
-    int unmitigated = UnitRules.GetRequired(attacker.Type).Attack;
+    UnitRule effectiveAttackerRule = ApplyCpuAttachmentBonuses(
+      state.Pieces, attacker, UnitRules.GetRequired(attacker.Type));
+    int unmitigated = effectiveAttackerRule.Attack;
     bool selectedAttacker = AdvancedAbilityRules.IsBaronSelectedTarget(
       state.Pieces.Select(piece => (
         piece.Type,
