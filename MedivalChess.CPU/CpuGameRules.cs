@@ -258,17 +258,16 @@ public static partial class CpuGameRules
       return false;
     }
 
-    bool inValidZone = rule.Type == "Mercenary" && !initialBuy
+    bool inValidZone = AbilityRules.MayPlaceInNoMansLand(rule.Type) && !initialBuy
       ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
       : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
-    // Ordinary units may share a Farm footprint, but the live Mercenary rule is stricter: a
-    // newly hired Mercenary must occupy a completely empty No-Man's-Land square. Hiring a
-    // neutral Mercenary above is the only intentional occupied-square exception.
-    bool mercenarySquareIsEmpty = rule.Type != "Mercenary" || !state.Pieces.Any(piece =>
+    // No-Man's-Land units must occupy an empty square. Hiring a neutral Mercenary above is the
+    // only intentional occupied-square exception.
+    bool noMansLandSquareIsEmpty = !AbilityRules.MayPlaceInNoMansLand(rule.Type) || !state.Pieces.Any(piece =>
       UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
       UnitRules.FootprintsOverlap(action.X, action.Y, rule.Width, rule.Height,
         piece.X, piece.Y, existingRule.Width, existingRule.Height));
-    return inValidZone && mercenarySquareIsEmpty && CanPlace(state, state.Pieces, rule, action.X, action.Y);
+    return inValidZone && noMansLandSquareIsEmpty && CanPlace(state, state.Pieces, rule, action.X, action.Y);
   }
 
   private static bool IsLegalAbility(CpuGameState state, UseAbilityAction action)

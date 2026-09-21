@@ -1315,7 +1315,7 @@ public sealed partial class MatchStore
     bool initialBuy
   )
   {
-    bool inValidTerritory = unit.Type == "Mercenary" && !initialBuy
+    bool inValidTerritory = AbilityRules.MayPlaceInNoMansLand(unit.Type) && !initialBuy
       ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y)
       : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
     if (!inValidTerritory) return false;
@@ -1397,7 +1397,8 @@ public sealed partial class MatchStore
     {
       bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
         (mayUsePalaceSupport && IsPalaceAssistedMovement(match, piece, rule, (piece.X, piece.Y), destination));
-      if ((!ignoresTerrain && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+      if ((!ignoresTerrain && match.Terrain.IsLake(square)) ||
+          (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square))) return false;
     }
 
     HashSet<string> ignoredPieces = match.Pieces
@@ -1444,7 +1445,8 @@ public sealed partial class MatchStore
         bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(match, piece, rule, from, destination);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
-            (!ignoresTerrain && match.Terrain.IsLake(square)) || match.Barricades.ContainsKey(square)) return false;
+            (!ignoresTerrain && match.Terrain.IsLake(square)) ||
+            (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square))) return false;
 
         NetworkPiece? blocker = match.Pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id && other.Type != "Farm" &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
@@ -1474,7 +1476,7 @@ public sealed partial class MatchStore
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = match.Roads.TryGetValue(square, out NetworkTeam roadOwner) && roadOwner == piece.Team;
-      int ordinaryCost = match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = match.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain && !AbilityRules.IgnoresForests(rule)
         ? 2
         : usesOwnedRoad && !match.Terrain.IsForest(square) ? 0 : 1;
       cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
@@ -1611,6 +1613,7 @@ public sealed partial class MatchStore
       targetRule,
       (attacker.X, attacker.Y),
       (damagedPiece.X, damagedPiece.Y)));
+    damage = AbilityRules.LimitIncomingDamage(targetRule, damage);
     damage = ApplyServerChessKingDeathRule(match, damagedPiece, damage);
     int damagedIndex = match.Pieces.FindIndex(piece => piece.Id == damagedPiece.Id);
     if (damagedIndex < 0)
@@ -1674,7 +1677,10 @@ public sealed partial class MatchStore
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
-    int damage = ApplyServerChessKingDeathRule(match, target, AbilityRules.EngineerMineDamage);
+    int damage = ApplyServerChessKingDeathRule(
+      match,
+      target,
+      AbilityRules.LimitIncomingDamage(UnitRules.GetRequired(target.Type), AbilityRules.EngineerMineDamage));
     if (target.Health > damage)
     {
       match.Pieces[index] = target with { Health = target.Health - damage };

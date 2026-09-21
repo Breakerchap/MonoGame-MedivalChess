@@ -49,7 +49,16 @@ public enum PieceType
   Civilian, Officer, Gunman, Sniper, Terrorist, Spy, Tank, Engineer, Mercenary, President,
   Brawler, Cowboy, Demolitionist, Pickpocket, Stagecoach, Sherrif,
   Fiend, Cherub, Fallen, Gatekeeper, Archangel, Archdemon, Succubus, Herald,
-  Pawn, ChessKnight, Bishop, Rook, Queen, ChessKing
+  Pawn, ChessKnight, Bishop, Rook, Queen, ChessKing,
+  WarDrum, Monk, Qilin, Hwacha, Harvester, Keshik,
+  SummonedGolem, Gargoyle, Phoenix,
+  Necromancer, SkeletonMinion, Shadow, Wendigo, WillOWisp, Wisp, Poltergeist, Skinwalker,
+  Medusa, Muse,
+  Barbarian, Shieldsman, Serpent, FlyingLongboat, Fafnir, FafnirDragon, Fylgja, Odin, Thor,
+  Frontiersmen, Musketeer, Duelist, CactusJack, Prison, HiredGun, Buffalo, BountyHunter, Sheriff, GangLeader,
+  MissileSilo, Developer, ArmouredTruck, Helicopter, CommandCentre, Hacker,
+  Seraph, Ophan, Beelzebub, ContractDemon, Mashhit, Imp, Satan,
+  FieldHospital, Ambulance, Scout, Assassin, Spearman, Teacher
 }
 
 public enum PieceCategory
@@ -70,7 +79,8 @@ public enum Pack
   Modern,
   WildWest,
   AngelsDemons,
-  Chess
+  Chess,
+  Legacy
 }
 
 public readonly record struct MovementDefinition
@@ -101,6 +111,8 @@ public sealed class PieceDefinition
 {
   public PieceType Type { get; }
   public string Identifier { get; }
+  /// <summary>Globally stable identifier from <c>units_codex.json</c>.</summary>
+  public string SourceUnitId { get; }
   public string DisplayName { get; }
   public string? Abbreviation { get; }
   public PieceCategory Category { get; }
@@ -114,6 +126,8 @@ public sealed class PieceDefinition
   public (int range, Shape shape) AttackShape => (AttackRange.Maximum, AttackPattern);
   public int MinimumAttackRange => AttackRange.Minimum;
   public int Cost { get; }
+  /// <summary>False for source rows explicitly marked Unchoosable.</summary>
+  public bool IsPurchasable { get; }
   public string AbilityDescription { get; }
 
   public PieceDefinition(
@@ -129,10 +143,13 @@ public sealed class PieceDefinition
     int cost,
     string abilityDescription = "",
     string? identifier = null,
-    string? displayName = null)
+    string? displayName = null,
+    string? sourceUnitId = null,
+    bool isPurchasable = true)
   {
     Type = type;
     Identifier = string.IsNullOrWhiteSpace(identifier) ? type.ToString() : identifier;
+    SourceUnitId = string.IsNullOrWhiteSpace(sourceUnitId) ? Identifier : sourceUnitId;
     DisplayName = string.IsNullOrWhiteSpace(displayName) ? type.ToString() : displayName;
     Abbreviation = string.IsNullOrWhiteSpace(abbreviation) ? null : abbreviation;
     Category = GetDefaultCategory(type);
@@ -144,6 +161,7 @@ public sealed class PieceDefinition
     AttackRange = attackRange;
     AttackPattern = attackPattern;
     Cost = cost;
+    IsPurchasable = isPurchasable;
     AbilityDescription = abilityDescription;
   }
 
@@ -291,7 +309,7 @@ public static class PieceDefinitions
   public static readonly PieceDefinition Queen = new(PieceType.Queen, "Qun", Pack.Chess, (8, Shape.LineOrDiagonal), 120, 5, (1, 1), (0, 0), Shape.MoveOnEnemy, 90, ChessLandingCaptureAbility);
   public static readonly PieceDefinition ChessKing = new(PieceType.ChessKing, "CKI", Pack.Chess, (1, Shape.Any), 120, 5, (1, 1), (0, 0), Shape.MoveOnEnemy, 0, ChessLandingCaptureAbility + " Must be checkmated to die.", displayName: "Chess King");
 
-  public static readonly PieceDefinition[] All =
+  private static readonly PieceDefinition[] LegacyDefinitions =
   [
     Peasant, Swordsman, Defender, Archer, Crossbowman, Knight, Cavalier, Bombard, Cannon, Catapult, Guard, Mason, Farm, King, Baron,
     Ashigaru, Samurai, Ninja, Sumo, Elephant, Ox, Carpenter, Emperor, TerracottaWarrior, Palace,
@@ -305,30 +323,28 @@ public static class PieceDefinitions
     Pawn, ChessKnight, Bishop, Rook, Queen, ChessKing
   ];
 
+  /// <summary>Definitions loaded from the embedded authoritative unit specification.</summary>
+  public static readonly PieceDefinition[] All = AuthoritativeUnitCatalogue.Load(LegacyDefinitions);
   public static readonly PieceDefinition[] Encyclopedia = [.. All];
 
-  public static readonly PieceDefinition[] Purchasable =
-  [
-    Peasant, Swordsman, Defender, Archer, Crossbowman, Knight, Cavalier, Bombard, Cannon, Catapult, Guard, Mason, Farm,
-    Ashigaru, Samurai, Ninja, Sumo, Elephant, Ox, Carpenter,
-    Commoner, Adventurer, Elf, Orc, Mimic, Wizard, Witch, Druid, Dragon, Giant,
-    Skeleton, Banshee, Reaper, Zombie, Abomination, Ghoul, Vampire,
-    Heracles, Ares, Pegasus, Spartan, Hermes, Artemis, Chariot, Ballista, Chimera, Zeus, Daedalus, Cyclops,
-    Viking, Hunter, Sleipnir, Raider, Beserker, Valkyrie, Runesmith,
-    Civilian, Officer, Gunman, Sniper, Terrorist, Spy, Tank, Engineer, Mercenary,
-    Brawler, Cowboy, Demolitionist, Pickpocket, Stagecoach,
-    Fiend, Cherub, Fallen, Gatekeeper, Archangel, Archdemon,
-    Pawn, ChessKnight, Bishop, Rook, Queen
-  ];
+  public static readonly PieceDefinition[] Purchasable = All
+    .Where(definition => definition.IsPurchasable && definition.Cost > 0)
+    .ToArray();
 
-  public static readonly PieceDefinition[] Royals =
-  [
-    King, Baron,
-    Emperor, TerracottaWarrior, Palace,
-    Sorceress, GoblinRoyalty,
-    Phylactery, Phantom,
-    Atlas, Chronos,
-    President, Jarl, Sherrif,
-    Herald, ChessKing
-  ];
+  public static readonly PieceDefinition[] Royals = All
+    .Where(definition => AuthoritativeUnitCatalogue.IsRoyal(definition.SourceUnitId))
+    .ToArray();
+
+  static PieceDefinitions()
+  {
+    // Retain the public named-definition API while making it reference the same canonical
+    // instances used by the runtime catalogue.
+    foreach (System.Reflection.FieldInfo field in typeof(PieceDefinitions).GetFields(
+      System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+    {
+      if (field.FieldType != typeof(PieceDefinition)) continue;
+      PieceDefinition? canonical = All.FirstOrDefault(unit => unit.Type.ToString() == field.Name);
+      if (canonical is not null) field.SetValue(null, canonical);
+    }
+  }
 }

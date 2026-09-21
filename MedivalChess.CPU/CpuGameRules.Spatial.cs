@@ -92,7 +92,8 @@ public static partial class CpuGameRules
     }
     foreach ((int x, int y) square in OccupiedSquares(rule, (x, y)))
     {
-      if ((!canIgnoreLakes && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+      if ((!canIgnoreLakes && state.Terrain.IsLake(square)) ||
+          (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)))
       {
         return false;
       }
@@ -124,7 +125,8 @@ public static partial class CpuGameRules
         bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
-            (!ignoresTerrain && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+            (!ignoresTerrain && state.Terrain.IsLake(square)) ||
+            (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)))
         {
           return false;
         }
@@ -160,7 +162,7 @@ public static partial class CpuGameRules
     {
       bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
         (roadOwner == piece.Team || roadOwner == NetworkTeam.Neutral);
-      int ordinaryCost = state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain && !AbilityRules.IgnoresForests(rule)
         ? 2
         : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1;
       cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));

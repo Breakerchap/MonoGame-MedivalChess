@@ -105,6 +105,73 @@ public sealed class SharedAbilityRulesTests
   }
 
   [Fact]
+  public void BansheeAndCherub_ApplyTheirCodexTerrainRules()
+  {
+    UnitRule banshee = UnitRules.GetRequired(nameof(PieceType.Banshee));
+    UnitRule cherub = UnitRules.GetRequired(nameof(PieceType.Cherub));
+
+    Assert.True(AbilityRules.IgnoresImpassableTerrain(banshee));
+    Assert.True(AbilityRules.IgnoresStructures(banshee));
+    Assert.True(AbilityRules.AttacksOverObstacles(banshee));
+    Assert.True(AbilityRules.IgnoresImpassableTerrain(cherub));
+    Assert.False(AbilityRules.IgnoresStructures(cherub));
+  }
+
+  [Fact]
+  public void TerrainSpecialists_UseOnlyTheirSpecifiedTraversalRules()
+  {
+    UnitRule elf = UnitRules.GetRequired(nameof(PieceType.Elf));
+    UnitRule fylgja = UnitRules.GetRequired(nameof(PieceType.Fylgja));
+    UnitRule beelzebub = UnitRules.GetRequired(nameof(PieceType.Beelzebub));
+
+    Assert.True(AbilityRules.IgnoresForests(elf));
+    Assert.False(AbilityRules.IgnoresImpassableTerrain(elf));
+    Assert.True(AbilityRules.IgnoresImpassableTerrain(fylgja));
+    Assert.True(AbilityRules.CanTravelThroughUnit(fylgja, NetworkTeam.Red, NetworkTeam.Red));
+    Assert.True(AbilityRules.IgnoresImpassableTerrain(beelzebub));
+    Assert.True(AbilityRules.CanTravelThroughUnit(beelzebub, NetworkTeam.Red, NetworkTeam.Blue));
+  }
+
+  [Fact]
+  public void Monk_CapsEverySingleIncomingDamageInstanceAtTwelve()
+  {
+    UnitRule monk = UnitRules.GetRequired(nameof(PieceType.Monk));
+    UnitRule swordsman = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+
+    Assert.Equal(AbilityRules.MonkMaximumIncomingDamage, AbilityRules.LimitIncomingDamage(monk, 70));
+    Assert.Equal(9, AbilityRules.LimitIncomingDamage(monk, 9));
+    Assert.Equal(70, AbilityRules.LimitIncomingDamage(swordsman, 70));
+  }
+
+  [Theory]
+  [InlineData(nameof(PieceType.Mercenary))]
+  [InlineData(nameof(PieceType.Gargoyle))]
+  [InlineData(nameof(PieceType.Valkyrie))]
+  [InlineData(nameof(PieceType.Frontiersmen))]
+  [InlineData(nameof(PieceType.Ophan))]
+  public void NoMansLandUnits_AreDeclaredBySharedCodexRules(string unitType)
+  {
+    Assert.True(AbilityRules.MayPlaceInNoMansLand(unitType));
+    Assert.False(AbilityRules.MayPlaceInNoMansLand(nameof(PieceType.Swordsman)));
+  }
+
+  [Fact]
+  public void Barbarian_NotRaider_GainsTheForwardMovementBonusSpecifiedByTheCodex()
+  {
+    UnitRule barbarian = UnitRules.GetRequired(nameof(PieceType.Barbarian));
+    UnitRule raider = UnitRules.GetRequired(nameof(PieceType.Raider));
+    (int x, int y) forward = TeamRules.GetForwardDirection(NetworkTeam.Red);
+    (int x, int y) destination = (3 + forward.x, 3 + forward.y);
+
+    Assert.Equal(AbilityRules.BarbarianForwardMovementBonus,
+      AbilityRules.GetMovementRangeBonus(barbarian, NetworkTeam.Red, (3, 3), destination));
+    Assert.Equal(0,
+      AbilityRules.GetMovementRangeBonus(raider, NetworkTeam.Red, (3, 3), destination));
+    Assert.Equal(barbarian.MoveRange + AbilityRules.BarbarianForwardMovementBonus,
+      barbarian.MoveRange + AbilityRules.GetMaximumMovementRangeBonus(barbarian));
+  }
+
+  [Fact]
   public void BombardPlan_UsesSharedTwentyDamageSplashIncludingFriendlies()
   {
     AbilityUnitSnapshot attacker = new("bomb", nameof(PieceType.Bombard), NetworkTeam.Red, 0, 0, 1, 1);
@@ -148,10 +215,30 @@ public sealed class SharedAbilityRulesTests
   }
 
   [Fact]
+  public void TerroristAttack_DamagesEveryUnitInRangeThenSelfDestructs()
+  {
+    AbilityUnitSnapshot terrorist = new("terrorist", nameof(PieceType.Terrorist), NetworkTeam.Red, 2, 2, 1, 1);
+    AbilityUnitSnapshot selectedEnemy = new("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 3, 1, 1);
+    AbilityUnitSnapshot adjacentFriendly = new("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 3, 2, 1, 1);
+    AbilityUnitSnapshot distant = new("distant", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 4, 1, 1);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      terrorist,
+      selectedEnemy,
+      [terrorist, selectedEnemy, adjacentFriendly, distant]
+    );
+
+    Assert.True(plan.SelfDestructAfterAttack);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == selectedEnemy.Id && hit.Mode == AbilityDamageMode.NormalAttack);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == adjacentFriendly.Id && hit.Mode == AbilityDamageMode.NormalAttack);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == distant.Id);
+  }
+
+  [Fact]
   public void Orc_UsesCurrentWorkbookCostAndIsPurchasable()
   {
     Assert.Equal(105, PieceDefinitions.Orc.Cost);
-    Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Orc);
   }
 
 }

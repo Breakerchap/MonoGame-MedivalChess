@@ -48,12 +48,12 @@ public sealed class SharedUnitRulesTests
   }
 
   [Fact]
-  public void Teacher_IsNotPartOfTheSharedOrClientRoster()
+  public void Teacher_IsPartOfTheCurrentLegacyRoster()
   {
-    Assert.False(UnitRules.TryGet("Teacher", out _));
-    Assert.DoesNotContain(UnitRules.All, rule => rule.Type == "Teacher");
-    Assert.DoesNotContain(PieceDefinitions.All, definition => definition.Type.ToString() == "Teacher");
-    Assert.DoesNotContain(PieceDefinitions.Purchasable, definition => definition.Type.ToString() == "Teacher");
+    Assert.True(UnitRules.TryGet("legacy.teacher", out _));
+    Assert.Contains(UnitRules.All, rule => rule.Type == "Teacher");
+    Assert.Contains(PieceDefinitions.All, definition => definition.Type == PieceType.Teacher);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Teacher);
   }
 
   [Fact]
@@ -120,10 +120,10 @@ public sealed class SharedUnitRulesTests
     UnitRule bombard = UnitRules.GetRequired("Bombard");
 
     Assert.Equal(RuleShape.Circle, catapult.AttackPattern);
-    Assert.Equal("Attacks over terrain and pieces.", UnitRules.GetAbilityDescription("Catapult"));
+    Assert.Equal("Attacks ignore units and terrain for line of sight.", UnitRules.GetAbilityDescription("Catapult"));
     Assert.Equal((2, 3), (bombard.MinimumAttackRange, bombard.AttackRange));
     Assert.Equal(new AttackRange(2, 3), bombard.AllowedAttackRange);
-    Assert.Contains("barricade", UnitRules.GetAbilityDescription("Engineer"));
+    Assert.Contains("Barricades", UnitRules.GetAbilityDescription("Engineer"));
     Assert.Contains("Ignores terrain", UnitRules.GetAbilityDescription("Elephant"));
     Assert.True(AbilityRules.IsEngineerDemolition("Demolish"));
   }

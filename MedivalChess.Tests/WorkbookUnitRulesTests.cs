@@ -34,21 +34,20 @@ public sealed class WorkbookUnitRulesTests
     Assert.Contains(Pack.Norse, PackRules.All);
     Assert.Contains(Pack.WildWest, PackRules.All);
     Assert.Contains(Pack.Medival, PackRules.All);
-    Assert.Contains(PieceDefinitions.Swordsman, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Atlas, PieceDefinitions.Royals);
-    Assert.Contains(PieceDefinitions.Stagecoach, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Viking, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Cowboy, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Vampire, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Artemis, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.President, PieceDefinitions.Royals);
-    Assert.Contains(PieceDefinitions.Orc, PieceDefinitions.Purchasable);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Swordsman);
+    Assert.Contains(PieceDefinitions.Royals, definition => definition.Type == PieceType.Atlas);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Stagecoach);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Viking);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Cowboy);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Vampire);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Artemis);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Orc);
     Assert.Contains(Pack.AngelsDemons, PackRules.All);
     Assert.Contains(Pack.Chess, PackRules.All);
-    Assert.Contains(PieceDefinitions.Giant, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Cyclops, PieceDefinitions.Purchasable);
-    Assert.Contains(PieceDefinitions.Herald, PieceDefinitions.Royals);
-    Assert.Contains(PieceDefinitions.ChessKing, PieceDefinitions.Royals);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Giant);
+    Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Cyclops);
+    Assert.Contains(PieceDefinitions.Royals, definition => definition.Type == PieceType.Herald);
+    Assert.DoesNotContain(PieceDefinitions.All, definition => definition.Type == PieceType.ChessKing);
     Assert.Contains(UnitRules.Purchasable, rule => rule.Type == nameof(PieceType.Orc));
   }
 
@@ -66,8 +65,8 @@ public sealed class WorkbookUnitRulesTests
     Assert.Equal((1, 1), PieceDefinitions.Ox.Size);
     Assert.Equal((2, 2), PieceDefinitions.Elephant.Size);
     Assert.Equal(2, PieceDefinitions.Emperor.Movement.Maximum);
-    Assert.Equal(0, PieceDefinitions.TerracottaWarrior.Attack);
-    Assert.Equal(0, PieceDefinitions.TerracottaWarrior.Movement.Maximum);
+    Assert.Equal(25, PieceDefinitions.TerracottaWarrior.Attack);
+    Assert.Equal(2, PieceDefinitions.TerracottaWarrior.Movement.Maximum);
 
     Assert.Equal(110, PieceDefinitions.Chimera.Cost);
     Assert.Equal(new MovementDefinition(2, 4, Shape.Circle), PieceDefinitions.Pegasus.Movement);

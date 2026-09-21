@@ -76,6 +76,7 @@ public static class AbilityAttackRules
 
       case nameof(PieceType.Dragon):
       case nameof(PieceType.Orc):
+      case nameof(PieceType.Terrorist):
         AddAllUnitsInAttackRange(damage, attacker, units);
         break;
 

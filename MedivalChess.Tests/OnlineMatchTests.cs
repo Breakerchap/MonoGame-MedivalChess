@@ -401,7 +401,7 @@ public sealed class OnlineMatchTests
   }
 
   [Fact]
-  public void ServerRejectsTeacherBecauseItIsNoLongerInTheRulebook()
+  public void ServerAllowsTeacherFromTheCurrentLegacyRoster()
   {
     MatchStore matches = new();
     RoomJoinResult host = matches.Create("host", new CreateGameRequest(DefaultConfiguration));
@@ -412,8 +412,7 @@ public sealed class OnlineMatchTests
     string redConnection = host.Team == NetworkTeam.Red ? "host" : "guest";
     ActionResult result = matches.PurchaseInitialUnit(redConnection, new PurchaseRequest("Teacher", 0, 8));
 
-    Assert.False(result.Accepted);
-    Assert.Contains("not available", result.Error!);
+    Assert.True(result.Accepted, result.Error);
   }
 
   [Fact]

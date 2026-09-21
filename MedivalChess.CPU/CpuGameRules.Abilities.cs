@@ -99,6 +99,7 @@ public static partial class CpuGameRules
       damagedRule,
       (attacker.X, attacker.Y),
       (damaged.X, damaged.Y)));
+    damage = AbilityRules.LimitIncomingDamage(damagedRule, damage);
     damage = ApplyCpuChessKingDeathRule(state, damaged, damage);
     int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
     if (damagedIndex < 0)
@@ -139,6 +140,11 @@ public static partial class CpuGameRules
         IsInForest(state, target),
         state.Source.Terrain.ForestDamageReduction)
       : damage;
+
+    if (UnitRules.TryGet(target.Type, out UnitRule targetRule))
+    {
+      appliedDamage = AbilityRules.LimitIncomingDamage(targetRule, appliedDamage);
+    }
 
     int index = FindPieceIndex(state.Pieces, target.Id);
     if (index < 0) return;

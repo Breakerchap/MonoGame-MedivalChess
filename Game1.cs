@@ -1026,15 +1026,15 @@ internal sealed partial class Game1 : Game
 
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     bool canPlace =
-      (definition.Type == PieceType.Mercenary
-        ? CanPlaceMercenary(targetPosition)
+      (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+        ? CanPlaceNoMansLand(definition, targetPosition)
         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
       (isOpeningFarmPlacement || buyingTeam.Money >= GetUnitPrice(definition));
 
     if (!canPlace)
     {
-      Console.WriteLine(definition.Type == PieceType.Mercenary
-        ? "Mercenaries must be placed on an empty square in No-Man's-Land."
+      Console.WriteLine(AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+        ? "This unit must be placed on an empty square in No-Man's-Land."
         : "Pieces must be placed on an empty square on your side of the board.");
       return;
     }
@@ -2855,13 +2855,17 @@ internal sealed partial class Game1 : Game
   }
 
   private bool CanPlaceMercenary((int x, int y) position)
+    => CanPlaceNoMansLand(PieceDefinitions.Mercenary, position);
+
+  private bool CanPlaceNoMansLand(PieceDefinition definition, (int x, int y) position)
   {
-    if (!IsTraversableTerrainSquare(position) || GetSquareOwner(position).HasValue)
+    if (!IsFootprintOnBoard(definition, position) || GetSquareOwner(position).HasValue ||
+        OccupiedSquares(definition, position).Any(square => !IsTraversableTerrainSquare(square)))
     {
       return false;
     }
 
-    return pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
+    return pieceSetup.IsFootprintClear(definition, position);
   }
 
   private bool IsInTeamTerritory((int x, int y) position, TeamName team)
@@ -3112,7 +3116,7 @@ internal sealed partial class Game1 : Game
     bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
       (mayUsePalaceSupport && IsPalaceAssistedMovement(piece, piece.Position, destination));
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
-        OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey) ||
+        (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
         (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
     {
       return false;
@@ -3137,7 +3141,8 @@ internal sealed partial class Game1 : Game
       {
         bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
           IsPalaceAssistedMovement(piece, from, destination);
-        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) || _barricades.ContainsKey(occupiedSquare) ||
+        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) ||
+            (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(occupiedSquare)) ||
             !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
@@ -3175,7 +3180,7 @@ internal sealed partial class Game1 : Game
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       bool usesOwnedRoad = UsesRoad(piece.Team, occupiedSquare);
-      int ordinaryCost = _terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = _terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain && !AbilityRules.IgnoresForests(rule)
         ? 2
         : usesOwnedRoad && !_terrain.IsForest(occupiedSquare) ? 0 : 1;
       cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
@@ -3621,6 +3626,7 @@ internal sealed partial class Game1 : Game
       targetRule,
       attacker.Position,
       damagedPiece.Position));
+    damage = AbilityRules.LimitIncomingDamage(targetRule, damage);
     damage = ApplyLocalChessKingDeathRule(damagedPiece, damage);
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
@@ -3629,7 +3635,9 @@ internal sealed partial class Game1 : Game
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
   {
-    int damage = ApplyLocalChessKingDeathRule(target, AbilityRules.EngineerMineDamage);
+    int damage = ApplyLocalChessKingDeathRule(
+      target,
+      AbilityRules.LimitIncomingDamage(UnitRules.FromPieceDefinition(target.Definition), AbilityRules.EngineerMineDamage));
     target.CurrentHealth -= damage;
     Console.WriteLine($"Mine dealt {damage} damage to {target.Definition.Type}.");
     HandlePieceDestroyed(target, mineOwner);
@@ -9341,6 +9349,10 @@ internal sealed partial class Game1 : Game
     Rectangle panel = GetEncyclopediaPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     PieceDefinition definition = PieceDefinitions.Encyclopedia[_encyclopediaIndex];
+    IReadOnlyList<PieceDefinition> packEntries = PieceDefinitions.Encyclopedia
+      .Where(entry => entry.Pack == definition.Pack)
+      .ToArray();
+    int packIndex = packEntries.ToList().FindIndex(entry => entry.Type == definition.Type);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("FIELD ENCYCLOPEDIA", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Text("Unit stats and core battlefield rules", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
@@ -9352,7 +9364,7 @@ internal sealed partial class Game1 : Game
     DrawMenuButton(previous, "<", UiButtonTone.Neutral);
     DrawPanel(selection, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
     _ui.CenterText(
-      $"{_encyclopediaIndex + 1}/{PieceDefinitions.Encyclopedia.Length}  {GetPieceDisplayName(definition.Type)}",
+      $"{GetPackDisplayName(definition.Pack).ToUpperInvariant()}  {packIndex + 1}/{packEntries.Count}  {GetPieceDisplayName(definition.Type)}",
       selection,
       UiTheme.TextPrimary,
       0.76f
