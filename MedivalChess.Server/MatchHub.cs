@@ -453,6 +453,7 @@ public sealed partial class MatchStore
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
       MoveHeraldCompanions(foundMatch, piece, oldX, oldY);
       TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
+      TriggerServerAbilityEntitiesAlongMovement(foundMatch, piece.Id, actualMovementPath);
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
       {
         TryDeliverTreasure(foundMatch, piece);
@@ -1843,6 +1844,7 @@ public sealed partial class MatchStore
 
   private static void RemovePiece(Match match, string pieceId)
   {
+    RemoveSourceBoundServerAbilityEntities(match, pieceId);
     for (int index = 0; index < match.Pieces.Count; index++)
     {
       NetworkPiece piece = match.Pieces[index];
