@@ -597,6 +597,35 @@ public sealed class CpuGameStateTests
     Assert.True(seraph.HasAttackedThisTurn);
   }
 
+
+  [Fact]
+  public void CpuSimulationBranchesOwnIndependentTerrain()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    BattlefieldTerrain terrain = new(forests: [(0, 0)], lakes: [(1, 0)]);
+    CpuGameState original = new(
+      configuration,
+      [new NetworkPiece("unit", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, 15)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: terrain
+    );
+
+    CpuMutableGameState firstBranch = original.ToMutable();
+    CpuMutableGameState secondBranch = original.ToMutable();
+
+    Assert.True(firstBranch.Terrain.DestroyTile((0, 0)));
+
+    Assert.False(firstBranch.Terrain.IsForest((0, 0)));
+    Assert.True(secondBranch.Terrain.IsForest((0, 0)));
+    Assert.True(original.Terrain.IsForest((0, 0)));
+    Assert.True(firstBranch.Terrain.IsLake((1, 0)));
+    Assert.True(secondBranch.Terrain.IsLake((1, 0)));
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
