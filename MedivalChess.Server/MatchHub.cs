@@ -653,6 +653,30 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
+      NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
+
+      AdvancedSpecialResult advanced = TryUseAdvancedServerAbility(
+        foundMatch,
+        actorIndex,
+        targetIndex,
+        request,
+        player);
+      if (advanced.Handled)
+      {
+        if (!advanced.Applied)
+        {
+          return new(false, "That special action has no valid target.", foundMatch.State());
+        }
+
+        if (advanced.SpendAction)
+        {
+          SpendAction(foundMatch, player);
+        }
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+
       bool engineerDemolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(request.Ability);
       bool plunderPickup = foundMatch.Configuration.GameMode == "Plunder" &&
         string.Equals(request.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
@@ -660,7 +684,6 @@ public sealed partial class MatchStore
       {
         return new(false, "That unit has already acted this turn.", foundMatch.State());
       }
-      NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
       bool carryThrow = AbilityRules.IsCarryThrowUnit(actor.Type) &&
         (string.Equals(request.Ability, "Carry", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(request.Ability, "Throw", StringComparison.OrdinalIgnoreCase));
