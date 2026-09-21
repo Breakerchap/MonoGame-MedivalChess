@@ -687,7 +687,12 @@ public static partial class CpuGameRules
       money = ClampCurrency((long)money + EconomyRules.GetInterest(money, state.Source.Configuration.InterestPercent));
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
-    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn);
+    int palaces = state.Pieces.Count(piece =>
+      piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Palace) &&
+      (piece.AbilityState?.DisabledOwnerTurnsRemaining ?? 0) <= 0);
+    money = ClampCurrency((long)money +
+      farms * (long)state.Source.Configuration.FarmIncomePerTurn +
+      palaces * (long)AdvancedAbilityRules.PalaceIncome);
     for (int index = 0; index < state.Pieces.Count; index++)
     {
       NetworkPiece mercenary = state.Pieces[index];
