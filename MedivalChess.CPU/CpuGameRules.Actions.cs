@@ -136,6 +136,11 @@ public static partial class CpuGameRules
       target = FindUnitOnAttackedSquare(state.Pieces, attacker, action.TargetX, action.TargetY) ?? target;
     }
 
+    if (target is not null)
+    {
+      ApplyCpuPickpocketSteal(state, attacker, target);
+    }
+
     AbilityAttackPlan? abilityPlan = null;
     if (target is null)
     {
@@ -213,6 +218,25 @@ public static partial class CpuGameRules
     {
       SpendSharedAction(state, action.Team);
     }
+  }
+
+  private static void ApplyCpuPickpocketSteal(
+    CpuMutableGameState state,
+    NetworkPiece attacker,
+    NetworkPiece target)
+  {
+    if (attacker.Type != nameof(PieceType.Pickpocket) ||
+        target.Team == attacker.Team || target.Team == NetworkTeam.Neutral ||
+        !state.Teams.TryGetValue(attacker.Team, out CpuTeamState? attackerTeam) ||
+        !state.Teams.TryGetValue(target.Team, out CpuTeamState? targetTeam))
+    {
+      return;
+    }
+
+    int stolen = Math.Min(AdvancedAbilityRules.PickpocketGold, Math.Max(0, targetTeam.Money));
+    if (stolen <= 0) return;
+    state.Teams[target.Team] = targetTeam with { Money = targetTeam.Money - stolen };
+    state.Teams[attacker.Team] = attackerTeam with { Money = ClampCurrency((long)attackerTeam.Money + stolen) };
   }
 
   private static void ApplySharedDisplacements(CpuMutableGameState state, AbilityAttackPlan plan)
