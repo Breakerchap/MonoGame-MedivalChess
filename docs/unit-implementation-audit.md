@@ -61,9 +61,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.ghoul` | Verified | Four-owner-turn expiry is implemented. |
 | `undead.vampire` | Verified | Post-attack healing is implemented and capped. |
 | `undead.shadow` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.wendigo` | Partial | Friendly normal attacks, attack counting, and end-owner-turn death after zero attacks are wired in local/server/CPU; consolidated runtime regression coverage remains before verification. |
+| `undead.wendigo` | Partial | Friendly normal attacks, attack counting, and end-owner-turn death after zero attacks are wired in local/server/CPU; CPU runtime regression coverage is committed and awaiting green CI. |
 | `undead.will_o_wisp` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.wisp` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.wisp` | Partial | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks; CPU runtime regression coverage is committed and awaiting green CI. |
 | `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.skinwalker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.lich` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -76,8 +76,8 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.hermes` | Verified | Two moves per owner turn are enforced in local, server, and CPU state; CPU regression coverage verifies the two-move limit. |
 | `greek.artemis` | Verified | Local/server/CPU attacks use the shared LOS and damage hooks: forests do not block Artemis and forest targets take +10 damage. Both behaviours have regression coverage. |
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
-| `greek.ballista` | Partial | Piercing attacks are wired in local/server/CPU and all three rays stop at forests, barricades, and attack-blocking ability entities. Dedicated regression coverage remains before verification. |
-| `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.ballista` | Partial | Piercing attacks are wired in local/server/CPU and all three rays stop at forests, barricades, and attack-blocking ability entities; CPU runtime blocker regression coverage is committed and awaiting green CI. |
+| `greek.chimera` | Partial | Local/server/CPU damage uses the shared +15 rear-attack modifier; CPU front-vs-behind runtime regression coverage is committed and awaiting green CI. |
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
@@ -89,7 +89,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.sleipnir` | Verified | Shared terrain/traversal rules are used by local/server/CPU movement: terrain costs are ignored except road benefits, and Sleipnir may travel through units. Regression coverage exercises the shared traversal semantics. |
 | `norse.barbarian` | Verified | Forward-only +2 movement is shared and enforced by the pathfinder in local, server, and CPU play. |
-| `norse.raider` | Partial | Raider kill rewards are now wired in local/server/CPU using half the defeated enemy unit's base cost rounded to the nearest 5; consolidated runtime regression coverage remains before verification. |
+| `norse.raider` | Partial | Raider kill rewards are wired in local/server/CPU using half the defeated enemy unit's base cost rounded to the nearest 5; CPU runtime regression coverage is committed and awaiting green CI. |
 | `norse.beserker` | Verified | Attack increases at 20 health or less. |
 | `norse.valkyrie` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `norse.shieldsman` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -106,9 +106,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.pickpocket` | Partial | Theft and its codex-required zero-damage normal attack are wired in local/server/CPU. Consolidated runtime regression coverage remains before verification. |
+| `wild_west.pickpocket` | Partial | Theft and its codex-required zero-damage normal attack are wired in local/server/CPU; CPU runtime regression coverage is committed and awaiting green CI. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.cactus_jack` | Partial | Half-damage reflection is now wired in local/server/CPU without recursive reflection; consolidated runtime regression coverage remains before verification. |
+| `wild_west.cactus_jack` | Partial | Half-damage reflection is wired in local/server/CPU without recursive reflection; CPU runtime regression coverage is committed and awaiting green CI. |
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.hired_gun` | Verified | Purchase now charges the immediate 20-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Hired Gun neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
@@ -121,7 +121,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.gunman` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.sniper` | Verified | Its two-owner-turn attack cadence is enforced by shared ability state in local, server, and CPU play, with CPU cooldown regression coverage. |
 | `modern.terrorist` | Verified | Its attack damages every other unit in range, including friendlies, before it self-destructs; the shared attack plan is used by local, server, and CPU runtimes. |
-| `modern.spy` | Partial | Mark/double-next-damage/mark-clear behaviour is already wired; CPU/server Mark now correctly consumes the Spy's attack state. Local attack consumption and consolidated runtime coverage remain before verification. |
+| `modern.spy` | Partial | Mark, attack consumption, double-next-damage, and mark clearing are wired in local/server/CPU; CPU runtime regression coverage is committed and awaiting green CI. |
 | `modern.tank` | Verified | Off-axis attack attempts rotate without firing. |
 | `modern.engineer` | Verified | Road, barricade, mine, and demolition actions are implemented. |
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
