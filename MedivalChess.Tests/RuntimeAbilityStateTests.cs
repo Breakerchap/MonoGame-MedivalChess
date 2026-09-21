@@ -143,7 +143,8 @@ public sealed class RuntimeAbilityStateTests
   public void SeraphLocalAttackSlotsMatchItsThreeAttackAbility()
   {
     PieceSetup setup = new();
-    Piece seraph = new(PieceDefinitions.Seraph, (0, 0), TeamName.Red);
+    PieceDefinition seraphDefinition = PieceDefinitions.Encyclopedia.First(definition => definition.Type == PieceType.Seraph);
+    Piece seraph = new(seraphDefinition, (0, 0), TeamName.Red);
     setup.AddPiece(seraph);
 
     seraph.HasAttackedThisTurn = true;
