@@ -4715,6 +4715,13 @@ internal sealed partial class Game1 : Game
     {
       movedPiece.HasAttackedThisTurn = true;
     }
+    else if (movedPiece.Definition.Type == PieceType.Stagecoach)
+    {
+      AttackUnitsMovedOver(
+        movedPiece,
+        completedAnimation.Path,
+        AdvancedAbilityRules.StagecoachTrampleDamage);
+    }
 
     destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
     MovePieceWithCompanions(movedPiece, destination);
@@ -4763,7 +4770,10 @@ internal sealed partial class Game1 : Game
       MatchRules.IsOnEnemyBackEdge(_board, piece.Team.ToNetworkTeam(), square));
   }
 
-  private bool AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
+  private bool AttackUnitsMovedOver(
+    Piece attacker,
+    IReadOnlyList<(int x, int y)> path,
+    int? damageOverride = null)
   {
     HashSet<Piece> damagedPieces = [];
     foreach (Piece crossedPiece in new List<Piece>(pieceSetup.Pieces))
@@ -4784,7 +4794,7 @@ internal sealed partial class Game1 : Game
       );
       if (wasMovedOver && damagedPieces.Add(crossedPiece))
       {
-        ResolveDamage(attacker, crossedPiece);
+        ResolveDamage(attacker, crossedPiece, damageOverride);
       }
     }
 

@@ -422,6 +422,22 @@ public sealed partial class MatchStore
           }
         }
       }
+      else if (piece.Type == nameof(PieceType.Stagecoach) && UnitRules.TryGet(piece.Type, out UnitRule stagecoachRule))
+      {
+        foreach (NetworkPiece crossed in foundMatch.Pieces.Where(other => other.Id != piece.Id && other.Team != piece.Team).ToArray())
+        {
+          if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) && AbilityRules.PathOverlapsUnit(
+            stagecoachRule, movementPath, crossedRule, crossed.X, crossed.Y))
+          {
+            ResolvePieceDamage(
+              foundMatch,
+              piece,
+              player,
+              crossed.Id,
+              AdvancedAbilityRules.StagecoachTrampleDamage);
+          }
+        }
+      }
 
       bool chessCaptureSurvived = false;
       if (chessCaptureTarget is not null)

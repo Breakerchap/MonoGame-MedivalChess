@@ -36,6 +36,22 @@ public static partial class CpuGameRules
         }
       }
     }
+    else if (piece.Type == nameof(PieceType.Stagecoach) && UnitRules.TryGet(piece.Type, out UnitRule stagecoachRule))
+    {
+      foreach (NetworkPiece crossed in state.Pieces.Where(other => other.Id != piece.Id && other.Team != piece.Team).ToArray())
+      {
+        if (UnitRules.TryGet(crossed.Type, out UnitRule crossedRule) &&
+            AbilityRules.PathOverlapsUnit(stagecoachRule, path, crossedRule, crossed.X, crossed.Y))
+        {
+          ResolveSharedPieceDamage(
+            state,
+            piece,
+            action.Team,
+            crossed.Id,
+            AdvancedAbilityRules.StagecoachTrampleDamage);
+        }
+      }
+    }
 
     index = FindPieceIndex(state.Pieces, action.PieceId);
     if (index < 0)

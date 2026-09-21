@@ -1758,6 +1758,42 @@ public sealed class CpuGameStateTests
     Assert.False(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(enemyGateState));
   }
 
+
+  [Fact]
+  public void StagecoachMovesThroughEnemiesDealsFixedDamageAndKeepsItsAttack()
+  {
+    Board board = new(
+      Enumerable.Range(0, 5)
+        .SelectMany(x => new[] { (x, 0), (x, 1) })
+        .ToArray());
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("coach", nameof(PieceType.Stagecoach), NetworkTeam.Red, 0, 0, 85),
+        new NetworkPiece("enemy-a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 0, 30),
+        new NetworkPiece("enemy-b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: board
+    );
+
+    MoveAction move = new(NetworkTeam.Red, "coach", 3, 0);
+    Assert.True(move.IsLegal(state));
+
+    CpuGameState moved = move.Apply(state);
+    NetworkPiece coach = moved.Pieces.Single(piece => piece.Id == "coach");
+
+    Assert.Equal((3, 0), (coach.X, coach.Y));
+    Assert.Equal(5, moved.Pieces.Single(piece => piece.Id == "enemy-a").Health);
+    Assert.Equal(5, moved.Pieces.Single(piece => piece.Id == "enemy-b").Health);
+    Assert.False(coach.HasAttackedThisTurn);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();

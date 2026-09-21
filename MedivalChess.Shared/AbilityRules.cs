@@ -63,11 +63,11 @@ public static class AbilityRules
 
   public static bool CanTravelThroughUnits(UnitRule unit) =>
     unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir) or
-      nameof(PieceType.Fylgja) or nameof(PieceType.Beelzebub);
+      nameof(PieceType.Fylgja) or nameof(PieceType.Beelzebub) or nameof(PieceType.Stagecoach);
 
   public static bool CanTravelThroughUnit(UnitRule mover, NetworkTeam moverTeam, NetworkTeam blockerTeam) =>
     mover.Type is nameof(PieceType.Sleipnir) or nameof(PieceType.Fylgja) or nameof(PieceType.Beelzebub) ||
-    (mover.Type == nameof(PieceType.Elephant) && blockerTeam != moverTeam);
+    (mover.Type is nameof(PieceType.Elephant) or nameof(PieceType.Stagecoach) && blockerTeam != moverTeam);
 
   /// <summary>Units whose codex rule allows initial placement in No-Man's-Land.</summary>
   public static bool MayPlaceInNoMansLand(string unitType) => unitType is
