@@ -22,7 +22,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.ashigaru` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.samurai` | Verified | Long-range projectile damage reduction is shared and runtime-tested. |
 | `dynasty.ninja` | Verified | Three attacks per owner turn are tracked by shared/local/server state. |
-| `dynasty.sumo` | Partial | Shared attack plans use footprint-centre direction; server and CPU apply shortened two-tile pushes without consuming the target's move. Local adapter update and runtime coverage remain. |
+| `dynasty.sumo` | Partial | Footprint-centre two-tile push is wired in local/server/CPU with shortened fallback and preserved target move state; runtime regression coverage is committed and awaiting green CI. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
 | `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
@@ -82,7 +82,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.atlas` | Partial | Its post-attack push uses footprint-centre direction in shared/server/CPU logic with shortened fallback; local adapter update, tests, and the once-per-turn three-unit movement action remain. |
+| `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line or Diagonal → Diamond → Circle → Square); attachment/runtime application still remains. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -104,7 +104,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.brawler` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `wild_west.musketeer` | Partial | Its shared/server/CPU retreat now uses footprint-centre direction with shortened fallback and preserved move state; local adapter update and runtime coverage remain. |
+| `wild_west.musketeer` | Partial | Two-tile retreat is wired in local/server/CPU with shortened fallback and preserved move state; runtime regression coverage is committed and awaiting green CI. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.pickpocket` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -137,7 +137,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `angels_demons.gatekeeper` | Partial | Portal/Seal entities exist and Seals now participate in local/server/CPU movement/attack blocking; portal transport, placement action parity, expiry, and tests remain. |
-| `angels_demons.beelzebub` | Partial | Terrain/unit traversal and push immunity are shared; its retaliatory push now uses footprint-centre direction in server/CPU logic. Local adapter update and runtime coverage remain. |
+| `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU; push-immunity regression coverage is committed and awaiting green CI. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
