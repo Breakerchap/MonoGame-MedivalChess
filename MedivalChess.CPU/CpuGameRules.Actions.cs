@@ -372,6 +372,36 @@ public static partial class CpuGameRules
         case nameof(PieceType.Engineer):
           ApplyEngineerAbility(state, actorIndex, action);
           break;
+        case nameof(PieceType.Muse):
+          state.Pieces[actorIndex] = actor with
+          {
+            AttachedToId = target!.Id,
+            AttachmentKind = NetworkAttachmentKind.Muse,
+            X = target.X,
+            Y = target.Y,
+            HasAttackedThisTurn = true
+          };
+          break;
+        case nameof(PieceType.Shieldsman):
+          state.Pieces[actorIndex] = actor with
+          {
+            AttachedToId = target!.Id,
+            AttachmentKind = NetworkAttachmentKind.Shieldsman,
+            X = target.X,
+            Y = target.Y,
+            HasAttackedThisTurn = true
+          };
+          break;
+        case nameof(PieceType.Imp):
+          state.Pieces[actorIndex] = actor with
+          {
+            AttachedToId = target!.Id,
+            AttachmentKind = NetworkAttachmentKind.Imp,
+            X = target.X,
+            Y = target.Y,
+            AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState)
+          };
+          break;
         case nameof(PieceType.Guard):
           state.Pieces[actorIndex] = actor with
           {
