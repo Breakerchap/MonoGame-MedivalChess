@@ -19,7 +19,8 @@ public sealed record AbilityEntity(
   int Y,
   int Health = 0,
   string? LinkedEntityId = null,
-  int ExpiresOnOwnerTurn = 0
+  int ExpiresOnOwnerTurn = 0,
+  string? SourcePieceId = null
 );
 
 public sealed record AbilityEntityDefinition(
@@ -30,7 +31,8 @@ public sealed record AbilityEntityDefinition(
   int EnterDamage = 0,
   int StartOfOwnerTurnDamage = 0,
   int Radius = 0,
-  int LifetimeOwnerTurns = 0
+  int LifetimeOwnerTurns = 0,
+  bool BlocksLanding = false
 );
 
 public static class AbilityEntityRules
@@ -39,8 +41,8 @@ public static class AbilityEntityRules
     new Dictionary<AbilityEntityKind, AbilityEntityDefinition>
     {
       [AbilityEntityKind.PoisonCloud] = new(AbilityEntityKind.PoisonCloud, 0, false, false, StartOfOwnerTurnDamage: 15, Radius: 1),
-      [AbilityEntityKind.Fire] = new(AbilityEntityKind.Fire, 0, false, false, EnterDamage: 15, LifetimeOwnerTurns: 1),
-      [AbilityEntityKind.Bramble] = new(AbilityEntityKind.Bramble, 30, true, false, EnterDamage: 10),
+      [AbilityEntityKind.Fire] = new(AbilityEntityKind.Fire, 0, false, false, EnterDamage: 15),
+      [AbilityEntityKind.Bramble] = new(AbilityEntityKind.Bramble, 30, false, false, EnterDamage: 10, BlocksLanding: true),
       [AbilityEntityKind.Portal] = new(AbilityEntityKind.Portal, 0, false, false),
       [AbilityEntityKind.Seal] = new(AbilityEntityKind.Seal, 0, true, true, LifetimeOwnerTurns: 1),
       [AbilityEntityKind.StoneWall] = new(AbilityEntityKind.StoneWall, 50, true, true),
@@ -60,4 +62,72 @@ public static class AbilityEntityRules
 
   public static AbilityEntityDefinition GetRequired(AbilityEntityKind kind) => Definitions[kind];
   public static IReadOnlyCollection<AbilityEntityDefinition> All => Definitions.Values.ToArray();
+
+  public static bool IsAt(AbilityEntity entity, int x, int y) => entity.X == x && entity.Y == y;
+
+  public static bool IsWithinRadius(AbilityEntity entity, int x, int y) =>
+    Math.Max(Math.Abs(entity.X - x), Math.Abs(entity.Y - y)) <= GetRequired(entity.Kind).Radius;
+
+  public static bool BlocksMovementFor(AbilityEntity entity, NetworkTeam mover) =>
+    entity.Kind == AbilityEntityKind.Gatehouse
+      ? entity.Owner != mover
+      : GetRequired(entity.Kind).BlocksMovement;
+
+  public static bool BlocksLandingFor(AbilityEntity entity, NetworkTeam mover) =>
+    BlocksMovementFor(entity, mover) || GetRequired(entity.Kind).BlocksLanding;
+
+  public static bool BlocksAttackFor(AbilityEntity entity, NetworkTeam attacker) =>
+    entity.Kind == AbilityEntityKind.Gatehouse
+      ? entity.Owner != attacker
+      : GetRequired(entity.Kind).BlocksAttacks;
+
+  public static bool IsRune(AbilityEntityKind kind) =>
+    kind is AbilityEntityKind.RuneAttack or AbilityEntityKind.RuneMovement or
+      AbilityEntityKind.RuneHealth or AbilityEntityKind.RuneRange;
+
+  public static int GetAttackBonus(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
+  {
+    bool rune = entities.Any(entity => entity.Owner == unit.Team &&
+      entity.Kind == AbilityEntityKind.RuneAttack &&
+      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+    return rune ? AdvancedAbilityRules.RuneAttackBonus : 0;
+  }
+
+  public static int GetMoveBonus(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
+  {
+    bool rune = entities.Any(entity => entity.Owner == unit.Team &&
+      entity.Kind == AbilityEntityKind.RuneMovement &&
+      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+    return rune ? AdvancedAbilityRules.RuneMoveBonus : 0;
+  }
+
+  public static int GetDamageReduction(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
+  {
+    bool rune = entities.Any(entity => entity.Owner == unit.Team &&
+      entity.Kind == AbilityEntityKind.RuneHealth &&
+      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+    return rune ? AdvancedAbilityRules.RuneDamageReduction : 0;
+  }
+
+  public static int GetAttackRangeBonus(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
+  {
+    int bonus = 0;
+    if (entities.Any(entity => entity.Owner == unit.Team &&
+        entity.Kind == AbilityEntityKind.RuneRange &&
+        Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1))
+    {
+      bonus += AdvancedAbilityRules.RuneRangeBonus;
+    }
+    if (entities.Any(entity => entity.Owner == unit.Team &&
+        entity.Kind == AbilityEntityKind.Watchtower && entity.X == unit.X && entity.Y == unit.Y))
+    {
+      bonus += 2;
+    }
+    return bonus;
+  }
+
+  public static AbilityEntity? GetLinkedPortal(IEnumerable<AbilityEntity> entities, AbilityEntity portal) =>
+    portal.Kind == AbilityEntityKind.Portal && portal.LinkedEntityId is not null
+      ? entities.FirstOrDefault(entity => entity.Id == portal.LinkedEntityId && entity.Kind == AbilityEntityKind.Portal)
+      : null;
 }
