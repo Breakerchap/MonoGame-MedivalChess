@@ -432,6 +432,8 @@ public static partial class CpuGameRules
 
   private static void ResetSharedTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    TriggerPoisonCloudsAtOwnerTurnStart(state, team);
+
     // Delayed effects trigger at the start of the source team's next turn, even if the target is
     // an enemy piece. Split them before refreshing the active team's own pieces.
     foreach (string pieceId in state.Pieces.Select(piece => piece.Id).ToArray())
