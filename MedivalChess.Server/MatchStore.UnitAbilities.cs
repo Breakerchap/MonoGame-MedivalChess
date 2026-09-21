@@ -225,10 +225,18 @@ public sealed partial class MatchStore
           effect.Damage,
           false,
           false,
-          HasAdjacentUnit(match, live, live.Team, nameof(PieceType.Baron)),
+          false,
           IsInForest(match, live),
           match.Terrain.ForestDamageReduction
         );
+        bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+          match.Pieces.Select(candidate => (
+            candidate.Type,
+            candidate.Team,
+            candidate.AbilityState?.SelectedTargetId)),
+          live.Id,
+          live.Team);
+        damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
         if (live.Health > damage)
         {
           match.Pieces[index] = live with { Health = live.Health - damage };
