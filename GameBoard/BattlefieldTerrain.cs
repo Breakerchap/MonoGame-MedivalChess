@@ -125,6 +125,14 @@ public sealed class BattlefieldTerrain
 
   public bool IsLake((int x, int y) position) => _lakes.Contains(position);
 
+  /// <summary>Removes destructible tile terrain (forest or lake) from this battlefield.</summary>
+  public bool DestroyTile((int x, int y) position)
+  {
+    bool removedForest = _forests.Remove(position);
+    bool removedLake = _lakes.Remove(position);
+    return removedForest || removedLake;
+  }
+
   public bool HasRiverBetween((int x, int y) first, (int x, int y) second)
   {
     return _rivers.Contains(TileEdge.Between(first, second));
