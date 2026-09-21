@@ -2359,6 +2359,7 @@ public sealed partial class MatchStore
     internal Dictionary<(int x, int y), int> Barricades { get; } = [];
     internal Dictionary<(int x, int y), NetworkTeam> Mines { get; } = [];
     internal HashSet<TileEdge> RiverBridges { get; } = [];
+    internal List<AbilityEntity> AbilityEntities { get; } = [];
     internal NetworkTeam? Winner { get; set; }
     internal int ConquestScore { get; set; }
     internal Dictionary<NetworkTeam, int> ConquestScores { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
@@ -2463,7 +2464,8 @@ public sealed partial class MatchStore
         ? new NetworkTreasureState(TreasurePosition?.x, TreasurePosition?.y, TreasureCarrierId)
         : null,
       ClockState(),
-      PackDraft?.ToNetworkState(Configuration.AllowedPacks)
+      PackDraft?.ToNetworkState(Configuration.AllowedPacks),
+      AbilityEntities.ToArray()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
     internal RoomJoinResult SpectatorResult() => new(true, null, Code, null, null, State());
