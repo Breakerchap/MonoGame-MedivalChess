@@ -241,7 +241,8 @@ public static class AdvancedAbilityRules
 
   public static RuleShape ImproveMusePattern(RuleShape pattern) => pattern switch
   {
-    RuleShape.Line or RuleShape.Diagonal => RuleShape.Diagonal,
+    RuleShape.Line => RuleShape.LineOrDiagonal,
+    RuleShape.Diagonal => RuleShape.Circle,
     RuleShape.Circle => RuleShape.Any,
     _ => pattern
   };
