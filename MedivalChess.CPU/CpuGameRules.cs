@@ -304,7 +304,8 @@ public static partial class CpuGameRules
     }
 
     bool demolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(action.Ability);
-    if (actor.HasAttackedThisTurn && !demolition)
+    bool independentActiveAbility = actor.Type == nameof(PieceType.Phoenix);
+    if (actor.HasAttackedThisTurn && !demolition && !independentActiveAbility)
     {
       return false;
     }
