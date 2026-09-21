@@ -38,17 +38,17 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.commoner` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.adventurer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.elf` | Verified | Forest movement costs are ignored in shared local, server, and CPU pathfinding. |
-| `fantasy.orc` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.orc` | Verified | Orc attacks flow through the shared local/server/CPU attack plan and also hit every other unit in its attack range, including friendlies; regression coverage verifies range targeting. |
 | `fantasy.mimic` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `fantasy.wizard` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.wizard` | Verified | Wizard attacks flow through the shared local/server/CPU attack plan and damage every other unit in the 3×3 area centred on the selected target, including friendlies; regression coverage verifies area targeting. |
 | `fantasy.witch` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.druid` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.giant` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.summoned_golem` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `fantasy.dragon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.dragon` | Partial | Its Forward-Line multi-target attack is wired through the shared local/server/CPU attack plan and has regression coverage. Fire immunity remains tied to the pending Fire movement/effect implementation. |
 | `fantasy.gargoyle` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `fantasy.phoenix` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `fantasy.sorceress` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.sorceress` | Verified | Local/server/CPU LOS uses the shared obstacle-bypass rule, so units, forests, terrain and barricades do not block Sorceress attacks; regression coverage verifies blocked-path bypass. |
 | `fantasy.goblin_royalty` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.skeleton` | Implemented | Core definition is loaded from the authoritative specification. |
 | `undead.banshee` | Verified | Terrain and structure traversal plus line-of-sight bypass are shared and enforced in local, server, and CPU movement/attack paths. |
@@ -74,7 +74,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.pegasus` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.spartan` | Verified | First lethal hit leaves it at 20 health. |
 | `greek.hermes` | Verified | Two moves per owner turn are enforced in local, server, and CPU state; CPU regression coverage verifies the two-move limit. |
-| `greek.artemis` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.artemis` | Verified | Local/server/CPU attacks use the shared LOS and damage hooks: forests do not block Artemis and forest targets take +10 damage. Both behaviours have regression coverage. |
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ballista` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -87,7 +87,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line or Diagonal → Diamond → Circle → Square); attachment/runtime application still remains. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
-| `norse.sleipnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.sleipnir` | Verified | Shared terrain/traversal rules are used by local/server/CPU movement: terrain costs are ignored except road benefits, and Sleipnir may travel through units. Regression coverage exercises the shared traversal semantics. |
 | `norse.barbarian` | Verified | Forward-only +2 movement is shared and enforced by the pathfinder in local, server, and CPU play. |
 | `norse.raider` | Partial | Core definition is loaded; its post-kill gold reward still requires a runtime hook. |
 | `norse.beserker` | Verified | Attack increases at 20 health or less. |
