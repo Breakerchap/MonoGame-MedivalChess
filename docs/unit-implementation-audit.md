@@ -44,7 +44,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.witch` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.druid` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.giant` | Verified | Local/server/CPU carry/throw flow is wired: directly-adjacent 1×1 units can be carried, carried units move with the Giant and cannot move independently, and throws use the 2–3 Circle pattern. Runtime coverage verifies carry and Circle-only throw geometry. |
-| `fantasy.summoned_golem` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.summoned_golem` | Verified | Purchase now charges the immediate 30-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Golem neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
 | `fantasy.dragon` | Partial | Its Forward-Line multi-target attack is wired through the shared local/server/CPU attack plan and has regression coverage. Fire immunity remains tied to the pending Fire movement/effect implementation. |
 | `fantasy.gargoyle` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `fantasy.phoenix` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -111,7 +111,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.cactus_jack` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.hired_gun` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.hired_gun` | Verified | Purchase now charges the immediate 20-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Hired Gun neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
 | `wild_west.buffalo` | Partial | Shared push fallback is implemented and tested; landing-attack movement/damage/push runtime flow remains. |
 | `wild_west.bounty_hunter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
