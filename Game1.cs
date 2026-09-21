@@ -601,6 +601,11 @@ internal sealed partial class Game1 : Game
       else
       {
         Piece hostilePieceAtTarget = GetUnattachedHostilePieceAt(targetPosition, selectedPiece.Team);
+        Piece normalAttackTarget = hostilePieceAtTarget ??
+          (AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(selectedPiece.Definition.Type.ToString()) &&
+           friendlyPieceAtTarget is not null && friendlyPieceAtTarget != selectedPiece
+            ? friendlyPieceAtTarget
+            : null);
         bool usedSpecialAbility = wasRightClick &&
           (_onlineClient is null
             ? TryUseSpecialAbility(selectedPiece, targetPosition, hostilePieceAtTarget ?? pieceAtTarget, keyboard)
@@ -651,21 +656,21 @@ internal sealed partial class Game1 : Game
           if (_onlineClient != null)
           {
             bool canSendOnlineAttack =
-              (hostilePieceAtTarget is not null ||
+              (normalAttackTarget is not null ||
                _barricades.ContainsKey(targetPosition)) &&
               AdvancedAbilityRules.CanAttack(
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
                 selectedPiece.HasAttackedThisTurn,
-                hostilePieceAtTarget?.NetworkId) &&
+                normalAttackTarget?.NetworkId) &&
               selectedPiece.Definition.Attack > 0 &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
-              if (hostilePieceAtTarget is not null)
+              if (normalAttackTarget is not null)
               {
-                _ = SendOnlineAttackAsync(selectedPiece, hostilePieceAtTarget);
+                _ = SendOnlineAttackAsync(selectedPiece, normalAttackTarget);
               }
               else
               {
@@ -692,11 +697,11 @@ internal sealed partial class Game1 : Game
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
                 selectedPiece.HasAttackedThisTurn,
-                hostilePieceAtTarget?.NetworkId) &&
+                normalAttackTarget?.NetworkId) &&
               Actions.CanAttackSquare(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
               selectedPiece.Definition.Attack > 0 &&
-              (hostilePieceAtTarget is not null ||
+              (normalAttackTarget is not null ||
                _barricades.ContainsKey(targetPosition));
 
             if (isValidAttack)
@@ -711,14 +716,18 @@ internal sealed partial class Game1 : Game
               }
               else
               {
-                PerformSharedUnitAttack(selectedPiece, hostilePieceAtTarget);
+                PerformSharedUnitAttack(selectedPiece, normalAttackTarget);
               }
 
-              selectedPiece.HasAttackedThisTurn = true;
+              AttackTurnState localAttackState = AbilityStateRules.RecordAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AttacksThisTurn);
+              selectedPiece.AttacksThisTurn = localAttackState.AttacksThisTurn;
+              selectedPiece.HasAttackedThisTurn = localAttackState.HasAttackedThisTurn;
               selectedPiece.AbilityState = AdvancedAbilityRules.RecordAttack(
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
-                hostilePieceAtTarget?.NetworkId);
+                normalAttackTarget?.NetworkId);
               selectedPiece.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
                 selectedPiece.Definition.Type.ToString(), selectedPiece.HasMovedThisTurn);
 
@@ -1313,6 +1322,16 @@ internal sealed partial class Game1 : Game
         return;
       }
 
+      foreach (Piece wendigo in pieceSetup.Pieces
+        .Where(piece => piece.Team == Team.CurrentTurn &&
+          AdvancedAbilityRules.ShouldDieAtEndOwnerTurn(
+            piece.Definition.Type.ToString(), piece.AttacksThisTurn))
+        .ToArray())
+      {
+        wendigo.CurrentHealth = 0;
+        HandlePieceDestroyed(wendigo, null);
+      }
+
       bool completedRound = Team.CurrentTurn == Team.ActiveTeams[^1];
       if (_onlineClient is null && _chessTimerEnabled)
       {
@@ -1890,7 +1909,10 @@ internal sealed partial class Game1 : Game
         target?.NetworkId) &&
       attacker.Definition.Attack > 0 &&
       Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
-      ((target is not null && target.Team != attacker.Team) || (target is null && _barricades.ContainsKey(targetPosition)));
+      ((target is not null && target != attacker &&
+        (target.Team != attacker.Team ||
+         AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Definition.Type.ToString()))) ||
+       (target is null && _barricades.ContainsKey(targetPosition)));
     if (!isValidAttack)
     {
       return false;
@@ -1909,7 +1931,11 @@ internal sealed partial class Game1 : Game
       PerformSharedUnitAttack(attacker, target);
     }
 
-    attacker.HasAttackedThisTurn = true;
+    AttackTurnState cpuAttackState = AbilityStateRules.RecordAttack(
+      attacker.Definition.Type.ToString(),
+      attacker.AttacksThisTurn);
+    attacker.AttacksThisTurn = cpuAttackState.AttacksThisTurn;
+    attacker.HasAttackedThisTurn = cpuAttackState.HasAttackedThisTurn;
     attacker.AbilityState = AdvancedAbilityRules.RecordAttack(
       attacker.Definition.Type.ToString(),
       attacker.AbilityState,
@@ -1933,6 +1959,7 @@ internal sealed partial class Game1 : Game
       {
         piece.HasMovedThisTurn = false;
         piece.HasAttackedThisTurn = false;
+        piece.AttacksThisTurn = 0;
         piece.CavalierFollowUpMoveAvailable = false;
         piece.EngineerBuildsThisTurn = 0;
         piece.CannotContributeToConquestThisTurn = false;
@@ -3665,6 +3692,16 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    if (attacker.Definition.Type == PieceType.Pickpocket &&
+        target.Team != attacker.Team && target.Team != TeamName.Neutral)
+    {
+      Team stealingTeam = _teams.Find(team => team.TeamName == attacker.Team);
+      Team targetTeam = _teams.Find(team => team.TeamName == target.Team);
+      int stolen = Math.Min(AdvancedAbilityRules.PickpocketGold, Math.Max(0, targetTeam.Money));
+      targetTeam.Money -= stolen;
+      stealingTeam.Money = ClampCurrency((long)stealingTeam.Money + stolen);
+    }
+
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
     Piece damagedPiece = guard ?? target;
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
@@ -3710,6 +3747,26 @@ internal sealed partial class Game1 : Game
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
     HandlePieceDestroyed(damagedPiece, attacker.Team);
+
+    if (!pieceSetup.Pieces.Contains(damagedPiece) &&
+        attacker.Definition.Type == PieceType.Raider &&
+        damagedPiece.Team != attacker.Team && damagedPiece.Team != TeamName.Neutral)
+    {
+      Team raiderTeam = _teams.Find(team => team.TeamName == attacker.Team);
+      raiderTeam.Money = ClampCurrency((long)raiderTeam.Money +
+        AdvancedAbilityRules.GetRaiderKillReward(damagedPiece.Definition.Cost));
+    }
+
+    if (damagedPiece.Definition.Type == PieceType.CactusJack && damage > 0 &&
+        pieceSetup.Pieces.Contains(attacker))
+    {
+      int reflected = AdvancedAbilityRules.ReflectCactusDamage(damage);
+      if (reflected > 0)
+      {
+        attacker.CurrentHealth -= reflected;
+        HandlePieceDestroyed(attacker, damagedPiece.Team);
+      }
+    }
   }
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
@@ -4548,7 +4605,13 @@ internal sealed partial class Game1 : Game
         DamageBarricade(attacker, position);
         break;
       }
-      if (_terrain.IsForest(position)) break;
+      if (_terrain.IsForest(position) ||
+          _abilityEntities.Any(entity =>
+            entity.X == position.x && entity.Y == position.y &&
+            AbilityEntityRules.BlocksAttackFor(entity, attacker.Team.ToNetworkTeam())))
+      {
+        break;
+      }
       Piece target = pieceSetup.GetPieceAt(position);
       if (target?.Definition.Type == PieceType.Farm)
       {
