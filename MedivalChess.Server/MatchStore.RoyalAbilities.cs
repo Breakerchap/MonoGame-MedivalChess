@@ -36,7 +36,7 @@ public sealed partial class MatchStore
       match.Pieces[actorIndex] = phantom with
       {
         PossessedUnitId = state.PhantomPossessedUnitId,
-        AbilityState = phantom.AbilityState with
+        AbilityState = (phantom.AbilityState ?? new UnitAbilityState()) with
         {
           CannotMoveThisTurn = true,
           CannotActThisTurn = true
