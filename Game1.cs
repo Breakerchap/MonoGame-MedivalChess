@@ -2444,7 +2444,7 @@ internal sealed partial class Game1 : Game
         ? targetPosition == actor.Position && AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
         : target is null &&
           Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
-          CanPlacePiece(PieceDefinitions.Wisp, targetPosition, null),
+          CanPlacePiece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, null),
       PieceType.Odin => target is not null && target != actor && target.Team == actor.Team &&
         target.Definition.Category != PieceCategory.Royal && actor.AbilityState.CooldownOwnerTurns <= 0 &&
         AbilityRules.IsWithinSquareRadius(
@@ -4147,9 +4147,9 @@ internal sealed partial class Game1 : Game
 
       if (actor.AbilityState.Settled && targetPiece is null &&
           Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
-          CanPlacePiece(PieceDefinitions.Wisp, targetPosition, null))
+          CanPlacePiece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, null))
       {
-        pieceSetup.AddPiece(new Piece(PieceDefinitions.Wisp, targetPosition, actor.Team));
+        pieceSetup.AddPiece(new Piece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, actor.Team));
         actor.HasAttackedThisTurn = true;
         CompleteAction();
         return true;
