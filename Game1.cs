@@ -3164,8 +3164,7 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
-    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-      (mayUsePalaceSupport && IsPalaceAssistedMovement(piece, piece.Position, destination));
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
         (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
         (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)) ||
@@ -3195,8 +3194,7 @@ internal sealed partial class Game1 : Game
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-          IsPalaceAssistedMovement(piece, from, destination);
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
         if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) ||
             (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(occupiedSquare)) ||
             _abilityEntities.Any(entity =>
