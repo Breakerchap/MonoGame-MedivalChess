@@ -8,6 +8,18 @@ namespace MedivalChess.CPU;
 /// </summary>
 public static partial class CpuGameRules
 {
+  private static UnitRule ApplyCpuAttachmentBonuses(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece host,
+    UnitRule rule)
+  {
+    bool hasImp = pieces.Any(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
+    int museCount = pieces.Count(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
+    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+  }
+
   private static void ResolveSharedPieceDamage(
     CpuMutableGameState state,
     NetworkPiece attacker,
@@ -25,7 +37,9 @@ public static partial class CpuGameRules
     }
 
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-      piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+      piece.AttachmentKind == NetworkAttachmentKind.Shieldsman) ??
+      state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
     NetworkPiece? oxAttachment = target.Type == nameof(PieceType.Ox)
       ? state.Pieces.FirstOrDefault(piece =>
         piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)
@@ -50,7 +64,8 @@ public static partial class CpuGameRules
 
   private static int GetSharedAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
   {
-    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    UnitRule attackerRule = ApplyCpuAttachmentBonuses(
+      state.Pieces, attacker, UnitRules.GetRequired(attacker.Type));
     UnitRule targetRule = UnitRules.GetRequired(target.Type);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
     (int x, int y) targetFacing = AbilityStateRules.GetFacing(target.Team, target.FacingX, target.FacingY);
@@ -480,6 +495,24 @@ public static partial class CpuGameRules
       {
         ApplySharedFixedDamage(state, pieceId, effect.SourceTeam, effect.Damage, applyCombatMitigation: true);
         if (FindPieceIndex(state.Pieces, pieceId) < 0) break;
+      }
+    }
+
+    foreach (NetworkPiece imp in state.Pieces
+      .Where(piece => piece.Team == team && piece.AttachmentKind == NetworkAttachmentKind.Imp &&
+        piece.AttachedToId is not null)
+      .ToArray())
+    {
+      int hostIndex = FindPieceIndex(state.Pieces, imp.AttachedToId!);
+      if (hostIndex < 0) continue;
+      NetworkPiece host = state.Pieces[hostIndex];
+      if (host.Health > AdvancedAbilityRules.ImpHealthDrain)
+      {
+        state.Pieces[hostIndex] = host with { Health = host.Health - AdvancedAbilityRules.ImpHealthDrain };
+      }
+      else
+      {
+        HandleSharedPieceDestroyed(state, host, null);
       }
     }
 
