@@ -84,7 +84,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.muse` | Partial | Attachment is now wired across local/server/CPU and online mapping; the host dynamically receives the codex pattern progression for both Move and Attack, with effects removed automatically on detach/death. Runtime regression coverage remains before verification. |
+| `greek.muse` | Partial | Attachment is wired across server/CPU and local/online state; because the codex gives Muse no attack range and says simply to attach to one friendly unit, its attach target is not restricted by normal attack geometry. The host dynamically receives the codex pattern progression for Move and Attack. Local targeting correction and runtime coverage remain before verification. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.sleipnir` | Verified | Shared terrain/traversal rules are used by local/server/CPU movement: terrain costs are ignored except road benefits, and Sleipnir may travel through units. Regression coverage exercises the shared traversal semantics. |
