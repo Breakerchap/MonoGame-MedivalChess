@@ -1925,6 +1925,7 @@ internal sealed partial class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
+    TriggerLocalPoisonCloudsAtOwnerTurnStart(teamName);
     ApplySharedStartOfTurnEffects(teamName);
     foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1).ToArray())
     {
@@ -3717,6 +3718,8 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
+
     if (damagedPiece.Definition.Type == PieceType.Phantom)
     {
       if (!preservePossessedRoyalProxy && !string.IsNullOrEmpty(damagedPiece.PossessedUnitId))
@@ -4354,6 +4357,7 @@ internal sealed partial class Game1 : Game
       movedPiece.CavalierFollowUpMoveAvailable = false;
     }
     TriggerMinesAlongMovement(movedPiece, completedAnimation.Path);
+    TriggerLocalAbilityEntitiesAlongMovement(movedPiece, completedAnimation.Path);
 
     if (_screen == Screen.GameOver || !pieceSetup.Pieces.Contains(movedPiece))
     {
