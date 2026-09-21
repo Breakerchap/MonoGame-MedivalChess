@@ -270,6 +270,20 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
           actor.Team, actor.Id, "Harvest", null, position.x, position.y), actions);
       }
     }
+    else if (actor.Type is nameof(PieceType.Witch) or nameof(PieceType.Druid) or nameof(PieceType.Phoenix))
+    {
+      string ability = actor.Type switch
+      {
+        nameof(PieceType.Witch) => "PoisonCloud",
+        nameof(PieceType.Druid) => "Bramble",
+        _ => "Fire"
+      };
+      foreach ((int x, int y) position in GetPotentialActionSquares(state, actor))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, ability, null, position.x, position.y), actions);
+      }
+    }
     else if (actor.Type == nameof(PieceType.Phantom))
     {
       if (!string.IsNullOrEmpty(actor.PossessedUnitId))
