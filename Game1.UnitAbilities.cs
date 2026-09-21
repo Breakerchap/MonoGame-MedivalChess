@@ -90,9 +90,10 @@ internal sealed partial class Game1
       }
 
       (int x, int y) start = moving.Position;
-      (int x, int y) destination = DisplacementRules.GetFurthestLegalPositionAwayFrom(
-        (instruction.AwayFromX, instruction.AwayFromY),
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPosition(
         start,
+        instruction.DirectionX,
+        instruction.DirectionY,
         instruction.MaximumDistance,
         candidate => CanDisplaceLocalPieceTo(moving, candidate));
       if (destination == start) continue;
