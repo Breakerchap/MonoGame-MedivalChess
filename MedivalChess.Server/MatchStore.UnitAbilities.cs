@@ -279,6 +279,7 @@ public sealed partial class MatchStore
 
   private static void ApplySharedServerStartOfTurnEffects(Match match, NetworkTeam activeTeam)
   {
+    TriggerServerPoisonCloudsAtOwnerTurnStart(match, activeTeam);
     foreach (string pieceId in match.Pieces.Select(piece => piece.Id).ToArray())
     {
       int index = match.Pieces.FindIndex(piece => piece.Id == pieceId);
