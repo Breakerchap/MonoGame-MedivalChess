@@ -181,6 +181,11 @@ public static partial class CpuGameRules
       }
     }
 
+    if (abilityPlan is not null)
+    {
+      ApplySharedDisplacements(state, abilityPlan);
+    }
+
     if (abilityPlan is { HealAttacker: > 0 })
     {
       attackerIndex = FindPieceIndex(state.Pieces, attacker.Id);
@@ -207,6 +212,75 @@ public static partial class CpuGameRules
     {
       SpendSharedAction(state, action.Team);
     }
+  }
+
+  private static void ApplySharedDisplacements(CpuMutableGameState state, AbilityAttackPlan plan)
+  {
+    foreach (AbilityDisplacementInstruction instruction in plan.Displacements ?? Array.Empty<AbilityDisplacementInstruction>())
+    {
+      int index = FindPieceIndex(state.Pieces, instruction.UnitId);
+      if (index < 0) continue;
+      NetworkPiece moving = state.Pieces[index];
+      if (moving.AttachedToId is not null || !DisplacementRules.CanBePushed(moving.Type) ||
+          !UnitRules.TryGet(moving.Type, out UnitRule rule))
+      {
+        continue;
+      }
+
+      (int x, int y) start = (moving.X, moving.Y);
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPositionAwayFrom(
+        (instruction.AwayFromX, instruction.AwayFromY),
+        start,
+        instruction.MaximumDistance,
+        candidate => CanDisplaceCpuPieceTo(state, moving, rule, candidate));
+      if (destination == start) continue;
+
+      NetworkPiece displaced = moving with { X = destination.x, Y = destination.y };
+      state.Pieces[index] = displaced;
+      for (int attachmentIndex = 0; attachmentIndex < state.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = state.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == moving.Id)
+        {
+          state.Pieces[attachmentIndex] = attachment with { X = destination.x, Y = destination.y };
+        }
+      }
+    }
+  }
+
+  private static bool CanDisplaceCpuPieceTo(
+    CpuMutableGameState state,
+    NetworkPiece moving,
+    UnitRule rule,
+    (int x, int y) destination)
+  {
+    if (!BoardRules.FootprintFitsBoard(
+      state.Source.Board, destination.x, destination.y, rule.Width, rule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if (state.Terrain.IsLake(square) || state.Barricades.ContainsKey(square) ||
+          state.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team)))
+      {
+        return false;
+      }
+    }
+
+    HashSet<string> ignored = state.Pieces
+      .Where(piece => piece.Id == moving.Id || piece.AttachedToId == moving.Id)
+      .Select(piece => piece.Id)
+      .ToHashSet(StringComparer.Ordinal);
+    return !state.Pieces.Any(piece =>
+      !ignored.Contains(piece.Id) && piece.AttachedToId is null && piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
   }
 
   private static void ApplyAbility(CpuMutableGameState state, UseAbilityAction action)
