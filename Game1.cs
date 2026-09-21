@@ -4514,10 +4514,14 @@ internal sealed partial class Game1 : Game
       UnitRules.FromPieceDefinition(attacker.Definition),
       attacker.CurrentHealth
     );
-    if (HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team))
-    {
-      damage += CombatRules.BaronDamageBonus;
-    }
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      pieceSetup.Pieces.Select(piece => (
+        piece.Definition.Type.ToString(),
+        piece.Team.ToNetworkTeam(),
+        piece.AbilityState.SelectedTargetId)),
+      attacker.NetworkId,
+      attacker.Team.ToNetworkTeam());
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
 
     _barricades[position] -= damage;
     if (_barricades[position] <= 0)
