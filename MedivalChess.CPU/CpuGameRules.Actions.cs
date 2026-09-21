@@ -337,6 +337,7 @@ public static partial class CpuGameRules
     bool plunderPickup = state.Source.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
 
+    bool spendAction = true;
     if (plunderPickup)
     {
       state.TreasureCarrierId = actor.Id;
@@ -553,10 +554,16 @@ public static partial class CpuGameRules
         case nameof(PieceType.Phantom):
           ApplySharedPhantomAbility(state, actorIndex, target, action.Ability);
           break;
+        default:
+          spendAction = ApplyCodexAdvancedAbility(state, actorIndex, target, action);
+          break;
       }
     }
 
-    SpendSharedAction(state, action.Team);
+    if (spendAction)
+    {
+      SpendSharedAction(state, action.Team);
+    }
   }
 
   private static void ApplyEngineerAbility(CpuMutableGameState state, int actorIndex, UseAbilityAction action)

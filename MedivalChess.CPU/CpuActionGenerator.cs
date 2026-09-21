@@ -237,7 +237,12 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
 
   private static void GenerateAbilities(CpuGameState state, NetworkPiece actor, List<ICpuGameAction> actions)
   {
-    if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type))
+    GenerateHwachaReloadAbilities(state, actor, actions);
+    if (GenerateCodexAdvancedAbilities(state, actor, actions))
+    {
+      // Advanced codex abilities are generated in the shared CPU partial.
+    }
+    else if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type))
     {
       AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Fire", null, actor.X, actor.Y), actions);
     }

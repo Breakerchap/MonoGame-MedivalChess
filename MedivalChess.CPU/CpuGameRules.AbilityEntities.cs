@@ -97,7 +97,8 @@ public static partial class CpuGameRules
     int x,
     int y)
   {
-    if (!BoardRules.Contains(state.Board, x, y) || state.Terrain.IsLake((x, y)) ||
+    if (!BoardRules.Contains(state.Board, x, y) ||
+        (kind != AbilityEntityKind.Bridge && state.Terrain.IsLake((x, y))) ||
         PieceOccupies(state.Pieces, (x, y)) ||
         state.AbilityEntities.Any(entity => entity.X == x && entity.Y == y))
     {

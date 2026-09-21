@@ -1794,6 +1794,129 @@ public sealed class CpuGameStateTests
     Assert.False(coach.HasAttackedThisTurn);
   }
 
+  [Fact]
+  public void HwachaCanBeReloadedByAdjacentFriendlyUnit()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("helper", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece(
+        "hwacha", nameof(PieceType.Hwacha), NetworkTeam.Red, 1, 0, 45,
+        AbilityState: new UnitAbilityState { ReloadRequired = true })
+    );
+    UseAbilityAction reload = new(NetworkTeam.Red, "helper", "ReloadHwacha", "hwacha", 1, 0);
+
+    Assert.True(reload.IsLegal(state));
+    CpuGameState after = reload.Apply(state);
+
+    Assert.True(after.Pieces.Single(piece => piece.Id == "helper").HasAttackedThisTurn);
+    Assert.False(after.Pieces.Single(piece => piece.Id == "hwacha").AbilityState!.ReloadRequired);
+    Assert.True(after.Pieces.Single(piece => piece.Id == "hwacha").AbilityState!.ReloadedThisTurn);
+  }
+
+  [Fact]
+  public void CommandCentreUpgradeIsPermanentAndChargesGold()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("command", nameof(PieceType.CommandCentre), NetworkTeam.Red, 0, 0, 160),
+      new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30)
+    );
+    UseAbilityAction upgrade = new(NetworkTeam.Red, "command", "UpgradeAttack", "soldier", 1, 0);
+
+    Assert.True(upgrade.IsLegal(state));
+    CpuGameState after = upgrade.Apply(state);
+
+    NetworkPiece soldier = after.Pieces.Single(piece => piece.Id == "soldier");
+    Assert.True(soldier.AbilityState!.Upgraded);
+    Assert.Equal(AdvancedAbilityRules.CommandCentreAttackBonus, soldier.AbilityState.AttackBonus);
+    Assert.Equal(200 - AdvancedAbilityRules.CommandCentreUpgradeCost, after.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void DemolitionistTntRequiresLaterUseAndDamagesThreeByThreeArea()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("demo", nameof(PieceType.Demolitionist), NetworkTeam.Red, 0, 0, 45),
+      new NetworkPiece("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 1, 50)
+    );
+    UseAbilityAction place = new(NetworkTeam.Red, "demo", "PlaceTnt", null, 1, 0);
+    Assert.True(place.IsLegal(state));
+    CpuGameState placed = place.Apply(state);
+    Assert.Contains(placed.AbilityEntities, entity =>
+      entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == "demo");
+
+    NetworkPiece demo = placed.Pieces.Single(piece => piece.Id == "demo");
+    CpuGameState nextOwnerTurn = new(
+      CreateConfiguration(),
+      placed.Pieces.Select(piece => piece.Id == demo.Id ? piece with { HasAttackedThisTurn = false } : piece),
+      placed.Teams.Values,
+      NetworkTeam.Red,
+      terrain: placed.Terrain,
+      board: placed.Board,
+      abilityEntities: placed.AbilityEntities
+    );
+    UseAbilityAction detonate = new(NetworkTeam.Red, "demo", "Detonate", null, 0, 0);
+    Assert.True(detonate.IsLegal(nextOwnerTurn));
+    CpuGameState after = detonate.Apply(nextOwnerTurn);
+
+    Assert.DoesNotContain(after.AbilityEntities, entity => entity.Kind == AbilityEntityKind.Tnt);
+    Assert.Equal(20, after.Pieces.Single(piece => piece.Id == "enemy").Health);
+  }
+
+  [Fact]
+  public void ThorCanCreateThreeStormsThenMoveAnExistingStorm()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("thor", nameof(PieceType.Thor), NetworkTeam.Red, 0, 0, 160)
+    );
+
+    for (int index = 0; index < 3; index++)
+    {
+      int x = index + 1;
+      UseAbilityAction create = new(NetworkTeam.Red, "thor", "Thunderstorm", null, x, 0);
+      Assert.True(create.IsLegal(state));
+      state = create.Apply(state);
+      NetworkPiece thor = state.Pieces.Single(piece => piece.Id == "thor");
+      state = new CpuGameState(
+        CreateConfiguration(),
+        state.Pieces.Select(piece => piece.Id == thor.Id
+          ? piece with
+          {
+            HasAttackedThisTurn = false,
+            AbilityState = (piece.AbilityState ?? new UnitAbilityState()) with { UsedThisTurn = false }
+          }
+          : piece),
+        state.Teams.Values,
+        NetworkTeam.Red,
+        terrain: state.Terrain,
+        board: state.Board,
+        abilityEntities: state.AbilityEntities);
+    }
+
+    Assert.Equal(3, state.AbilityEntities.Count(entity => entity.Kind == AbilityEntityKind.Thunderstorm));
+    AbilityEntity first = state.AbilityEntities.First(entity => entity.Kind == AbilityEntityKind.Thunderstorm);
+    UseAbilityAction move = new(NetworkTeam.Red, "thor", "Thunderstorm", first.Id, 0, 1);
+    Assert.True(move.IsLegal(state));
+    CpuGameState moved = move.Apply(state);
+    Assert.Contains(moved.AbilityEntities, entity => entity.Id == first.Id && entity.X == 0 && entity.Y == 1);
+  }
+
+  [Fact]
+  public void FafnirTransformationChargesGoldAndBecomesDragon()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("fafnir", nameof(PieceType.Fafnir), NetworkTeam.Red, 0, 0, 60)
+    );
+    UseAbilityAction transform = new(NetworkTeam.Red, "fafnir", "Transform", null, 0, 0);
+
+    Assert.True(transform.IsLegal(state));
+    CpuGameState after = transform.Apply(state);
+
+    NetworkPiece dragon = after.Pieces.Single(piece => piece.Id == "fafnir");
+    Assert.Equal(nameof(PieceType.FafnirDragon), dragon.Type);
+    Assert.Equal(UnitRules.GetRequired(nameof(PieceType.FafnirDragon)).Health, dragon.Health);
+    Assert.Equal(200 - AdvancedAbilityRules.FafnirTransformCost, after.Teams[NetworkTeam.Red].Money);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();

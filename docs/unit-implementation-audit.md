@@ -167,3 +167,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - All 142 non-Legacy, non-Chess source rows have a shared catalogue definition; Qilin and Serpent use their documented baseline forms.
 - Chess and Legacy gameplay work is out of scope for the current request. Chess King and four Legacy rows additionally lack usable core source data.
 - `Verified` is intentionally limited to mechanics with existing shared/runtime regression coverage; all remaining `Partial` rows still need their bespoke rules wired end-to-end.
+
+
+### 2026-09-22 — advanced-unit CPU parity batch
+
+- Added CPU legality/application/generation parity for the already-authoritative advanced-action framework: adjacent Hwacha reload, Mason/Carpenter/Daedalus builders and demolition, Runesmith runes, Fafnir transformation, Thor Thunderstorms, Demolitionist TNT, Command Centre permanent upgrades, Mashhit destruction, and Gatekeeper Portal/Seal construction.
+- Multi-selection builders now preserve pending selections without spending the team action until the required selection count is complete.
+- CPU Bridge placement now permits water tiles, matching the codex.
+- Added CPU regression coverage for Hwacha reload, Command Centre upgrades, Demolitionist TNT, Thor storm creation/movement, and Fafnir transformation.
+- These rows remain **Partial** until local-play interaction parity and their remaining unit-specific edge cases are complete; this entry intentionally does not overstate implementation status.

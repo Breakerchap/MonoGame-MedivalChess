@@ -350,11 +350,13 @@ public static partial class CpuGameRules
     }
 
     bool demolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(action.Ability);
+    bool advancedDemolition = IsCodexDemolitionAbility(actor.Type, action.Ability);
     bool independentActiveAbility = actor.Type is
       nameof(PieceType.Phoenix) or nameof(PieceType.Imp) or nameof(PieceType.Baron) or
-      nameof(PieceType.Odin) or nameof(PieceType.Hacker) ||
+      nameof(PieceType.Odin) or nameof(PieceType.Hacker) or nameof(PieceType.Fafnir) or
+      nameof(PieceType.Thor) or nameof(PieceType.CommandCentre) or nameof(PieceType.Demolitionist) ||
       (actor.Type == nameof(PieceType.WillOWisp) && !(actor.AbilityState?.Settled ?? false));
-    if (actor.HasAttackedThisTurn && !demolition && !independentActiveAbility)
+    if (actor.HasAttackedThisTurn && !demolition && !advancedDemolition && !independentActiveAbility)
     {
       return false;
     }
@@ -364,7 +366,10 @@ public static partial class CpuGameRules
     {
       return false;
     }
-    if (action.TargetPieceId is not null && target is null)
+    bool targetsAbilityEntity = actor.Type == nameof(PieceType.Thor) &&
+      action.TargetPieceId is not null &&
+      state.AbilityEntities.Any(entity => entity.Id == action.TargetPieceId);
+    if (action.TargetPieceId is not null && target is null && !targetsAbilityEntity)
     {
       return false;
     }
@@ -378,10 +383,14 @@ public static partial class CpuGameRules
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
+    bool rangeIndependentCodexAbility =
+      string.Equals(action.Ability, "ReloadHwacha", StringComparison.OrdinalIgnoreCase) ||
+      actor.Type is nameof(PieceType.Fafnir);
     if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
         actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse) or
           nameof(PieceType.WillOWisp) or nameof(PieceType.Odin) or nameof(PieceType.Hacker)) &&
-        !isCarryThrowUnit && !CanUseActionSquare(actor, action.TargetX, action.TargetY))
+        !rangeIndependentCodexAbility && !isCarryThrowUnit &&
+        !CanUseActionSquare(state, actor, action.TargetX, action.TargetY))
     {
       return false;
     }
@@ -478,7 +487,7 @@ public static partial class CpuGameRules
           RoyalAbilityRules.CanPhantomPossess(
             actor.Type, actor.Team, actor.PossessedUnitId,
             target.Id, target.Type, target.Team, target.IsRoyalProxy),
-      _ => false
+      _ => IsLegalCodexAdvancedAbility(state, actor, target, action)
     };
   }
 
