@@ -145,14 +145,15 @@ public sealed class PieceDefinition
     string? identifier = null,
     string? displayName = null,
     string? sourceUnitId = null,
-    bool isPurchasable = true)
+    bool isPurchasable = true,
+    PieceCategory? category = null)
   {
     Type = type;
     Identifier = string.IsNullOrWhiteSpace(identifier) ? type.ToString() : identifier;
     SourceUnitId = string.IsNullOrWhiteSpace(sourceUnitId) ? Identifier : sourceUnitId;
     DisplayName = string.IsNullOrWhiteSpace(displayName) ? type.ToString() : displayName;
     Abbreviation = string.IsNullOrWhiteSpace(abbreviation) ? null : abbreviation;
-    Category = GetDefaultCategory(type);
+    Category = category ?? GetDefaultCategory(type);
     Pack = pack;
     Movement = movement;
     Attack = attack;

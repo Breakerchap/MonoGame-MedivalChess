@@ -64,6 +64,7 @@ public static class AbilityAttackRules
         break;
 
       case nameof(PieceType.Wizard):
+      case nameof(PieceType.Hwacha):
         AddSquareAreaNormalDamage(
           damage,
           selectedTarget,
@@ -87,7 +88,7 @@ public static class AbilityAttackRules
 
     return new AbilityAttackPlan(
       damage,
-      SelfDestructAfterAttack: attacker.Type == nameof(PieceType.Terrorist),
+      SelfDestructAfterAttack: attacker.Type is nameof(PieceType.Terrorist) or nameof(PieceType.Wisp),
       HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0
     );
   }

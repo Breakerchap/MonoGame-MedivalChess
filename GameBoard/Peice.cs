@@ -10,7 +10,13 @@ internal enum AttachmentKind
 {
   None,
   Guard,
-  Carried
+  Carried,
+  Shieldsman,
+  Shadow,
+  Muse,
+  Succubus,
+  Imp,
+  Passenger
 }
 
 internal sealed class Piece
@@ -111,6 +117,7 @@ internal sealed class Piece
   internal string PossessedUnitId { get; set; }
   internal (int x, int y) Facing { get; set; }
   internal IReadOnlyList<NetworkPendingDamage> PendingDamage { get; set; } = Array.Empty<NetworkPendingDamage>();
+  internal UnitAbilityState AbilityState { get; set; } = new();
 
   internal long NextMercenaryBid => (long)LastBid + 10;
   internal bool IsRoyal => RoyalAbilityRules.IsRoyal(

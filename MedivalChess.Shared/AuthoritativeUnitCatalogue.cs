@@ -48,7 +48,8 @@ internal static class AuthoritativeUnitCatalogue
         type.ToString(),
         unit.Name,
         unit.UnitId,
-        !unit.Name.Contains("Unchoosable", StringComparison.OrdinalIgnoreCase)));
+        !unit.Name.Contains("Unchoosable", StringComparison.OrdinalIgnoreCase),
+        unit.IsRoyal ? PieceCategory.Royal : null));
     }
     return [.. definitions];
   }
