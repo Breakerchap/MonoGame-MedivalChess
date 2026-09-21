@@ -84,7 +84,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line → Line and Diagonal → Circle → Square); attachment/runtime application still remains. |
+| `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line or Diagonal → Diamond → Circle → Square); attachment/runtime application still remains. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.sleipnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
