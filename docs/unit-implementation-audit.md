@@ -84,7 +84,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line or Diagonal → Diamond → Circle → Square); attachment/runtime application still remains. |
+| `greek.muse` | Partial | Attachment is now wired across local/server/CPU and online mapping; the host dynamically receives the codex pattern progression for both Move and Attack, with effects removed automatically on detach/death. Runtime regression coverage remains before verification. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.sleipnir` | Verified | Shared terrain/traversal rules are used by local/server/CPU movement: terrain costs are ignored except road benefits, and Sleipnir may travel through units. Regression coverage exercises the shared traversal semantics. |
@@ -92,7 +92,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.raider` | Verified | Kill rewards are wired in local/server/CPU as half the defeated enemy unit's base cost rounded to the nearest 5, with green CPU runtime coverage. |
 | `norse.beserker` | Verified | Attack increases at 20 health or less. |
 | `norse.valkyrie` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `norse.shieldsman` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.shieldsman` | Partial | Attach is wired across local/server/CPU and online mapping; while attached, incoming host damage is redirected to the Shieldsman and the attachment moves with the host. Runtime regression coverage remains before verification. |
 | `norse.runesmith` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
 | `norse.flying_longboat` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -143,7 +143,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.archangel` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.archdemon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `angels_demons.imp` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.imp` | Partial | Active attach is wired across local/server/CPU and online mapping with one Imp per host; the host dynamically gains +1 Move/+15 Attack and loses 5 Health at each owner-turn start. Runtime regression coverage remains before verification. |
 | `angels_demons.herald` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.satan` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `chess.pawn` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
