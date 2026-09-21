@@ -795,25 +795,32 @@ public sealed class CpuGameStateTests
     NetworkPiece releasedHost = state.Pieces.Single(piece => piece.Id == "host");
     Assert.Null(releasedPhantom.PossessedUnitId);
     Assert.False(releasedHost.IsRoyalProxy);
-    Assert.True(releasedPhantom.AbilityState?.CannotMoveThisTurn);
-    Assert.True(releasedPhantom.AbilityState?.CannotActThisTurn);
+    Assert.True(releasedPhantom.AbilityState?.CannotMoveThisTurn == true);
+    Assert.True(releasedPhantom.AbilityState?.CannotActThisTurn == true);
     Assert.False(new MoveAction(NetworkTeam.Red, "phantom", 1, 0).IsLegal(state));
   }
 
   [Fact]
   public void KillingPossessedRoyalProxyAlsoKillsItsPhantom()
   {
-    CpuGameState state = CreateState(
-      new NetworkPiece(
-        "phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20,
-        PossessedUnitId: "host"),
-      new NetworkPiece(
-        "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 5,
-        IsRoyalProxy: true),
-      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -2, 30)
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20,
+          PossessedUnitId: "host"),
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 5,
+          IsRoyalProxy: true),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -2, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Phantom)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
     );
-
-    state = state with { CurrentTurn = NetworkTeam.Blue };
     AttackAction attack = new(NetworkTeam.Blue, "attacker", "host", 0, -1);
     Assert.True(attack.IsLegal(state));
 
