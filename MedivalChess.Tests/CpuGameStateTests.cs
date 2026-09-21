@@ -891,7 +891,9 @@ public sealed class CpuGameStateTests
         new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
       ],
       NetworkTeam.Red,
-      terrain: new BattlefieldTerrain(lakes: [(0, assistedY), (0, -1)])
+      terrain: new BattlefieldTerrain(
+        forests: [(0, 1), (0, 2), (0, 3), (0, assistedY)],
+        lakes: [(0, -1)])
     );
 
     IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> paths =
