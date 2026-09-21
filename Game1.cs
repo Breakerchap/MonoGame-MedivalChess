@@ -2375,7 +2375,7 @@ internal sealed partial class Game1 : Game
 
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    bool independentActiveAbility = actor.Definition.Type == PieceType.Phoenix;
+    bool independentActiveAbility = actor.Definition.Type is PieceType.Phoenix or PieceType.Imp;
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
@@ -2414,6 +2414,18 @@ internal sealed partial class Game1 : Game
         actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
         CanPlaceLocalAbilityEntity(targetPosition),
       PieceType.Engineer => true,
+      PieceType.Muse => target is not null && target.Team == actor.Team && target != actor &&
+        target.AttachedTo is null && CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Shieldsman => target is not null && target.Team == actor.Team && target != actor &&
+        target.AttachedTo is null && target.Definition.Category != PieceCategory.Royal &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == target && candidate.AttachmentKind == AttachmentKind.Shieldsman) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Imp => target is not null && target.Team == actor.Team && target != actor &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == target && candidate.AttachmentKind == AttachmentKind.Imp) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
       PieceType.Phantom => !string.IsNullOrEmpty(actor.PossessedUnitId)
         ? target == actor || target?.NetworkId == actor.PossessedUnitId
@@ -2443,6 +2455,8 @@ internal sealed partial class Game1 : Game
       ? "Fire"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
+      : actor.Definition.Type is PieceType.Muse or PieceType.Shieldsman or PieceType.Imp
+      ? "Attach"
       : AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString())
         ? "Fire"
         : actor.Definition.Type == PieceType.Phantom
@@ -3943,7 +3957,7 @@ internal sealed partial class Game1 : Game
     }
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    bool independentActiveAbility = actor.Definition.Type == PieceType.Phoenix;
+    bool independentActiveAbility = actor.Definition.Type is PieceType.Phoenix or PieceType.Imp;
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
@@ -4041,6 +4055,59 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Engineer)
     {
       return TryUseEngineerAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Muse &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        targetPiece.AttachedTo is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Muse))
+      {
+        return false;
+      }
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Shieldsman &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        targetPiece.AttachedTo is null &&
+        targetPiece.Definition.Category != PieceCategory.Royal &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == targetPiece && candidate.AttachmentKind == AttachmentKind.Shieldsman) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Shieldsman))
+      {
+        return false;
+      }
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Imp &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == targetPiece && candidate.AttachmentKind == AttachmentKind.Imp) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Imp))
+      {
+        return false;
+      }
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      CompleteAction();
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Guard &&
