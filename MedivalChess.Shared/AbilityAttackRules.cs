@@ -218,7 +218,7 @@ public static class AbilityAttackRules
         continue;
       }
 
-      if (AbilityRules.AreDirectlyAdjacent(
+      if (AbilityRules.AreAdjacent(
         centreRule,
         (centre.X, centre.Y),
         candidateRule,
