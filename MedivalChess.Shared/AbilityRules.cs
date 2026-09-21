@@ -192,6 +192,15 @@ public static class AbilityRules
     return dx * forward.x + dy * forward.y > 0;
   }
 
+  public static bool MovesCloserToPalace(
+    UnitRule movingUnit,
+    (int x, int y) from,
+    (int x, int y) to,
+    UnitRule palace,
+    (int x, int y) palacePosition
+  ) => FootprintDistance(movingUnit, to, palace, palacePosition) <
+    FootprintDistance(movingUnit, from, palace, palacePosition);
+
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
     (int x, int y) from,
@@ -201,8 +210,8 @@ public static class AbilityRules
   )
   {
     int movementSteps = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
-    return movementSteps > 1 && FootprintDistance(movingUnit, to, palace, palacePosition) <
-      FootprintDistance(movingUnit, from, palace, palacePosition);
+    return movementSteps > 1 &&
+      MovesCloserToPalace(movingUnit, from, to, palace, palacePosition);
   }
 
   public static bool AreAdjacent(
