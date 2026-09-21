@@ -2,7 +2,7 @@ name: Unit packs and Circle tests
 
 on:
   push:
-    branches: [unit-packs-circle]
+    branches: [unit-packs-circle, feature/updated-units]
   pull_request:
 
 jobs:
