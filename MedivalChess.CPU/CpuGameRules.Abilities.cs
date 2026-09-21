@@ -32,9 +32,11 @@ public static partial class CpuGameRules
       : null;
     int unmitigated = damageOverride ?? GetSharedAttackDamage(state, attacker, target);
     ApplySharedDamageToPiece(state, attacker, attackerTeam, damaged, unmitigated);
+    RewardCpuRaiderKill(state, attacker, damaged);
     if (oxAttachment is not null && oxAttachment.Id != damaged.Id && FindPiece(state.Pieces, oxAttachment.Id) is not null)
     {
       ApplySharedDamageToPiece(state, attacker, attackerTeam, oxAttachment, unmitigated);
+      RewardCpuRaiderKill(state, attacker, oxAttachment);
     }
 
     for (int index = 0; index < state.Pieces.Count; index++)
@@ -124,10 +126,41 @@ public static partial class CpuGameRules
     if (live.Health > damage)
     {
       state.Pieces[damagedIndex] = live with { Health = live.Health - damage };
+    }
+    else
+    {
+      HandleSharedPieceDestroyed(state, live, attackerTeam);
+    }
+
+    if (damaged.Type == nameof(PieceType.CactusJack) && damage > 0)
+    {
+      int reflected = AdvancedAbilityRules.ReflectCactusDamage(damage);
+      if (reflected > 0)
+      {
+        ApplySharedFixedDamage(
+          state,
+          attacker.Id,
+          damaged.Team,
+          reflected,
+          applyCombatMitigation: false);
+      }
+    }
+  }
+
+  private static void RewardCpuRaiderKill(
+    CpuMutableGameState state,
+    NetworkPiece attacker,
+    NetworkPiece defeated)
+  {
+    if (attacker.Type != nameof(PieceType.Raider) ||
+        defeated.Team == attacker.Team || defeated.Team == NetworkTeam.Neutral ||
+        state.Pieces.Any(piece => piece.Id == defeated.Id) ||
+        !UnitRules.TryGet(defeated.Type, out UnitRule defeatedRule))
+    {
       return;
     }
 
-    HandleSharedPieceDestroyed(state, live, attackerTeam);
+    AddMoney(state, attacker.Team, AdvancedAbilityRules.GetRaiderKillReward(defeatedRule.Cost));
   }
 
   private static void ApplySharedFixedDamage(
@@ -500,6 +533,21 @@ public static partial class CpuGameRules
   private static void CompleteSharedTurn(CpuMutableGameState state, NetworkTeam team)
   {
     ApplyEndOfTurnObjectives(state, team);
+    if (state.Winner is null)
+    {
+      foreach (string wendigoId in state.Pieces
+        .Where(piece => piece.Team == team &&
+          AdvancedAbilityRules.ShouldDieAtEndOwnerTurn(piece.Type, piece.AttacksThisTurn))
+        .Select(piece => piece.Id)
+        .ToArray())
+      {
+        int index = FindPieceIndex(state.Pieces, wendigoId);
+        if (index >= 0)
+        {
+          HandleSharedPieceDestroyed(state, state.Pieces[index], null);
+        }
+      }
+    }
     if (state.Winner is not null)
     {
       return;
