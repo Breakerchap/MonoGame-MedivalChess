@@ -374,10 +374,10 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece piece = foundMatch.Pieces[index];
-      if (piece.HasMovedThisTurn && !AbilityRules.CanUseCavalierFollowUpMove(
-        piece.Type, piece.CavalierFollowUpMoveAvailable))
+      if (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
+          !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable))
       {
-        return new(false, "That unit has already moved this turn.", foundMatch.State());
+        return new(false, "That unit cannot move again this turn.", foundMatch.State());
       }
 
       if (piece.AttachedToId is not null && piece.AttachmentKind == NetworkAttachmentKind.Guard)
@@ -446,7 +446,8 @@ public sealed partial class MatchStore
         Y = finalY,
         HasMovedThisTurn = true,
         HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamagedAnEnemy || foundMatch.Pieces[pieceIndex].HasAttackedThisTurn,
-        CavalierFollowUpMoveAvailable = false
+        CavalierFollowUpMoveAvailable = false,
+        AbilityState = AdvancedAbilityRules.RecordMove(foundMatch.Pieces[pieceIndex].AbilityState)
       };
       foundMatch.Pieces[pieceIndex] = piece;
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
@@ -516,7 +517,7 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece attacker = foundMatch.Pieces[attackerIndex];
-      if (attacker.Team != player.Team || attacker.HasAttackedThisTurn)
+      if (attacker.Team != player.Team)
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
@@ -541,6 +542,10 @@ public sealed partial class MatchStore
       (int x, int y) targetPosition = target is null
         ? (request.TargetX!.Value, request.TargetY!.Value)
         : (target.X, target.Y);
+      if (!AdvancedAbilityRules.CanAttack(attacker.Type, attacker.AbilityState, attacker.HasAttackedThisTurn, target?.Id))
+      {
+        return new(false, "That unit cannot attack that target this turn.", foundMatch.State());
+      }
       bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried &&
         target is not null && attacker.AttachedToId == target.Id && target.Team != attacker.Team;
       if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
@@ -570,7 +575,7 @@ public sealed partial class MatchStore
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
 
-      PrepareSharedServerAttack(foundMatch, attackerIndex, targetPosition, out attacker, out bool mayFire);
+      PrepareSharedServerAttack(foundMatch, attackerIndex, targetPosition, target?.Id, out attacker, out bool mayFire);
       if (!mayFire)
       {
         if (foundMatch.Winner is null) SpendAction(foundMatch, player);
