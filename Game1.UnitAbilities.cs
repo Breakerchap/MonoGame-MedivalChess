@@ -61,6 +61,8 @@ internal sealed partial class Game1
       ResolveDamage(attacker, target, fixedDamage);
     }
 
+    ApplySharedLocalDisplacements(plan);
+
     if (plan.HealAttacker > 0 && pieceSetup.Pieces.Contains(attacker) && attacker.CurrentHealth > 0)
     {
       attacker.CurrentHealth = Math.Min(
@@ -74,6 +76,62 @@ internal sealed partial class Game1
       attacker.CurrentHealth = 0;
       HandlePieceDestroyed(attacker, null);
     }
+  }
+
+  private void ApplySharedLocalDisplacements(AbilityAttackPlan plan)
+  {
+    foreach (AbilityDisplacementInstruction instruction in plan.Displacements ?? Array.Empty<AbilityDisplacementInstruction>())
+    {
+      Piece moving = pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == instruction.UnitId);
+      if (moving is null || moving.AttachedTo is not null ||
+          !DisplacementRules.CanBePushed(moving.Definition.Type.ToString()))
+      {
+        continue;
+      }
+
+      (int x, int y) start = moving.Position;
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPositionAwayFrom(
+        (instruction.AwayFromX, instruction.AwayFromY),
+        start,
+        instruction.MaximumDistance,
+        candidate => CanDisplaceLocalPieceTo(moving, candidate));
+      if (destination == start) continue;
+
+      moving.Position = destination;
+      foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == moving))
+      {
+        attachment.Position = destination;
+      }
+      pieceSetup.RefreshOccupancy();
+    }
+  }
+
+  private bool CanDisplaceLocalPieceTo(Piece moving, (int x, int y) destination)
+  {
+    if (!IsFootprintOnBoard(moving.Definition, destination))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(moving.Definition, destination))
+    {
+      if (_terrain.IsLake(square) || _barricades.ContainsKey(square) ||
+          _abilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team.ToNetworkTeam())))
+      {
+        return false;
+      }
+    }
+
+    HashSet<Piece> ignored = pieceSetup.Pieces
+      .Where(piece => piece == moving || piece.AttachedTo == moving)
+      .ToHashSet();
+    return !pieceSetup.Pieces.Any(piece =>
+      !ignored.Contains(piece) && piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm &&
+      UnitRules.FootprintsOverlap(
+        piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+        destination.x, destination.y, moving.Definition.Size.x, moving.Definition.Size.y));
   }
 
   private int GetSharedLocalAttackDamage(Piece attacker, Piece target)
