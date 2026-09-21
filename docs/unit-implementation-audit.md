@@ -41,13 +41,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.orc` | Verified | Orc attacks flow through the shared local/server/CPU attack plan and also hit every other unit in its attack range, including friendlies; regression coverage verifies range targeting. |
 | `fantasy.mimic` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.wizard` | Verified | Wizard attacks flow through the shared local/server/CPU attack plan and damage every other unit in the 3×3 area centred on the selected target, including friendlies; regression coverage verifies area targeting. |
-| `fantasy.witch` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `fantasy.druid` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.witch` | Partial | Server Poison Cloud creation exists; shared owner-turn cloud damage/source-bound effect rules are now defined. CPU/local creation, runtime damage triggering, source-death cleanup, and regression coverage remain. |
+| `fantasy.druid` | Partial | Server Bramble creation exists; shared entry damage, Bramble self-damage and no-landing rules are defined. CPU/local creation and movement-trigger application remain. |
 | `fantasy.giant` | Verified | Local/server/CPU carry/throw flow is wired: directly-adjacent 1×1 units can be carried, carried units move with the Giant and cannot move independently, and throws use the 2–3 Circle pattern. Runtime coverage verifies carry and Circle-only throw geometry. |
 | `fantasy.summoned_golem` | Verified | Purchase now charges the immediate 30-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Golem neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
-| `fantasy.dragon` | Partial | Its Forward-Line multi-target attack is wired through the shared local/server/CPU attack plan and has regression coverage. Fire immunity remains tied to the pending Fire movement/effect implementation. |
+| `fantasy.dragon` | Partial | Its Forward-Line multi-target attack is wired/tested and shared Fire immunity is now defined. Runtime Fire-trigger integration remains before verification. |
 | `fantasy.gargoyle` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `fantasy.phoenix` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.phoenix` | Partial | Phoenix now has shared terrain and Fire immunity; server Fire creation exists and shared Fire entry/consumption rules are defined. CPU/local creation and runtime Fire triggering remain. |
 | `fantasy.sorceress` | Verified | Local/server/CPU LOS uses the shared obstacle-bypass rule, so units, forests, terrain and barricades do not block Sorceress attacks; regression coverage verifies blocked-path bypass. |
 | `fantasy.goblin_royalty` | Verified | Royal placement spawns four separate Goblin Royalty units and shared local/server/CPU death handling only defeats the team when the final goblin dies; runtime regression coverage verifies first-vs-final death. |
 | `undead.skeleton` | Implemented | Core definition is loaded from the authoritative specification. |
