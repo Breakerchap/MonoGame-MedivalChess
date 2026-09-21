@@ -530,6 +530,73 @@ public sealed class CpuGameStateTests
       action is AttackAction { AttackerId: "red-guard" } or UseAbilityAction { ActorId: "red-guard" });
   }
 
+
+  [Fact]
+  public void HermesMayMoveTwiceButNotThreeTimesInOneOwnerTurn()
+  {
+    CpuGameState state = CreateState(new NetworkPiece("hermes", nameof(PieceType.Hermes), NetworkTeam.Red, 0, 0, 20));
+
+    MoveAction first = new(NetworkTeam.Red, "hermes", 0, -1);
+    Assert.True(first.IsLegal(state));
+    state = first.Apply(state);
+
+    MoveAction second = new(NetworkTeam.Red, "hermes", 0, -2);
+    Assert.True(second.IsLegal(state));
+    state = second.Apply(state);
+
+    Assert.False(new MoveAction(NetworkTeam.Red, "hermes", 0, -3).IsLegal(state));
+    Assert.Equal(2, state.Pieces.Single(piece => piece.Id == "hermes").AbilityState?.MovesThisTurn);
+  }
+
+  [Fact]
+  public void SniperCooldownAdvancesOnCpuOwnerTurns()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("sniper", nameof(PieceType.Sniper), NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -3, 110)
+    );
+    AttackAction shot = new(NetworkTeam.Red, "sniper", "target", 0, -3);
+
+    Assert.True(shot.IsLegal(state));
+    state = shot.Apply(state);
+    Assert.False(shot.IsLegal(state));
+
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+    Assert.Equal(NetworkTeam.Red, state.CurrentTurn);
+    Assert.False(shot.IsLegal(state));
+
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+    Assert.Equal(NetworkTeam.Red, state.CurrentTurn);
+    Assert.True(shot.IsLegal(state));
+  }
+
+  [Fact]
+  public void SeraphCpuAttacksThreeDistinctTargetsAndCannotRepeatOne()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("seraph", nameof(PieceType.Seraph), NetworkTeam.Red, 0, 0, 75),
+      new NetworkPiece("a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100),
+      new NetworkPiece("b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 0, 100),
+      new NetworkPiece("c", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 2, 100),
+      new NetworkPiece("d", nameof(PieceType.Swordsman), NetworkTeam.Blue, -1, 0, 100)
+    );
+
+    foreach ((string id, int x, int y) in new[] { ("a", 0, -1), ("b", 2, 0), ("c", 1, 2) })
+    {
+      AttackAction attack = new(NetworkTeam.Red, "seraph", id, x, y);
+      Assert.True(attack.IsLegal(state));
+      state = attack.Apply(state);
+    }
+
+    Assert.False(new AttackAction(NetworkTeam.Red, "seraph", "a", 0, -1).IsLegal(state));
+    Assert.False(new AttackAction(NetworkTeam.Red, "seraph", "d", -1, 0).IsLegal(state));
+    NetworkPiece seraph = state.Pieces.Single(piece => piece.Id == "seraph");
+    Assert.Equal(3, seraph.AttacksThisTurn);
+    Assert.True(seraph.HasAttackedThisTurn);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
