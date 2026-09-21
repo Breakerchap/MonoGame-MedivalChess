@@ -63,7 +63,7 @@ public static partial class CpuGameRules
   )
   {
     if (CanChessCaptureLand(state, pieces, piece, rule, destination)) return true;
-    return CanPlace(
+    if (!CanPlace(
       state,
       pieces,
       rule,
@@ -72,7 +72,17 @@ public static partial class CpuGameRules
       piece.Id,
       AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
       AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
-    );
+    ))
+    {
+      return false;
+    }
+
+    return !OccupiedSquares(rule, destination).Any(square =>
+      state.AbilityEntities.Any(entity =>
+        entity.X == square.x && entity.Y == square.y &&
+        AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
+        (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule))));
+  }
   }
 
   private static bool CanPlace(
@@ -126,7 +136,11 @@ public static partial class CpuGameRules
           IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
             (!ignoresTerrain && state.Terrain.IsLake(square)) ||
-            (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)))
+            (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)) ||
+            state.AbilityEntities.Any(entity =>
+              entity.X == square.x && entity.Y == square.y &&
+              AbilityEntityRules.BlocksMovementFor(entity, piece.Team) &&
+              !AbilityRules.IgnoresStructures(rule)))
         {
           return false;
         }
@@ -247,7 +261,10 @@ public static partial class CpuGameRules
       OccupiedSquares(rule, (attacker.X, attacker.Y)),
       target,
       state.Terrain.IsForest,
-      barricades.ContainsKey,
+      square => barricades.ContainsKey(square) ||
+        state.AbilityEntities.Any(entity =>
+          entity.X == square.x && entity.Y == square.y &&
+          AbilityEntityRules.BlocksAttackFor(entity, attacker.Team)),
       square => pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null &&
         other.Type != "Farm" && !(attacker.Type == "Sorceress" && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square))
