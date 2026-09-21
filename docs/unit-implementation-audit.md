@@ -15,7 +15,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `medival.cannon` | Implemented | Core definition is loaded from the authoritative specification. |
 | `medival.catapult` | Verified | Line-of-sight bypass is enforced by attack validation. |
 | `medival.guard` | Verified | Friendly non-Royal attachment and damage interception are implemented. |
-| `medival.mason` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `medival.mason` | Partial | Stone Wall/Gatehouse entities and their team-aware movement/attack blocking are wired into local, server, and CPU pathing; build/demolish action parity and tests remain. |
 | `medival.farm` | Verified | Owner-turn income and pass-through handling are implemented. |
 | `medival.king` | Implemented | Core definition is loaded from the authoritative specification. |
 | `medival.baron` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -25,7 +25,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.sumo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
-| `dynasty.carpenter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
 | `dynasty.war_drum` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
@@ -73,13 +73,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.ares` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.pegasus` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.spartan` | Verified | First lethal hit leaves it at 20 health. |
-| `greek.hermes` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.hermes` | Verified | Two moves per owner turn are enforced in local, server, and CPU state; CPU regression coverage verifies the two-move limit. |
 | `greek.artemis` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ballista` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.zeus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.daedalus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -119,7 +119,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.civilian` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.officer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.gunman` | Implemented | Core definition is loaded from the authoritative specification. |
-| `modern.sniper` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.sniper` | Verified | Its two-owner-turn attack cadence is enforced by shared ability state in local, server, and CPU play, with CPU cooldown regression coverage. |
 | `modern.terrorist` | Verified | Its attack damages every other unit in range, including friendlies, before it self-destructs; the shared attack plan is used by local, server, and CPU runtimes. |
 | `modern.spy` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.tank` | Verified | Off-axis attack attempts rotate without firing. |
@@ -134,9 +134,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.fiend` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.cherub` | Verified | Terrain-ignoring movement is shared and enforced by local, server, and CPU pathfinding. |
 | `angels_demons.fallen` | Implemented | Core definition is loaded from the authoritative specification. |
-| `angels_demons.seraph` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `angels_demons.gatekeeper` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.gatekeeper` | Partial | Portal/Seal entities exist and Seals now participate in local/server/CPU movement/attack blocking; portal transport, placement action parity, expiry, and tests remain. |
 | `angels_demons.beelzebub` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
