@@ -556,12 +556,12 @@ public sealed partial class MatchStore
       if (target is not null &&
           ((target.Id == attacker.Id) ||
            (target.Team == attacker.Team && !AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Type)) ||
-           target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
+           target.AttachedToId is not null || !CanUseActionTarget(foundMatch, attacker, target)))
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
 
-      if (target is null && !CanUseActionSquare(attacker, targetPosition.x, targetPosition.y))
+      if (target is null && !CanUseActionSquare(foundMatch, attacker, targetPosition.x, targetPosition.y))
       {
         return new(false, "That barricade is outside the unit's attack pattern.", foundMatch.State());
       }
@@ -574,7 +574,8 @@ public sealed partial class MatchStore
       }
 
       if (!UnitRules.TryGet(attacker.Type, out UnitRule directAttackRule) ||
-          !AbilityRules.CanMakeNormalAttack(directAttackRule))
+          !AbilityRules.CanMakeNormalAttack(
+            ApplySharedServerAttachmentBonuses(foundMatch, attacker, directAttackRule)))
       {
         return new(false, "That unit cannot make a direct attack.", foundMatch.State());
       }
@@ -1462,6 +1463,7 @@ public sealed partial class MatchStore
 
   private static UnitRule GetEffectiveMovementRule(Match match, NetworkPiece piece, UnitRule rule)
   {
+    rule = ApplySharedServerAttachmentBonuses(match, piece, rule);
     int attachmentBonus = GetSharedServerAttachmentMovementBonus(match, piece);
     if (attachmentBonus != 0)
     {
@@ -1631,9 +1633,11 @@ public sealed partial class MatchStore
         attackingPlayer.Money = ClampCurrency((long)attackingPlayer.Money + stolen);
       }
     }
+    NetworkPiece? shield = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Shieldsman);
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard);
-    NetworkPiece damagedPiece = guard ?? target;
+    NetworkPiece damagedPiece = shield ?? guard ?? target;
     NetworkPiece? oxAttachment = target.Type == nameof(PieceType.Ox)
       ? match.Pieces.FirstOrDefault(piece =>
         piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)
@@ -2006,6 +2010,27 @@ public sealed partial class MatchStore
         targetX - origin.x, targetY - origin.y)) return true;
     }
     return false;
+  }
+
+  private static bool CanUseActionSquare(Match match, NetworkPiece actor, int targetX, int targetY)
+  {
+    if (!UnitRules.TryGet(actor.Type, out UnitRule rule)) return false;
+    rule = ApplySharedServerAttachmentBonuses(match, actor, rule);
+    if (rule.AttackPattern == RuleShape.None) return false;
+    foreach ((int x, int y) origin in OccupiedSquares(rule, (actor.X, actor.Y)))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern, rule.MinimumAttackRange, rule.AttackRange, actor.Team,
+        targetX - origin.x, targetY - origin.y)) return true;
+    }
+    return false;
+  }
+
+  private static bool CanUseActionTarget(Match match, NetworkPiece actor, NetworkPiece target)
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return false;
+    return OccupiedSquares(targetRule, (target.X, target.Y))
+      .Any(square => CanUseActionSquare(match, actor, square.x, square.y));
   }
 
   private static bool TryMarkSpyTarget(Match match, int actorIndex, NetworkPiece? target)
