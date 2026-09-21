@@ -106,7 +106,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.pickpocket` | Partial | Theft is wired in local/server/CPU, and shared/CPU attack legality now permits its codex-required zero-damage normal attack. Server/local zero-damage attack gates and runtime regression coverage remain. |
+| `wild_west.pickpocket` | Partial | Theft and its codex-required zero-damage normal attack are wired in local/server/CPU. Consolidated runtime regression coverage remains before verification. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.cactus_jack` | Partial | Half-damage reflection is now wired in local/server/CPU without recursive reflection; consolidated runtime regression coverage remains before verification. |
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
