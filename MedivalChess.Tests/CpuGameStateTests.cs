@@ -1234,6 +1234,207 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void PickpocketZeroDamageAttackStealsUpToTwentyGold()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("pickpocket", nameof(PieceType.Pickpocket), NetworkTeam.Red, 0, 0, 20),
+        new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 12, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Red, "pickpocket", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(212, result.Teams[NetworkTeam.Red].Money);
+    Assert.Equal(0, result.Teams[NetworkTeam.Blue].Money);
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "pickpocket").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void RaiderKillAwardsHalfBaseCostRoundedToFive()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("raider", nameof(PieceType.Raider), NetworkTeam.Red, 0, 0, 40),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 1)
+    );
+    int expectedReward = AdvancedAbilityRules.GetRaiderKillReward(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Cost);
+
+    CpuGameState result = new AttackAction(
+      NetworkTeam.Red, "raider", "target", 0, -1).Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "target");
+    Assert.Equal(200 + expectedReward, result.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void CactusJackReflectsHalfOfFinalIncomingDamage()
+  {
+    UnitRule swordsmanRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState state = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, swordsmanRule.Health),
+      new NetworkPiece("cactus", nameof(PieceType.CactusJack), NetworkTeam.Blue, 0, -1, 45)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "cactus", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    int reflected = AdvancedAbilityRules.ReflectCactusDamage(swordsmanRule.Attack);
+    Assert.Equal(45 - swordsmanRule.Attack, result.Pieces.Single(piece => piece.Id == "cactus").Health);
+    Assert.Equal(swordsmanRule.Health - reflected, result.Pieces.Single(piece => piece.Id == "attacker").Health);
+  }
+
+  [Fact]
+  public void WendigoMayAttackFriendlyAndOnlyDiesAfterTurnWithNoAttack()
+  {
+    CpuGameState attackState = CreateState(
+      new NetworkPiece("wendigo", nameof(PieceType.Wendigo), NetworkTeam.Red, 0, 0, 65),
+      new NetworkPiece("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 100),
+      new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+    );
+    AttackAction friendlyAttack = new(NetworkTeam.Red, "wendigo", "friendly", 0, -1);
+
+    Assert.True(friendlyAttack.IsLegal(attackState));
+    CpuGameState afterAttack = friendlyAttack.Apply(attackState);
+    NetworkPiece attackedWendigo = afterAttack.Pieces.Single(piece => piece.Id == "wendigo");
+    Assert.Equal(1, attackedWendigo.AttacksThisTurn);
+    Assert.Equal(50, afterAttack.Pieces.Single(piece => piece.Id == "friendly").Health);
+
+    Assert.True(new EndTurnAction(NetworkTeam.Red).IsLegal(afterAttack));
+    CpuGameState survivedTurn = new EndTurnAction(NetworkTeam.Red).Apply(afterAttack);
+    Assert.Contains(survivedTurn.Pieces, piece => piece.Id == "wendigo");
+
+    CpuGameState idleState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("wendigo", nameof(PieceType.Wendigo), NetworkTeam.Red, 0, 0, 65),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+
+    EndTurnAction idleEnd = new(NetworkTeam.Red);
+    Assert.True(idleEnd.IsLegal(idleState));
+    CpuGameState died = idleEnd.Apply(idleState);
+    Assert.DoesNotContain(died.Pieces, piece => piece.Id == "wendigo");
+  }
+
+  [Fact]
+  public void SpyMarkConsumesAttackDoublesNextDamageAndThenClears()
+  {
+    UnitRule swordsman = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState state = CreateState(
+      new NetworkPiece("spy", nameof(PieceType.Spy), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -1, swordsman.Health),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100)
+    );
+    UseAbilityAction mark = new(NetworkTeam.Red, "spy", "Mark", "target", 0, -1);
+
+    Assert.True(mark.IsLegal(state));
+    CpuGameState marked = mark.Apply(state);
+    NetworkPiece spy = marked.Pieces.Single(piece => piece.Id == "spy");
+    Assert.True(spy.HasAttackedThisTurn);
+    Assert.Equal(1, spy.AttacksThisTurn);
+    Assert.Equal("target", spy.MarkedTargetId);
+
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "target", 0, -1);
+    Assert.True(attack.IsLegal(marked));
+    CpuGameState damaged = attack.Apply(marked);
+
+    Assert.Equal(100 - swordsman.Attack * 2, damaged.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Null(damaged.Pieces.Single(piece => piece.Id == "spy").MarkedTargetId);
+  }
+
+  [Fact]
+  public void WispDiesImmediatelyAfterAttacking()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("wisp", nameof(PieceType.Wisp), NetworkTeam.Red, 0, 0, 5),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "wisp", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "wisp");
+    Assert.Equal(80, result.Pieces.Single(piece => piece.Id == "target").Health);
+  }
+
+  [Fact]
+  public void ChimeraTakesFifteenExtraDamageFromBehind()
+  {
+    UnitRule swordsman = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState behindState = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, swordsman.Health),
+      new NetworkPiece(
+        "chimera", nameof(PieceType.Chimera), NetworkTeam.Blue, 0, 0, 75,
+        FacingX: 0, FacingY: -1)
+    );
+    CpuGameState frontState = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, swordsman.Health),
+      new NetworkPiece(
+        "chimera", nameof(PieceType.Chimera), NetworkTeam.Blue, 0, 0, 75,
+        FacingX: 0, FacingY: -1)
+    );
+
+    CpuGameState behind = new AttackAction(
+      NetworkTeam.Red, "attacker", "chimera", 0, 0).Apply(behindState);
+    CpuGameState front = new AttackAction(
+      NetworkTeam.Red, "attacker", "chimera", 0, 0).Apply(frontState);
+
+    int behindDamage = 75 - behind.Pieces.Single(piece => piece.Id == "chimera").Health;
+    int frontDamage = 75 - front.Pieces.Single(piece => piece.Id == "chimera").Health;
+    Assert.Equal(15, behindDamage - frontDamage);
+  }
+
+  [Fact]
+  public void BallistaPiercingStopsAtAttackBlockingAbilityEntity()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("ballista", nameof(PieceType.Ballista), NetworkTeam.Red, 0, 0, 25),
+        new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190),
+        new NetworkPiece("behind", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -4, 100)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("wall", AbilityEntityKind.StoneWall, NetworkTeam.Blue, 0, -3, 50)
+      ]
+    );
+    AttackAction attack = new(NetworkTeam.Red, "ballista", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(150, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Equal(100, result.Pieces.Single(piece => piece.Id == "behind").Health);
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
