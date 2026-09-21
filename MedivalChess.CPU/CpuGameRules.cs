@@ -72,8 +72,9 @@ public static partial class CpuGameRules
     NetworkPiece piece
   )
   {
-    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || (piece.HasMovedThisTurn &&
-        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) ||
+        (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
+         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind is NetworkAttachmentKind.Guard ||
         (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
@@ -169,8 +170,9 @@ public static partial class CpuGameRules
   private static bool IsLegalMove(CpuGameState state, MoveAction action)
   {
     NetworkPiece? piece = FindPiece(state.Pieces, action.PieceId);
-    if (piece is null || piece.Team != action.Team || (piece.HasMovedThisTurn &&
-        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
+    if (piece is null || piece.Team != action.Team ||
+        (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
+         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind == NetworkAttachmentKind.Guard ||
         (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
@@ -183,13 +185,17 @@ public static partial class CpuGameRules
   private static bool IsLegalAttack(CpuGameState state, AttackAction action)
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
-    if (attacker is null || attacker.Team != action.Team || attacker.HasAttackedThisTurn ||
+    if (attacker is null || attacker.Team != action.Team ||
         !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || attackerRule.Attack <= 0)
     {
       return false;
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    if (!AdvancedAbilityRules.CanAttack(attacker.Type, attacker.AbilityState, attacker.HasAttackedThisTurn, target?.Id))
+    {
+      return false;
+    }
     bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target?.Id;
     if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
     {
