@@ -778,7 +778,7 @@ public static partial class CpuGameRules
       .Any(second => Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y) == 1)));
 
   private static bool IsInForest(CpuMutableGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
-    OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Source.Terrain.IsForest);
+    OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);
 
   private static bool IsInForest(CpuGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
     OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);
