@@ -36,7 +36,7 @@ public static class AbilityRules
 
   public static bool IsTerrainImmune(UnitRule unit) =>
     unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir) or
-      nameof(PieceType.Cherub) or nameof(PieceType.Banshee) or
+      nameof(PieceType.Phoenix) or nameof(PieceType.Cherub) or nameof(PieceType.Banshee) or
       nameof(PieceType.Poltergeist) or nameof(PieceType.FafnirDragon) or
       nameof(PieceType.Fylgja) or nameof(PieceType.FlyingLongboat) or
       nameof(PieceType.Beelzebub);
