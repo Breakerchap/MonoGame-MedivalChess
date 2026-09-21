@@ -18,7 +18,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `medival.mason` | Partial | Stone Wall/Gatehouse entities and their team-aware movement/attack blocking are wired into local, server, and CPU pathing; build/demolish action parity and tests remain. |
 | `medival.farm` | Verified | Owner-turn income and pass-through handling are implemented. |
 | `medival.king` | Implemented | Core definition is loaded from the authoritative specification. |
-| `medival.baron` | Partial | Selected-target action is now wired across local/server/CPU and online play, while the existing shared combat hooks apply +10 outgoing damage and -10 incoming damage to the selected friendly unit. Runtime regression coverage remains before verification. |
+| `medival.baron` | Partial | Selected-target action and +10 outgoing/-10 incoming combat effects are wired across local/server/CPU and online play; CPU runtime coverage for selection, once-per-turn use and damage bonus is committed, awaiting green CI. |
 | `dynasty.ashigaru` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.samurai` | Verified | Long-range projectile damage reduction is shared and runtime-tested. |
 | `dynasty.ninja` | Verified | Three attacks per owner turn are tracked by shared/local/server state. |
@@ -26,7 +26,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
 | `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
-| `dynasty.war_drum` | Partial | Refresh is wired across local/server/CPU and online play: as an attack it targets a friendly unit that already moved, clears its moved state, and marks it refreshed so the same unit cannot be refreshed twice that owner turn. Runtime coverage remains. |
+| `dynasty.war_drum` | Partial | Refresh is wired across local/server/CPU and online play, clearing a moved friendly unit's moved state and preventing a second refresh that owner turn; CPU runtime coverage is committed, awaiting green CI. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
 | `dynasty.hwacha` | Partial | Shared attack targeting now correctly hits the selected target plus only directly-adjacent splash units, with regression coverage. Reload/reload-assist runtime flow remains. |
@@ -62,7 +62,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.vampire` | Verified | Post-attack healing is implemented and capped. |
 | `undead.shadow` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.wendigo` | Verified | Friendly normal attacks, attack counting, and end-owner-turn death after zero attacks are wired in local/server/CPU with green CPU runtime coverage. |
-| `undead.will_o_wisp` | Partial | Settle and SpawnWisp are wired across local/server/CPU and online play. Settled state prevents normal movement; once settled it may spend its attack to spawn a Wisp on an adjacent empty square, with Wisp self-destruction already shared. Runtime coverage remains. |
+| `undead.will_o_wisp` | Partial | Settle and adjacent Wisp spawning are wired across local/server/CPU and online play; settled movement lock and spawned-Wisp attack consumption have CPU runtime coverage committed, awaiting green CI. |
 | `undead.wisp` | Verified | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks, with green CPU runtime regression coverage. |
 | `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.skinwalker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -99,7 +99,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.fafnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.fafnir_dragon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.fylgja` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `norse.odin` | Partial | Protect is wired across local/server/CPU and online play with the four-owner-turn cooldown. The first lethal event while protected now leaves the target at 1 Health and consumes protection, and protection expires before effects at the start of the next owner turn. Runtime coverage remains. |
+| `norse.odin` | Partial | Protect, cooldown, first-lethal survival at 1 Health, consumption, and expiry before next-owner-turn effects are wired across local/server/CPU and online play; CPU runtime coverage is committed, awaiting green CI. |
 | `norse.thor` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.brawler` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -130,7 +130,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.command_centre` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `modern.hacker` | Partial | Hack is wired across local/server/CPU and online play with the three-owner-turn cooldown and 5-Circle targeting. The target's special abilities are disabled through its next owner turn while movement/normal attacks remain available; income checks already respect disabled state. Runtime coverage remains. |
+| `modern.hacker` | Partial | Hack targeting/cooldown is wired across local/server/CPU and online play; all special-action entry points now respect disabled state, normal movement/attacks remain available, and disable duration decrements at the end of the target's owner turn. CPU runtime coverage is committed, awaiting green CI. |
 | `angels_demons.fiend` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.cherub` | Verified | Terrain-ignoring movement is shared and enforced by local, server, and CPU pathfinding. |
 | `angels_demons.fallen` | Implemented | Core definition is loaded from the authoritative specification. |
