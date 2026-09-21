@@ -256,6 +256,70 @@ public sealed class SharedAbilityRulesTests
   }
 
   [Fact]
+  public void WizardAttackDamagesEveryOtherUnitInTargetThreeByThree()
+  {
+    AbilityUnitSnapshot wizard = new("wizard", nameof(PieceType.Wizard), NetworkTeam.Red, 0, 0, 1, 1);
+    AbilityUnitSnapshot target = new("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -2, 1, 1);
+    AbilityUnitSnapshot friendly = new("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -2, 1, 1);
+    AbilityUnitSnapshot diagonal = new("diagonal", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -3, 1, 1);
+    AbilityUnitSnapshot distant = new("distant", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, -4, 1, 1);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      wizard, target, [wizard, target, friendly, diagonal, distant]);
+
+    Assert.Contains(plan.Damage, hit => hit.TargetId == target.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == friendly.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == diagonal.Id);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == distant.Id);
+  }
+
+  [Fact]
+  public void OrcAttackHitsEveryUnitInItsAttackRangeIncludingFriendlies()
+  {
+    AbilityUnitSnapshot orc = new("orc", nameof(PieceType.Orc), NetworkTeam.Red, 0, 0, 1, 1);
+    AbilityUnitSnapshot selected = new("selected", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 1, 1);
+    AbilityUnitSnapshot friendly = new("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 1, 1);
+    AbilityUnitSnapshot diagonal = new("diagonal", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -1, 1, 1);
+    AbilityUnitSnapshot distant = new("distant", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 0, 1, 1);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      orc, selected, [orc, selected, friendly, diagonal, distant]);
+
+    Assert.Contains(plan.Damage, hit => hit.TargetId == selected.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == friendly.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == diagonal.Id);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == distant.Id);
+  }
+
+  [Fact]
+  public void DragonAttackHitsEveryUnitInItsForwardLineRange()
+  {
+    AbilityUnitSnapshot dragon = new("dragon", nameof(PieceType.Dragon), NetworkTeam.Red, 0, 0, 2, 3);
+    AbilityUnitSnapshot selected = new("selected", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 1, 1);
+    AbilityUnitSnapshot secondLine = new("second", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -2, 1, 1);
+    AbilityUnitSnapshot outsideLine = new("outside", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, -1, 1, 1);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      dragon, selected, [dragon, selected, secondLine, outsideLine]);
+
+    Assert.Contains(plan.Damage, hit => hit.TargetId == selected.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == secondLine.Id);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == outsideLine.Id);
+  }
+
+  [Fact]
+  public void ArtemisGetsTenBonusDamageAgainstTargetsInForests()
+  {
+    UnitRule artemis = UnitRules.GetRequired(nameof(PieceType.Artemis));
+    UnitRule target = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+
+    Assert.Equal(AbilityRules.ArtemisForestBonus, AbilityRules.GetAttackAbilityBonus(
+      artemis, target, true, (0, 1), (0, 0), (0, -2)));
+    Assert.Equal(0, AbilityRules.GetAttackAbilityBonus(
+      artemis, target, false, (0, 1), (0, 0), (0, -2)));
+  }
+
+  [Fact]
   public void Orc_UsesCurrentWorkbookCostAndIsPurchasable()
   {
     Assert.Equal(105, PieceDefinitions.Orc.Cost);
