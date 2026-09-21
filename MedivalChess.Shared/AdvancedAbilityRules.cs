@@ -247,6 +247,32 @@ public static class AdvancedAbilityRules
     _ => pattern
   };
 
+  public static UnitRule ApplyAttachmentBonuses(
+    UnitRule rule,
+    bool hasImp,
+    int museCount
+  )
+  {
+    if (hasImp)
+    {
+      rule = rule with
+      {
+        MoveRange = rule.MoveRange + ImpMoveBonus,
+        Attack = rule.Attack + ImpAttackBonus
+      };
+    }
+
+    for (int i = 0; i < Math.Max(0, museCount); i++)
+    {
+      rule = rule with
+      {
+        MovePattern = ImproveMusePattern(rule.MovePattern),
+        AttackPattern = ImproveMusePattern(rule.AttackPattern)
+      };
+    }
+    return rule;
+  }
+
   public static bool IsUpkeepFireUnit(string unitType) =>
     unitType is nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun);
 
