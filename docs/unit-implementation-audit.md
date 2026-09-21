@@ -121,7 +121,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.gunman` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.sniper` | Verified | Its two-owner-turn attack cadence is enforced by shared ability state in local, server, and CPU play, with CPU cooldown regression coverage. |
 | `modern.terrorist` | Verified | Its attack damages every other unit in range, including friendlies, before it self-destructs; the shared attack plan is used by local, server, and CPU runtimes. |
-| `modern.spy` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.spy` | Partial | Mark/double-next-damage/mark-clear behaviour is already wired; CPU/server Mark now correctly consumes the Spy's attack state. Local attack consumption and consolidated runtime coverage remain before verification. |
 | `modern.tank` | Verified | Off-axis attack attempts rotate without firing. |
 | `modern.engineer` | Verified | Road, barricade, mine, and demolition actions are implemented. |
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
