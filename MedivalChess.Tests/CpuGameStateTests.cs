@@ -626,6 +626,58 @@ public sealed class CpuGameStateTests
     Assert.True(secondBranch.Terrain.IsLake((1, 0)));
   }
 
+
+  [Fact]
+  public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    NetworkPiece swordsman = new("red-swordsman", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    CpuTeamState[] teams =
+    [
+      new(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+      new(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+    ];
+
+    CpuGameState wallState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("wall", AbilityEntityKind.StoneWall, NetworkTeam.Red, 0, -1, 50)
+      ]
+    );
+    Assert.False(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(wallState));
+
+    CpuGameState friendlyGateState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("gate", AbilityEntityKind.Gatehouse, NetworkTeam.Red, 0, -1, 15)
+      ]
+    );
+    Assert.True(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(friendlyGateState));
+
+    CpuGameState enemyGateState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("gate", AbilityEntityKind.Gatehouse, NetworkTeam.Blue, 0, -1, 15)
+      ]
+    );
+    Assert.False(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(enemyGateState));
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
