@@ -413,6 +413,32 @@ public sealed class SharedAbilityRulesTests
 
 
   [Fact]
+  public void AttachmentBonusesApplyImpStatsAndMusePatterns()
+  {
+    UnitRule baseRule = new(
+      "TestHost",
+      RuleCategory.Melee,
+      2,
+      RuleShape.Line,
+      20,
+      30,
+      1,
+      1,
+      3,
+      RuleShape.Diagonal,
+      50
+    );
+
+    UnitRule effective = AdvancedAbilityRules.ApplyAttachmentBonuses(
+      baseRule, hasImp: true, museCount: 1);
+
+    Assert.Equal(3, effective.MoveRange);
+    Assert.Equal(35, effective.Attack);
+    Assert.Equal(RuleShape.Straight, effective.MovePattern);
+    Assert.Equal(RuleShape.Straight, effective.AttackPattern);
+  }
+
+  [Fact]
   public void MusePatternProgressionMatchesCodex()
   {
     Assert.Equal(RuleShape.Straight, AdvancedAbilityRules.ImproveMusePattern(RuleShape.Line));
