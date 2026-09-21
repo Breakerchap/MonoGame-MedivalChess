@@ -554,7 +554,9 @@ public sealed partial class MatchStore
         return new(false, "An attached unit may only attack its carrier.", foundMatch.State());
       }
       if (target is not null &&
-          (target.Team == attacker.Team || target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
+          ((target.Id == attacker.Id) ||
+           (target.Team == attacker.Team && !AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Type)) ||
+           target.AttachedToId is not null || !NetworkAttackRules.IsLegal(attacker, target)))
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
@@ -602,7 +604,10 @@ public sealed partial class MatchStore
         foreach ((int x, int y) position in AbilityRules.GetPiercingRay(ballistaRule, attacker.X, attacker.Y, target.X, target.Y))
         {
           if (!NetworkBoardRules.Contains(foundMatch.Configuration, position.x, position.y) ||
-              foundMatch.Terrain.IsForest(position) || foundMatch.Barricades.ContainsKey(position)) break;
+              foundMatch.Terrain.IsForest(position) || foundMatch.Barricades.ContainsKey(position) ||
+              foundMatch.AbilityEntities.Any(entity =>
+                entity.X == position.x && entity.Y == position.y &&
+                AbilityEntityRules.BlocksAttackFor(entity, attacker.Team))) break;
           NetworkPiece? pierced = foundMatch.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id && piece.Id != target.Id && piece.Team != attacker.Team && piece.Type != "Farm" &&
             piece.AttachedToId is null && UnitRules.TryGet(piece.Type, out UnitRule rule) && UnitRules.FootprintsOverlap(piece.X, piece.Y, rule.Width, rule.Height, position.x, position.y, 1, 1));
           if (pierced is not null) ResolvePieceDamage(foundMatch, attacker, player, pierced.Id, null);
@@ -1613,6 +1618,18 @@ public sealed partial class MatchStore
     if (index < 0) return;
     NetworkPiece target = match.Pieces[index];
     if (!CanSharedServerDamage(attacker, target)) return;
+
+    if (attacker.Type == nameof(PieceType.Pickpocket) &&
+        target.Team != attacker.Team && target.Team != NetworkTeam.Neutral)
+    {
+      PlayerSlot? targetPlayer = match.Players.FirstOrDefault(candidate => candidate.Team == target.Team);
+      if (targetPlayer is not null)
+      {
+        int stolen = Math.Min(AdvancedAbilityRules.PickpocketGold, Math.Max(0, targetPlayer.Money));
+        targetPlayer.Money -= stolen;
+        attackingPlayer.Money = ClampCurrency((long)attackingPlayer.Money + stolen);
+      }
+    }
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard);
     NetworkPiece damagedPiece = guard ?? target;
@@ -1682,6 +1699,35 @@ public sealed partial class MatchStore
     else
     {
       HandlePieceDestroyed(match, damagedPiece, attackingPlayer);
+    }
+
+    bool destroyed = match.Pieces.All(piece => piece.Id != damagedPiece.Id);
+    if (destroyed && attacker.Type == nameof(PieceType.Raider) &&
+        damagedPiece.Team != attacker.Team && damagedPiece.Team != NetworkTeam.Neutral &&
+        UnitRules.TryGet(damagedPiece.Type, out UnitRule defeatedRule))
+    {
+      attackingPlayer.Money = ClampCurrency((long)attackingPlayer.Money +
+        AdvancedAbilityRules.GetRaiderKillReward(defeatedRule.Cost));
+    }
+
+    if (damagedPiece.Type == nameof(PieceType.CactusJack) && damage > 0)
+    {
+      int reflected = AdvancedAbilityRules.ReflectCactusDamage(damage);
+      int attackerIndex = match.Pieces.FindIndex(piece => piece.Id == attacker.Id);
+      if (reflected > 0 && attackerIndex >= 0)
+      {
+        NetworkPiece liveAttacker = match.Pieces[attackerIndex];
+        if (liveAttacker.Health > reflected)
+        {
+          match.Pieces[attackerIndex] = liveAttacker with { Health = liveAttacker.Health - reflected };
+        }
+        else
+        {
+          PlayerSlot reflectionSource = match.Players.FirstOrDefault(candidate => candidate.Team == damagedPiece.Team)
+            ?? attackingPlayer;
+          HandlePieceDestroyed(match, liveAttacker, reflectionSource);
+        }
+      }
     }
   }
 
@@ -2310,6 +2356,19 @@ public sealed partial class MatchStore
       {
         match.Winner = player.Team;
         return;
+      }
+    }
+
+    foreach (string wendigoId in match.Pieces
+      .Where(piece => piece.Team == player.Team &&
+        AdvancedAbilityRules.ShouldDieAtEndOwnerTurn(piece.Type, piece.AttacksThisTurn))
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == wendigoId);
+      if (index >= 0)
+      {
+        HandlePieceDestroyed(match, match.Pieces[index], player);
       }
     }
 
