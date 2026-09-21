@@ -30,7 +30,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
 | `dynasty.hwacha` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `dynasty.harvester` | Partial | Server harvest exists; CPU legality/action generation now target destructible terrain in range. CPU application, offline-local execution, and end-to-end regression coverage remain. |
+| `dynasty.harvester` | Partial | Harvest now executes in server, CPU, offline local, and online client flows, destroying in-range terrain and granting 15 gold; end-to-end regression coverage remains before verification. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
 | `dynasty.terracotta_warrior` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
