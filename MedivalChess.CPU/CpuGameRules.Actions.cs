@@ -332,8 +332,17 @@ public static partial class CpuGameRules
       switch (actor.Type)
       {
         case nameof(PieceType.Spy):
-          state.Pieces[actorIndex] = actor with { MarkedTargetId = target!.Id };
-          break;
+          {
+            AttackTurnState attackState = AbilityStateRules.RecordAttack(actor.Type, actor.AttacksThisTurn);
+            state.Pieces[actorIndex] = actor with
+            {
+              MarkedTargetId = target!.Id,
+              AttacksThisTurn = attackState.AttacksThisTurn,
+              HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+              AbilityState = AdvancedAbilityRules.RecordAttack(actor.Type, actor.AbilityState, target.Id)
+            };
+            break;
+          }
         case nameof(PieceType.Harvester):
           state.Terrain.DestroyTile((action.TargetX, action.TargetY));
           AddMoney(state, action.Team, AdvancedAbilityRules.HarvesterGold);
