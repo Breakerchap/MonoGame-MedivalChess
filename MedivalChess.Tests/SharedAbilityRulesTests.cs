@@ -195,23 +195,44 @@ public sealed class SharedAbilityRulesTests
   }
 
   [Fact]
-  public void ZeusPlan_ChainsOnlyThroughOrthogonallyAdjacentEnemies()
+  public void ZeusPlan_ChainsThroughAllAdjacentEnemiesIncludingDiagonals()
   {
     AbilityUnitSnapshot zeus = new("zeus", nameof(PieceType.Zeus), NetworkTeam.Red, 0, 0, 1, 1);
     AbilityUnitSnapshot target = new("a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 2, 1, 1);
     AbilityUnitSnapshot next = new("b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 3, 2, 1, 1);
     AbilityUnitSnapshot chained = new("c", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 2, 1, 1);
-    AbilityUnitSnapshot diagonalOnly = new("d", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 1, 1, 1);
+    AbilityUnitSnapshot diagonal = new("d", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 1, 1, 1);
+    AbilityUnitSnapshot friendly = new("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 2, 1, 1, 1);
 
     AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
       zeus,
       target,
-      [zeus, target, next, chained, diagonalOnly]
+      [zeus, target, next, chained, diagonal, friendly]
     );
 
     Assert.Contains(plan.Damage, hit => hit.TargetId == next.Id && hit.FixedDamage == AbilityRules.ZeusChainDamage);
     Assert.Contains(plan.Damage, hit => hit.TargetId == chained.Id && hit.FixedDamage == AbilityRules.ZeusChainDamage);
-    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == diagonalOnly.Id);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == diagonal.Id && hit.FixedDamage == AbilityRules.ZeusChainDamage);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == friendly.Id);
+  }
+
+  [Fact]
+  public void HwachaHitsSelectedTargetAndOnlyDirectlyAdjacentSplashUnits()
+  {
+    AbilityUnitSnapshot hwacha = new("hwacha", nameof(PieceType.Hwacha), NetworkTeam.Red, 0, 0, 1, 1);
+    AbilityUnitSnapshot target = new("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 3, 0, 1, 1);
+    AbilityUnitSnapshot orthogonal = new("orthogonal", nameof(PieceType.Swordsman), NetworkTeam.Red, 3, 1, 1, 1);
+    AbilityUnitSnapshot diagonal = new("diagonal", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 1, 1, 1);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      hwacha,
+      target,
+      [hwacha, target, orthogonal, diagonal]
+    );
+
+    Assert.Contains(plan.Damage, hit => hit.TargetId == target.Id && hit.Mode == AbilityDamageMode.NormalAttack);
+    Assert.Contains(plan.Damage, hit => hit.TargetId == orthogonal.Id && hit.Mode == AbilityDamageMode.NormalAttack);
+    Assert.DoesNotContain(plan.Damage, hit => hit.TargetId == diagonal.Id);
   }
 
   [Fact]
