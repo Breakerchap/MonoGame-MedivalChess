@@ -172,6 +172,7 @@ internal sealed partial class Game1 : Game
   private readonly Dictionary<(int x, int y), TeamName> _mines = [];
   private readonly HashSet<(int x, int y)> _restoredLakeTiles = [];
   private readonly HashSet<TileEdge> _riverBridges = [];
+  private readonly List<AbilityEntity> _abilityEntities = [];
   private const int noMansLandHalfHeight = MatchRules.DefaultNoMansLandHalfHeight;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
@@ -1711,7 +1712,8 @@ internal sealed partial class Game1 : Game
       riverBridges: _riverBridges,
       scenario: CreateCampaignCpuScenario(configuration),
       recentMoves: _cpuRecentMoves,
-      board: _campaignTestPlay ? _board : null
+      board: _campaignTestPlay ? _board : null,
+      abilityEntities: _abilityEntities
     );
   }
 
@@ -2541,6 +2543,8 @@ internal sealed partial class Game1 : Game
     ApplyOnlineClockState(state.Clock);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlineImprovements(state.Improvements);
+    _abilityEntities.Clear();
+    _abilityEntities.AddRange(state.AbilityEntities ?? []);
     ApplyOnlinePieces(state.Pieces);
     _conquestScore = state.ConquestScore;
     _conquestScores.Clear();
