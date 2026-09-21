@@ -12,7 +12,7 @@ public interface ICpuActionGenerator
 /// Complete legal-action generator. Candidate ranking is deliberately separate so low difficulty
 /// can prune aggressively without weakening the rules or high-difficulty search.
 /// </summary>
-public sealed class CpuActionGenerator : ICpuActionGenerator
+public sealed partial class CpuActionGenerator : ICpuActionGenerator
 {
   private readonly record struct PurchasePlacementCluster(
     int TerritoryBand,
