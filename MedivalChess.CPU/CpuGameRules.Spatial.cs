@@ -83,7 +83,6 @@ public static partial class CpuGameRules
         AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
         (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule))));
   }
-  }
 
   private static bool CanPlace(
     CpuGameState state,
