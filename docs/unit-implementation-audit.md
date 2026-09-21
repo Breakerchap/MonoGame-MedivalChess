@@ -22,7 +22,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.ashigaru` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.samurai` | Verified | Long-range projectile damage reduction is shared and runtime-tested. |
 | `dynasty.ninja` | Verified | Three attacks per owner turn are tracked by shared/local/server state. |
-| `dynasty.sumo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `dynasty.sumo` | Partial | Shared push fallback is implemented and tested (full distance, otherwise furthest legal square); post-attack runtime displacement remains. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
 | `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
@@ -82,7 +82,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.atlas` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.atlas` | Partial | Shared push fallback is implemented and tested; Atlas's post-attack push plus its once-per-turn three-unit movement action remain to be wired. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.muse` | Partial | Shared pattern progression is implemented and tested (Line or Diagonal → Diamond → Circle → Square); attachment/runtime application still remains. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -104,7 +104,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.brawler` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `wild_west.musketeer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.musketeer` | Partial | Shared displacement fallback is implemented and tested; post-attack two-tile retreat remains to be wired through runtimes. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.pickpocket` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -112,7 +112,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.hired_gun` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.buffalo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.buffalo` | Partial | Shared push fallback is implemented and tested; landing-attack movement/damage/push runtime flow remains. |
 | `wild_west.bounty_hunter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.gang_leader` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -127,7 +127,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
 | `modern.missile_silo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `modern.armoured_truck` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.command_centre` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.hacker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -137,7 +137,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `angels_demons.gatekeeper` | Partial | Portal/Seal entities exist and Seals now participate in local/server/CPU movement/attack blocking; portal transport, placement action parity, expiry, and tests remain. |
-| `angels_demons.beelzebub` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.beelzebub` | Partial | Terrain/unit traversal is already shared; the tested displacement rules now encode push immunity and blocked-push fallback, while retaliatory push remains to be wired. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
