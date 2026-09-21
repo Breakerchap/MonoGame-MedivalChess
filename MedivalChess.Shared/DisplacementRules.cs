@@ -17,6 +17,19 @@ public static class DisplacementRules
     (int x, int y) start,
     int maximumDistance,
     Func<(int x, int y), bool> isLegal
+  ) => GetFurthestLegalPosition(
+    start,
+    Math.Sign(start.x - source.x),
+    Math.Sign(start.y - source.y),
+    maximumDistance,
+    isLegal);
+
+  public static (int x, int y) GetFurthestLegalPosition(
+    (int x, int y) start,
+    int directionX,
+    int directionY,
+    int maximumDistance,
+    Func<(int x, int y), bool> isLegal
   )
   {
     ArgumentNullException.ThrowIfNull(isLegal);
@@ -25,8 +38,8 @@ public static class DisplacementRules
       return start;
     }
 
-    int stepX = Math.Sign(start.x - source.x);
-    int stepY = Math.Sign(start.y - source.y);
+    int stepX = Math.Sign(directionX);
+    int stepY = Math.Sign(directionY);
     if (stepX == 0 && stepY == 0)
     {
       return start;
