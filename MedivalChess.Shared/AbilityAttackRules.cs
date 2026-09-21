@@ -26,7 +26,8 @@ public readonly record struct AbilityDisplacementInstruction(
   string UnitId,
   int DirectionX,
   int DirectionY,
-  int MaximumDistance
+  int MaximumDistance,
+  bool RequireFullDistance = false
 );
 
 public sealed record AbilityAttackPlan(
@@ -106,7 +107,7 @@ public static class AbilityAttackRules
     if (attacker.Type == nameof(PieceType.Musketeer))
     {
       (int x, int y) direction = DirectionAwayFrom(selectedTarget, attacker);
-      displacements.Add(new(attacker.Id, direction.x, direction.y, 2));
+      displacements.Add(new(attacker.Id, direction.x, direction.y, 2, RequireFullDistance: true));
     }
     if (selectedTarget.Type == nameof(PieceType.Beelzebub) &&
         DisplacementRules.CanBePushed(attacker.Type))
