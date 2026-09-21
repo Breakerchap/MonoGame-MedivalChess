@@ -95,10 +95,18 @@ public static partial class CpuGameRules
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentUnit(state, damaged, damaged.Team, nameof(PieceType.Baron)),
+      false,
       IsInForest(state, damaged),
       state.Source.Terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      damaged.Id,
+      damaged.Team);
+    damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       damagedRule,
@@ -141,10 +149,21 @@ public static partial class CpuGameRules
         damage,
         false,
         false,
-        HasAdjacentUnit(state, target, target.Team, nameof(PieceType.Baron)),
+        false,
         IsInForest(state, target),
         state.Source.Terrain.ForestDamageReduction)
       : damage;
+    if (applyCombatMitigation)
+    {
+      bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+        state.Pieces.Select(piece => (
+          piece.Type,
+          piece.Team,
+          piece.AbilityState?.SelectedTargetId)),
+        target.Id,
+        target.Team);
+      appliedDamage = AdvancedAbilityRules.ApplyBaronIncomingReduction(appliedDamage, protectedByBaron);
+    }
 
     if (UnitRules.TryGet(target.Type, out UnitRule targetRule))
     {
@@ -329,10 +348,15 @@ public static partial class CpuGameRules
       return;
     }
 
-    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health) +
-      (HasAdjacentUnit(state, attacker, attacker.Team, nameof(PieceType.Baron))
-        ? CombatRules.BaronDamageBonus
-        : 0);
+    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
     if (health <= damage)
     {
       state.Barricades.Remove(position);
