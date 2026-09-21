@@ -114,6 +114,7 @@ internal sealed class PieceSetup
 
     piece.Position = destination;
     piece.HasMovedThisTurn = true;
+    piece.AbilityState = AdvancedAbilityRules.RecordMove(piece.AbilityState);
 
     foreach (Piece attachedPiece in _pieces.FindAll(candidate => candidate.AttachedTo == piece))
     {
