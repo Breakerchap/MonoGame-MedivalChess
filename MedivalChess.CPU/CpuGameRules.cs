@@ -712,9 +712,11 @@ public static partial class CpuGameRules
         {
           HasMovedThisTurn = false,
           HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
           CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
-          CannotContributeToConquestThisTurn = false
+          CannotContributeToConquestThisTurn = false,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, piece.Health)
         };
       }
     }
