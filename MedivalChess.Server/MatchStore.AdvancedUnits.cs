@@ -215,8 +215,7 @@ public sealed partial class MatchStore
       case nameof(PieceType.Muse):
         if (!string.Equals(ability, "Attach", StringComparison.OrdinalIgnoreCase) ||
             actor.HasAttackedThisTurn || target is null || target.Team != actor.Team ||
-            target.Id == actor.Id || target.AttachedToId is not null ||
-            !CanUseActionSquare(actor, target.X, target.Y))
+            target.Id == actor.Id || target.AttachedToId is not null)
         {
           return AdvancedSpecialResult.Rejected;
         }
