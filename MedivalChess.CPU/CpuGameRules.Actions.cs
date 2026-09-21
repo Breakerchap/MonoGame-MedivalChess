@@ -61,7 +61,8 @@ public static partial class CpuGameRules
       Y = finalY,
       HasMovedThisTurn = true,
       HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamaged || state.Pieces[index].HasAttackedThisTurn,
-      CavalierFollowUpMoveAvailable = false
+      CavalierFollowUpMoveAvailable = false,
+      AbilityState = AdvancedAbilityRules.RecordMove(state.Pieces[index].AbilityState)
     };
     state.Pieces[index] = piece;
     state.RecordMove(action.Team, piece.Id, oldX, oldY, finalX, finalY);
@@ -99,7 +100,11 @@ public static partial class CpuGameRules
       HasAttackedThisTurn = attackState.HasAttackedThisTurn,
       CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
         originalAttacker.Type,
-        originalAttacker.HasMovedThisTurn)
+        originalAttacker.HasMovedThisTurn),
+      AbilityState = AdvancedAbilityRules.RecordAttack(
+        originalAttacker.Type,
+        originalAttacker.AbilityState,
+        action.TargetPieceId)
     };
 
     if (attacker.Type == nameof(PieceType.Tank))
