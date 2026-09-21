@@ -25,7 +25,15 @@ public static partial class CpuGameRules
       }
 
       PhantomPossessionState unpossessed = RoyalAbilityRules.Unpossess();
-      state.Pieces[actorIndex] = phantom with { PossessedUnitId = unpossessed.PhantomPossessedUnitId };
+      state.Pieces[actorIndex] = phantom with
+      {
+        PossessedUnitId = unpossessed.PhantomPossessedUnitId,
+        AbilityState = phantom.AbilityState with
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      };
       return;
     }
 
