@@ -17,9 +17,10 @@ public sealed class OnlineMatchTests
     0f,
     2,
     4,
-    15,
-    FarmsEnabled: false
-  );
+     15,
+     FarmsEnabled: false,
+     PackSelectionMode: PackDraftRules.ManualMode
+   );
 
   [Fact]
   public void ServerKeepsFarmsEnabledWhenBasePackIsNotSelected()
@@ -34,6 +35,54 @@ public sealed class OnlineMatchTests
     Assert.True(created.Accepted);
     Assert.True(created.State!.Configuration.FarmsEnabled);
     Assert.Equal(["Fantasy"], created.State.Configuration.AllowedPacks);
+  }
+
+  [Fact]
+  public void PackDraftAlternatesBansKeepsVotesSecretAndUsesOnlyCommonPacks()
+  {
+    MatchStore matches = new();
+    NetworkMatchConfiguration configuration = DefaultConfiguration with
+    {
+      PackSelectionMode = PackDraftRules.DraftMode,
+      PackBanCount = 1,
+      PackVoteCount = 3,
+      AllowedPacks = ["Medival", "Dynasty", "Fantasy", "Undead", "Greek", "Norse", "Modern"]
+    };
+    RoomJoinResult host = matches.Create("host", new CreateGameRequest(configuration));
+    RoomJoinResult guest = matches.Join("guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(host.Accepted);
+    Assert.True(guest.Accepted);
+
+    Dictionary<NetworkTeam, string> connectionByTeam = new()
+    {
+      [host.Team!.Value] = "host",
+      [guest.Team!.Value] = "guest"
+    };
+    Assert.Equal(PackDraftRules.BanningPhase, guest.State!.PackDraft!.Phase);
+    Assert.False(matches.ChooseRoyal("host", new RoyalSelectionRequest("Sorceress")).Accepted);
+
+    Assert.True(matches.BanPack(connectionByTeam[NetworkTeam.Red], new PackBanRequest("Medival")).Accepted);
+    ActionResult afterSecondBan = matches.BanPack(connectionByTeam[NetworkTeam.Blue], new PackBanRequest("Dynasty"));
+    Assert.True(afterSecondBan.Accepted);
+    Assert.Equal(PackDraftRules.VotingPhase, afterSecondBan.State!.PackDraft!.Phase);
+
+    ActionResult afterRedVote = matches.VotePacks(
+      connectionByTeam[NetworkTeam.Red],
+      new PackVoteRequest(["Fantasy", "Undead", "Greek"]));
+    Assert.True(afterRedVote.Accepted);
+    Assert.Contains(NetworkTeam.Red, afterRedVote.State!.PackDraft!.SubmittedVoteTeams);
+    Assert.Null(afterRedVote.State.PackDraft.AllowedPacks);
+
+    ActionResult completed = matches.VotePacks(
+      connectionByTeam[NetworkTeam.Blue],
+      new PackVoteRequest(["Fantasy", "Norse", "Modern"]));
+    Assert.True(completed.Accepted);
+    Assert.Equal(PackDraftRules.CompletePhase, completed.State!.PackDraft!.Phase);
+    Assert.Equal(["Fantasy"], completed.State.Configuration.AllowedPacks);
+    Assert.Equal(["Fantasy"], completed.State.PackDraft.AllowedPacks);
+
+    Assert.True(matches.ChooseRoyal("host", new RoyalSelectionRequest("Sorceress")).Accepted);
+    Assert.True(matches.ChooseRoyal("guest", new RoyalSelectionRequest("Sorceress")).Accepted);
   }
 
   [Fact]

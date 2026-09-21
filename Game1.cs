@@ -22,6 +22,7 @@ internal sealed partial class Game1 : Game
     OnlineLobby,
     OnlineJoin,
     OnlineWaiting,
+    OnlinePackDraft,
     OnlineRoyalSelection,
     Settings,
     Setup,
@@ -68,6 +69,7 @@ internal sealed partial class Game1 : Game
     Battlefield,
     Economy,
     ModeSettings,
+    PackDraft,
     RoyalSelection
   }
 
@@ -200,6 +202,17 @@ internal sealed partial class Game1 : Game
   private PieceDefinition _royalAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
   private readonly HashSet<Pack> _allowedPacks = [Pack.Medival];
+  private string _packSelectionMode = PackDraftRules.DraftMode;
+  private int _packBanCount = 2;
+  private int _packVoteCount = 3;
+  private TeamName _packDraftCurrentTeam = TeamName.Red;
+  private readonly HashSet<Pack> _packDraftBannedPacks = [];
+  private readonly Dictionary<TeamName, HashSet<Pack>> _packDraftVotes = [];
+  private readonly HashSet<TeamName> _packDraftSubmittedTeams = [];
+  private string _packDraftPhase = PackDraftRules.BanningPhase;
+  private string _packDraftError = string.Empty;
+  private NetworkPackDraftState _onlinePackDraft;
+  private readonly HashSet<Pack> _onlinePackVoteSelection = [];
   private BoardSize _selectedBoardSize = BoardSize.Medium;
   private TerrainDensity _forestDensity = TerrainDensity.Standard;
   private TerrainDensity _waterwayDensity = TerrainDensity.Standard;
@@ -2474,6 +2487,35 @@ internal sealed partial class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlinePackBanAsync(Pack pack)
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.BanPackAsync(pack.ToString());
+      if (!result.Accepted) _onlineError = result.Error ?? "That pack ban was rejected.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Pack ban could not be sent: {exception.Message}");
+      _onlineError = "Could not send the pack ban.";
+    }
+  }
+
+  private async System.Threading.Tasks.Task SendOnlinePackVoteAsync()
+  {
+    try
+    {
+      ActionResult result = await _onlineClient.VotePacksAsync(
+        _onlinePackVoteSelection.Select(pack => pack.ToString()).OrderBy(pack => pack).ToArray());
+      if (!result.Accepted) _onlineError = result.Error ?? "That pack vote was rejected.";
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Pack vote could not be sent: {exception.Message}");
+      _onlineError = "Could not send the pack vote.";
+    }
+  }
+
   private void ApplyOnlineState(NetworkGameState state)
   {
     Dictionary<string, (int x, int y)> previousPositions = pieceSetup.Pieces
@@ -2513,6 +2555,16 @@ internal sealed partial class Game1 : Game
         ? $"SPECTATING  WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}"
         : $"WAITING FOR {state.Configuration.PlayerCount - state.PlayerCount} MORE PLAYER(S)  ROOM: {state.JoinCode}";
       _screen = Screen.OnlineWaiting;
+      return;
+    }
+
+    _onlinePackDraft = state.PackDraft;
+    if (state.PackDraft is { Phase: not PackDraftRules.CompletePhase } draft)
+    {
+      _onlineStatus = IsOnlineSpectator
+        ? $"SPECTATING PACK DRAFT  ROOM: {state.JoinCode}"
+        : $"ONLINE PACK DRAFT  ROOM: {state.JoinCode}";
+      _screen = Screen.OnlinePackDraft;
       return;
     }
 
@@ -2597,6 +2649,9 @@ internal sealed partial class Game1 : Game
     _terrainSource = terrainSource;
     _selectedTerrainPresetId = configuration.PresetId;
     _selectedTerrainPresetName = null;
+    _packSelectionMode = PackDraftRules.NormalizeMode(configuration.PackSelectionMode);
+    _packBanCount = configuration.PackBanCount;
+    _packVoteCount = configuration.PackVoteCount;
     _allowedPacks.Clear();
     _allowedPacks.UnionWith(PackRules.GetAllowedPacks(configuration.AllowedPacks));
     _gameMode = gameMode;
@@ -6452,6 +6507,11 @@ internal sealed partial class Game1 : Game
     _playerCount = Math.Clamp(playerCount, 2, 4);
     pieceSetup.ClearPieces();
     ConfigureTeamsForPlayerCount();
+    if (_screen == Screen.Setup && _onlineClient is null && PackDraftRules.IsDraft(_packSelectionMode) &&
+        _packDraftBannedPacks.Count == 0)
+    {
+      _packBanCount = Math.Min(2, Math.Max(0, (PackRules.All.Count - _packVoteCount) / _playerCount));
+    }
     _selectedRoyalIndex = 0;
   }
 
@@ -6653,6 +6713,12 @@ internal sealed partial class Game1 : Game
       ConfigureCpuOpponents();
     }
     _onlineMatchConfiguration = null;
+    _packSelectionMode = PackDraftRules.DraftMode;
+    _packBanCount = 2;
+    _packVoteCount = 3;
+    _allowedPacks.Clear();
+    _allowedPacks.UnionWith(PackRules.All);
+    ResetLocalPackDraft();
     Team.ResetTurn();
   }
 
@@ -6703,7 +6769,10 @@ internal sealed partial class Game1 : Game
       _chessTimerIncrementSeconds,
       _terrainSource.ToString(),
       _selectedTerrainPresetId,
-      _allowedPacks.Select(pack => pack.ToString()).ToArray()
+      _allowedPacks.Select(pack => pack.ToString()).ToArray(),
+      PackSelectionMode: _packSelectionMode,
+      PackBanCount: _packBanCount,
+      PackVoteCount: _packVoteCount
     );
   }
 
@@ -6768,6 +6837,9 @@ internal sealed partial class Game1 : Game
           _screen = Screen.Title;
           return;
         case Screen.OnlineWaiting:
+          ReturnToTitle();
+          return;
+        case Screen.OnlinePackDraft:
           ReturnToTitle();
           return;
         case Screen.OnlineRoyalSelection:
@@ -6929,6 +7001,10 @@ internal sealed partial class Game1 : Game
         {
           ReturnToTitle();
         }
+        break;
+
+      case Screen.OnlinePackDraft:
+        UpdateOnlinePackDraft(mousePosition);
         break;
 
       case Screen.OnlineRoyalSelection:
@@ -7110,18 +7186,85 @@ internal sealed partial class Game1 : Game
         }
         else if (_setupStage == SetupStage.Packs)
         {
+          if (GetPackSelectionSettingBounds(0).Contains(mousePosition))
+          {
+            _packSelectionMode = PackDraftRules.IsDraft(_packSelectionMode)
+              ? PackDraftRules.ManualMode
+              : PackDraftRules.DraftMode;
+            if (PackDraftRules.IsDraft(_packSelectionMode))
+            {
+              _allowedPacks.Clear();
+              _allowedPacks.UnionWith(PackRules.All);
+              ResetLocalPackDraft();
+            }
+            else
+            {
+              _allowedPacks.Clear();
+              _allowedPacks.Add(Pack.Medival);
+            }
+            break;
+          }
+          if (PackDraftRules.IsDraft(_packSelectionMode) &&
+              GetPackSelectionSettingBounds(1).Contains(mousePosition))
+          {
+            _packBanCount = GetNextPackBanCount();
+            ResetLocalPackDraft();
+            break;
+          }
+          if (PackDraftRules.IsDraft(_packSelectionMode) &&
+              GetPackSelectionSettingBounds(2).Contains(mousePosition))
+          {
+            _packVoteCount = GetNextPackVoteCount();
+            ResetLocalPackDraft();
+            break;
+          }
+
           bool handledPack = false;
           foreach (Pack pack in PackRules.All)
           {
             if (!GetSetupPackButtonBounds(pack).Contains(mousePosition)) continue;
-            ToggleSetupPack(pack);
+            if (!PackDraftRules.IsDraft(_packSelectionMode))
+            {
+              ToggleSetupPack(pack);
+            }
             handledPack = true;
             break;
           }
-          if (!handledPack && GetSetupConfirmButtonBounds().Contains(mousePosition) && GetAllowedRoyals().Length > 0)
+          if (!handledPack && GetSetupConfirmButtonBounds().Contains(mousePosition))
           {
-            _selectedRoyalIndex = 0;
-            _setupStage = SetupStage.Battlefield;
+            if (PackDraftRules.IsDraft(_packSelectionMode) && !_onlineHostingSetup)
+            {
+              _setupStage = SetupStage.Battlefield;
+            }
+            else if (GetAllowedRoyals().Length > 0)
+            {
+              _selectedRoyalIndex = 0;
+              _setupStage = SetupStage.Battlefield;
+            }
+          }
+        }
+        else if (_setupStage == SetupStage.PackDraft)
+        {
+          bool handledPack = false;
+          foreach (Pack pack in PackRules.All)
+          {
+            if (!GetSetupPackButtonBounds(pack).Contains(mousePosition)) continue;
+            HandleLocalPackDraftPackClick(pack);
+            handledPack = true;
+            break;
+          }
+
+          if (!handledPack && GetSetupConfirmButtonBounds().Contains(mousePosition))
+          {
+            if (_packDraftPhase == PackDraftRules.VotingPhase)
+            {
+              SubmitLocalPackVote();
+            }
+            else if (_packDraftPhase == PackDraftRules.CompletePhase)
+            {
+              _selectedRoyalIndex = 0;
+              _setupStage = SetupStage.RoyalSelection;
+            }
           }
         }
         else if (_setupStage == SetupStage.Battlefield)
@@ -7402,7 +7545,15 @@ internal sealed partial class Game1 : Game
             }
             else
             {
-              _setupStage = SetupStage.RoyalSelection;
+              if (PackDraftRules.IsDraft(_packSelectionMode))
+              {
+                ResetLocalPackDraft();
+                _setupStage = SetupStage.PackDraft;
+              }
+              else
+              {
+                _setupStage = SetupStage.RoyalSelection;
+              }
             }
           }
         }
@@ -7615,6 +7766,10 @@ internal sealed partial class Game1 : Game
       case SetupStage.Packs:
         _setupStage = SetupStage.Mode;
         break;
+      case SetupStage.PackDraft:
+        ResetLocalPackDraft();
+        _setupStage = SetupStage.Packs;
+        break;
       case SetupStage.Battlefield:
         _setupStage = SetupStage.Packs;
         break;
@@ -7713,8 +7868,8 @@ internal sealed partial class Game1 : Game
 
   private void DrawSetupProgress(Rectangle content)
   {
-    SetupStage[] stages = [SetupStage.Mode, SetupStage.Packs, SetupStage.Battlefield, SetupStage.Economy, SetupStage.ModeSettings, SetupStage.RoyalSelection];
-    string[] labels = ["MODE", "PACKS", "MAP", "ECONOMY", "RULES", "ROYAL"];
+    SetupStage[] stages = [SetupStage.Mode, SetupStage.Packs, SetupStage.Battlefield, SetupStage.Economy, SetupStage.ModeSettings, SetupStage.PackDraft, SetupStage.RoyalSelection];
+    string[] labels = ["MODE", "PACKS", "MAP", "ECONOMY", "RULES", "DRAFT", "ROYAL"];
     Rectangle row = new(content.X, content.Y + 62, content.Width, 18);
     int currentIndex = Array.IndexOf(stages, _setupStage);
 
@@ -8159,6 +8314,87 @@ internal sealed partial class Game1 : Game
     DrawMenuButton(GetOnlineWaitingCancelButtonBounds(), "CANCEL", UiButtonTone.Neutral);
   }
 
+  private void UpdateOnlinePackDraft(Point mousePosition)
+  {
+    if (GetSetupBackButtonBounds().Contains(mousePosition))
+    {
+      ReturnToTitle();
+      return;
+    }
+
+    if (_onlinePackDraft is null || IsOnlineSpectator || _onlineClient?.Team is not NetworkTeam localNetworkTeam)
+    {
+      return;
+    }
+
+    TeamName localTeam = localNetworkTeam.ToTeamName();
+    bool myTurn = _onlinePackDraft.CurrentTeam == localNetworkTeam;
+    bool alreadyVoted = _onlinePackDraft.SubmittedVoteTeams.Contains(localNetworkTeam);
+    foreach (Pack pack in PackRules.All)
+    {
+      if (!GetSetupPackButtonBounds(pack).Contains(mousePosition)) continue;
+      string name = pack.ToString();
+      bool available = _onlinePackDraft.CandidatePacks.Contains(name) && !_onlinePackDraft.BannedPacks.Contains(name);
+      if (!available) return;
+      if (_onlinePackDraft.Phase == PackDraftRules.BanningPhase && myTurn)
+      {
+        _ = SendOnlinePackBanAsync(pack);
+      }
+      else if (_onlinePackDraft.Phase == PackDraftRules.VotingPhase && !alreadyVoted)
+      {
+        if (!_onlinePackVoteSelection.Add(pack)) _onlinePackVoteSelection.Remove(pack);
+      }
+      return;
+    }
+
+    if (GetSetupConfirmButtonBounds().Contains(mousePosition) &&
+        _onlinePackDraft.Phase == PackDraftRules.VotingPhase && !alreadyVoted &&
+        _onlinePackVoteSelection.Count == _packVoteCount)
+    {
+      _ = SendOnlinePackVoteAsync();
+    }
+  }
+
+  private void DrawOnlinePackDraftScreen()
+  {
+    Rectangle panel = GetSetupPanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    TeamName localTeam = _onlineClient?.Team?.ToTeamName() ?? TeamName.Red;
+    bool isSpectator = IsOnlineSpectator;
+    bool myTurn = !isSpectator && _onlinePackDraft?.CurrentTeam == localTeam.ToNetworkTeam();
+    bool alreadyVoted = isSpectator || _onlinePackDraft?.SubmittedVoteTeams.Contains(localTeam.ToNetworkTeam()) == true;
+    DrawPanel(panel, UiTheme.Panel, UiTheme.GetTeamColour(localTeam));
+    _ui.Text("PACK DRAFT", new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
+    string subtitle = _onlinePackDraft?.Phase == PackDraftRules.BanningPhase
+      ? (isSpectator ? "Watching the players ban packs." : myTurn ? "Ban one unbanned pack." : "Waiting for the other player to ban a pack.")
+      : alreadyVoted ? "Vote submitted secretly. Waiting for the other player."
+      : $"Secretly vote for {_packVoteCount} different unbanned packs.";
+    _ui.Text(subtitle, new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
+    _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
+
+    foreach (Pack pack in PackRules.All)
+    {
+      string name = pack.ToString();
+      bool candidate = _onlinePackDraft?.CandidatePacks.Contains(name) == true;
+      bool banned = _onlinePackDraft?.BannedPacks.Contains(name) == true;
+      bool selected = _onlinePackDraft?.Phase == PackDraftRules.VotingPhase && _onlinePackVoteSelection.Contains(pack);
+      UiButtonTone tone = !candidate || banned ? UiButtonTone.Danger : selected ? UiButtonTone.Primary : UiButtonTone.Neutral;
+      DrawMenuButton(GetSetupPackButtonBounds(pack), banned ? $"{name.ToUpperInvariant()}  BANNED" : name.ToUpperInvariant(), tone, selected, 0.68f);
+    }
+
+    string status = !string.IsNullOrWhiteSpace(_onlineError)
+      ? _onlineError
+      : _onlinePackDraft?.Phase == PackDraftRules.BanningPhase
+        ? $"Bans complete: {_onlinePackDraft.BannedPacks.Count}/{_packBanCount * _playerCount}."
+        : alreadyVoted ? "Your vote is hidden until both players submit."
+        : $"Selected {_onlinePackVoteSelection.Count}/{_packVoteCount}.";
+    _ui.Text(status, new Vector2(content.X, content.Bottom - 92), !string.IsNullOrWhiteSpace(_onlineError) ? UiTheme.Attack : UiTheme.TextMuted, 0.66f);
+    bool canSubmit = !isSpectator && !alreadyVoted && _onlinePackDraft?.Phase == PackDraftRules.VotingPhase && _onlinePackVoteSelection.Count == _packVoteCount;
+    DrawMenuButton(GetSetupConfirmButtonBounds(), canSubmit ? "SUBMIT SECRET VOTE" : "WAITING...", canSubmit ? UiButtonTone.Primary : UiButtonTone.Neutral, !canSubmit);
+  }
+
   private void DrawOnlineRoyalSelectionScreen()
   {
     Rectangle panel = GetSetupPanelBounds();
@@ -8297,6 +8533,12 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    if (_setupStage == SetupStage.PackDraft)
+    {
+      DrawPackDraftSetup(panel);
+      return;
+    }
+
     PieceDefinition royal = GetAllowedRoyals()[_selectedRoyalIndex];
     Color teamColour = UiTheme.GetTeamColour(_setupTeam);
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
@@ -8347,6 +8589,180 @@ internal sealed partial class Game1 : Game
     .Where(royal => _allowedPacks.Contains(royal.Pack))
     .ToArray();
 
+  private Rectangle GetPackSelectionSettingBounds(int index)
+  {
+    Rectangle content = UiLayout.Inset(GetSetupPanelBounds(), UiTheme.SpaceLg);
+    Rectangle row = new(content.X, content.Y + 76, content.Width, 30);
+    return UiLayout.HorizontalSlot(row, 3, index, UiTheme.SpaceSm);
+  }
+
+  private int GetNextPackBanCount()
+  {
+    for (int offset = 1; offset <= 3; offset++)
+    {
+      int candidate = (_packBanCount + offset) % 3;
+      if (candidate * Team.ActiveTeams.Count + _packVoteCount <= PackRules.All.Count) return candidate;
+    }
+    return _packBanCount;
+  }
+
+  private int GetNextPackVoteCount()
+  {
+    for (int offset = 1; offset <= 5; offset++)
+    {
+      int candidate = ((_packVoteCount - 1 + offset) % 5) + 1;
+      if (_packBanCount * Team.ActiveTeams.Count + candidate <= PackRules.All.Count) return candidate;
+    }
+    return _packVoteCount;
+  }
+
+  private void ResetLocalPackDraft()
+  {
+    _packDraftPhase = _packBanCount == 0 ? PackDraftRules.VotingPhase : PackDraftRules.BanningPhase;
+    _packDraftCurrentTeam = TeamName.Red;
+    _packDraftBannedPacks.Clear();
+    _packDraftVotes.Clear();
+    _packDraftSubmittedTeams.Clear();
+    _packDraftError = string.Empty;
+    _packDraftBanCounts.Clear();
+  }
+
+  private readonly Dictionary<TeamName, int> _packDraftBanCounts = [];
+
+  private bool IsCpuPackDraftTeam(TeamName team) => _cpuProfiles.ContainsKey(team);
+
+  private Pack[] GetLocalUnbannedDraftPacks() => PackRules.All
+    .Where(pack => !_packDraftBannedPacks.Contains(pack))
+    .ToArray();
+
+  private void AdvanceCpuPackDraft()
+  {
+    if (_onlineHostingSetup || !PackDraftRules.IsDraft(_packSelectionMode)) return;
+
+    while (IsCpuPackDraftTeam(_packDraftCurrentTeam))
+    {
+      if (_packDraftPhase == PackDraftRules.BanningPhase)
+      {
+        Pack? ban = GetLocalUnbannedDraftPacks().FirstOrDefault();
+        if (ban is null) return;
+        _packDraftBannedPacks.Add(ban.Value);
+        _packDraftBanCounts[_packDraftCurrentTeam] = _packDraftBanCounts.GetValueOrDefault(_packDraftCurrentTeam) + 1;
+        if (Team.ActiveTeams.All(team => _packDraftBanCounts.GetValueOrDefault(team) >= _packBanCount))
+        {
+          _packDraftPhase = PackDraftRules.VotingPhase;
+          _packDraftCurrentTeam = Team.ActiveTeams[0];
+        }
+        else
+        {
+          _packDraftCurrentTeam = TeamRules.GetNextTeam(_packDraftCurrentTeam.ToNetworkTeam(), _playerCount).ToTeamName();
+        }
+      }
+      else if (_packDraftPhase == PackDraftRules.VotingPhase)
+      {
+        Pack[] available = GetLocalUnbannedDraftPacks();
+        HashSet<Pack> vote = available.Take(_packVoteCount).ToHashSet();
+        _packDraftVotes[_packDraftCurrentTeam] = vote;
+        _packDraftSubmittedTeams.Add(_packDraftCurrentTeam);
+        if (_packDraftSubmittedTeams.Count == Team.ActiveTeams.Count)
+        {
+          string[] common = PackDraftRules.ResolveCommonPacks(_packDraftVotes.Values.Select(values => values.Select(pack => pack.ToString())));
+          if (common.Length == 0)
+          {
+            _packDraftError = "Both players must share at least one voted pack. Vote again.";
+            _packDraftVotes.Clear();
+            _packDraftSubmittedTeams.Clear();
+            _packDraftCurrentTeam = TeamName.Red;
+            return;
+          }
+          _allowedPacks.Clear();
+          _allowedPacks.UnionWith(PackRules.GetAllowedPacks(common));
+          _packDraftPhase = PackDraftRules.CompletePhase;
+          return;
+        }
+        _packDraftCurrentTeam = Team.ActiveTeams.First(team => !_packDraftSubmittedTeams.Contains(team));
+      }
+      else
+      {
+        return;
+      }
+    }
+  }
+
+  private void HandleLocalPackDraftPackClick(Pack pack)
+  {
+    if (!PackDraftRules.IsDraft(_packSelectionMode) || _onlineHostingSetup || _packDraftPhase == PackDraftRules.CompletePhase)
+    {
+      return;
+    }
+    if (_packDraftPhase == PackDraftRules.BanningPhase)
+    {
+      if (IsCpuPackDraftTeam(_packDraftCurrentTeam) || _packDraftBannedPacks.Contains(pack)) return;
+      _packDraftBannedPacks.Add(pack);
+      _packDraftBanCounts[_packDraftCurrentTeam] = _packDraftBanCounts.GetValueOrDefault(_packDraftCurrentTeam) + 1;
+      if (Team.ActiveTeams.All(team => _packDraftBanCounts.GetValueOrDefault(team) >= _packBanCount))
+      {
+        _packDraftPhase = PackDraftRules.VotingPhase;
+        _packDraftCurrentTeam = Team.ActiveTeams[0];
+      }
+      else
+      {
+        _packDraftCurrentTeam = TeamRules.GetNextTeam(_packDraftCurrentTeam.ToNetworkTeam(), _playerCount).ToTeamName();
+      }
+      AdvanceCpuPackDraft();
+      return;
+    }
+
+    if (_packDraftPhase == PackDraftRules.VotingPhase && !IsCpuPackDraftTeam(_packDraftCurrentTeam) &&
+        !_packDraftBannedPacks.Contains(pack) && !_packDraftSubmittedTeams.Contains(_packDraftCurrentTeam))
+    {
+      TeamName currentTeam = _packDraftCurrentTeam;
+      if (!_packDraftVotes.TryGetValue(currentTeam, out HashSet<Pack> votes))
+      {
+        votes = [];
+        _packDraftVotes[currentTeam] = votes;
+      }
+      if (!votes.Add(pack)) votes.Remove(pack);
+      if (votes.Count > _packVoteCount) votes.Remove(votes.OrderBy(candidate => candidate.ToString()).Last());
+    }
+  }
+
+  private void SubmitLocalPackVote()
+  {
+    if (_packDraftPhase != PackDraftRules.VotingPhase || IsCpuPackDraftTeam(_packDraftCurrentTeam) ||
+        _packDraftSubmittedTeams.Contains(_packDraftCurrentTeam)) return;
+    TeamName currentTeam = _packDraftCurrentTeam;
+    if (!_packDraftVotes.TryGetValue(currentTeam, out HashSet<Pack> votes))
+    {
+      votes = [];
+      _packDraftVotes[currentTeam] = votes;
+    }
+    if (votes.Count != _packVoteCount)
+    {
+      _packDraftError = $"Select exactly {_packVoteCount} different unbanned packs.";
+      return;
+    }
+    _packDraftSubmittedTeams.Add(currentTeam);
+    if (_packDraftSubmittedTeams.Count == Team.ActiveTeams.Count)
+    {
+      string[] common = PackDraftRules.ResolveCommonPacks(_packDraftVotes.Values.Select(values => values.Select(pack => pack.ToString())));
+      if (common.Length == 0)
+      {
+        _packDraftError = "Both players must share at least one voted pack. Vote again.";
+        _packDraftVotes.Clear();
+        _packDraftSubmittedTeams.Clear();
+        _packDraftCurrentTeam = TeamName.Red;
+        return;
+      }
+      _allowedPacks.Clear();
+      _allowedPacks.UnionWith(PackRules.GetAllowedPacks(common));
+      _packDraftPhase = PackDraftRules.CompletePhase;
+      _packDraftError = string.Empty;
+      return;
+    }
+    _packDraftCurrentTeam = Team.ActiveTeams.First(team => !_packDraftSubmittedTeams.Contains(team));
+    AdvanceCpuPackDraft();
+  }
+
   private void ToggleSetupPack(Pack pack)
   {
     if (_allowedPacks.Contains(pack))
@@ -8370,23 +8786,71 @@ internal sealed partial class Game1 : Game
   {
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
-    _ui.Text("ALLOWED PACKS", new Vector2(content.X, content.Y), UiTheme.Gold);
+    _ui.Text("PACK SELECTION CONFIGURATION", new Vector2(content.X, content.Y), UiTheme.Gold);
     DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
-    _ui.Text("Choose which unit packs can be bought and which Royals can be selected.", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
+    _ui.Text(
+      PackDraftRules.IsDraft(_packSelectionMode)
+        ? "Configure the draft now; the actual bans and votes happen immediately before Royals."
+        : "Choose which unit packs can be bought and which Royals can be selected.",
+      new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
+    _ui.Divider(content, content.Y + 56);
+    DrawSetupProgress(content);
+
+    DrawMenuButton(GetPackSelectionSettingBounds(0), PackDraftRules.IsDraft(_packSelectionMode) ? "MODE: DRAFT" : "MODE: MANUAL", UiButtonTone.Accent, false, 0.62f);
+    DrawMenuButton(GetPackSelectionSettingBounds(1), PackDraftRules.IsDraft(_packSelectionMode) ? $"BANS: {_packBanCount}" : "", UiButtonTone.Neutral, false, 0.62f);
+    DrawMenuButton(GetPackSelectionSettingBounds(2), PackDraftRules.IsDraft(_packSelectionMode) ? $"VOTES: {_packVoteCount}" : "", UiButtonTone.Neutral, false, 0.62f);
+
+    foreach (Pack pack in PackRules.All)
+    {
+      bool selected = PackDraftRules.IsDraft(_packSelectionMode) || _allowedPacks.Contains(pack);
+      DrawMenuButton(GetSetupPackButtonBounds(pack), pack.ToString().ToUpperInvariant(), selected ? UiButtonTone.Primary : UiButtonTone.Neutral, selected, 0.68f);
+    }
+
+    string hint = !PackDraftRules.IsDraft(_packSelectionMode) && GetAllowedRoyals().Length == 0
+        ? "Select a pack containing a complete Royal before continuing."
+        : PackDraftRules.IsDraft(_packSelectionMode)
+          ? $"Draft configured: {_packBanCount} ban(s) each, {_packVoteCount} secret vote(s) each."
+          : $"{_allowedPacks.Count} pack{(_allowedPacks.Count == 1 ? string.Empty : "s")} enabled.";
+    _ui.Text(hint, new Vector2(content.X, content.Bottom - 92), !PackDraftRules.IsDraft(_packSelectionMode) && GetAllowedRoyals().Length == 0 ? UiTheme.Attack : UiTheme.TextMuted, 0.66f);
+    bool canContinue = PackDraftRules.IsDraft(_packSelectionMode) || GetAllowedRoyals().Length > 0;
+    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", canContinue ? UiButtonTone.Primary : UiButtonTone.Danger);
+  }
+
+  private void DrawPackDraftSetup(Rectangle panel)
+  {
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
+    _ui.Text("PACK DRAFT", new Vector2(content.X, content.Y), UiTheme.Gold);
+    DrawMenuButton(GetSetupBackButtonBounds(), "BACK", UiButtonTone.Neutral);
+    _ui.Text(
+      _packDraftPhase == PackDraftRules.BanningPhase
+        ? $"{_packDraftCurrentTeam} bans next. Choose an unbanned pack."
+        : _packDraftPhase == PackDraftRules.VotingPhase
+          ? $"{_packDraftCurrentTeam}: secretly choose {_packVoteCount} different unbanned packs."
+          : "The draft is complete. Continue to choose Royals.",
+      new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.72f);
     _ui.Divider(content, content.Y + 56);
     DrawSetupProgress(content);
 
     foreach (Pack pack in PackRules.All)
     {
-      bool selected = _allowedPacks.Contains(pack);
-      DrawMenuButton(GetSetupPackButtonBounds(pack), pack.ToString().ToUpperInvariant(), selected ? UiButtonTone.Primary : UiButtonTone.Neutral, selected, 0.76f);
+      bool banned = _packDraftBannedPacks.Contains(pack);
+      bool selected = _packDraftPhase == PackDraftRules.VotingPhase &&
+        _packDraftVotes.GetValueOrDefault(_packDraftCurrentTeam)?.Contains(pack) == true;
+      UiButtonTone tone = banned ? UiButtonTone.Danger : selected ? UiButtonTone.Primary : UiButtonTone.Neutral;
+      DrawMenuButton(GetSetupPackButtonBounds(pack), banned ? $"{pack.ToString().ToUpperInvariant()} BANNED" : pack.ToString().ToUpperInvariant(), tone, selected, 0.68f);
     }
 
-    string hint = GetAllowedRoyals().Length == 0
-      ? "Select a pack containing a complete Royal before continuing."
-      : $"{_allowedPacks.Count} pack{(_allowedPacks.Count == 1 ? string.Empty : "s")} enabled.";
-    _ui.Text(hint, new Vector2(content.X, content.Bottom - 92), GetAllowedRoyals().Length == 0 ? UiTheme.Attack : UiTheme.TextMuted, 0.66f);
-    DrawMenuButton(GetSetupConfirmButtonBounds(), "CONTINUE", GetAllowedRoyals().Length == 0 ? UiButtonTone.Danger : UiButtonTone.Primary);
+    string hint = _packDraftError.Length > 0
+      ? _packDraftError
+      : _packDraftPhase == PackDraftRules.BanningPhase
+        ? $"Bans complete: {_packDraftBannedPacks.Count}/{_packBanCount * Team.ActiveTeams.Count}."
+        : _packDraftPhase == PackDraftRules.VotingPhase
+          ? $"Selected {_packDraftVotes.GetValueOrDefault(_packDraftCurrentTeam)?.Count ?? 0}/{_packVoteCount}."
+          : $"Shared packs: {_allowedPacks.Count}.";
+    _ui.Text(hint, new Vector2(content.X, content.Bottom - 92), _packDraftError.Length > 0 ? UiTheme.Attack : UiTheme.TextMuted, 0.66f);
+    string action = _packDraftPhase == PackDraftRules.VotingPhase ? "SUBMIT SECRET VOTE" : _packDraftPhase == PackDraftRules.CompletePhase ? "CHOOSE ROYALS" : "WAITING...";
+    DrawMenuButton(GetSetupConfirmButtonBounds(), action, _packDraftPhase == PackDraftRules.CompletePhase ? UiButtonTone.Primary : UiButtonTone.Neutral);
   }
 
   private void DrawModeSetup(Rectangle panel)
@@ -9030,6 +9494,7 @@ internal sealed partial class Game1 : Game
       case Screen.OnlineLobby: DrawOnlineLobbyScreen(); break;
       case Screen.OnlineJoin: DrawOnlineJoinScreen(); break;
       case Screen.OnlineWaiting: DrawOnlineWaitingScreen(); break;
+      case Screen.OnlinePackDraft: DrawOnlinePackDraftScreen(); break;
       case Screen.OnlineRoyalSelection: DrawOnlineRoyalSelectionScreen(); break;
       case Screen.Settings: DrawSettingsScreen(); break;
       case Screen.Setup: DrawSetupScreen(); break;

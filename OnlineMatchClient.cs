@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using MedivalChess.Shared;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -78,6 +79,16 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
   internal async Task<ActionResult> ChooseRoyalAsync(string royalType, int x, int y)
   {
     return await _connection.InvokeAsync<ActionResult>("ChooseRoyal", new RoyalSelectionRequest(royalType, x, y));
+  }
+
+  internal async Task<ActionResult> BanPackAsync(string pack)
+  {
+    return await _connection.InvokeAsync<ActionResult>("BanPack", new PackBanRequest(pack));
+  }
+
+  internal async Task<ActionResult> VotePacksAsync(IReadOnlyList<string> packs)
+  {
+    return await _connection.InvokeAsync<ActionResult>("VotePacks", new PackVoteRequest(packs));
   }
 
   internal async Task<ActionResult> SelectDebugTeamAsync(NetworkTeam team)

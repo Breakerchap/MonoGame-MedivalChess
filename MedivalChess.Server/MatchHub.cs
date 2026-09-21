@@ -94,6 +94,28 @@ public sealed class MatchHub(MatchStore matches) : Hub
     return result;
   }
 
+  public async Task<ActionResult> BanPack(PackBanRequest request)
+  {
+    ActionResult result = matches.BanPack(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
+  public async Task<ActionResult> VotePacks(PackVoteRequest request)
+  {
+    ActionResult result = matches.VotePacks(Context.ConnectionId, request);
+    if (result.Accepted && result.State is not null)
+    {
+      await Clients.Group(result.State.JoinCode).SendAsync("StateUpdated", result.State);
+    }
+
+    return result;
+  }
+
   public async Task<ActionResult> PurchaseInitialUnit(PurchaseRequest request)
   {
     ActionResult result = matches.PurchaseInitialUnit(Context.ConnectionId, request);
@@ -159,7 +181,8 @@ public sealed partial class MatchStore
       0f,
       2,
       4,
-      MatchRules.DefaultConquestWinScore
+      MatchRules.DefaultConquestWinScore,
+      PackSelectionMode: PackDraftRules.ManualMode
     );
     Match debugMatch = new(
       DebugJoinCode,
@@ -706,6 +729,85 @@ public sealed partial class MatchStore
     }
   }
 
+  public ActionResult BanPack(string connectionId, PackBanRequest request)
+  {
+    if (request is null || string.IsNullOrWhiteSpace(request.Pack))
+    {
+      return new(false, "Choose an unbanned pack to ban.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (player is null || foundMatch.PackDraft is null)
+      {
+        return new(false, "This room is not using pack drafting.", foundMatch.State());
+      }
+
+      if (foundMatch.Players.Count < foundMatch.Configuration.PlayerCount)
+      {
+        return new(false, "Wait for every player to join before drafting packs.", foundMatch.State());
+      }
+
+      if (!foundMatch.PackDraft.TryBan(player.Team, request.Pack, out string? error))
+      {
+        return new(false, error, foundMatch.State());
+      }
+
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
+  public ActionResult VotePacks(string connectionId, PackVoteRequest request)
+  {
+    if (request is null)
+    {
+      return new(false, "Choose your pack votes.", null);
+    }
+
+    if (!TryGetMatch(connectionId, out Match? match))
+    {
+      return new(false, "Join a room first.", null);
+    }
+
+    Match foundMatch = match!;
+    lock (foundMatch.Sync)
+    {
+      PlayerSlot? player = foundMatch.FindPlayerByConnection(connectionId);
+      if (player is null || foundMatch.PackDraft is null)
+      {
+        return new(false, "This room is not using pack drafting.", foundMatch.State());
+      }
+
+      if (foundMatch.Players.Count < foundMatch.Configuration.PlayerCount)
+      {
+        return new(false, "Wait for every player to join before voting on packs.", foundMatch.State());
+      }
+
+      if (!foundMatch.PackDraft.TryVote(player.Team, request.Packs, out string? error, out string[]? allowedPacks))
+      {
+        return new(false, error, foundMatch.State());
+      }
+
+      if (allowedPacks is not null)
+      {
+        foundMatch.Configuration = foundMatch.Configuration with { AllowedPacks = allowedPacks };
+      }
+
+      foundMatch.Version++;
+      foundMatch.Touch();
+      return new(true, null, foundMatch.State());
+    }
+  }
+
   public ActionResult ChooseRoyal(string connectionId, RoyalSelectionRequest request)
   {
     if (request is null || string.IsNullOrWhiteSpace(request.RoyalType))
@@ -725,6 +827,11 @@ public sealed partial class MatchStore
       if (player is null || foundMatch.Players.Count < foundMatch.Configuration.PlayerCount)
       {
         return new(false, "Wait for every player to join before choosing a royal.", foundMatch.State());
+      }
+
+      if (foundMatch.PackDraft is { Phase: not PackDraftRules.CompletePhase })
+      {
+        return new(false, "Complete the pack draft before choosing a royal.", foundMatch.State());
       }
 
       if (player.ChosenRoyal is not null)
@@ -1108,10 +1215,24 @@ public sealed partial class MatchStore
       return false;
     }
 
+    string packSelectionMode = PackDraftRules.NormalizeMode(configuration.PackSelectionMode);
+    if (!PackDraftRules.TryValidateSettings(
+      configuration.PackSelectionMode,
+      configuration.PackBanCount,
+      configuration.PackVoteCount,
+      configuration.PlayerCount,
+      allowedPacks.Length,
+      out string? packError))
+    {
+      error = packError;
+      return false;
+    }
+
     sanitized = configuration with
     {
       PresetId = string.IsNullOrWhiteSpace(configuration.PresetId) ? null : configuration.PresetId.Trim(),
       AllowedPacks = allowedPacks,
+      PackSelectionMode = packSelectionMode,
       FarmsEnabled = configuration.FarmsEnabled
     };
     return true;
@@ -2211,7 +2332,7 @@ public sealed partial class MatchStore
   {
     internal object Sync { get; } = new();
     internal string Code { get; } = code;
-    internal NetworkMatchConfiguration Configuration { get; } = configuration;
+    internal NetworkMatchConfiguration Configuration { get; set; } = configuration;
     internal PlayerSlot Host { get; } = host;
     internal bool IsDebugMatch { get; } = isDebugMatch;
     private readonly List<PlayerSlot> _players = [host];
@@ -2237,6 +2358,7 @@ public sealed partial class MatchStore
       : null;
     internal string? TreasureCarrierId { get; set; }
     internal OpeningBuyPhase? InitialBuy { get; set; }
+    internal PackDraft? PackDraft { get; } = PackDraft.Create(configuration);
     internal NetworkTeam CurrentTurn { get; set; } = TeamRules.GetFirstTeam(configuration.PlayerCount);
     internal long Version { get; set; }
     internal Dictionary<NetworkTeam, long> ClockMilliseconds { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
@@ -2327,10 +2449,139 @@ public sealed partial class MatchStore
       Configuration.GameMode == "Plunder"
         ? new NetworkTreasureState(TreasurePosition?.x, TreasurePosition?.y, TreasureCarrierId)
         : null,
-      ClockState()
+      ClockState(),
+      PackDraft?.ToNetworkState(Configuration.AllowedPacks)
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
     internal RoomJoinResult SpectatorResult() => new(true, null, Code, null, null, State());
+  }
+
+  private sealed class PackDraft
+  {
+    private readonly IReadOnlyList<NetworkTeam> _teams;
+    private readonly int _banCount;
+    private readonly int _voteCount;
+    private readonly List<string> _candidatePacks;
+    private readonly HashSet<string> _bannedPacks = new(StringComparer.Ordinal);
+    private readonly Dictionary<NetworkTeam, int> _bansByTeam;
+    private readonly Dictionary<NetworkTeam, string[]> _votes = [];
+
+    private PackDraft(NetworkMatchConfiguration configuration)
+    {
+      _teams = TeamRules.GetActiveTeams(configuration.PlayerCount);
+      _banCount = configuration.PackBanCount;
+      _voteCount = configuration.PackVoteCount;
+      _candidatePacks = [.. PackRules.GetAllowedPacks(configuration.AllowedPacks).Select(pack => pack.ToString())];
+      _bansByTeam = _teams.ToDictionary(team => team, _ => 0);
+      CurrentTeam = _teams[0];
+      Phase = _banCount == 0 ? PackDraftRules.VotingPhase : PackDraftRules.BanningPhase;
+    }
+
+    internal string Phase { get; private set; }
+    internal NetworkTeam CurrentTeam { get; private set; }
+    internal static PackDraft? Create(NetworkMatchConfiguration configuration) =>
+      PackDraftRules.IsDraft(configuration.PackSelectionMode) ? new PackDraft(configuration) : null;
+
+    internal bool TryBan(NetworkTeam team, string requestedPack, out string? error)
+    {
+      error = null;
+      if (Phase != PackDraftRules.BanningPhase)
+      {
+        error = "The pack banning phase is complete.";
+        return false;
+      }
+      if (team != CurrentTeam)
+      {
+        error = "Wait for the other player to ban a pack.";
+        return false;
+      }
+
+      string? pack = _candidatePacks.FirstOrDefault(candidate =>
+        string.Equals(candidate, requestedPack.Trim(), StringComparison.OrdinalIgnoreCase));
+      if (pack is null || _bannedPacks.Contains(pack))
+      {
+        error = "Choose an unbanned pack.";
+        return false;
+      }
+
+      _bannedPacks.Add(pack);
+      _bansByTeam[team]++;
+      if (_bansByTeam.Values.All(count => count >= _banCount))
+      {
+        Phase = PackDraftRules.VotingPhase;
+        CurrentTeam = _teams[0];
+      }
+      else
+      {
+        CurrentTeam = TeamRules.GetNextTeam(CurrentTeam, _teams.Count);
+      }
+
+      return true;
+    }
+
+    internal bool TryVote(
+      NetworkTeam team,
+      IReadOnlyList<string> requestedPacks,
+      out string? error,
+      out string[]? allowedPacks
+    )
+    {
+      allowedPacks = null;
+      if (Phase != PackDraftRules.VotingPhase)
+      {
+        error = "The pack voting phase is not active.";
+        return false;
+      }
+      if (_votes.ContainsKey(team))
+      {
+        error = "Your pack vote has already been submitted.";
+        return false;
+      }
+      if (!PackDraftRules.TryNormaliseVote(
+        requestedPacks,
+        _candidatePacks,
+        _bannedPacks,
+        _voteCount,
+        out string[] votes,
+        out error))
+      {
+        return false;
+      }
+
+      bool isLastVote = _votes.Count == _teams.Count - 1;
+      if (isLastVote)
+      {
+        string[] common = PackDraftRules.ResolveCommonPacks(_votes.Values.Append(votes));
+        if (common.Length == 0)
+        {
+          error = "Both players must share at least one voted pack. Choose a different vote.";
+          return false;
+        }
+        allowedPacks = common;
+      }
+
+      _votes[team] = votes;
+      if (_votes.Count == _teams.Count)
+      {
+        Phase = PackDraftRules.CompletePhase;
+        CurrentTeam = NetworkTeam.Neutral;
+      }
+      else
+      {
+        CurrentTeam = _teams.First(candidate => !_votes.ContainsKey(candidate));
+      }
+      error = null;
+      return true;
+    }
+
+    internal NetworkPackDraftState ToNetworkState(IReadOnlyList<string>? allowedPacks) => new(
+      Phase,
+      CurrentTeam,
+      _candidatePacks.ToArray(),
+      _bannedPacks.OrderBy(pack => pack, StringComparer.Ordinal).ToArray(),
+      _votes.Keys.ToArray(),
+      Phase == PackDraftRules.CompletePhase ? allowedPacks : null
+    );
   }
 
   private sealed class OpeningBuyPhase(int purchasesPerTurn, int buyTurnsPerTeam, int playerCount, bool farmsEnabled = false)

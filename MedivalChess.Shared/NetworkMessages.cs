@@ -101,6 +101,20 @@ public sealed record NetworkMatchConfiguration(
   // When supplied, this authored preset is used directly instead of choosing one from the density filter.
   string? PresetId = null,
   // Null is accepted from older clients and means every pack.
+  IReadOnlyList<string>? AllowedPacks = null,
+  // Manual keeps the legacy fixed-list behaviour; new matches default to Draft.
+  string PackSelectionMode = "Draft",
+  int PackBanCount = 2,
+  int PackVoteCount = 3
+);
+
+/// <summary>Public progress for the pre-match pack draft. Individual vote choices are never sent.</summary>
+public sealed record NetworkPackDraftState(
+  string Phase,
+  NetworkTeam CurrentTeam,
+  IReadOnlyList<string> CandidatePacks,
+  IReadOnlyList<string> BannedPacks,
+  IReadOnlyList<NetworkTeam> SubmittedVoteTeams,
   IReadOnlyList<string>? AllowedPacks = null
 );
 
@@ -138,7 +152,8 @@ public sealed record NetworkGameState(
   IReadOnlyList<NetworkConquestTeamState>? ConquestScores = null,
   IReadOnlyList<NetworkModeTeamState>? ModeScores = null,
   NetworkTreasureState? Treasure = null,
-  NetworkClockState? Clock = null
+  NetworkClockState? Clock = null,
+  NetworkPackDraftState? PackDraft = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
@@ -163,6 +178,9 @@ public sealed record SkipTurnRequest();
 public sealed record PurchaseRequest(string PieceType, int X, int Y);
 
 public sealed record RoyalSelectionRequest(string RoyalType, int? X = null, int? Y = null);
+
+public sealed record PackBanRequest(string Pack);
+public sealed record PackVoteRequest(IReadOnlyList<string> Packs);
 
 public sealed record DebugTeamSelectionRequest(NetworkTeam Team);
 
