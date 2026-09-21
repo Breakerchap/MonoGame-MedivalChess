@@ -49,7 +49,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.gargoyle` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `fantasy.phoenix` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `fantasy.sorceress` | Verified | Local/server/CPU LOS uses the shared obstacle-bypass rule, so units, forests, terrain and barricades do not block Sorceress attacks; regression coverage verifies blocked-path bypass. |
-| `fantasy.goblin_royalty` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.goblin_royalty` | Verified | Royal placement spawns four separate Goblin Royalty units and shared local/server/CPU death handling only defeats the team when the final goblin dies; runtime regression coverage verifies first-vs-final death. |
 | `undead.skeleton` | Implemented | Core definition is loaded from the authoritative specification. |
 | `undead.banshee` | Verified | Terrain and structure traversal plus line-of-sight bypass are shared and enforced in local, server, and CPU movement/attack paths. |
 | `undead.reaper` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -68,7 +68,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.skinwalker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.lich` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.phylactery` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.phantom` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.phantom` | Verified | Possess/unpossess is wired in local/server/CPU, royal identity moves to the possessed friendly non-Royal, possessed-unit death also kills the Phantom, and unpossessing locks the Phantom from moving/acting for the rest of that owner turn. Runtime regression coverage verifies the flow. |
 | `greek.heracles` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ares` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.pegasus` | Implemented | Core definition is loaded from the authoritative specification. |
