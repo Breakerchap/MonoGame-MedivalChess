@@ -22,7 +22,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.ashigaru` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.samurai` | Verified | Long-range projectile damage reduction is shared and runtime-tested. |
 | `dynasty.ninja` | Verified | Three attacks per owner turn are tracked by shared/local/server state. |
-| `dynasty.sumo` | Partial | Footprint-centre two-tile push is wired in local/server/CPU with shortened fallback and preserved target move state; runtime regression coverage is committed and awaiting green CI. |
+| `dynasty.sumo` | Verified | Post-attack two-tile push is wired in local/server/CPU using footprint-centre direction, 2→1→0 legal fallback, preserved target move state, and runtime regression coverage. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
 | `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
@@ -30,7 +30,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
 | `dynasty.hwacha` | Partial | Shared attack targeting now correctly hits the selected target plus only directly-adjacent splash units, with regression coverage. Reload/reload-assist runtime flow remains. |
-| `dynasty.harvester` | Partial | Harvest now executes in server, CPU, offline local, and online client flows, destroying in-range terrain and granting 15 gold; end-to-end regression coverage remains before verification. |
+| `dynasty.harvester` | Verified | Harvest is wired in server, CPU, offline local, and online client flows; it destroys in-range terrain, grants 15 gold, consumes the attack, preserves simulation snapshots, and has regression coverage. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
 | `dynasty.terracotta_warrior` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -78,7 +78,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.chariot` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ballista` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.chimera` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `greek.zeus` | Partial | Shared chaining now follows the codex Adjacent definition (all eight surrounding squares), excludes friendlies, and has regression coverage; end-to-end runtime confirmation remains before verification. |
+| `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
 | `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
 | `greek.cyclops` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -104,7 +104,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.brawler` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `wild_west.musketeer` | Partial | Two-tile retreat is wired in local/server/CPU with shortened fallback and preserved move state; runtime regression coverage is committed and awaiting green CI. |
+| `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.pickpocket` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -137,7 +137,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `angels_demons.gatekeeper` | Partial | Portal/Seal entities exist and Seals now participate in local/server/CPU movement/attack blocking; portal transport, placement action parity, expiry, and tests remain. |
-| `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU; push-immunity regression coverage is committed and awaiting green CI. |
+| `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU with runtime coverage; pull-immunity integration will be verified alongside forced-movement abilities such as Fylgja. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
