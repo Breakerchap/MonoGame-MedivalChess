@@ -340,6 +340,9 @@ public static partial class CpuGameRules
     {
       "Spy" => string.Equals(action.Ability, "Mark", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team != actor.Team && actor.AttachedToId is null,
+      nameof(PieceType.Harvester) => string.Equals(action.Ability, "Harvest", StringComparison.OrdinalIgnoreCase) &&
+        target is null && (state.Terrain.IsForest((action.TargetX, action.TargetY)) ||
+          state.Terrain.IsLake((action.TargetX, action.TargetY))),
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
       "Guard" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
