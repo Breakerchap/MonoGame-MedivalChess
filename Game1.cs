@@ -3995,7 +3995,13 @@ internal sealed partial class Game1 : Game
         targetPiece.Team != actor.Team &&
         Actions.CanAttackSquare(actor, targetPosition))
     {
+      AttackTurnState attackState = AbilityStateRules.RecordAttack(
+        actor.Definition.Type.ToString(), actor.AttacksThisTurn);
       actor.MarkedTarget = targetPiece;
+      actor.AttacksThisTurn = attackState.AttacksThisTurn;
+      actor.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+      actor.AbilityState = AdvancedAbilityRules.RecordAttack(
+        actor.Definition.Type.ToString(), actor.AbilityState, targetPiece.NetworkId);
       Console.WriteLine($"Spy marked {targetPiece.Definition.Type}.");
       CompleteAction();
       return true;
