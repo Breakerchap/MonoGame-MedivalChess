@@ -138,4 +138,21 @@ public sealed class RuntimeAbilityStateTests
     berserker.CurrentHealth = 30;
     Assert.Equal(20, berserker.Definition.Attack);
   }
+
+  [Fact]
+  public void SeraphLocalAttackSlotsMatchItsThreeAttackAbility()
+  {
+    PieceSetup setup = new();
+    Piece seraph = new(PieceDefinitions.Seraph, (0, 0), TeamName.Red);
+    setup.AddPiece(seraph);
+
+    seraph.HasAttackedThisTurn = true;
+    Assert.False(seraph.HasAttackedThisTurn);
+    seraph.HasAttackedThisTurn = true;
+    Assert.False(seraph.HasAttackedThisTurn);
+    seraph.HasAttackedThisTurn = true;
+    Assert.True(seraph.HasAttackedThisTurn);
+    Assert.Equal(3, seraph.AttacksThisTurn);
+  }
+
 }
