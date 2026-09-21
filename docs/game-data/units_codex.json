@@ -4468,7 +4468,7 @@
       },
       "ability": {
         "id": "greek.muse.ability",
-        "text": "As an attack, attach to one friendly unit. While attached, improve that unit's Move and Attack patterns by one step: Line → Line and Diagonal, Diagonal → Circle, Circle → Square.",
+        "text": "As an attack, attach to one friendly unit. While attached, improve that unit's Move and Attack patterns by one step: Line or Diagonal → Diamond, Diamond → Circle, Circle → Square.",
         "has_special_ability": true
       },
       "data_ready": true,
