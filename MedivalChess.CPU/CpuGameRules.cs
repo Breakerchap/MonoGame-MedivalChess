@@ -360,6 +360,10 @@ public static partial class CpuGameRules
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+    {
+      return false;
+    }
     if (action.TargetPieceId is not null && target is null)
     {
       return false;
@@ -681,6 +685,7 @@ public static partial class CpuGameRules
       return;
     }
 
+    EndSharedOwnerTurnStates(state, team);
     state.Teams[team] = state.Teams[team] with { ActionsRemaining = state.Teams[team].ActionLimit };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;

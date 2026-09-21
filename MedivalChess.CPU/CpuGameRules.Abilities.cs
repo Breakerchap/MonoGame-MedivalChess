@@ -588,6 +588,21 @@ public static partial class CpuGameRules
     }
   }
 
+  private static void EndSharedOwnerTurnStates(CpuMutableGameState state, NetworkTeam team)
+  {
+    for (int index = 0; index < state.Pieces.Count; index++)
+    {
+      NetworkPiece piece = state.Pieces[index];
+      if (piece.Team == team)
+      {
+        state.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.EndOwnerTurn(piece.AbilityState)
+        };
+      }
+    }
+  }
+
   private static void CompleteSharedTurn(CpuMutableGameState state, NetworkTeam team)
   {
     ApplyEndOfTurnObjectives(state, team);
@@ -611,6 +626,7 @@ public static partial class CpuGameRules
       return;
     }
 
+    EndSharedOwnerTurnStates(state, team);
     state.Teams[team] = state.Teams[team] with { ActionsRemaining = state.Teams[team].ActionLimit };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;

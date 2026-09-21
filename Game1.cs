@@ -1339,6 +1339,10 @@ internal sealed partial class Game1 : Game
       {
         _localClockSeconds[Team.CurrentTurn] = _localClockSeconds.GetValueOrDefault(Team.CurrentTurn) + _chessTimerIncrementSeconds;
       }
+      foreach (Piece piece in pieceSetup.Pieces.Where(piece => piece.Team == Team.CurrentTurn))
+      {
+        piece.AbilityState = AdvancedAbilityRules.EndOwnerTurn(piece.AbilityState);
+      }
       Team.AdvanceTurn();
       if (completedRound) _campaignCompletedRounds++;
       _cpuTurnNumber++;
@@ -2380,6 +2384,10 @@ internal sealed partial class Game1 : Game
   private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
   {
     if (IsOnlineSpectator)
+    {
+      return false;
+    }
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
     }
@@ -4015,6 +4023,10 @@ internal sealed partial class Game1 : Game
     if (!IsCampaignAbilityAllowed(actor.Team, actor.Definition.Type))
     {
       Console.WriteLine($"{actor.Definition.Type}'s ability is disabled for this campaign level.");
+      return false;
+    }
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+    {
       return false;
     }
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&

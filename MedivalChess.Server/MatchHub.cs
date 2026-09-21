@@ -662,6 +662,10 @@ public sealed partial class MatchStore
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
+      if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+      {
+        return new(false, "That unit's special abilities are currently disabled.", foundMatch.State());
+      }
 
       AdvancedSpecialResult advanced = TryUseAdvancedServerAbility(
         foundMatch,
@@ -2402,6 +2406,18 @@ public sealed partial class MatchStore
       if (index >= 0)
       {
         HandlePieceDestroyed(match, match.Pieces[index], player);
+      }
+    }
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Team == player.Team)
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.EndOwnerTurn(piece.AbilityState)
+        };
       }
     }
 
