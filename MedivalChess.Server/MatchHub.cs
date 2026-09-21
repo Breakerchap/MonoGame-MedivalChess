@@ -2012,7 +2012,14 @@ public sealed partial class MatchStore
   {
     NetworkPiece actor = match.Pieces[actorIndex];
     if (target is null || target.Team == actor.Team) return false;
-    match.Pieces[actorIndex] = actor with { MarkedTargetId = target.Id };
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(actor.Type, actor.AttacksThisTurn);
+    match.Pieces[actorIndex] = actor with
+    {
+      MarkedTargetId = target.Id,
+      AttacksThisTurn = attackState.AttacksThisTurn,
+      HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+      AbilityState = AdvancedAbilityRules.RecordAttack(actor.Type, actor.AbilityState, target.Id)
+    };
     return true;
   }
 
