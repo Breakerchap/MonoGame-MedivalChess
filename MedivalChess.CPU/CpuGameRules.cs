@@ -88,10 +88,14 @@ public static partial class CpuGameRules
   public static bool CanDirectlyAttack(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
   {
     bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target.Id;
-    return (attacker.AttachedToId is null || carriedCargoMayAttackHost) && attacker.Team != target.Team && target.AttachedToId is null &&
-      UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
-      UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
-      AbilityRules.CanMakeNormalAttack(attackerRule) && !attacker.HasAttackedThisTurn &&
+    if ((attacker.AttachedToId is not null && !carriedCargoMayAttackHost) || attacker.Team == target.Team ||
+        target.AttachedToId is not null || !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule))
+    {
+      return false;
+    }
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, attackerRule);
+    return AbilityRules.CanMakeNormalAttack(attackerRule) && !attacker.HasAttackedThisTurn &&
       UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
       HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
   }
@@ -101,9 +105,13 @@ public static partial class CpuGameRules
   {
     string? occupiedTargetId = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id &&
       UnitRules.TryGet(piece.Type, out UnitRule targetRule) && Occupies(targetRule, piece, (targetX, targetY)))?.Id;
-    return attacker.AttachedToId is null && UnitRules.TryGet(attacker.Type, out UnitRule rule) &&
-      AbilityRules.CanMakeNormalAttack(rule) && !attacker.HasAttackedThisTurn &&
-      CanUseActionSquare(attacker, targetX, targetY) &&
+    if (attacker.AttachedToId is not null || !UnitRules.TryGet(attacker.Type, out UnitRule rule))
+    {
+      return false;
+    }
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, rule);
+    return AbilityRules.CanMakeNormalAttack(rule) && !attacker.HasAttackedThisTurn &&
+      CanUseActionSquare(state, attacker, targetX, targetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (targetX, targetY), occupiedTargetId, state.Barricades);
   }
 
@@ -171,6 +179,34 @@ public static partial class CpuGameRules
     return false;
   }
 
+  private static bool CanUseActionSquare(CpuGameState state, NetworkPiece actor, int targetX, int targetY)
+  {
+    if (!UnitRules.TryGet(actor.Type, out UnitRule rule))
+    {
+      return false;
+    }
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, actor, rule);
+    if (rule.AttackPattern == RuleShape.None)
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) origin in OccupiedSquares(rule, (actor.X, actor.Y)))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern,
+        rule.MinimumAttackRange,
+        rule.AttackRange,
+        actor.Team,
+        targetX - origin.x,
+        targetY - origin.y))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static NetworkPiece? FindUnitOnAttackedSquare(
     IReadOnlyList<NetworkPiece> pieces,
     NetworkPiece attacker,
@@ -203,7 +239,12 @@ public static partial class CpuGameRules
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
     if (attacker is null || attacker.Team != action.Team ||
-        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || !AbilityRules.CanMakeNormalAttack(attackerRule))
+        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
+    {
+      return false;
+    }
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, attackerRule);
+    if (!AbilityRules.CanMakeNormalAttack(attackerRule))
     {
       return false;
     }
@@ -225,7 +266,7 @@ public static partial class CpuGameRules
     if (target is null)
     {
       return action.TargetPieceId is null && state.Barricades.ContainsKey((action.TargetX, action.TargetY)) &&
-        CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
+        CanUseActionSquare(state, attacker, action.TargetX, action.TargetY) &&
         HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), null, state.Barricades);
     }
 
@@ -235,7 +276,7 @@ public static partial class CpuGameRules
       target.AttachedToId is null &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
       Occupies(targetRule, target, (action.TargetX, action.TargetY)) &&
-      CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
+      CanUseActionSquare(state, attacker, action.TargetX, action.TargetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), target.Id, state.Barricades);
   }
 
@@ -307,7 +348,7 @@ public static partial class CpuGameRules
     }
 
     bool demolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(action.Ability);
-    bool independentActiveAbility = actor.Type == nameof(PieceType.Phoenix);
+    bool independentActiveAbility = actor.Type is nameof(PieceType.Phoenix) or nameof(PieceType.Imp);
     if (actor.HasAttackedThisTurn && !demolition && !independentActiveAbility)
     {
       return false;
@@ -361,6 +402,21 @@ public static partial class CpuGameRules
         actor.Health > AdvancedAbilityRules.PhoenixFireHealthCost && target is null &&
         CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Fire, actor.Team, action.TargetX, action.TargetY),
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
+      nameof(PieceType.Muse) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        target.AttachedToId is null && !actor.HasAttackedThisTurn,
+      nameof(PieceType.Shieldsman) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        target.AttachedToId is null && !actor.HasAttackedThisTurn &&
+        UnitRules.TryGet(target.Type, out UnitRule shieldsTargetRule) &&
+        shieldsTargetRule.Category != RuleCategory.Royal &&
+        !state.Pieces.Any(piece => piece.AttachedToId == target.Id &&
+          piece.AttachmentKind == NetworkAttachmentKind.Shieldsman),
+      nameof(PieceType.Imp) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !state.Pieces.Any(piece => piece.AttachedToId == target.Id &&
+          piece.AttachmentKind == NetworkAttachmentKind.Imp),
       "Guard" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
         UnitRules.TryGet(target.Type, out UnitRule targetRule) && UnitRules.TryGet(actor.Type, out UnitRule guardRule) &&
