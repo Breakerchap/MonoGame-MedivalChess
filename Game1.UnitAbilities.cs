@@ -146,10 +146,18 @@ internal sealed partial class Game1
           effect.Damage,
           false,
           false,
-          HasAdjacentPieceOfType(target, PieceType.Baron, target.Team),
+          false,
           IsPieceInForest(target),
           _terrain.ForestDamageReduction
         );
+        bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+          pieceSetup.Pieces.Select(piece => (
+            piece.Definition.Type.ToString(),
+            piece.Team.ToNetworkTeam(),
+            piece.AbilityState.SelectedTargetId)),
+          target.NetworkId,
+          target.Team.ToNetworkTeam());
+        damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
         target.CurrentHealth -= damage;
         HandlePieceDestroyed(target, effect.SourceTeam.ToTeamName());
       }
