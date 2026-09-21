@@ -230,6 +230,11 @@ public static partial class CpuGameRules
         case nameof(PieceType.Spy):
           state.Pieces[actorIndex] = actor with { MarkedTargetId = target!.Id };
           break;
+        case nameof(PieceType.Harvester):
+          state.Terrain.DestroyTile((action.TargetX, action.TargetY));
+          AddMoney(state, action.Team, AdvancedAbilityRules.HarvesterGold);
+          state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          break;
         case nameof(PieceType.Engineer):
           ApplyEngineerAbility(state, actorIndex, action);
           break;
