@@ -686,6 +686,33 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void MusketeerStaysPutWhenFullRetreatIsBlocked()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("musketeer", nameof(PieceType.Musketeer), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(lakes: [(0, 2)])
+    );
+    AttackAction attack = new(NetworkTeam.Red, "musketeer", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece musketeer = result.Pieces.Single(piece => piece.Id == "musketeer");
+    Assert.Equal((0, 0), (musketeer.X, musketeer.Y));
+    Assert.False(musketeer.HasMovedThisTurn);
+  }
+
+  [Fact]
   public void BeelzebubCannotBePushedBySumo()
   {
     CpuGameState state = CreateState(
