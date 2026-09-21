@@ -663,8 +663,9 @@ internal sealed partial class Game1 : Game
                 selectedPiece.AbilityState,
                 selectedPiece.HasAttackedThisTurn,
                 normalAttackTarget?.NetworkId) &&
-              AbilityRules.CanMakeNormalAttack(UnitRules.FromPieceDefinition(selectedPiece.Definition)) &&
-              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              AbilityRules.CanMakeNormalAttack(ApplyLocalAttachmentBonuses(
+                selectedPiece, UnitRules.FromPieceDefinition(selectedPiece.Definition))) &&
+              CanAttackSquareWithAttachments(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
@@ -698,9 +699,10 @@ internal sealed partial class Game1 : Game
                 selectedPiece.AbilityState,
                 selectedPiece.HasAttackedThisTurn,
                 normalAttackTarget?.NetworkId) &&
-              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              CanAttackSquareWithAttachments(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
-              selectedPiece.Definition.Attack > 0 &&
+              ApplyLocalAttachmentBonuses(
+                selectedPiece, UnitRules.FromPieceDefinition(selectedPiece.Definition)).Attack > 0 &&
               (normalAttackTarget is not null ||
                _barricades.ContainsKey(targetPosition));
 
@@ -1907,8 +1909,9 @@ internal sealed partial class Game1 : Game
         attacker.AbilityState,
         attacker.HasAttackedThisTurn,
         target?.NetworkId) &&
-      AbilityRules.CanMakeNormalAttack(UnitRules.FromPieceDefinition(attacker.Definition)) &&
-      Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
+      AbilityRules.CanMakeNormalAttack(ApplyLocalAttachmentBonuses(
+        attacker, UnitRules.FromPieceDefinition(attacker.Definition))) &&
+      CanAttackSquareWithAttachments(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
       ((target is not null && target != attacker &&
         (target.Team != attacker.Team ||
          AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Definition.Type.ToString()))) ||
@@ -2400,13 +2403,13 @@ internal sealed partial class Game1 : Game
     bool isSpecialTarget = plunderTreasureTarget || actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
-      PieceType.Harvester => target is null && Actions.CanAttackSquare(actor, targetPosition) &&
+      PieceType.Harvester => target is null && CanAttackSquareWithAttachments(actor, targetPosition) &&
         (_terrain.IsForest(targetPosition) || _terrain.IsLake(targetPosition)),
-      PieceType.Witch => Actions.CanAttackSquare(actor, targetPosition),
+      PieceType.Witch => CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Druid => target is null &&
         Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
         CanPlaceLocalAbilityEntity(targetPosition),
-      PieceType.Phoenix => target is null && Actions.CanAttackSquare(actor, targetPosition) &&
+      PieceType.Phoenix => target is null && CanAttackSquareWithAttachments(actor, targetPosition) &&
         AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
         actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
         CanPlaceLocalAbilityEntity(targetPosition),
@@ -3140,7 +3143,8 @@ internal sealed partial class Game1 : Game
 
   private UnitRule GetEffectiveMovementRule(Piece piece)
   {
-    UnitRule rule = UnitRules.FromPieceDefinition(piece.Definition);
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      piece, UnitRules.FromPieceDefinition(piece.Definition));
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
       candidate.AttachedTo == piece && candidate.Definition.Type == PieceType.Ox);
     if (oxAttachment is not null)
@@ -3161,8 +3165,34 @@ internal sealed partial class Game1 : Game
       : rule;
   }
 
+  private bool CanAttackSquareWithAttachments(Piece piece, (int x, int y) targetPosition)
+  {
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      piece, UnitRules.FromPieceDefinition(piece.Definition));
+    if (rule.AttackPattern == RuleShape.None)
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) origin in OccupiedSquares(piece.Definition, piece.Position))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern,
+        rule.MinimumAttackRange,
+        rule.AttackRange,
+        piece.Team.ToNetworkTeam(),
+        targetPosition.x - origin.x,
+        targetPosition.y - origin.y))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static bool CanMoveThisTurn(Piece piece) =>
-    (piece.AttachedTo is null || piece.AttachmentKind != AttachmentKind.Carried || piece.Definition.Type == PieceType.Ox) &&
+    (piece.AttachedTo is null ||
+     (piece.AttachmentKind == AttachmentKind.Carried && piece.Definition.Type == PieceType.Ox)) &&
     (AdvancedAbilityRules.CanMove(piece.Definition.Type.ToString(), piece.AbilityState, piece.HasMovedThisTurn) ||
       AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable));
 
@@ -3470,7 +3500,7 @@ internal sealed partial class Game1 : Game
           continue;
         }
 
-        if (Actions.CanAttackSquare(piece, targetPosition) && HasClearAttackPath(piece, targetPosition))
+        if (CanAttackSquareWithAttachments(piece, targetPosition) && HasClearAttackPath(piece, targetPosition))
         {
           highlightedSquares.Add(targetPosition);
         }
@@ -3702,8 +3732,9 @@ internal sealed partial class Game1 : Game
       stealingTeam.Money = ClampCurrency((long)stealingTeam.Money + stolen);
     }
 
+    Piece shield = pieceSetup.GetAttachedPiece(target, AttachmentKind.Shieldsman);
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
-    Piece damagedPiece = guard ?? target;
+    Piece damagedPiece = shield ?? guard ?? target;
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
       candidate.AttachedTo == target && AbilityRules.SharesIncomingDamageWithHost(candidate.Definition.Type.ToString()));
     int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
@@ -3941,7 +3972,7 @@ internal sealed partial class Game1 : Game
 
     if (actor.Definition.Type == PieceType.Harvester &&
         targetPiece is null &&
-        Actions.CanAttackSquare(actor, targetPosition) &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
         _terrain.DestroyTile(targetPosition))
     {
       Team harvestingTeam = _teams.Find(team => team.TeamName == actor.Team);
@@ -3952,7 +3983,7 @@ internal sealed partial class Game1 : Game
     }
 
     if (actor.Definition.Type == PieceType.Witch &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       _abilityEntities.RemoveAll(entity =>
         entity.Kind == AbilityEntityKind.PoisonCloud && entity.SourcePieceId == actor.NetworkId);
@@ -3977,7 +4008,7 @@ internal sealed partial class Game1 : Game
 
     if (actor.Definition.Type == PieceType.Phoenix &&
         targetPiece is null &&
-        Actions.CanAttackSquare(actor, targetPosition) &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
         AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
         actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
         CanPlaceLocalAbilityEntity(targetPosition))
@@ -3993,7 +4024,7 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Spy &&
         targetPiece != null &&
         targetPiece.Team != actor.Team &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       AttackTurnState attackState = AbilityStateRules.RecordAttack(
         actor.Definition.Type.ToString(), actor.AttacksThisTurn);
@@ -4022,7 +4053,7 @@ internal sealed partial class Game1 : Game
           actor.AttachedTo != null,
           pieceSetup.GetAttachedPiece(targetPiece, AttachmentKind.Guard) != null
         ) &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       pieceSetup.Attach(actor, targetPiece, AttachmentKind.Guard);
       CompleteAction();
@@ -4041,7 +4072,7 @@ internal sealed partial class Game1 : Game
           pieceSetup.Pieces.Any(candidate =>
             candidate.AttachedTo == targetPiece && candidate.Definition.Type == PieceType.Ox)
         ) &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       pieceSetup.Attach(targetPiece, actor, AttachmentKind.Carried);
       CompleteAction();
@@ -4150,7 +4181,7 @@ internal sealed partial class Game1 : Game
   {
     bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
     if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
-        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !CanAttackSquareWithAttachments(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
       return false;
@@ -4186,7 +4217,7 @@ internal sealed partial class Game1 : Game
   {
     bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
     if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
-        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !CanAttackSquareWithAttachments(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
       return false;
