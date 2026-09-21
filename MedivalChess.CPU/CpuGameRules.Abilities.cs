@@ -451,7 +451,7 @@ public static partial class CpuGameRules
         CavalierFollowUpMoveAvailable = false,
         EngineerBuildsThisTurn = 0,
         CannotContributeToConquestThisTurn = false,
-        AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, state.ResultingHealth)
+        AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, ownerTurn.ResultingHealth)
       };
     }
   }
