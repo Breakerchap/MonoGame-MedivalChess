@@ -61,7 +61,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.ghoul` | Verified | Four-owner-turn expiry is implemented. |
 | `undead.vampire` | Verified | Post-attack healing is implemented and capped. |
 | `undead.shadow` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.wendigo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.wendigo` | Partial | Shared rules already define friendly targeting and end-turn death; CPU attack legality now allows friendly targets. End-turn death, server/local parity, and runtime coverage remain. |
 | `undead.will_o_wisp` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.wisp` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -106,7 +106,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.pickpocket` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.pickpocket` | Partial | CPU attacks now steal up to 20 gold from the attacked enemy team before damage resolution. Server/local parity and runtime regression coverage remain. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.cactus_jack` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.stagecoach` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
