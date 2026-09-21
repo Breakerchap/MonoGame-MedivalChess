@@ -1632,10 +1632,18 @@ public sealed partial class MatchStore
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentUnit(match, damagedPiece, damagedPiece.Team, "Baron"),
+      false,
       IsInForest(match, damagedPiece),
       match.Terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      match.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      damagedPiece.Id,
+      damagedPiece.Team);
+    damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       targetRule,
@@ -1662,8 +1670,15 @@ public sealed partial class MatchStore
   {
     if (!match.Barricades.TryGetValue(position, out int health)) return;
     UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
-    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health) +
-      (HasAdjacentUnit(match, attacker, attacker.Team, nameof(PieceType.Baron)) ? CombatRules.BaronDamageBonus : 0);
+    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      match.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
     health -= damage;
     if (health <= 0) match.Barricades.Remove(position);
     else match.Barricades[position] = health;
