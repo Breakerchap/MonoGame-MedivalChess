@@ -2359,6 +2359,7 @@ public sealed partial class MatchStore
     internal Dictionary<(int x, int y), int> Barricades { get; } = [];
     internal Dictionary<(int x, int y), NetworkTeam> Mines { get; } = [];
     internal HashSet<TileEdge> RiverBridges { get; } = [];
+    internal HashSet<(int x, int y)> DestroyedTerrainTiles { get; } = [];
     internal List<AbilityEntity> AbilityEntities { get; } = [];
     internal NetworkTeam? Winner { get; set; }
     internal int ConquestScore { get; set; }
@@ -2454,7 +2455,8 @@ public sealed partial class MatchStore
       [
         .. Roads.Select(pair => new NetworkImprovement("Road", pair.Key.x, pair.Key.y, 0, pair.Value)),
         .. Barricades.Select(pair => new NetworkImprovement("Barrier", pair.Key.x, pair.Key.y, pair.Value)),
-        .. Mines.Select(pair => new NetworkImprovement("Mine", pair.Key.x, pair.Key.y, 0, pair.Value))
+        .. Mines.Select(pair => new NetworkImprovement("Mine", pair.Key.x, pair.Key.y, 0, pair.Value)),
+        .. DestroyedTerrainTiles.Select(position => new NetworkImprovement("ClearedTerrain", position.x, position.y))
       ],
       Winner,
       ConquestScore,
