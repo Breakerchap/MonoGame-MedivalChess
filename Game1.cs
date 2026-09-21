@@ -1677,7 +1677,8 @@ internal sealed partial class Game1 : Game
         piece.PossessedUnitId,
         piece.Facing.x,
         piece.Facing.y,
-        piece.PendingDamage
+        piece.PendingDamage,
+        piece.AbilityState
       )),
       _teams.Select(team => new CpuTeamState(
         team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString(), team.ActionLimit
@@ -1907,6 +1908,7 @@ internal sealed partial class Game1 : Game
         piece.CavalierFollowUpMoveAvailable = false;
         piece.EngineerBuildsThisTurn = 0;
         piece.CannotContributeToConquestThisTurn = false;
+        piece.AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.Position.x, piece.Position.y, piece.CurrentHealth);
       }
     }
   }
@@ -1923,7 +1925,9 @@ internal sealed partial class Game1 : Game
 
     int farmCount = pieceSetup.Pieces.Count(piece =>
       piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Farm);
-    long income = farmCount * (long)_farmIncomePerTurn;
+    int palaceCount = pieceSetup.Pieces.Count(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Palace && piece.AbilityState.DisabledOwnerTurnsRemaining <= 0);
+    long income = farmCount * (long)_farmIncomePerTurn + palaceCount * (long)AdvancedAbilityRules.PalaceIncome;
     if (income != 0)
     {
       team.Money = ClampCurrency((long)team.Money + income);
@@ -2745,7 +2749,8 @@ internal sealed partial class Game1 : Game
           networkPiece.FacingX,
           networkPiece.FacingY
         ),
-        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>()
+        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>(),
+        AbilityState = networkPiece.AbilityState ?? new UnitAbilityState()
       };
       pieceSetup.AddPiece(piece);
       piecesByNetworkId[networkPiece.Id] = piece;
@@ -2761,6 +2766,12 @@ internal sealed partial class Game1 : Game
         {
           NetworkAttachmentKind.Guard => AttachmentKind.Guard,
           NetworkAttachmentKind.Carried => AttachmentKind.Carried,
+          NetworkAttachmentKind.Shieldsman => AttachmentKind.Shieldsman,
+          NetworkAttachmentKind.Shadow => AttachmentKind.Shadow,
+          NetworkAttachmentKind.Muse => AttachmentKind.Muse,
+          NetworkAttachmentKind.Succubus => AttachmentKind.Succubus,
+          NetworkAttachmentKind.Imp => AttachmentKind.Imp,
+          NetworkAttachmentKind.Passenger => AttachmentKind.Passenger,
           _ => AttachmentKind.None
         };
       }
@@ -3617,10 +3628,15 @@ internal sealed partial class Game1 : Game
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentPieceOfType(damagedPiece, PieceType.Baron, damagedPiece.Team),
+      false,
       IsPieceInForest(damagedPiece),
       _terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      pieceSetup.Pieces.Select(piece => (piece.Definition.Type.ToString(), piece.Team.ToNetworkTeam(), piece.AbilityState.SelectedTargetId)),
+      damagedPiece.NetworkId,
+      damagedPiece.Team.ToNetworkTeam());
+    damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       targetRule,

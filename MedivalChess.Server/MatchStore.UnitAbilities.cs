@@ -39,9 +39,14 @@ public sealed partial class MatchStore
       (target.X, target.Y)
     );
 
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      match.Pieces.Select(piece => (piece.Type, piece.Team, piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    baseDamage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(baseDamage, selectedByBaron);
     return CombatRules.CalculateDamage(
       baseDamage,
-      HasAdjacentUnit(match, attacker, attacker.Team, nameof(PieceType.Baron)),
+      false,
       match.Pieces.Any(piece => piece.Type == nameof(PieceType.Spy) && piece.MarkedTargetId == target.Id),
       false,
       false,
@@ -288,7 +293,8 @@ public sealed partial class MatchStore
             Team = NetworkTeam.Neutral,
             HasMovedThisTurn = true,
             HasAttackedThisTurn = true,
-            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type)
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type),
+            AbilityState = (mercenary.AbilityState ?? new UnitAbilityState()) with { CannotActThisTurn = true, CannotMoveThisTurn = true }
           };
         }
       }

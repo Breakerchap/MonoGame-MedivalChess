@@ -90,12 +90,16 @@ internal sealed partial class Game1
       target.Position
     );
 
-    bool hasBaronBonus = HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team);
+    bool hasBaronBonus = AdvancedAbilityRules.IsBaronSelectedTarget(
+      pieceSetup.Pieces.Select(piece => (piece.Definition.Type.ToString(), piece.Team.ToNetworkTeam(), piece.AbilityState.SelectedTargetId)),
+      attacker.NetworkId,
+      attacker.Team.ToNetworkTeam());
     bool isSpyMarked = pieceSetup.Pieces.Any(spy =>
       spy.Definition.Type == PieceType.Spy && spy.MarkedTarget == target);
+    baseDamage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(baseDamage, hasBaronBonus);
     return CombatRules.CalculateDamage(
       baseDamage,
-      hasBaronBonus,
+      false,
       isSpyMarked,
       false,
       false,
@@ -171,6 +175,7 @@ internal sealed partial class Game1
         piece.Team = TeamName.Neutral;
         piece.HasMovedThisTurn = true;
         piece.HasAttackedThisTurn = true;
+        piece.AbilityState = piece.AbilityState with { CannotActThisTurn = true, CannotMoveThisTurn = true };
       }
       else if (decision.UnpaidEffect == UnpaidUnitUpkeepEffect.LoseMatch)
       {

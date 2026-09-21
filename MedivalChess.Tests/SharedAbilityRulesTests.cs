@@ -241,4 +241,75 @@ public sealed class SharedAbilityRulesTests
     Assert.Contains(PieceDefinitions.Purchasable, definition => definition.Type == PieceType.Orc);
   }
 
+  [Fact]
+  public void UpdatedUnitUpkeep_UsesCodexAmountsAndFiresWhenUnpaid()
+  {
+    Assert.Equal(30, EconomyRules.ResolveAbilityUpkeep(nameof(PieceType.SummonedGolem), 50).Cost);
+    Assert.Equal(20, EconomyRules.ResolveAbilityUpkeep(nameof(PieceType.HiredGun), 50).Cost);
+
+    UnitUpkeepResult golem = EconomyRules.ResolveAbilityUpkeep(nameof(PieceType.SummonedGolem), 29);
+    Assert.False(golem.Paid);
+    Assert.Equal(UnpaidUnitUpkeepEffect.FireUnit, golem.UnpaidEffect);
+  }
+
+  [Fact]
+  public void QilinVariablePrice_UsesCodexFormula()
+  {
+    foreach (int x in new[] { 40, 60, 80, 100, 120, 140, 160 })
+    {
+      Assert.True(AdvancedAbilityRules.IsValidQilinCost(x));
+      Assert.Equal(10 + x / 4, AdvancedAbilityRules.GetQilinAttack(x));
+      Assert.Equal(20 + x / 2, AdvancedAbilityRules.GetQilinHealth(x));
+    }
+
+    Assert.False(AdvancedAbilityRules.IsValidQilinCost(50));
+    Assert.False(AdvancedAbilityRules.IsValidQilinCost(180));
+  }
+
+  [Fact]
+  public void HermesGetsTwoMovesAndSniperCooldownCountsOwnerTurns()
+  {
+    UnitAbilityState hermes = new();
+    Assert.True(AdvancedAbilityRules.CanMove(nameof(PieceType.Hermes), hermes, false));
+    hermes = AdvancedAbilityRules.RecordMove(hermes);
+    Assert.True(AdvancedAbilityRules.CanMove(nameof(PieceType.Hermes), hermes, true));
+    hermes = AdvancedAbilityRules.RecordMove(hermes);
+    Assert.False(AdvancedAbilityRules.CanMove(nameof(PieceType.Hermes), hermes, true));
+
+    UnitAbilityState sniper = AdvancedAbilityRules.RecordAttack(nameof(PieceType.Sniper), new UnitAbilityState(), "enemy");
+    Assert.False(AdvancedAbilityRules.CanAttack(nameof(PieceType.Sniper), sniper, false, "enemy"));
+    sniper = AdvancedAbilityRules.StartOwnerTurn(sniper, 0, 0, 30);
+    Assert.False(AdvancedAbilityRules.CanAttack(nameof(PieceType.Sniper), sniper, false, "enemy"));
+    sniper = AdvancedAbilityRules.StartOwnerTurn(sniper, 0, 0, 30);
+    Assert.True(AdvancedAbilityRules.CanAttack(nameof(PieceType.Sniper), sniper, false, "enemy"));
+  }
+
+  [Fact]
+  public void SeraphCanAttackThreeDistinctTargetsOnly()
+  {
+    UnitAbilityState state = new();
+    foreach (string id in new[] { "a", "b", "c" })
+    {
+      Assert.True(AdvancedAbilityRules.CanAttack(nameof(PieceType.Seraph), state, false, id));
+      state = AdvancedAbilityRules.RecordAttack(nameof(PieceType.Seraph), state, id);
+    }
+
+    Assert.False(AdvancedAbilityRules.CanAttack(nameof(PieceType.Seraph), state, false, "d"));
+    Assert.False(AdvancedAbilityRules.CanAttack(nameof(PieceType.Seraph), state, false, "a"));
+  }
+
+  [Fact]
+  public void BaronSelectionAppliesOnlyToItsChosenFriendlyUnit()
+  {
+    var pieces = new[]
+    {
+      (nameof(PieceType.Baron), NetworkTeam.Red, (string?)"chosen"),
+      (nameof(PieceType.Baron), NetworkTeam.Blue, (string?)"other")
+    };
+    Assert.True(AdvancedAbilityRules.IsBaronSelectedTarget(pieces, "chosen", NetworkTeam.Red));
+    Assert.False(AdvancedAbilityRules.IsBaronSelectedTarget(pieces, "other", NetworkTeam.Red));
+    Assert.Equal(30, AdvancedAbilityRules.ApplyBaronOutgoingBonus(20, true));
+    Assert.Equal(10, AdvancedAbilityRules.ApplyBaronIncomingReduction(20, true));
+  }
+
 }

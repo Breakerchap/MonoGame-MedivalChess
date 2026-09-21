@@ -2173,7 +2173,8 @@ public sealed partial class MatchStore
           AttacksThisTurn = 0,
           CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
-          CannotContributeToConquestThisTurn = false
+          CannotContributeToConquestThisTurn = false,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, piece.Health)
         };
       }
     }
@@ -2281,7 +2282,8 @@ public sealed partial class MatchStore
     }
 
     int farmCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
-    long income = farmCount * (long)match.Configuration.FarmIncomePerTurn;
+    int palaceCount = match.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Palace) && (piece.AbilityState?.DisabledOwnerTurnsRemaining ?? 0) <= 0);
+    long income = farmCount * (long)match.Configuration.FarmIncomePerTurn + palaceCount * (long)AdvancedAbilityRules.PalaceIncome;
     if (income != 0)
     {
       player.Money = ClampCurrency((long)player.Money + income);

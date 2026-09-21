@@ -40,6 +40,8 @@ public sealed record UnitAbilityState
   public UnitTurnSnapshot? PreviousOwnerTurnStart { get; init; }
   public bool PendingRespawn { get; init; }
   public int LinkedDeaths { get; init; }
+  public int VariableCostValue { get; init; }
+  public int SkipMovementOwnerTurns { get; init; }
 }
 
 public static class AdvancedAbilityRules
@@ -47,6 +49,7 @@ public static class AdvancedAbilityRules
   public const int BaronAttackBonus = 10;
   public const int BaronDamageReduction = 10;
   public const int HarvesterGold = 15;
+  public const int PalaceIncome = 10;
   public const int SummonedGolemUpkeep = 30;
   public const int HiredGunUpkeep = 20;
   public const int ContractDemonRoyalHealthUpkeep = 5;
@@ -89,7 +92,7 @@ public static class AdvancedAbilityRules
   public static bool CanMove(string unitType, UnitAbilityState? state, bool legacyHasMoved)
   {
     state ??= new();
-    if (state.PetrifiedById is not null || state.CannotMoveThisTurn || state.CannotActThisTurn)
+    if (state.PetrifiedById is not null || state.CannotMoveThisTurn || state.CannotActThisTurn || state.SkipMovementOwnerTurns > 0)
     {
       return false;
     }
@@ -189,7 +192,8 @@ public static class AdvancedAbilityRules
       OdinProtectedById = null,
       OdinProtectionAvailable = false,
       PreviousOwnerTurnStart = state.CurrentOwnerTurnStart,
-      CurrentOwnerTurnStart = new UnitTurnSnapshot(x, y, health)
+      CurrentOwnerTurnStart = new UnitTurnSnapshot(x, y, health),
+      SkipMovementOwnerTurns = Math.Max(0, state.SkipMovementOwnerTurns - 1)
     };
   }
 

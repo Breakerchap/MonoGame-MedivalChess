@@ -61,9 +61,14 @@ public static partial class CpuGameRules
       (target.X, target.Y)
     );
 
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (piece.Type, piece.Team, piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    baseDamage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(baseDamage, selectedByBaron);
     return CombatRules.CalculateDamage(
       baseDamage,
-      HasAdjacentUnit(state, attacker, attacker.Team, nameof(PieceType.Baron)),
+      false,
       state.Pieces.Any(piece => piece.Type == nameof(PieceType.Spy) && piece.MarkedTargetId == target.Id),
       false,
       false,
@@ -352,6 +357,8 @@ public static partial class CpuGameRules
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Farm));
     money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn);
+    int palaces = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Palace) && (piece.AbilityState?.DisabledOwnerTurnsRemaining ?? 0) <= 0);
+    money = ClampCurrency((long)money + palaces * (long)AdvancedAbilityRules.PalaceIncome);
 
     UnitUpkeepSequenceResult abilityUpkeep = EconomyRules.ResolveAbilityUpkeepSequence(
       money,
@@ -381,7 +388,8 @@ public static partial class CpuGameRules
             Team = NetworkTeam.Neutral,
             HasMovedThisTurn = true,
             HasAttackedThisTurn = true,
-            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type)
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type),
+            AbilityState = (mercenary.AbilityState ?? new UnitAbilityState()) with { CannotActThisTurn = true, CannotMoveThisTurn = true }
           };
         }
       }
@@ -442,7 +450,8 @@ public static partial class CpuGameRules
         AttacksThisTurn = 0,
         CavalierFollowUpMoveAvailable = false,
         EngineerBuildsThisTurn = 0,
-        CannotContributeToConquestThisTurn = false
+        CannotContributeToConquestThisTurn = false,
+        AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, state.ResultingHealth)
       };
     }
   }
