@@ -284,6 +284,46 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
           actor.Team, actor.Id, ability, null, position.x, position.y), actions);
       }
     }
+    else if (actor.Type is nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or
+      nameof(PieceType.Odin) or nameof(PieceType.Hacker))
+    {
+      string ability = actor.Type switch
+      {
+        nameof(PieceType.Baron) => "Select",
+        nameof(PieceType.WarDrum) => "Refresh",
+        nameof(PieceType.Odin) => "Protect",
+        _ => "Hack"
+      };
+      foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Id != actor.Id)
+        .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+      {
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(
+            actor.Team, actor.Id, ability, target.Id, targetSquare.x, targetSquare.y), actions);
+        }
+      }
+    }
+    else if (actor.Type == nameof(PieceType.WillOWisp))
+    {
+      if (!(actor.AbilityState?.Settled ?? false))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, "Settle", null, actor.X, actor.Y), actions);
+      }
+      else
+      {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+          for (int dx = -1; dx <= 1; dx++)
+          {
+            if (dx == 0 && dy == 0) continue;
+            AddIfLegal(state, new UseAbilityAction(
+              actor.Team, actor.Id, "SpawnWisp", null, actor.X + dx, actor.Y + dy), actions);
+          }
+        }
+      }
+    }
     else if (actor.Type == nameof(PieceType.Phantom))
     {
       if (!string.IsNullOrEmpty(actor.PossessedUnitId))

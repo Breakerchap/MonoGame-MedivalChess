@@ -372,6 +372,71 @@ public static partial class CpuGameRules
         case nameof(PieceType.Engineer):
           ApplyEngineerAbility(state, actorIndex, action);
           break;
+        case nameof(PieceType.Baron):
+          state.Pieces[actorIndex] = actor with
+          {
+            AbilityState = AdvancedAbilityRules.SelectTarget(actor.AbilityState, target!.Id)
+          };
+          break;
+        case nameof(PieceType.WarDrum):
+          {
+            int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+            NetworkPiece refreshed = state.Pieces[targetIndex];
+            state.Pieces[targetIndex] = refreshed with
+            {
+              HasMovedThisTurn = false,
+              AbilityState = AdvancedAbilityRules.RefreshByWarDrum(refreshed.AbilityState)
+            };
+            state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+            break;
+          }
+        case nameof(PieceType.WillOWisp):
+          if (string.Equals(action.Ability, "Settle", StringComparison.OrdinalIgnoreCase))
+          {
+            state.Pieces[actorIndex] = actor with
+            {
+              AbilityState = AdvancedAbilityRules.SetSettled(actor.AbilityState)
+            };
+          }
+          else
+          {
+            UnitRule wispRule = UnitRules.GetRequired(nameof(PieceType.Wisp));
+            state.Pieces.Add(new NetworkPiece(
+              CreatePieceId(state, wispRule.Type), wispRule.Type, actor.Team,
+              action.TargetX, action.TargetY, wispRule.Health));
+            state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          }
+          break;
+        case nameof(PieceType.Odin):
+          {
+            int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+            NetworkPiece protectedPiece = state.Pieces[targetIndex];
+            state.Pieces[targetIndex] = protectedPiece with
+            {
+              AbilityState = AdvancedAbilityRules.ProtectWithOdin(protectedPiece.AbilityState, actor.Id)
+            };
+            state.Pieces[actorIndex] = actor with
+            {
+              AbilityState = AdvancedAbilityRules.StartCooldown(
+                actor.AbilityState, AdvancedAbilityRules.OdinCooldownTurns)
+            };
+            break;
+          }
+        case nameof(PieceType.Hacker):
+          {
+            int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+            NetworkPiece hacked = state.Pieces[targetIndex];
+            state.Pieces[targetIndex] = hacked with
+            {
+              AbilityState = AdvancedAbilityRules.DisableAbilities(hacked.AbilityState, 1)
+            };
+            state.Pieces[actorIndex] = actor with
+            {
+              AbilityState = AdvancedAbilityRules.StartCooldown(
+                actor.AbilityState, AdvancedAbilityRules.HackerCooldownTurns)
+            };
+            break;
+          }
         case nameof(PieceType.Muse):
           state.Pieces[actorIndex] = actor with
           {

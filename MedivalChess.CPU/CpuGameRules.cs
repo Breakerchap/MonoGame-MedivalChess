@@ -350,7 +350,10 @@ public static partial class CpuGameRules
     }
 
     bool demolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(action.Ability);
-    bool independentActiveAbility = actor.Type is nameof(PieceType.Phoenix) or nameof(PieceType.Imp);
+    bool independentActiveAbility = actor.Type is
+      nameof(PieceType.Phoenix) or nameof(PieceType.Imp) or nameof(PieceType.Baron) or
+      nameof(PieceType.Odin) or nameof(PieceType.Hacker) ||
+      (actor.Type == nameof(PieceType.WillOWisp) && !(actor.AbilityState?.Settled ?? false));
     if (actor.HasAttackedThisTurn && !demolition && !independentActiveAbility)
     {
       return false;
@@ -372,8 +375,9 @@ public static partial class CpuGameRules
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
     if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
-        actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse)) && !isCarryThrowUnit &&
-        !CanUseActionSquare(actor, action.TargetX, action.TargetY))
+        actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse) or
+          nameof(PieceType.WillOWisp) or nameof(PieceType.Odin) or nameof(PieceType.Hacker)) &&
+        !isCarryThrowUnit && !CanUseActionSquare(actor, action.TargetX, action.TargetY))
     {
       return false;
     }
@@ -404,6 +408,32 @@ public static partial class CpuGameRules
         actor.Health > AdvancedAbilityRules.PhoenixFireHealthCost && target is null &&
         CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Fire, actor.Team, action.TargetX, action.TargetY),
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
+      nameof(PieceType.Baron) => string.Equals(action.Ability, "Select", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState),
+      nameof(PieceType.WarDrum) => string.Equals(action.Ability, "Refresh", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(target.AbilityState, target.HasMovedThisTurn),
+      nameof(PieceType.WillOWisp) => string.Equals(action.Ability, "Settle", StringComparison.OrdinalIgnoreCase)
+        ? target is null && !(actor.AbilityState?.Settled ?? false) &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+        : string.Equals(action.Ability, "SpawnWisp", StringComparison.OrdinalIgnoreCase) &&
+          target is null && (actor.AbilityState?.Settled ?? false) && !actor.HasAttackedThisTurn &&
+          Math.Max(Math.Abs(action.TargetX - actor.X), Math.Abs(action.TargetY - actor.Y)) == 1 &&
+          UnitRules.TryGet(nameof(PieceType.Wisp), out UnitRule wispRule) &&
+          CanPlace(state, state.Pieces, wispRule, action.TargetX, action.TargetY),
+      nameof(PieceType.Odin) => string.Equals(action.Ability, "Protect", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        UnitRules.TryGet(target.Type, out UnitRule odinTargetRule) &&
+        odinTargetRule.Category != RuleCategory.Royal &&
+        (actor.AbilityState?.CooldownOwnerTurns ?? 0) <= 0 &&
+        UnitRules.TryGet(actor.Type, out UnitRule odinRule) &&
+        AbilityRules.IsWithinSquareRadius(
+          odinRule, (actor.X, actor.Y), odinTargetRule, (target.X, target.Y), 3),
+      nameof(PieceType.Hacker) => string.Equals(action.Ability, "Hack", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team != actor.Team && target.Team != NetworkTeam.Neutral &&
+        (actor.AbilityState?.CooldownOwnerTurns ?? 0) <= 0 &&
+        IsWithinCpuCircleRange(actor, target, 5),
       nameof(PieceType.Muse) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != actor.Id &&
         target.AttachedToId is null && !actor.HasAttackedThisTurn,
@@ -446,6 +476,27 @@ public static partial class CpuGameRules
             target.Id, target.Type, target.Team, target.IsRoyalProxy),
       _ => false
     };
+  }
+
+  private static bool IsWithinCpuCircleRange(NetworkPiece centre, NetworkPiece candidate, int radius)
+  {
+    if (!UnitRules.TryGet(centre.Type, out UnitRule centreRule) ||
+        !UnitRules.TryGet(candidate.Type, out UnitRule candidateRule))
+    {
+      return false;
+    }
+
+    int radiusSquared = radius * radius;
+    foreach ((int x, int y) first in OccupiedSquares(centreRule, (centre.X, centre.Y)))
+    {
+      foreach ((int x, int y) second in OccupiedSquares(candidateRule, (candidate.X, candidate.Y)))
+      {
+        int dx = second.x - first.x;
+        int dy = second.y - first.y;
+        if (dx * dx + dy * dy <= radiusSquared) return true;
+      }
+    }
+    return false;
   }
 
   internal static NetworkPiece? GetCarriedUnit(CpuGameState state, NetworkPiece carrier) =>
