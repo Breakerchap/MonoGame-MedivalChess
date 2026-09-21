@@ -55,10 +55,7 @@ public static class AbilityAttackRules
   )
   {
     List<AbilityDamageInstruction> damage = [];
-    if (attacker.Type != nameof(PieceType.Hwacha))
-    {
-      AddUnique(damage, new(selectedTarget.Id, AbilityDamageMode.NormalAttack));
-    }
+    AddUnique(damage, new(selectedTarget.Id, AbilityDamageMode.NormalAttack));
 
     switch (attacker.Type)
     {
@@ -322,7 +319,8 @@ public static class AbilityAttackRules
           currentRule,
           (current.X, current.Y),
           candidateRule,
-          (candidate.X, candidate.Y)))
+          (candidate.X, candidate.Y),
+          includeDiagonal: true))
         {
           continue;
         }
