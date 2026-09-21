@@ -1531,6 +1531,183 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
+  public void BaronSelectsOneFriendlyUnitAndAppliesCombatBonus()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("baron", nameof(PieceType.Baron), NetworkTeam.Red, 0, 0, 120),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30),
+      new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 1, -1, 190),
+      new NetworkPiece("other", nameof(PieceType.Swordsman), NetworkTeam.Red, -1, 0, 30)
+    );
+    NetworkPiece hostBefore = state.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyBefore = state.Pieces.Single(piece => piece.Id == "enemy");
+    int baseDamage = CpuGameRules.EstimateAttackDamage(state, hostBefore, enemyBefore);
+
+    UseAbilityAction select = new(NetworkTeam.Red, "baron", "Select", "host", 1, 0);
+    Assert.True(select.IsLegal(state));
+    CpuGameState selected = select.Apply(state);
+
+    NetworkPiece baron = selected.Pieces.Single(piece => piece.Id == "baron");
+    Assert.Equal("host", baron.AbilityState?.SelectedTargetId);
+    Assert.False(baron.HasAttackedThisTurn);
+    Assert.Equal(baseDamage + AdvancedAbilityRules.BaronAttackBonus,
+      CpuGameRules.EstimateAttackDamage(
+        selected,
+        selected.Pieces.Single(piece => piece.Id == "host"),
+        selected.Pieces.Single(piece => piece.Id == "enemy")));
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "baron", "Select", "other", -1, 0).IsLegal(selected));
+  }
+
+  [Fact]
+  public void WarDrumRefreshesMovedUnitOnlyOncePerOwnerTurn()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("drum-a", nameof(PieceType.WarDrum), NetworkTeam.Red, 0, 0, 35),
+      new NetworkPiece("drum-b", nameof(PieceType.WarDrum), NetworkTeam.Red, 1, 0, 35),
+      new NetworkPiece(
+        "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -2, 30,
+        HasMovedThisTurn: true)
+    );
+    UseAbilityAction refresh = new(NetworkTeam.Red, "drum-a", "Refresh", "host", 0, -2);
+
+    Assert.True(refresh.IsLegal(state));
+    CpuGameState result = refresh.Apply(state);
+
+    NetworkPiece host = result.Pieces.Single(piece => piece.Id == "host");
+    Assert.False(host.HasMovedThisTurn);
+    Assert.True(host.AbilityState?.RefreshedByWarDrumThisTurn == true);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "drum-a").HasAttackedThisTurn);
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "drum-b", "Refresh", "host", 0, -2).IsLegal(result));
+  }
+
+  [Fact]
+  public void WillOWispSettlesThenSpawnsAdjacentWisp()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("will", nameof(PieceType.WillOWisp), NetworkTeam.Red, 0, 0, 30)
+    );
+    UseAbilityAction settle = new(NetworkTeam.Red, "will", "Settle", null, 0, 0);
+
+    Assert.True(settle.IsLegal(state));
+    CpuGameState settled = settle.Apply(state);
+    NetworkPiece settledWill = settled.Pieces.Single(piece => piece.Id == "will");
+    Assert.True(settledWill.AbilityState?.Settled == true);
+    Assert.False(new MoveAction(NetworkTeam.Red, "will", 0, 1).IsLegal(settled));
+
+    UseAbilityAction spawn = new(NetworkTeam.Red, "will", "SpawnWisp", null, 1, 1);
+    Assert.True(spawn.IsLegal(settled));
+    CpuGameState spawned = spawn.Apply(settled);
+
+    Assert.Contains(spawned.Pieces, piece =>
+      piece.Type == nameof(PieceType.Wisp) && piece.Team == NetworkTeam.Red &&
+      piece.X == 1 && piece.Y == 1);
+    Assert.True(spawned.Pieces.Single(piece => piece.Id == "will").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void OdinProtectionSavesFirstLethalHitAndExpiresBeforeNextOwnerTurnEffects()
+  {
+    CpuGameState selectionState = CreateState(
+      new NetworkPiece("odin", nameof(PieceType.Odin), NetworkTeam.Red, 0, 0, 170),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -2, 30)
+    );
+    UseAbilityAction protect = new(NetworkTeam.Red, "odin", "Protect", "host", 0, -2);
+    Assert.True(protect.IsLegal(selectionState));
+    CpuGameState protectedState = protect.Apply(selectionState);
+    Assert.True(protectedState.Pieces.Single(piece => piece.Id == "host")
+      .AbilityState?.OdinProtectionAvailable == true);
+    Assert.Equal(AdvancedAbilityRules.OdinCooldownTurns,
+      protectedState.Pieces.Single(piece => piece.Id == "odin").AbilityState?.CooldownOwnerTurns);
+
+    CpuGameState lethalState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 5,
+          AbilityState: new UnitAbilityState { OdinProtectedById = "odin", OdinProtectionAvailable = true }),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuGameState survived = new AttackAction(
+      NetworkTeam.Blue, "attacker", "host", 0, 0).Apply(lethalState);
+    NetworkPiece survivor = survived.Pieces.Single(piece => piece.Id == "host");
+    Assert.Equal(1, survivor.Health);
+    Assert.False(survivor.AbilityState?.OdinProtectionAvailable == true);
+
+    CpuGameState expiryState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 5,
+          PendingDamage: [new NetworkPendingDamage(NetworkTeam.Red, NetworkTeam.Blue, 10)],
+          AbilityState: new UnitAbilityState { OdinProtectedById = "odin", OdinProtectionAvailable = true }),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    EndTurnAction endBlue = new(NetworkTeam.Blue);
+    Assert.True(endBlue.IsLegal(expiryState));
+    CpuGameState afterExpiry = endBlue.Apply(expiryState);
+    Assert.DoesNotContain(afterExpiry.Pieces, piece => piece.Id == "host");
+  }
+
+  [Fact]
+  public void HackerDisablesSpecialsButNotNormalMovementForOneOwnerTurn()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("hacker", nameof(PieceType.Hacker), NetworkTeam.Red, 0, 0, 25),
+      new NetworkPiece("target", nameof(PieceType.Phoenix), NetworkTeam.Blue, 3, 4, 70)
+    );
+    UseAbilityAction hack = new(NetworkTeam.Red, "hacker", "Hack", "target", 3, 4);
+    Assert.True(hack.IsLegal(state));
+    CpuGameState hacked = hack.Apply(state);
+    Assert.Equal(1, hacked.Pieces.Single(piece => piece.Id == "target")
+      .AbilityState?.DisabledOwnerTurnsRemaining);
+    Assert.Equal(AdvancedAbilityRules.HackerCooldownTurns,
+      hacked.Pieces.Single(piece => piece.Id == "hacker").AbilityState?.CooldownOwnerTurns);
+
+    CpuGameState blueTurn = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "target", nameof(PieceType.Phoenix), NetworkTeam.Blue, 0, 0, 70,
+          AbilityState: new UnitAbilityState { DisabledOwnerTurnsRemaining = 1 }),
+        new NetworkPiece("red-king", nameof(PieceType.King), NetworkTeam.Red, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Blue, "target", "Fire", null, 1, 0).IsLegal(blueTurn));
+    MoveAction move = new(NetworkTeam.Blue, "target", 0, 1);
+    Assert.True(move.IsLegal(blueTurn));
+    CpuGameState afterMove = move.Apply(blueTurn);
+    EndTurnAction endBlue = new(NetworkTeam.Blue);
+    Assert.True(endBlue.IsLegal(afterMove));
+    CpuGameState redTurn = endBlue.Apply(afterMove);
+    Assert.Equal(0, redTurn.Pieces.Single(piece => piece.Id == "target")
+      .AbilityState?.DisabledOwnerTurnsRemaining);
+  }
+
+  [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
