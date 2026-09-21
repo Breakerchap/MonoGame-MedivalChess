@@ -34,7 +34,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
 | `dynasty.terracotta_warrior` | Verified | Emperor lethal damage transforms into the unchoosable Terracotta Warrior second form in local/server/CPU; Terracotta remains the Royal and its death loses Regicide. Runtime coverage verifies transform then final defeat. |
-| `dynasty.palace` | Verified | Local/server/CPU now grant +10 gold at owner-turn start and use the shared Palace movement rule for +1 Move and terrain-cost bypass only when moving closer. CPU regression coverage checks both income and toward-vs-away terrain handling. |
+| `dynasty.palace` | Verified | Local/server/CPU grant +10 gold at owner-turn start and use the shared Palace rule for +1 Move plus waived terrain movement costs only when moving closer; impassable Lakes/rivers remain blockers. CPU regression coverage checks income, costly terrain toward the Palace, and an away-facing Lake. |
 | `fantasy.commoner` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.adventurer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.elf` | Verified | Forest movement costs are ignored in shared local, server, and CPU pathfinding. |
