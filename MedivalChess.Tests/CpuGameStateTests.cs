@@ -598,6 +598,38 @@ public sealed class CpuGameStateTests
   }
 
 
+
+  [Fact]
+  public void HarvesterDestroysTerrainGainsGoldAndPreservesSourceSnapshot()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    BattlefieldTerrain terrain = new(forests: [(0, -1)]);
+    CpuGameState original = new(
+      configuration,
+      [new NetworkPiece("harvester", nameof(PieceType.Harvester), NetworkTeam.Red, 0, 0, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: terrain
+    );
+    UseAbilityAction harvest = new(NetworkTeam.Red, "harvester", "Harvest", null, 0, -1);
+
+    Assert.True(harvest.IsLegal(original));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(original, NetworkTeam.Red), action =>
+      action is UseAbilityAction { ActorId: "harvester", Ability: "Harvest", TargetX: 0, TargetY: -1 });
+
+    CpuGameState simulated = harvest.Apply(original);
+
+    Assert.True(original.Terrain.IsForest((0, -1)));
+    Assert.False(simulated.Terrain.IsForest((0, -1)));
+    Assert.Equal(200, original.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.Equal(215, simulated.Teams.Single(team => team.Team == NetworkTeam.Red).Money);
+    Assert.True(simulated.Pieces.Single(piece => piece.Id == "harvester").HasAttackedThisTurn);
+    Assert.False(harvest.IsLegal(simulated));
+  }
+
   [Fact]
   public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
   {
