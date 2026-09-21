@@ -1954,6 +1954,17 @@ internal sealed partial class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
+    foreach (Piece piece in pieceSetup.Pieces.Where(piece => piece.Team == teamName))
+    {
+      if (piece.AbilityState.OdinProtectionAvailable)
+      {
+        piece.AbilityState = piece.AbilityState with
+        {
+          OdinProtectedById = null,
+          OdinProtectionAvailable = false
+        };
+      }
+    }
     TriggerLocalPoisonCloudsAtOwnerTurnStart(teamName);
     ApplySharedStartOfTurnEffects(teamName);
     foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1).ToArray())
@@ -2375,7 +2386,9 @@ internal sealed partial class Game1 : Game
 
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    bool independentActiveAbility = actor.Definition.Type is PieceType.Phoenix or PieceType.Imp;
+    bool independentActiveAbility = actor.Definition.Type is
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker ||
+      (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
@@ -2413,6 +2426,24 @@ internal sealed partial class Game1 : Game
         AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
         actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
         CanPlaceLocalAbilityEntity(targetPosition),
+      PieceType.Baron => target is not null && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.WarDrum => target is not null && target != actor && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(target.AbilityState, target.HasMovedThisTurn) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.WillOWisp => !actor.AbilityState.Settled
+        ? targetPosition == actor.Position && AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+        : target is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlacePiece(PieceDefinitions.Wisp, targetPosition, null),
+      PieceType.Odin => target is not null && target != actor && target.Team == actor.Team &&
+        target.Definition.Category != PieceCategory.Royal && actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition), target.Position, 3),
+      PieceType.Hacker => target is not null && target.Team != actor.Team && target.Team != TeamName.Neutral &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 && IsWithinLocalCircleRange(actor, target, 5),
       PieceType.Engineer => true,
       PieceType.Muse => target is not null && target.Team == actor.Team && target != actor &&
         target.AttachedTo is null,
@@ -2453,6 +2484,16 @@ internal sealed partial class Game1 : Game
       ? "Bramble"
       : actor.Definition.Type == PieceType.Phoenix
       ? "Fire"
+      : actor.Definition.Type == PieceType.Baron
+      ? "Select"
+      : actor.Definition.Type == PieceType.WarDrum
+      ? "Refresh"
+      : actor.Definition.Type == PieceType.WillOWisp
+      ? actor.AbilityState.Settled ? "SpawnWisp" : "Settle"
+      : actor.Definition.Type == PieceType.Odin
+      ? "Protect"
+      : actor.Definition.Type == PieceType.Hacker
+      ? "Hack"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
       : actor.Definition.Type is PieceType.Muse or PieceType.Shieldsman or PieceType.Imp
@@ -3204,6 +3245,21 @@ internal sealed partial class Game1 : Game
     return false;
   }
 
+  private static bool IsWithinLocalCircleRange(Piece centre, Piece candidate, int radius)
+  {
+    int radiusSquared = radius * radius;
+    foreach ((int x, int y) first in centre.OccupiedSquares())
+    {
+      foreach ((int x, int y) second in candidate.OccupiedSquares())
+      {
+        int dx = second.x - first.x;
+        int dy = second.y - first.y;
+        if (dx * dx + dy * dy <= radiusSquared) return true;
+      }
+    }
+    return false;
+  }
+
   private static bool CanMoveThisTurn(Piece piece) =>
     (piece.AttachedTo is null ||
      (piece.AttachmentKind == AttachmentKind.Carried && piece.Definition.Type == PieceType.Ox)) &&
@@ -3834,6 +3890,12 @@ internal sealed partial class Game1 : Game
     {
       return;
     }
+    if (damagedPiece.AbilityState.OdinProtectionAvailable)
+    {
+      damagedPiece.CurrentHealth = 1;
+      damagedPiece.AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(damagedPiece.AbilityState);
+      return;
+    }
 
     RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
 
@@ -3957,7 +4019,9 @@ internal sealed partial class Game1 : Game
     }
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    bool independentActiveAbility = actor.Definition.Type is PieceType.Phoenix or PieceType.Imp;
+    bool independentActiveAbility = actor.Definition.Type is
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker ||
+      (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
@@ -4031,6 +4095,81 @@ internal sealed partial class Game1 : Game
       actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
       _abilityEntities.Add(CreateLocalAbilityEntity(
         AbilityEntityKind.Fire, actor, targetPosition));
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Baron &&
+        targetPiece != null && targetPiece.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      actor.AbilityState = AdvancedAbilityRules.SelectTarget(actor.AbilityState, targetPiece.NetworkId);
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.WarDrum &&
+        targetPiece != null && targetPiece != actor && targetPiece.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(targetPiece.AbilityState, targetPiece.HasMovedThisTurn) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      targetPiece.HasMovedThisTurn = false;
+      targetPiece.AbilityState = AdvancedAbilityRules.RefreshByWarDrum(targetPiece.AbilityState);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.WillOWisp)
+    {
+      if (!actor.AbilityState.Settled &&
+          targetPosition == actor.Position &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+      {
+        actor.AbilityState = AdvancedAbilityRules.SetSettled(actor.AbilityState);
+        CompleteAction();
+        return true;
+      }
+
+      if (actor.AbilityState.Settled && targetPiece is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlacePiece(PieceDefinitions.Wisp, targetPosition, null))
+      {
+        pieceSetup.AddPiece(new Piece(PieceDefinitions.Wisp, targetPosition, actor.Team));
+        actor.HasAttackedThisTurn = true;
+        CompleteAction();
+        return true;
+      }
+    }
+
+    if (actor.Definition.Type == PieceType.Odin &&
+        targetPiece != null && targetPiece != actor && targetPiece.Team == actor.Team &&
+        targetPiece.Definition.Category != PieceCategory.Royal &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition), targetPiece.Position, 3))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.ProtectWithOdin(
+        targetPiece.AbilityState, actor.NetworkId);
+      actor.AbilityState = AdvancedAbilityRules.StartCooldown(
+        actor.AbilityState, AdvancedAbilityRules.OdinCooldownTurns);
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Hacker &&
+        targetPiece != null && targetPiece.Team != actor.Team && targetPiece.Team != TeamName.Neutral &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        IsWithinLocalCircleRange(actor, targetPiece, 5))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.DisableAbilities(targetPiece.AbilityState, 1);
+      actor.AbilityState = AdvancedAbilityRules.StartCooldown(
+        actor.AbilityState, AdvancedAbilityRules.HackerCooldownTurns);
       CompleteAction();
       return true;
     }

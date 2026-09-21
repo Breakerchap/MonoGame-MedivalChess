@@ -246,6 +246,16 @@ public static partial class CpuGameRules
     }
     piece = state.Pieces[liveIndex];
 
+    if (piece.AbilityState?.OdinProtectionAvailable == true)
+    {
+      state.Pieces[liveIndex] = piece with
+      {
+        Health = 1,
+        AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(piece.AbilityState)
+      };
+      return;
+    }
+
     LethalAbilityOutcome lethal = AbilityStateRules.ResolveLethalDamage(piece.Type, piece.HasRevived);
     if (lethal.Kind != LethalAbilityOutcomeKind.Die)
     {
@@ -480,6 +490,21 @@ public static partial class CpuGameRules
 
   private static void ResetSharedTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    for (int index = 0; index < state.Pieces.Count; index++)
+    {
+      NetworkPiece piece = state.Pieces[index];
+      if (piece.Team == team && piece.AbilityState?.OdinProtectionAvailable == true)
+      {
+        state.Pieces[index] = piece with
+        {
+          AbilityState = piece.AbilityState with
+          {
+            OdinProtectedById = null,
+            OdinProtectionAvailable = false
+          }
+        };
+      }
+    }
     TriggerPoisonCloudsAtOwnerTurnStart(state, team);
 
     // Delayed effects trigger at the start of the source team's next turn, even if the target is

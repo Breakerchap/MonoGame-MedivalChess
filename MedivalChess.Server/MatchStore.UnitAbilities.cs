@@ -232,6 +232,20 @@ public sealed partial class MatchStore
   /// <summary>Returns true when a lethal hit was consumed by a revive/transform ability.</summary>
   private static bool TryApplySharedServerLethalAbility(Match match, NetworkPiece defeatedPiece)
   {
+    if (defeatedPiece.AbilityState?.OdinProtectionAvailable == true)
+    {
+      int protectedIndex = match.Pieces.FindIndex(piece => piece.Id == defeatedPiece.Id);
+      if (protectedIndex >= 0)
+      {
+        match.Pieces[protectedIndex] = defeatedPiece with
+        {
+          Health = 1,
+          AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(defeatedPiece.AbilityState)
+        };
+      }
+      return true;
+    }
+
     LethalAbilityOutcome outcome = AbilityStateRules.ResolveLethalDamage(
       defeatedPiece.Type,
       defeatedPiece.HasRevived
@@ -289,6 +303,21 @@ public sealed partial class MatchStore
 
   private static void ApplySharedServerStartOfTurnEffects(Match match, NetworkTeam activeTeam)
   {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Team == activeTeam && piece.AbilityState?.OdinProtectionAvailable == true)
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = piece.AbilityState with
+          {
+            OdinProtectedById = null,
+            OdinProtectionAvailable = false
+          }
+        };
+      }
+    }
     TriggerServerPoisonCloudsAtOwnerTurnStart(match, activeTeam);
     foreach (string pieceId in match.Pieces.Select(piece => piece.Id).ToArray())
     {
