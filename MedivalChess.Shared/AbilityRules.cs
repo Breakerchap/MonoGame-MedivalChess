@@ -108,6 +108,9 @@ public static class AbilityRules
     nameof(PieceType.Ballista) or nameof(PieceType.Artemis) or nameof(PieceType.Gunman) or
     nameof(PieceType.Sniper) or nameof(PieceType.Cowboy);
 
+  public static bool CanMakeNormalAttack(UnitRule unit) =>
+    unit.Attack > 0 || unit.Type == nameof(PieceType.Pickpocket);
+
   public static bool CanDamageTarget(UnitRule attacker, UnitRule target) =>
     true;
 
