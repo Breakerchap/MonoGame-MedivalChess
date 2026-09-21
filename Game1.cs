@@ -2345,7 +2345,8 @@ internal sealed partial class Game1 : Game
 
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    if (actor.HasAttackedThisTurn && !engineerDemolition)
+    bool independentActiveAbility = actor.Definition.Type == PieceType.Phoenix;
+    if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
     }
@@ -2374,6 +2375,14 @@ internal sealed partial class Game1 : Game
       PieceType.Spy => target is not null && target.Team != actor.Team,
       PieceType.Harvester => target is null && Actions.CanAttackSquare(actor, targetPosition) &&
         (_terrain.IsForest(targetPosition) || _terrain.IsLake(targetPosition)),
+      PieceType.Witch => Actions.CanAttackSquare(actor, targetPosition),
+      PieceType.Druid => target is null &&
+        Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+        CanPlaceLocalAbilityEntity(targetPosition),
+      PieceType.Phoenix => target is null && Actions.CanAttackSquare(actor, targetPosition) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
+        CanPlaceLocalAbilityEntity(targetPosition),
       PieceType.Engineer => true,
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
       PieceType.Phantom => !string.IsNullOrEmpty(actor.PossessedUnitId)
@@ -2396,6 +2405,12 @@ internal sealed partial class Game1 : Game
       ? "PickUpTreasure"
       : actor.Definition.Type == PieceType.Harvester
       ? "Harvest"
+      : actor.Definition.Type == PieceType.Witch
+      ? "PoisonCloud"
+      : actor.Definition.Type == PieceType.Druid
+      ? "Bramble"
+      : actor.Definition.Type == PieceType.Phoenix
+      ? "Fire"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
       : AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString())
@@ -3840,7 +3855,8 @@ internal sealed partial class Game1 : Game
     }
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    if (actor.HasAttackedThisTurn && !engineerDemolition)
+    bool independentActiveAbility = actor.Definition.Type == PieceType.Phoenix;
+    if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
     }
@@ -3874,6 +3890,45 @@ internal sealed partial class Game1 : Game
       Team harvestingTeam = _teams.Find(team => team.TeamName == actor.Team);
       harvestingTeam.Money = ClampCurrency((long)harvestingTeam.Money + AdvancedAbilityRules.HarvesterGold);
       actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Witch &&
+        Actions.CanAttackSquare(actor, targetPosition))
+    {
+      _abilityEntities.RemoveAll(entity =>
+        entity.Kind == AbilityEntityKind.PoisonCloud && entity.SourcePieceId == actor.NetworkId);
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.PoisonCloud, actor, targetPosition));
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Druid &&
+        targetPiece is null &&
+        Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+        CanPlaceLocalAbilityEntity(targetPosition))
+    {
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.Bramble, actor, targetPosition));
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Phoenix &&
+        targetPiece is null &&
+        Actions.CanAttackSquare(actor, targetPosition) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
+        CanPlaceLocalAbilityEntity(targetPosition))
+    {
+      actor.CurrentHealth -= AdvancedAbilityRules.PhoenixFireHealthCost;
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.Fire, actor, targetPosition));
       CompleteAction();
       return true;
     }
