@@ -681,8 +681,11 @@ public sealed partial class MatchStore
   {
     var square = (x, y);
     if (!NetworkBoardRules.Contains(match.Configuration, x, y)) return false;
-    if (match.Terrain.Forests.Remove(square)) return true;
-    if (match.Terrain.Lakes.Remove(square)) return true;
+    if (match.Terrain.DestroyTile(square))
+    {
+      match.DestroyedTerrainTiles.Add(square);
+      return true;
+    }
     if (match.Roads.Remove(square)) return true;
     if (match.Mines.Remove(square)) return true;
     return false;
@@ -767,8 +770,10 @@ public sealed partial class MatchStore
   {
     foreach ((int x, int y) square in OccupiedSquares(rule, (piece.X, piece.Y)).ToArray())
     {
-      match.Terrain.Forests.Remove(square);
-      match.Terrain.Lakes.Remove(square);
+      if (match.Terrain.DestroyTile(square))
+      {
+        match.DestroyedTerrainTiles.Add(square);
+      }
       match.Barricades.Remove(square);
       match.Roads.Remove(square);
       match.Mines.Remove(square);
