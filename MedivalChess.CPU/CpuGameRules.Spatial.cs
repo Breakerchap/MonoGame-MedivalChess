@@ -169,7 +169,7 @@ public static partial class CpuGameRules
   )
   {
     int cost = 0;
-    bool ignoresTerrain = IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
+    bool ignoresTerrain = IsPalaceTerrainCostIgnored(pieces, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
@@ -210,6 +210,20 @@ public static partial class CpuGameRules
   private static bool HasPalaceSupport(IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece) =>
     piece.Type != "Palace" && pieces.Any(candidate => candidate.Team == piece.Team &&
       candidate.AttachedToId is null && candidate.Type == "Palace");
+
+  private static bool IsPalaceTerrainCostIgnored(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule movingRule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
+  {
+    NetworkPiece? palace = pieces.FirstOrDefault(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == nameof(PieceType.Palace));
+    return palace is not null && UnitRules.TryGet(palace.Type, out UnitRule palaceRule) &&
+      AbilityRules.MovesCloserToPalace(movingRule, from, to, palaceRule, (palace.X, palace.Y));
+  }
 
   private static bool IsPalaceAssistedMovement(
     IReadOnlyList<NetworkPiece> pieces,
