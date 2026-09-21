@@ -276,6 +276,11 @@ internal sealed partial class Game1
       }
       PhantomPossessionState state = RoyalAbilityRules.Unpossess();
       actor.PossessedUnitId = state.PhantomPossessedUnitId;
+      actor.AbilityState = actor.AbilityState with
+      {
+        CannotMoveThisTurn = true,
+        CannotActThisTurn = true
+      };
       CompleteAction();
       return true;
     }
