@@ -229,7 +229,10 @@ public static partial class CpuGameRules
         HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), null, state.Barricades);
     }
 
-    return target.Team != attacker.Team && target.AttachedToId is null &&
+    bool mayAttackFriendly = AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Type);
+    return target.Id != attacker.Id &&
+      (target.Team != attacker.Team || mayAttackFriendly) &&
+      target.AttachedToId is null &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
       Occupies(targetRule, target, (action.TargetX, action.TargetY)) &&
       CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
