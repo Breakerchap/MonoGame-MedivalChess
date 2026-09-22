@@ -1000,6 +1000,350 @@ internal sealed partial class Game1
 
 
 
+
+  private Piece GetLocalSheriffPrison(Piece sheriff)
+  {
+    if (sheriff?.Definition.Type != PieceType.Sheriff ||
+        string.IsNullOrWhiteSpace(sheriff.AbilityState.LinkedPieceId))
+    {
+      return null;
+    }
+
+    return pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.NetworkId == sheriff.AbilityState.LinkedPieceId &&
+      piece.Definition.Type == PieceType.Prison &&
+      AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+  }
+
+  private Piece GetLocalSheriffNeedingPrison(TeamName team) =>
+    pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedTo is null &&
+      piece.Definition.Type == PieceType.Sheriff &&
+      GetLocalSheriffPrison(piece) is null);
+
+  private void BeginLocalSheriffPrisonPlacement(Piece sheriff)
+  {
+    sheriff.AbilityState = AdvancedAbilityRules.BeginSheriffPrisonPlacement(
+      sheriff.AbilityState);
+  }
+
+  private bool CanPlaceLocalSheriffPrison(
+    Piece sheriff,
+    (int x, int y) position)
+  {
+    if (sheriff is null || sheriff.Definition.Type != PieceType.Sheriff ||
+        GetLocalSheriffPrison(sheriff) is not null)
+    {
+      return false;
+    }
+
+    PieceDefinition prisonDefinition = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Prison);
+    return CanPlacePiece(prisonDefinition, position, sheriff.Team);
+  }
+
+  private bool TryPlaceLocalSheriffPrison(
+    Piece sheriff,
+    (int x, int y) position,
+    int lastBid)
+  {
+    if (!CanPlaceLocalSheriffPrison(sheriff, position))
+    {
+      return false;
+    }
+
+    PieceDefinition prisonDefinition = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Prison);
+    Piece prison = new(prisonDefinition, position, sheriff.Team)
+    {
+      LastBid = Math.Max(0, lastBid),
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        new UnitAbilityState(), sheriff.NetworkId)
+    };
+    pieceSetup.AddPiece(prison);
+    sheriff.AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+      sheriff.AbilityState, prison.NetworkId);
+    return true;
+  }
+
+  private bool TryPlaceNearestLocalSheriffPrison(Piece sheriff)
+  {
+    PieceDefinition prisonDefinition = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Prison);
+    foreach ((int x, int y) position in _board.Cells
+      .OrderBy(position => AdvancedAbilityRules.GetFootprintChebyshevDistance(
+        sheriff.Position.x, sheriff.Position.y,
+        sheriff.Definition.Size.x, sheriff.Definition.Size.y,
+        position.x, position.y,
+        prisonDefinition.Size.x, prisonDefinition.Size.y))
+      .ThenByDescending(position => position.y)
+      .ThenByDescending(position => position.x))
+    {
+      if (TryPlaceLocalSheriffPrison(sheriff, position, lastBid: 0))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private bool TryLinkLocalPurchasedSheriffPrison(Piece prison)
+  {
+    if (prison?.Definition.Type != PieceType.Prison ||
+        AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return false;
+    }
+
+    Piece sheriff = GetLocalSheriffNeedingPrison(prison.Team);
+    if (sheriff is null)
+    {
+      return false;
+    }
+
+    prison.AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+      prison.AbilityState, sheriff.NetworkId);
+    sheriff.AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+      sheriff.AbilityState, prison.NetworkId);
+    return true;
+  }
+
+  private bool CanLocalSheriffArrest(
+    Piece sheriff,
+    Piece target,
+    (int x, int y) targetPosition)
+  {
+    if (sheriff?.Definition.Type != PieceType.Sheriff ||
+        target is null ||
+        target == sheriff ||
+        target.Team == sheriff.Team ||
+        target.Team == TeamName.Neutral ||
+        target.AttachedTo is not null ||
+        target.IsRoyal ||
+        target.Definition.Category == PieceCategory.Structure ||
+        !target.Occupies(targetPosition) ||
+        !AdvancedAbilityRules.CanUseSpecialAbility(sheriff.AbilityState) ||
+        !AdvancedAbilityRules.CanTakeDirectDamage(
+          target.Definition.Type.ToString(), target.AbilityState) ||
+        !AdvancedAbilityRules.CanAttack(
+          sheriff.Definition.Type.ToString(),
+          sheriff.AbilityState,
+          sheriff.HasAttackedThisTurn,
+          target.NetworkId) ||
+        !CanAttackSquareWithAttachments(sheriff, targetPosition) ||
+        !HasClearAttackPath(sheriff, targetPosition) ||
+        !IsLocalDuelistAttackLegal(sheriff, target))
+    {
+      return false;
+    }
+
+    Piece prison = GetLocalSheriffPrison(sheriff);
+    return prison is not null &&
+      AdvancedAbilityRules.CanSheriffArrest(
+        target.CurrentHealth,
+        target.IsRoyal,
+        target.Definition.Category == PieceCategory.Structure,
+        prison.AbilityState);
+  }
+
+  private bool TryArrestLocalSheriff(
+    Piece sheriff,
+    Piece target,
+    (int x, int y) targetPosition)
+  {
+    if (!CanLocalSheriffArrest(sheriff, target, targetPosition))
+    {
+      return false;
+    }
+
+    Piece prison = GetLocalSheriffPrison(sheriff);
+    prison.AbilityState = AdvancedAbilityRules.RecordPrisoner(
+      prison.AbilityState, target.NetworkId);
+    if (!pieceSetup.Attach(target, prison, AttachmentKind.Prisoner))
+    {
+      return false;
+    }
+
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == target))
+    {
+      attachment.Position = prison.Position;
+    }
+    pieceSetup.RefreshOccupancy();
+
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      sheriff.Definition.Type.ToString(), sheriff.AttacksThisTurn);
+    sheriff.AttacksThisTurn = attackState.AttacksThisTurn;
+    sheriff.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+    sheriff.AbilityState = AdvancedAbilityRules.RecordAttack(
+      sheriff.Definition.Type.ToString(), sheriff.AbilityState, target.NetworkId);
+    CompleteAction();
+    return true;
+  }
+
+  private bool CanPlaceLocalPrisonRelease(
+    PieceDefinition definition,
+    TeamName team,
+    (int x, int y) destination,
+    HashSet<Piece> ignoredPieces)
+  {
+    if (!IsFootprintOnBoard(definition, destination))
+    {
+      return false;
+    }
+
+    UnitRule rule = UnitRules.FromPieceDefinition(definition);
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
+    foreach ((int x, int y) square in OccupiedSquares(definition, destination))
+    {
+      if ((!ignoresTerrain && _terrain.IsLake(square) && !HasLocalBridgeAt(square)) ||
+          (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(square)) ||
+          _abilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, team.ToNetworkTeam()) &&
+            (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule))))
+      {
+        return false;
+      }
+    }
+
+    return !pieceSetup.Pieces.Any(piece =>
+      !ignoredPieces.Contains(piece) &&
+      piece.AttachedTo is null &&
+      piece.Definition.Type != PieceType.Farm &&
+      UnitRules.FootprintsOverlap(
+        piece.Position.x, piece.Position.y,
+        piece.Definition.Size.x, piece.Definition.Size.y,
+        destination.x, destination.y,
+        definition.Size.x, definition.Size.y));
+  }
+
+  private (int x, int y)? FindNearestLocalPrisonPlacement(
+    PieceDefinition definition,
+    TeamName team,
+    Piece destroyedPrison,
+    HashSet<Piece> ignoredPieces)
+  {
+    foreach ((int x, int y) position in _board.Cells
+      .OrderBy(position => AdvancedAbilityRules.GetFootprintChebyshevDistance(
+        destroyedPrison.Position.x, destroyedPrison.Position.y,
+        destroyedPrison.Definition.Size.x, destroyedPrison.Definition.Size.y,
+        position.x, position.y,
+        definition.Size.x, definition.Size.y))
+      .ThenByDescending(position => position.y)
+      .ThenByDescending(position => position.x))
+    {
+      if (CanPlaceLocalPrisonRelease(
+        definition, team, position, ignoredPieces))
+      {
+        return position;
+      }
+    }
+    return null;
+  }
+
+  private void ResolveLocalPrisonDestruction(Piece prison)
+  {
+    if (prison.Definition.Type != PieceType.Prison)
+    {
+      return;
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState) &&
+        !string.IsNullOrWhiteSpace(prison.AbilityState.LinkedPieceId))
+    {
+      Piece sheriff = pieceSetup.Pieces.FirstOrDefault(piece =>
+        piece.NetworkId == prison.AbilityState.LinkedPieceId &&
+        piece.Definition.Type == PieceType.Sheriff);
+      if (sheriff is not null &&
+          string.Equals(
+            sheriff.AbilityState.LinkedPieceId,
+            prison.NetworkId,
+            StringComparison.Ordinal))
+      {
+        sheriff.AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+          sheriff.AbilityState, null);
+      }
+    }
+
+    List<Piece> prisoners = prison.AbilityState.PrisonerIds
+      .Select(id => pieceSetup.Pieces.FirstOrDefault(piece =>
+        string.Equals(piece.NetworkId, id, StringComparison.Ordinal)))
+      .Where(piece => piece is not null)
+      .Cast<Piece>()
+      .ToList();
+    HashSet<Piece> pendingPrisoners = prisoners.ToHashSet();
+
+    foreach (Piece prisoner in prisoners)
+    {
+      (int x, int y)? destination = FindNearestLocalPrisonPlacement(
+        prisoner.Definition, prisoner.Team, prison, pendingPrisoners);
+      pendingPrisoners.Remove(prisoner);
+      if (destination is null)
+      {
+        continue;
+      }
+
+      prisoner.AttachedTo = null;
+      prisoner.AttachmentKind = AttachmentKind.None;
+      prisoner.Position = destination.Value;
+      prisoner.HasMovedThisTurn = true;
+      prisoner.HasAttackedThisTurn = true;
+      prisoner.AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(
+        prisoner.Definition.Type.ToString());
+      prisoner.AbilityState = prisoner.AbilityState with
+      {
+        CannotMoveThisTurn = true,
+        CannotActThisTurn = true
+      };
+      foreach (Piece attachment in pieceSetup.Pieces.Where(piece =>
+        piece.AttachedTo == prisoner))
+      {
+        attachment.Position = destination.Value;
+      }
+      pieceSetup.RefreshOccupancy();
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return;
+    }
+
+    PieceType[] reinforcements =
+    [
+      PieceType.Cowboy,
+      PieceType.Cowboy,
+      PieceType.Brawler,
+      PieceType.Brawler
+    ];
+    foreach (PieceType reinforcementType in reinforcements)
+    {
+      PieceDefinition definition = PieceDefinitions.All.First(candidate =>
+        candidate.Type == reinforcementType);
+      (int x, int y)? destination = FindNearestLocalPrisonPlacement(
+        definition, prison.Team, prison, new HashSet<Piece>());
+      if (destination is null)
+      {
+        continue;
+      }
+
+      Piece reinforcement = new(definition, destination.Value, prison.Team)
+      {
+        AbilityState = new UnitAbilityState
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        },
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(
+          definition.Type.ToString())
+      };
+      pieceSetup.AddPiece(reinforcement);
+    }
+  }
+
+
   private Piece GetOwnedAttachedActionUnitAt(
     (int x, int y) position,
     TeamName team)

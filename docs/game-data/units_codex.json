@@ -5909,7 +5909,7 @@
       },
       "ability": {
         "id": "wild_west.prison.ability",
-        "text": "When destroyed, releases all imprisoned units and spawns two Cowboys and two Brawlers.",
+        "text": "When an ordinary Prison is destroyed, release all imprisoned units onto the closest legal squares, preferring down-right when equally close, then spawn two Cowboys and two Brawlers by the same rule. A Sheriff-linked Prison releases its prisoners but does not spawn Cowboys or Brawlers.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -6133,7 +6133,7 @@
       },
       "ability": {
         "id": "wild_west.sheriff.ability",
-        "text": "When placing the Sheriff, also place one empty Prison. When the Sheriff would attack a non-Royal enemy with 30 Health or less, it may arrest that unit instead of dealing damage. A Prison holds at most three units; imprisoned units cannot act. If the Prison is destroyed, all prisoners are released. A replacement empty Prison costs 120 gold.",
+        "text": "When placing the Sheriff, separately place one empty 3×3 Sheriff Prison for free on a legal square in friendly territory. When the Sheriff would attack a non-Royal enemy with 30 Health or less, it may arrest that unit instead of dealing damage. The linked Prison holds at most three units; imprisoned units cannot act. If it is destroyed, release prisoners in arrest order onto the closest legal squares, preferring down-right when equally close. A replacement empty Sheriff Prison costs 120 gold and does not spawn Cowboys or Brawlers when destroyed.",
         "has_special_ability": true
       },
       "data_ready": true,

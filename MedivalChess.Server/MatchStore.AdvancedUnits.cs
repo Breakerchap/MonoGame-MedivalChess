@@ -926,6 +926,15 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedWithoutAction;
 
+      case nameof(PieceType.Sheriff):
+        if (!string.Equals(ability, "Arrest", StringComparison.OrdinalIgnoreCase) ||
+            target is null ||
+            !TryArrestServerSheriff(match, actorIndex, targetIndex))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.GangLeader):
         if (!string.Equals(ability, "Recruit", StringComparison.OrdinalIgnoreCase) ||
             target is null || target.Id == actor.Id ||
@@ -1151,7 +1160,7 @@ public sealed partial class MatchStore
   private static bool IsAdvancedSpecialUnit(string type) => type is
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
     nameof(PieceType.Mimic) or nameof(PieceType.Poltergeist) or nameof(PieceType.Developer) or
-    nameof(PieceType.Satan) or
+    nameof(PieceType.Satan) or nameof(PieceType.Sheriff) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or

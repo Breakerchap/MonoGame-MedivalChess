@@ -618,10 +618,13 @@ public sealed class SharedAbilityRulesTests
   [Fact]
   public void LandingAttackUnitsUseTheirCodexPushAndAttackConsumptionRules()
   {
+    Assert.True(AdvancedAbilityRules.IsLandingAttackUnit(nameof(PieceType.Abomination)));
     Assert.True(AdvancedAbilityRules.IsLandingAttackUnit(nameof(PieceType.Buffalo)));
     Assert.True(AdvancedAbilityRules.IsLandingAttackUnit(nameof(PieceType.ArmouredTruck)));
+    Assert.Equal(0, AdvancedAbilityRules.GetLandingAttackPushDistance(nameof(PieceType.Abomination)));
     Assert.Equal(1, AdvancedAbilityRules.GetLandingAttackPushDistance(nameof(PieceType.Buffalo)));
     Assert.Equal(2, AdvancedAbilityRules.GetLandingAttackPushDistance(nameof(PieceType.ArmouredTruck)));
+    Assert.True(AdvancedAbilityRules.LandingAttackConsumesNormalAttack(nameof(PieceType.Abomination)));
     Assert.True(AdvancedAbilityRules.LandingAttackConsumesNormalAttack(nameof(PieceType.Buffalo)));
     Assert.False(AdvancedAbilityRules.LandingAttackConsumesNormalAttack(nameof(PieceType.ArmouredTruck)));
   }
@@ -832,6 +835,39 @@ public sealed class SharedAbilityRulesTests
     state = AdvancedAbilityRules.RecordLongboatDisembark(state, "b");
     Assert.Equal(new[] { "a", "c" }, state.PassengerIds);
     Assert.True(AdvancedAbilityRules.CanLongboatBoard(state));
+  }
+
+
+  [Fact]
+  public void SheriffPrisonTracksCapacityAndArrestThreshold()
+  {
+    UnitAbilityState sheriff = AdvancedAbilityRules.BeginSheriffPrisonPlacement(new UnitAbilityState());
+    Assert.True(AdvancedAbilityRules.IsAwaitingSheriffPrison(sheriff));
+
+    UnitAbilityState prison = AdvancedAbilityRules.MarkSheriffPrison(new UnitAbilityState(), "sheriff");
+    Assert.True(AdvancedAbilityRules.IsSheriffPrison(prison));
+    Assert.True(AdvancedAbilityRules.CanSheriffArrest(30, false, false, prison));
+    Assert.False(AdvancedAbilityRules.CanSheriffArrest(31, false, false, prison));
+    Assert.False(AdvancedAbilityRules.CanSheriffArrest(30, true, false, prison));
+    Assert.False(AdvancedAbilityRules.CanSheriffArrest(30, false, true, prison));
+
+    prison = AdvancedAbilityRules.RecordPrisoner(prison, "one");
+    prison = AdvancedAbilityRules.RecordPrisoner(prison, "two");
+    prison = AdvancedAbilityRules.RecordPrisoner(prison, "three");
+    Assert.False(AdvancedAbilityRules.CanPrisonAcceptPrisoner(prison));
+    Assert.Equal(new[] { "one", "two", "three" }, prison.PrisonerIds);
+
+    sheriff = AdvancedAbilityRules.LinkSheriffPrison(sheriff, "prison");
+    Assert.False(AdvancedAbilityRules.IsAwaitingSheriffPrison(sheriff));
+    Assert.Equal("prison", sheriff.LinkedPieceId);
+  }
+
+  [Fact]
+  public void PrisonReleaseDistanceUsesFootprintEdges()
+  {
+    Assert.Equal(0, AdvancedAbilityRules.GetFootprintChebyshevDistance(4, 4, 3, 3, 6, 6, 1, 1));
+    Assert.Equal(1, AdvancedAbilityRules.GetFootprintChebyshevDistance(4, 4, 3, 3, 7, 7, 1, 1));
+    Assert.Equal(2, AdvancedAbilityRules.GetFootprintChebyshevDistance(4, 4, 3, 3, 8, 4, 1, 1));
   }
 
 

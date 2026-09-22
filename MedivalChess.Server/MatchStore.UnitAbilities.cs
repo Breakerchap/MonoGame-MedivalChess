@@ -730,6 +730,435 @@ public sealed partial class MatchStore
 
 
 
+
+  private static NetworkPiece? GetServerSheriffPrison(
+    Match match,
+    NetworkPiece sheriff)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        string.IsNullOrWhiteSpace(sheriff.AbilityState?.LinkedPieceId))
+    {
+      return null;
+    }
+
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Id == sheriff.AbilityState.LinkedPieceId &&
+      piece.Type == nameof(PieceType.Prison) &&
+      AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+  }
+
+  private static NetworkPiece? GetServerSheriffNeedingPrison(
+    Match match,
+    NetworkTeam team) =>
+    match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.Sheriff) &&
+      GetServerSheriffPrison(match, piece) is null);
+
+  private static bool CanPlaceServerSheriffPrison(
+    Match match,
+    NetworkPiece sheriff,
+    int x,
+    int y)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        GetServerSheriffPrison(match, sheriff) is not null ||
+        !UnitRules.TryGet(nameof(PieceType.Prison), out UnitRule prisonRule))
+    {
+      return false;
+    }
+
+    return CanPlaceForTeamWithDeveloperClaims(
+        match, sheriff.Team, x, y, prisonRule.Width, prisonRule.Height) &&
+      CanPlaceNetworkPiece(
+        match, nameof(PieceType.Prison), sheriff.Team, x, y);
+  }
+
+  private static bool TryPlaceServerSheriffPrison(
+    Match match,
+    int sheriffIndex,
+    int x,
+    int y,
+    int lastBid)
+  {
+    if (sheriffIndex < 0 || sheriffIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece sheriff = match.Pieces[sheriffIndex];
+    if (!CanPlaceServerSheriffPrison(match, sheriff, x, y))
+    {
+      return false;
+    }
+
+    NetworkPiece prison = SpawnNetworkPiece(
+      match, nameof(PieceType.Prison), sheriff.Team, x, y);
+    int prisonIndex = match.Pieces.FindIndex(piece => piece.Id == prison.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      LastBid = Math.Max(0, lastBid),
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        prison.AbilityState, sheriff.Id)
+    };
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+        sheriff.AbilityState, prison.Id)
+    };
+    return true;
+  }
+
+  private static bool TryLinkServerPurchasedSheriffPrison(
+    Match match,
+    int prisonIndex)
+  {
+    if (prisonIndex < 0 || prisonIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece prison = match.Pieces[prisonIndex];
+    if (prison.Type != nameof(PieceType.Prison) ||
+        AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return false;
+    }
+
+    NetworkPiece? sheriff = GetServerSheriffNeedingPrison(match, prison.Team);
+    if (sheriff is null)
+    {
+      return false;
+    }
+
+    int sheriffIndex = match.Pieces.FindIndex(piece => piece.Id == sheriff.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        prison.AbilityState, sheriff.Id)
+    };
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+        sheriff.AbilityState, prison.Id)
+    };
+    return true;
+  }
+
+  private static bool CanServerSheriffArrest(
+    Match match,
+    NetworkPiece sheriff,
+    NetworkPiece target)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        target.Id == sheriff.Id ||
+        target.Team == sheriff.Team ||
+        target.Team == NetworkTeam.Neutral ||
+        target.AttachedToId is not null ||
+        RoyalAbilityRules.IsRoyal(
+          target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+        targetRule.Category == RuleCategory.Structure ||
+        !AdvancedAbilityRules.CanUseSpecialAbility(sheriff.AbilityState) ||
+        !AdvancedAbilityRules.CanTakeDirectDamage(
+          target.Type, target.AbilityState) ||
+        !AdvancedAbilityRules.CanAttack(
+          sheriff.Type,
+          sheriff.AbilityState,
+          sheriff.HasAttackedThisTurn,
+          target.Id) ||
+        !CanUseActionTarget(match, sheriff, target) ||
+        !IsServerDuelistAttackLegal(match, sheriff, target))
+    {
+      return false;
+    }
+
+    NetworkPiece? prison = GetServerSheriffPrison(match, sheriff);
+    return prison is not null &&
+      AdvancedAbilityRules.CanSheriffArrest(
+        target.Health,
+        RoyalAbilityRules.IsRoyal(
+          target.Type, target.IsRoyalProxy, target.PossessedUnitId),
+        targetRule.Category == RuleCategory.Structure,
+        prison.AbilityState);
+  }
+
+  private static bool TryArrestServerSheriff(
+    Match match,
+    int sheriffIndex,
+    int targetIndex)
+  {
+    if (sheriffIndex < 0 || targetIndex < 0 ||
+        sheriffIndex >= match.Pieces.Count ||
+        targetIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece sheriff = match.Pieces[sheriffIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    if (!CanServerSheriffArrest(match, sheriff, target))
+    {
+      return false;
+    }
+
+    NetworkPiece prison = GetServerSheriffPrison(match, sheriff)!;
+    int prisonIndex = match.Pieces.FindIndex(piece => piece.Id == prison.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      AbilityState = AdvancedAbilityRules.RecordPrisoner(
+        prison.AbilityState, target.Id)
+    };
+    match.Pieces[targetIndex] = target with
+    {
+      AttachedToId = prison.Id,
+      AttachmentKind = NetworkAttachmentKind.Prisoner,
+      X = prison.X,
+      Y = prison.Y
+    };
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece attachment = match.Pieces[index];
+      if (attachment.AttachedToId == target.Id)
+      {
+        match.Pieces[index] = attachment with
+        {
+          X = prison.X,
+          Y = prison.Y
+        };
+      }
+    }
+
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      sheriff.Type, sheriff.AttacksThisTurn);
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AttacksThisTurn = attackState.AttacksThisTurn,
+      HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+      AbilityState = AdvancedAbilityRules.RecordAttack(
+        sheriff.Type, sheriff.AbilityState, target.Id)
+    };
+    return true;
+  }
+
+  private static bool CanPlaceServerPrisonRelease(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) destination,
+    HashSet<string> ignoredPieceIds)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration,
+          destination.x,
+          destination.y,
+          rule.Width,
+          rule.Height))
+    {
+      return false;
+    }
+
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if ((!ignoresTerrain && match.Terrain.IsLake(square) &&
+           !HasServerBridgeAt(match, square)) ||
+          (!AbilityRules.IgnoresStructures(rule) &&
+           match.Barricades.ContainsKey(square)) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
+            (entity.Kind == AbilityEntityKind.Bramble ||
+             !AbilityRules.IgnoresStructures(rule))))
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(other =>
+      other.Id != piece.Id &&
+      !ignoredPieceIds.Contains(other.Id) &&
+      other.AttachedToId is null &&
+      other.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        other.X, other.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
+  }
+
+  private static (int x, int y)? FindNearestServerPrisonPlacement(
+    Match match,
+    NetworkPiece piece,
+    UnitRule pieceRule,
+    NetworkPiece destroyedPrison,
+    UnitRule prisonRule,
+    HashSet<string> ignoredPieceIds)
+  {
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    foreach ((int x, int y) position in board.Cells
+      .OrderBy(position => AdvancedAbilityRules.GetFootprintChebyshevDistance(
+        destroyedPrison.X, destroyedPrison.Y,
+        prisonRule.Width, prisonRule.Height,
+        position.x, position.y,
+        pieceRule.Width, pieceRule.Height))
+      .ThenByDescending(position => position.y)
+      .ThenByDescending(position => position.x))
+    {
+      if (CanPlaceServerPrisonRelease(
+        match, piece, pieceRule, position, ignoredPieceIds))
+      {
+        return position;
+      }
+    }
+    return null;
+  }
+
+  private static void ResolveServerPrisonDestruction(
+    Match match,
+    NetworkPiece prison)
+  {
+    if (prison.Type != nameof(PieceType.Prison) ||
+        !UnitRules.TryGet(prison.Type, out UnitRule prisonRule))
+    {
+      return;
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState) &&
+        !string.IsNullOrWhiteSpace(prison.AbilityState?.LinkedPieceId))
+    {
+      int sheriffIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == prison.AbilityState!.LinkedPieceId &&
+        piece.Type == nameof(PieceType.Sheriff));
+      if (sheriffIndex >= 0)
+      {
+        NetworkPiece sheriff = match.Pieces[sheriffIndex];
+        if (string.Equals(
+          sheriff.AbilityState?.LinkedPieceId,
+          prison.Id,
+          StringComparison.Ordinal))
+        {
+          match.Pieces[sheriffIndex] = sheriff with
+          {
+            AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+              sheriff.AbilityState, null)
+          };
+        }
+      }
+    }
+
+    string[] prisonerIds = prison.AbilityState?.PrisonerIds?.ToArray() ??
+      Array.Empty<string>();
+    HashSet<string> pendingIds = prisonerIds
+      .Where(id => match.Pieces.Any(piece => piece.Id == id))
+      .ToHashSet(StringComparer.Ordinal);
+
+    foreach (string prisonerId in prisonerIds)
+    {
+      int prisonerIndex = match.Pieces.FindIndex(piece => piece.Id == prisonerId);
+      if (prisonerIndex < 0)
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      NetworkPiece prisoner = match.Pieces[prisonerIndex];
+      if (!UnitRules.TryGet(prisoner.Type, out UnitRule prisonerRule))
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      (int x, int y)? destination = FindNearestServerPrisonPlacement(
+        match, prisoner, prisonerRule, prison, prisonRule, pendingIds);
+      pendingIds.Remove(prisonerId);
+      if (destination is null)
+      {
+        continue;
+      }
+
+      UnitAbilityState releasedState =
+        (prisoner.AbilityState ?? new UnitAbilityState()) with
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        };
+      match.Pieces[prisonerIndex] = prisoner with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y,
+        AttachedToId = null,
+        AttachmentKind = NetworkAttachmentKind.None,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(prisoner.Type),
+        AbilityState = releasedState
+      };
+      for (int attachmentIndex = 0;
+           attachmentIndex < match.Pieces.Count;
+           attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == prisoner.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with
+          {
+            X = destination.Value.x,
+            Y = destination.Value.y
+          };
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return;
+    }
+
+    string[] reinforcementTypes =
+    [
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Brawler),
+      nameof(PieceType.Brawler)
+    ];
+    foreach (string type in reinforcementTypes)
+    {
+      UnitRule rule = UnitRules.GetRequired(type);
+      NetworkPiece probe = new(
+        Guid.NewGuid().ToString("N"),
+        type,
+        prison.Team,
+        prison.X,
+        prison.Y,
+        rule.Health);
+      (int x, int y)? destination = FindNearestServerPrisonPlacement(
+        match, probe, rule, prison, prisonRule,
+        new HashSet<string>(StringComparer.Ordinal));
+      if (destination is null)
+      {
+        continue;
+      }
+
+      NetworkPiece spawned = SpawnNetworkPiece(
+        match, type, prison.Team,
+        destination.Value.x, destination.Value.y);
+      int spawnedIndex = match.Pieces.FindIndex(piece => piece.Id == spawned.Id);
+      match.Pieces[spawnedIndex] = spawned with
+      {
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(type),
+        AbilityState = new UnitAbilityState
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      };
+    }
+  }
+
+
   private static NetworkPiece? GetServerLandingAttackTarget(
     Match match,
     NetworkPiece mover,

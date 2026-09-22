@@ -31,6 +31,8 @@ public sealed record UnitAbilityState
   public bool BountySelectionAvailable { get; init; }
   public IReadOnlyList<string> TargetIdsThisTurn { get; init; } = Array.Empty<string>();
   public IReadOnlyList<string> PassengerIds { get; init; } = Array.Empty<string>();
+  public IReadOnlyList<string> PrisonerIds { get; init; } = Array.Empty<string>();
+  public bool SheriffPrison { get; init; }
   public string? PendingAbility { get; init; }
   public IReadOnlyList<AbilitySelection> PendingSelections { get; init; } = Array.Empty<AbilitySelection>();
   public bool Upgraded { get; init; }
@@ -85,6 +87,9 @@ public static class AdvancedAbilityRules
   public const int OdinCooldownTurns = 4;
   public const int ChronosCooldownTurns = 5;
   public const int SniperCooldownTurns = 2;
+  public const int SheriffArrestHealthThreshold = 30;
+  public const int PrisonCapacity = 3;
+  public const string SheriffPrisonPlacementAbility = "PlaceSheriffPrison";
 
   public static bool IsValidQilinCost(int cost) => cost is >= 40 and <= 160 && cost % 20 == 0;
   public static int GetQilinAttack(int cost) =>
@@ -125,7 +130,7 @@ public static class AdvancedAbilityRules
   }
 
   public static bool IsLandingAttackUnit(string unitType) =>
-    unitType is nameof(PieceType.Buffalo) or nameof(PieceType.ArmouredTruck);
+    unitType is nameof(PieceType.Abomination) or nameof(PieceType.Buffalo) or nameof(PieceType.ArmouredTruck);
 
   public static int GetLandingAttackPushDistance(string unitType) => unitType switch
   {
@@ -135,7 +140,7 @@ public static class AdvancedAbilityRules
   };
 
   public static bool LandingAttackConsumesNormalAttack(string unitType) =>
-    unitType == nameof(PieceType.Buffalo);
+    unitType is nameof(PieceType.Abomination) or nameof(PieceType.Buffalo);
 
   public static bool CanUseSpecialAbility(UnitAbilityState? state)
   {
@@ -347,6 +352,97 @@ public static class AdvancedAbilityRules
     nameof(PieceType.HiredGun) => HiredGunUpkeep,
     _ => 0
   };
+
+  public static bool IsAwaitingSheriffPrison(UnitAbilityState? state) =>
+    string.Equals(state?.PendingAbility, SheriffPrisonPlacementAbility, StringComparison.Ordinal);
+
+  public static UnitAbilityState BeginSheriffPrisonPlacement(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with
+    {
+      LinkedPieceId = null,
+      PendingAbility = SheriffPrisonPlacementAbility,
+      PendingSelections = Array.Empty<AbilitySelection>()
+    };
+  }
+
+  public static UnitAbilityState LinkSheriffPrison(UnitAbilityState? state, string prisonId)
+  {
+    state ??= new();
+    return state with
+    {
+      LinkedPieceId = prisonId,
+      PendingAbility = null,
+      PendingSelections = Array.Empty<AbilitySelection>()
+    };
+  }
+
+  public static UnitAbilityState MarkSheriffPrison(UnitAbilityState? state, string sheriffId)
+  {
+    state ??= new();
+    return state with
+    {
+      SheriffPrison = true,
+      LinkedPieceId = sheriffId,
+      PrisonerIds = Array.Empty<string>()
+    };
+  }
+
+  public static bool IsSheriffPrison(UnitAbilityState? state) =>
+    state?.SheriffPrison == true;
+
+  public static bool CanPrisonAcceptPrisoner(UnitAbilityState? state) =>
+    (state?.PrisonerIds?.Count ?? 0) < PrisonCapacity;
+
+  public static UnitAbilityState RecordPrisoner(UnitAbilityState? state, string prisonerId)
+  {
+    state ??= new();
+    if (state.PrisonerIds.Contains(prisonerId, StringComparer.Ordinal) ||
+        state.PrisonerIds.Count >= PrisonCapacity)
+    {
+      return state;
+    }
+    return state with { PrisonerIds = [.. state.PrisonerIds, prisonerId] };
+  }
+
+  public static bool CanSheriffArrest(
+    int targetHealth,
+    bool targetIsRoyal,
+    bool targetIsStructure,
+    UnitAbilityState? prisonState) =>
+    targetHealth <= SheriffArrestHealthThreshold &&
+    !targetIsRoyal &&
+    !targetIsStructure &&
+    CanPrisonAcceptPrisoner(prisonState);
+
+  public static int GetFootprintChebyshevDistance(
+    int firstX,
+    int firstY,
+    int firstWidth,
+    int firstHeight,
+    int secondX,
+    int secondY,
+    int secondWidth,
+    int secondHeight)
+  {
+    int firstRight = firstX + Math.Max(1, firstWidth) - 1;
+    int firstBottom = firstY + Math.Max(1, firstHeight) - 1;
+    int secondRight = secondX + Math.Max(1, secondWidth) - 1;
+    int secondBottom = secondY + Math.Max(1, secondHeight) - 1;
+
+    int dx = secondRight < firstX
+      ? firstX - secondRight
+      : secondX > firstRight
+        ? secondX - firstRight
+        : 0;
+    int dy = secondBottom < firstY
+      ? firstY - secondBottom
+      : secondY > firstBottom
+        ? secondY - firstBottom
+        : 0;
+    return Math.Max(dx, dy);
+  }
 
   public static bool CanLongboatBoard(UnitAbilityState? state) =>
     (state?.PassengerIds?.Count ?? 0) < 3;

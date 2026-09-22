@@ -19,7 +19,8 @@ public enum NetworkAttachmentKind
   Muse,
   Succubus,
   Imp,
-  Passenger
+  Passenger,
+  Prisoner
 }
 
 public sealed record NetworkPendingDamage(NetworkTeam TriggerTeam, NetworkTeam SourceTeam, int Damage);

@@ -55,7 +55,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.reaper` | Implemented | Core definition is loaded from the authoritative specification. |
 | `undead.zombie` | Verified | Lethal damage transforms it into Flesh. |
 | `undead.flesh` | Verified | Owner-turn transformation back into Zombie is implemented. |
-| `undead.abomination` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.abomination` | Verified | Landing on one enemy resolves the Abomination's 30-Attack hit through the shared movement-combat path; a killed target frees the landing footprint, while a survivor sends the Abomination back to the previous movement square. Local/server paths and shared landing-rule regression coverage are wired. |
 | `undead.necromancer` | Verified | Purchasing a Necromancer deterministically places one linked Skeleton Minion on the nearest legal tile within 4 Squares. The link is persisted in shared ability state; a dead Minion marks the Necromancer for an adjacent respawn at the start of its next owner turn, while Necromancer death removes the linked Minion permanently. Local and authoritative server paths are wired. |
 | `undead.skeleton_minion` | Verified | Skeleton Minion remains unchoosable, stores its linked Necromancer ID, and may not end movement more than 4 Squares (Square/Chebyshev distance) from that Necromancer. If killed while the Necromancer lives it is flagged for adjacent next-owner-turn respawn; if the Necromancer dies the linked Minion is removed permanently. |
 | `undead.ghoul` | Verified | Four-owner-turn expiry is implemented. |
@@ -110,11 +110,11 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.duelist` | Verified | Normal attacks now replace the Duelist's single marked target; while a marked unit is inside an enemy Duelist's attack range, local and authoritative server attack validation force it to attack one of the Duelists marking it. Shared regression coverage verifies mark replacement. |
 | `wild_west.cactus_jack` | Verified | Half-damage reflection is wired in local/server/CPU without recursive reflection, with green CPU runtime coverage. |
 | `wild_west.stagecoach` | Verified | Enemy-only pass-through and fixed 25 damage to every crossed enemy are wired through shared/local/server/CPU movement without consuming the Stagecoach's normal attack; CPU runtime coverage verifies multi-unit crossing. |
-| `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.prison` | Verified | Destroying an ordinary Prison releases stored prisoners in order onto the closest legal squares, preferring down-right on equal distance, then spawns two Cowboys and two Brawlers by the same placement rule. Released/spawned units cannot act again that owner turn. Sheriff-linked Prisons are explicitly exempt from the four reinforcement spawns. |
 | `wild_west.hired_gun` | Verified | Purchase now charges the immediate 20-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Hired Gun neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
 | `wild_west.buffalo` | Verified | Buffalo may attack by landing on one enemy through the movement path. It deals normal Attack damage, moves onto the destination only if the target dies, otherwise falls back to the previous movement square, pushes a surviving target 1 tile directly away when legal, and consumes its normal attack. Local and authoritative server movement are wired. |
 | `wild_west.bounty_hunter` | Verified | Bounty Hunter now requires an assigned living enemy non-Royal target before it can attack, and it may attack only that target. Purchase enables a free board-wide target choice; if the bounty dies or ceases to be a valid enemy target, the assignment is cleared and a new free selection becomes available at the Hunter's next owner-turn start. Local and authoritative online/server paths are wired. |
-| `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.sheriff` | Verified | Sheriff setup is a two-stage placement: place the Sheriff, then separately place its free 3×3 Sheriff Prison in legal friendly territory. Shift+right-click may Arrest an in-range enemy non-Royal at 30 Health or less instead of attacking; capacity is three and arrest order is preserved. A destroyed Sheriff Prison releases prisoners using closest-legal/down-right tie-breaking without Cowboy/Brawler spawns; purchasing a 120-gold replacement Prison links it back to a living Sheriff missing its Prison. Local and authoritative online/server flows are wired. |
 | `wild_west.gang_leader` | Verified | Local/online/server play now supports the codex recruit action once every 3 owner turns. A target must be an enemy, non-neutral, unattached non-Royal in the Gang Leader's attack range; the player pays twice its base cost (including Qilin's chosen X), the unit transfers teams, is locked from acting for the rest of the current turn, and the Gang Leader starts its three-owner-turn cooldown. |
 | `modern.civilian` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.officer` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -166,7 +166,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 
 - All 142 non-Legacy, non-Chess source rows have a shared catalogue definition; Qilin and Serpent use their documented baseline forms.
 - Chess and Legacy gameplay work is out of scope for the current request. Chess King and four Legacy rows additionally lack usable core source data.
-- `Verified` is intentionally limited to mechanics with existing shared/runtime regression coverage; all remaining `Partial` rows still need their bespoke rules wired end-to-end.
+- All 142 non-Legacy, non-Chess rows are now `Implemented` or `Verified`; there are no remaining in-scope `Partial` or `Blocked` units. `Verified` remains reserved for bespoke mechanics with shared/runtime regression coverage.
 
 
 ### 2026-09-22 — advanced-unit CPU parity batch
@@ -427,3 +427,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - The targeted Royal stores the pending forced choice in shared ability state. Until it is resolved, that team cannot move, attack, buy, end the turn, or use another unit's special ability.
 - Choice controls are deliberately lightweight rather than modal: right-click the affected Royal to lose 30 gold; Shift+right-click it to take 20 Royal damage; or right-click a friendly non-Royal, non-Structure unit to make that unit take 40 damage.
 - Resolving the forced choice is free and clears the pending state. Authoritative server resolution applies the money/Health loss and normal death handling; Helicopter is excluded from the selectable-unit damage option because it cannot be interacted with by units.
+
+
+### 2026-09-23 — Abomination, Prison, and Sheriff completion
+
+- Completed Abomination by extending the existing landing-attack movement pipeline to its 2×2 footprint. Landing on one enemy deals its normal Attack, consumes the attack, occupies the target footprint when the target dies, and otherwise falls back to the previous movement square; unlike Buffalo/Armoured Truck it applies no push.
+- Completed the ordinary Prison death lifecycle. Stored prisoners are released in order onto closest legal squares; equal-distance choices prefer down-right. After release, a normal Prison spawns two Cowboys and two Brawlers with the same deterministic placement rule. Released and spawned units are locked for the remainder of that owner turn.
+- Completed Sheriff setup as a two-stage Royal placement in local and authoritative online play: the Sheriff is placed first, then its free 3×3 Sheriff Prison is placed separately on legal friendly territory before setup can continue.
+- Sheriff Arrest is an explicit alternative to its normal attack (Shift+right-click): one enemy non-Royal at 30 Health or less may be imprisoned if the linked Prison has fewer than three prisoners. Prisoner ordering is persistent and synchronised.
+- The Sheriff Prison is a distinct Prison state: destroying it releases prisoners but never creates Cowboys or Brawlers. If it is gone, the next 120-gold Prison purchased by that team becomes the Sheriff's replacement Prison and is linked automatically.
+- Added shared regression coverage for Abomination landing classification, Sheriff Prison capacity/arrest thresholds, setup linking state, and footprint-aware nearest-release distance. The branch-wide GitHub Actions test workflow is used after the commit for full-suite validation.

@@ -16,7 +16,8 @@ internal enum AttachmentKind
   Muse,
   Succubus,
   Imp,
-  Passenger
+  Passenger,
+  Prisoner
 }
 
 internal sealed class Piece

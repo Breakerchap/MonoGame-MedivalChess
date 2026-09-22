@@ -1002,6 +1002,48 @@ public sealed partial class MatchStore
         return new(false, "Complete the pack draft before choosing a royal.", foundMatch.State());
       }
 
+      NetworkPiece? pendingSheriff = foundMatch.Pieces.FirstOrDefault(piece =>
+        piece.Team == player.Team &&
+        piece.Type == nameof(PieceType.Sheriff) &&
+        AdvancedAbilityRules.IsAwaitingSheriffPrison(piece.AbilityState));
+      if (pendingSheriff is not null)
+      {
+        if (!string.Equals(
+              request.RoyalType,
+              nameof(PieceType.Sheriff),
+              StringComparison.Ordinal) ||
+            request.X is not int prisonX ||
+            request.Y is not int prisonY)
+        {
+          return new(false, "Place the Sheriff's Prison before continuing.", foundMatch.State());
+        }
+
+        int sheriffIndex = foundMatch.Pieces.FindIndex(piece =>
+          piece.Id == pendingSheriff.Id);
+        if (!TryPlaceServerSheriffPrison(
+              foundMatch, sheriffIndex, prisonX, prisonY, lastBid: 0))
+        {
+          return new(false,
+            "Place the Sheriff's Prison on an empty, traversable 3x3 area in your territory.",
+            foundMatch.State());
+        }
+
+        if (foundMatch.MatchReady)
+        {
+          foundMatch.InitialBuy ??= new OpeningBuyPhase(
+            foundMatch.Configuration.InitialBuysPerTurn,
+            foundMatch.Configuration.InitialBuyTurnsPerTeam,
+            foundMatch.Configuration.PlayerCount,
+            foundMatch.Configuration.FarmsEnabled
+          );
+          foundMatch.CurrentTurn = foundMatch.InitialBuy.CurrentTeam;
+          foundMatch.ResetClockTimestamp();
+        }
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+
       if (player.ChosenRoyal is not null)
       {
         return new(false, "You have already chosen your royal.", foundMatch.State());
@@ -1027,6 +1069,21 @@ public sealed partial class MatchStore
 
       AddSharedServerRoyalGroup(foundMatch, player.Team, request.RoyalType, position.x, position.y, health);
       player.ChosenRoyal = request.RoyalType;
+      if (request.RoyalType == nameof(PieceType.Sheriff))
+      {
+        int sheriffIndex = foundMatch.Pieces.FindLastIndex(piece =>
+          piece.Team == player.Team &&
+          piece.Type == nameof(PieceType.Sheriff));
+        if (sheriffIndex >= 0)
+        {
+          NetworkPiece sheriff = foundMatch.Pieces[sheriffIndex];
+          foundMatch.Pieces[sheriffIndex] = sheriff with
+          {
+            AbilityState = AdvancedAbilityRules.BeginSheriffPrisonPlacement(
+              sheriff.AbilityState)
+          };
+        }
+      }
       if (foundMatch.MatchReady)
       {
         foundMatch.InitialBuy ??= new OpeningBuyPhase(
@@ -1154,6 +1211,11 @@ public sealed partial class MatchStore
           : NetworkAttachmentKind.None,
         LastBid: isOpeningFarmPlacement ? 0 : purchaseCost,
         AbilityState: isOpeningFarmPlacement ? new UnitAbilityState() : purchaseState));
+      if (unit.Type == nameof(PieceType.Prison))
+      {
+        TryLinkServerPurchasedSheriffPrison(
+          foundMatch, foundMatch.Pieces.Count - 1);
+      }
       if (unit.Type == nameof(PieceType.Serpent))
       {
         CreateServerSerpentFollowers(foundMatch, foundMatch.Pieces.Count - 1);
@@ -1316,6 +1378,11 @@ public sealed partial class MatchStore
         CannotContributeToConquestThisTurn: true,
         AbilityState: purchaseState
       ));
+      if (unit.Type == nameof(PieceType.Prison))
+      {
+        TryLinkServerPurchasedSheriffPrison(
+          foundMatch, foundMatch.Pieces.Count - 1);
+      }
       if (unit.Type == nameof(PieceType.Serpent))
       {
         CreateServerSerpentFollowers(foundMatch, foundMatch.Pieces.Count - 1);
@@ -2246,6 +2313,10 @@ public sealed partial class MatchStore
     if (defeatedPiece.Team == NetworkTeam.Neutral)
     {
       RemovePiece(match, defeatedPiece.Id);
+      if (defeatedPiece.Type == nameof(PieceType.Prison))
+      {
+        ResolveServerPrisonDestruction(match, defeatedPiece);
+      }
       ReconnectServerSerpentAfterDeath(match, defeatedPiece);
       return;
     }
@@ -2270,6 +2341,10 @@ public sealed partial class MatchStore
 
     bool royalDeath = IsSharedServerRoyalDeath(match, defeatedPiece);
     RemovePiece(match, defeatedPiece.Id);
+    if (defeatedPiece.Type == nameof(PieceType.Prison))
+    {
+      ResolveServerPrisonDestruction(match, defeatedPiece);
+    }
     ReconnectServerSerpentAfterDeath(match, defeatedPiece);
     ApplySharedServerDeathExplosion(match, defeatedPiece, explosionSource, deathExplosion);
     if (!royalDeath || !UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule)) return;
@@ -2988,7 +3063,12 @@ public sealed partial class MatchStore
     private readonly HashSet<string> _debugControllers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, NetworkTeam> _debugTeams = new(StringComparer.Ordinal);
 
-    internal bool MatchReady => Players.Count == Configuration.PlayerCount && Players.All(player => player.ChosenRoyal is not null);
+    internal bool MatchReady =>
+    Players.Count == Configuration.PlayerCount &&
+    Players.All(player => player.ChosenRoyal is not null) &&
+    !Pieces.Any(piece =>
+      piece.Type == nameof(PieceType.Sheriff) &&
+      AdvancedAbilityRules.IsAwaitingSheriffPrison(piece.AbilityState));
     internal void AddPlayer(PlayerSlot player) => _players.Add(player);
     internal PlayerSlot? FindPlayerByConnection(string connectionId)
     {

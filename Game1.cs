@@ -205,6 +205,7 @@ internal sealed partial class Game1 : Game
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
   private PieceDefinition _royalAwaitingPlacement;
+  private Piece _sheriffPrisonAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
   private readonly HashSet<Pack> _allowedPacks = [Pack.Medival];
   private string _packSelectionMode = PackDraftRules.DraftMode;
@@ -510,7 +511,7 @@ internal sealed partial class Game1 : Game
       keyboard.IsKeyDown(_endTurnKey) &&
       !_previousKeyboardState.IsKeyDown(_endTurnKey);
 
-    if (wasSkipTurnPressed)
+    if (wasSkipTurnPressed && _sheriffPrisonAwaitingPlacement is null)
     {
       TrySkipCurrentTurn();
     }
@@ -522,7 +523,8 @@ internal sealed partial class Game1 : Game
     }
 
     if (wasPurchaseModeToggle && !satanChoicePending &&
-        _initialBuyPhase == null && _royalAwaitingPlacement is null)
+        _initialBuyPhase == null && _royalAwaitingPlacement is null &&
+        _sheriffPrisonAwaitingPlacement is null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -539,7 +541,8 @@ internal sealed partial class Game1 : Game
     }
 
     bool clickedPurchasePanel =
-      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
+      _royalAwaitingPlacement is null && _sheriffPrisonAwaitingPlacement is null &&
+      wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(ToUiPoint(mouse.Position));
     bool clickedSkipTurn =
@@ -571,7 +574,14 @@ internal sealed partial class Game1 : Game
       Piece friendlyPieceAtTarget = GetUnattachedPieceAt(targetPosition, Team.CurrentTurn);
       Piece inspectablePieceAtTarget = GetUnattachedPieceAt(targetPosition);
 
-      if (_royalAwaitingPlacement is not null)
+      if (_sheriffPrisonAwaitingPlacement is not null)
+      {
+        if (wasLeftClick)
+        {
+          TryPlaceSheriffPrison(targetPosition);
+        }
+      }
+      else if (_royalAwaitingPlacement is not null)
       {
         if (wasLeftClick)
         {
@@ -668,6 +678,11 @@ internal sealed partial class Game1 : Game
            friendlyPieceAtTarget is not null && friendlyPieceAtTarget != selectedPiece
             ? friendlyPieceAtTarget
             : null);
+        bool sheriffArrestModifier =
+          wasRightClick &&
+          selectedPiece.Definition.Type == PieceType.Sheriff &&
+          (keyboard.IsKeyDown(Keys.LeftShift) ||
+           keyboard.IsKeyDown(Keys.RightShift));
         bool usedSpecialAbility = wasRightClick &&
           (_onlineClient is null
             ? TryUseSpecialAbility(selectedPiece, targetPosition, hostilePieceAtTarget ?? pieceAtTarget, keyboard)
@@ -676,6 +691,10 @@ internal sealed partial class Game1 : Game
         if (usedSpecialAbility)
         {
           selectedPiece = null;
+        }
+        else if (sheriffArrestModifier)
+        {
+          // Shift+right-click explicitly chooses Arrest instead of the Sheriff's normal attack.
         }
         else if (wasLeftClick)
         {
@@ -1222,6 +1241,10 @@ internal sealed partial class Game1 : Game
     if (definition.Type == PieceType.Necromancer)
     {
       SpawnLocalSkeletonForNecromancer(boughtPiece, initialPlacement: true);
+    }
+    if (definition.Type == PieceType.Prison)
+    {
+      TryLinkLocalPurchasedSheriffPrison(boughtPiece);
     }
 
     Console.WriteLine(
@@ -2559,11 +2582,12 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
+    bool shiftHeld =
+      Keyboard.GetState().IsKeyDown(Keys.LeftShift) ||
+      Keyboard.GetState().IsKeyDown(Keys.RightShift);
+
     if (IsPendingLocalSatanChoiceRoyal(actor))
     {
-      bool shiftHeld =
-        Keyboard.GetState().IsKeyDown(Keys.LeftShift) ||
-        Keyboard.GetState().IsKeyDown(Keys.RightShift);
       string choice = target == actor
         ? shiftHeld ? "SatanRoyal" : "SatanGold"
         : target is not null && target.Team == actor.Team &&
@@ -2611,6 +2635,16 @@ internal sealed partial class Game1 : Game
     if (target?.Definition.Type == PieceType.Helicopter)
     {
       return false;
+    }
+
+    if (actor.Definition.Type == PieceType.Sheriff &&
+        shiftHeld &&
+        target is not null &&
+        CanLocalSheriffArrest(actor, target, targetPosition))
+    {
+      _ = SendOnlineSpecialAsync(
+        actor, "Arrest", target.NetworkId, targetPosition);
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Mimic &&
@@ -2976,6 +3010,33 @@ internal sealed partial class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlineSheriffPrisonPlacementAsync(
+    (int x, int y) position)
+  {
+    if (_onlineClient == null || _onlineRoyalChoicePending)
+    {
+      return;
+    }
+
+    _onlineRoyalChoicePending = true;
+    try
+    {
+      ActionResult result = await _onlineClient.ChooseRoyalAsync(
+        PieceType.Sheriff.ToString(), position.x, position.y);
+      if (!result.Accepted)
+      {
+        _onlineRoyalChoicePending = false;
+        _onlineError = result.Error ?? "Could not place the Sheriff's Prison.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Sheriff Prison placement could not be sent: {exception.Message}");
+      _onlineRoyalChoicePending = false;
+      _onlineError = "Could not send Sheriff Prison placement.";
+    }
+  }
+
   private async System.Threading.Tasks.Task SendOnlineInitialPurchaseAsync(
     PieceDefinition definition,
     (int x, int y) position
@@ -3149,10 +3210,27 @@ internal sealed partial class Game1 : Game
       }
 
       NetworkTeam? localTeam = _onlineClient?.Team;
+      _setupTeam = localTeam?.ToTeamName() ?? TeamName.Red;
+      Piece pendingSheriff = localTeam is NetworkTeam localNetworkTeam
+        ? pieceSetup.Pieces.FirstOrDefault(piece =>
+            piece.Team == localNetworkTeam.ToTeamName() &&
+            piece.Definition.Type == PieceType.Sheriff &&
+            AdvancedAbilityRules.IsAwaitingSheriffPrison(piece.AbilityState))
+        : null;
+      if (pendingSheriff is not null)
+      {
+        _sheriffPrisonAwaitingPlacement = pendingSheriff;
+        _royalAwaitingPlacement = null;
+        _onlineRoyalChoicePending = false;
+        _onlineStatus = $"PLACE SHERIFF PRISON  ROOM: {state.JoinCode}";
+        _screen = Screen.Playing;
+        return;
+      }
+
+      _sheriffPrisonAwaitingPlacement = null;
       bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
         teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
       _onlineRoyalChoicePending = hasChosenRoyal;
-      _setupTeam = localTeam?.ToTeamName() ?? TeamName.Red;
       _onlineStatus = hasChosenRoyal
         ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
         : $"ONLINE ROYAL SETUP  ROOM: {state.JoinCode}";
@@ -3162,6 +3240,7 @@ internal sealed partial class Game1 : Game
 
     if (state.InitialBuy is { IsComplete: false } initialBuy)
     {
+      _sheriffPrisonAwaitingPlacement = null;
       _initialBuyPhase = new InitialBuyPhase(
         initialBuy.PurchasesPerTurn,
         initialBuy.BuyTurnsPerTeam,
@@ -3184,6 +3263,7 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    _sheriffPrisonAwaitingPlacement = null;
     Team.SetCurrentTurn(state.CurrentTurn.ToTeamName());
     selectedPiece = null;
     _initialBuyPhase = null;
@@ -3339,6 +3419,7 @@ internal sealed partial class Game1 : Game
           NetworkAttachmentKind.Succubus => AttachmentKind.Succubus,
           NetworkAttachmentKind.Imp => AttachmentKind.Imp,
           NetworkAttachmentKind.Passenger => AttachmentKind.Passenger,
+          NetworkAttachmentKind.Prisoner => AttachmentKind.Prisoner,
           _ => AttachmentKind.None
         };
       }
@@ -3599,6 +3680,52 @@ internal sealed partial class Game1 : Game
     );
     Color outline = canPlace
       ? Color.Lerp(UiTheme.GetTeamColour(_setupTeam), UiTheme.GoldBright, 0.4f)
+      : UiTheme.Attack;
+    Color fill = new(outline.R, outline.G, outline.B, canPlace ? (byte)46 : (byte)30);
+    Color border = new(outline.R, outline.G, outline.B, canPlace ? (byte)190 : (byte)145);
+
+    DrawWorldRectangle(footprint, fill, 0.134f);
+    DrawWorldOutline(footprint, border, 0.135f);
+  }
+
+  private void DrawSheriffPrisonPlacementPreview(int cellSize)
+  {
+    Piece sheriff = _sheriffPrisonAwaitingPlacement;
+    if (sheriff is null)
+    {
+      return;
+    }
+
+    MouseState mouse = Mouse.GetState();
+    if (GetStatusPanelBounds().Contains(ToUiPoint(mouse.Position)))
+    {
+      return;
+    }
+
+    Vector2 mouseWorld = Vector2.Transform(
+      mouse.Position.ToVector2(),
+      Matrix.Invert(CreateCameraTransform())
+    );
+    (int x, int y) targetPosition = (
+      (int)MathF.Floor(mouseWorld.X / cellSize) + _board.MinX,
+      (int)MathF.Floor(mouseWorld.Y / cellSize) + _board.MinY
+    );
+    if (!IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return;
+    }
+
+    PieceDefinition prison = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Prison);
+    bool canPlace = CanPlaceLocalSheriffPrison(sheriff, targetPosition);
+    Rectangle footprint = new(
+      (targetPosition.x - _board.MinX) * cellSize,
+      (targetPosition.y - _board.MinY) * cellSize,
+      prison.Size.x * cellSize,
+      prison.Size.y * cellSize
+    );
+    Color outline = canPlace
+      ? Color.Lerp(UiTheme.GetTeamColour(sheriff.Team), UiTheme.GoldBright, 0.4f)
       : UiTheme.Attack;
     Color fill = new(outline.R, outline.G, outline.B, canPlace ? (byte)46 : (byte)30);
     Color border = new(outline.R, outline.G, outline.B, canPlace ? (byte)190 : (byte)145);
@@ -4439,6 +4566,10 @@ internal sealed partial class Game1 : Game
     if (damagedPiece.Team == TeamName.Neutral)
     {
       pieceSetup.RemovePiece(damagedPiece);
+      if (damagedPiece.Definition.Type == PieceType.Prison)
+      {
+        ResolveLocalPrisonDestruction(damagedPiece);
+      }
       ReconnectLocalSerpentAfterDeath(damagedPiece);
       return;
     }
@@ -4459,6 +4590,10 @@ internal sealed partial class Game1 : Game
 
     bool royalDeath = IsSharedRoyalDeath(damagedPiece);
     pieceSetup.RemovePiece(damagedPiece);
+    if (damagedPiece.Definition.Type == PieceType.Prison)
+    {
+      ResolveLocalPrisonDestruction(damagedPiece);
+    }
     ReconnectLocalSerpentAfterDeath(damagedPiece);
     if (royalDeath && _gameMode == GameMode.Regicide)
     {
@@ -4526,13 +4661,13 @@ internal sealed partial class Game1 : Game
     KeyboardState keyboard
   )
   {
-    bool shiftHeldForSatan =
+    bool shiftHeld =
       keyboard.IsKeyDown(Keys.LeftShift) ||
       keyboard.IsKeyDown(Keys.RightShift);
     if (IsPendingLocalSatanChoiceRoyal(actor))
     {
       return TryResolveLocalSatanChoice(
-        actor, targetPiece, shiftHeldForSatan);
+        actor, targetPiece, shiftHeld);
     }
 
     if (!IsCampaignAbilityAllowed(actor.Team, actor.Definition.Type))
@@ -4577,6 +4712,13 @@ internal sealed partial class Game1 : Game
         targetPiece is not null)
     {
       return TryUseLocalMimicSwap(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Sheriff &&
+        shiftHeld &&
+        targetPiece is not null)
+    {
+      return TryArrestLocalSheriff(actor, targetPiece, targetPosition);
     }
 
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
@@ -7886,6 +8028,18 @@ internal sealed partial class Game1 : Game
     PieceDefinition royal = ChooseCpuRoyal(eligibleRoyals, profile, random);
     (int x, int y) position = ChooseCpuRoyalPlacement(teamName, royal, profile, random);
     PlaceRoyal(teamName, royal, position);
+    if (royal.Type == PieceType.Sheriff)
+    {
+      Piece sheriff = pieceSetup.Pieces.First(piece =>
+        piece.Team == teamName &&
+        piece.Definition.Type == PieceType.Sheriff);
+      BeginLocalSheriffPrisonPlacement(sheriff);
+      if (!TryPlaceNearestLocalSheriffPrison(sheriff))
+      {
+        throw new InvalidOperationException(
+          "Could not find a legal square for the Sheriff's Prison.");
+      }
+    }
   }
 
   private void ContinueRoyalSelection()
@@ -7943,6 +8097,7 @@ internal sealed partial class Game1 : Game
     _onlineJoinAsSpectator = false;
     _onlineRoyalChoicePending = false;
     _royalAwaitingPlacement = null;
+    _sheriffPrisonAwaitingPlacement = null;
     _debugTeamSwitchPending = false;
     _onlineHostingSetup = false;
     _onlineMatchConfiguration = null;
@@ -9011,6 +9166,45 @@ internal sealed partial class Game1 : Game
 
     PlaceRoyal(_setupTeam, royal, position);
     _royalAwaitingPlacement = null;
+    if (royal.Type == PieceType.Sheriff)
+    {
+      Piece sheriff = pieceSetup.Pieces.First(piece =>
+        piece.Team == _setupTeam &&
+        piece.Definition.Type == PieceType.Sheriff);
+      BeginLocalSheriffPrisonPlacement(sheriff);
+      _sheriffPrisonAwaitingPlacement = sheriff;
+      Console.WriteLine("Place the Sheriff's free Prison on a legal 3x3 square in your territory.");
+      return;
+    }
+    ContinueRoyalSelection();
+  }
+
+  private void TryPlaceSheriffPrison((int x, int y) position)
+  {
+    Piece sheriff = _sheriffPrisonAwaitingPlacement;
+    if (sheriff is null)
+    {
+      return;
+    }
+
+    if (!CanPlaceLocalSheriffPrison(sheriff, position))
+    {
+      Console.WriteLine("The Sheriff's Prison must fit on an empty, traversable 3x3 area in your territory.");
+      return;
+    }
+
+    if (_onlineClient is not null)
+    {
+      _ = SendOnlineSheriffPrisonPlacementAsync(position);
+      return;
+    }
+
+    if (!TryPlaceLocalSheriffPrison(sheriff, position, lastBid: 0))
+    {
+      return;
+    }
+
+    _sheriffPrisonAwaitingPlacement = null;
     ContinueRoyalSelection();
   }
 
@@ -11901,6 +12095,7 @@ internal sealed partial class Game1 : Game
 
     DrawPurchasePlacementPreview(cellSize);
     DrawRoyalPlacementPreview(cellSize);
+    DrawSheriffPrisonPlacementPreview(cellSize);
 
     if (selectedPiece != null && IsVisibleWorldBounds(GetPieceWorldBounds(selectedPiece, cellSize)))
     {
