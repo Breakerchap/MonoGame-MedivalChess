@@ -1898,10 +1898,10 @@ public sealed class CpuGameStateTests
 
     Assert.Equal(3, state.AbilityEntities.Count(entity => entity.Kind == AbilityEntityKind.Thunderstorm));
     AbilityEntity first = state.AbilityEntities.First(entity => entity.Kind == AbilityEntityKind.Thunderstorm);
-    UseAbilityAction move = new(NetworkTeam.Red, "thor", "Thunderstorm", first.Id, 0, 1);
+    UseAbilityAction move = new(NetworkTeam.Red, "thor", "Thunderstorm", first.Id, 1, 1);
     Assert.True(move.IsLegal(state));
     CpuGameState moved = move.Apply(state);
-    Assert.Contains(moved.AbilityEntities, entity => entity.Id == first.Id && entity.X == 0 && entity.Y == 1);
+    Assert.Contains(moved.AbilityEntities, entity => entity.Id == first.Id && entity.X == 1 && entity.Y == 1);
   }
 
   [Fact]
