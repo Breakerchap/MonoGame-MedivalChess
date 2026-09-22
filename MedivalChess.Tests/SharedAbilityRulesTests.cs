@@ -773,4 +773,29 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void BountyHunterCannotAttackWithoutItsAssignedBounty()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.EnableBountySelection(
+      new UnitAbilityState());
+
+    Assert.False(AdvancedAbilityRules.CanAttack(
+      nameof(PieceType.BountyHunter), state, legacyHasAttacked: false, targetId: "enemy"));
+
+    state = AdvancedAbilityRules.SetBountyTarget(state, "enemy");
+    Assert.True(AdvancedAbilityRules.CanAttack(
+      nameof(PieceType.BountyHunter), state, legacyHasAttacked: false, targetId: "enemy"));
+    Assert.False(AdvancedAbilityRules.CanAttack(
+      nameof(PieceType.BountyHunter), state, legacyHasAttacked: false, targetId: "other"));
+
+    state = AdvancedAbilityRules.ClearBountyTarget(state);
+    Assert.Null(state.BountyTargetId);
+    Assert.False(state.BountySelectionAvailable);
+
+    state = AdvancedAbilityRules.EnableBountySelection(state);
+    Assert.True(state.BountySelectionAvailable);
+  }
+
+
 }

@@ -1521,7 +1521,9 @@ public sealed partial class MatchStore
 
     cost = unit.Cost;
     health = unit.Health;
-    state = new UnitAbilityState();
+    state = unit.Type == nameof(PieceType.BountyHunter)
+      ? AdvancedAbilityRules.EnableBountySelection(new UnitAbilityState())
+      : new UnitAbilityState();
     return true;
   }
 
@@ -2086,6 +2088,7 @@ public sealed partial class MatchStore
     {
       ClearServerPetrificationBy(match, defeatedPiece.Id);
     }
+    ClearServerBountyTargetsFor(match, defeatedPiece.Id);
     if (defeatedPiece.Type == nameof(PieceType.Lich))
     {
       ApplyServerLichDeathLink(match, defeatedPiece, attackingPlayer);
@@ -2606,6 +2609,7 @@ public sealed partial class MatchStore
         };
       }
     }
+    RefreshServerBountySelectionAtOwnerTurnStart(match, team);
     SpawnServerLinkedLichesAtOwnerTurnStart(match, team);
   }
 

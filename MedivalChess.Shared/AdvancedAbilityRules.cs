@@ -28,6 +28,7 @@ public sealed record UnitAbilityState
   public string? OdinProtectedById { get; init; }
   public bool OdinProtectionAvailable { get; init; }
   public string? BountyTargetId { get; init; }
+  public bool BountySelectionAvailable { get; init; }
   public IReadOnlyList<string> TargetIdsThisTurn { get; init; } = Array.Empty<string>();
   public string? PendingAbility { get; init; }
   public IReadOnlyList<AbilitySelection> PendingSelections { get; init; } = Array.Empty<AbilitySelection>();
@@ -157,8 +158,10 @@ public static class AdvancedAbilityRules
     {
       return false;
     }
-    if (unitType == nameof(PieceType.BountyHunter) && state.BountyTargetId is not null &&
-        targetId is not null && !string.Equals(state.BountyTargetId, targetId, StringComparison.Ordinal))
+    if (unitType == nameof(PieceType.BountyHunter) &&
+        (string.IsNullOrWhiteSpace(state.BountyTargetId) ||
+         string.IsNullOrWhiteSpace(targetId) ||
+         !string.Equals(state.BountyTargetId, targetId, StringComparison.Ordinal)))
     {
       return false;
     }
@@ -397,7 +400,27 @@ public static class AdvancedAbilityRules
   public static UnitAbilityState SetBountyTarget(UnitAbilityState? state, string? targetId)
   {
     state ??= new();
-    return state with { BountyTargetId = targetId };
+    return state with
+    {
+      BountyTargetId = targetId,
+      BountySelectionAvailable = false
+    };
+  }
+
+  public static UnitAbilityState ClearBountyTarget(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with
+    {
+      BountyTargetId = null,
+      BountySelectionAvailable = false
+    };
+  }
+
+  public static UnitAbilityState EnableBountySelection(UnitAbilityState? state)
+  {
+    state ??= new();
+    return state with { BountySelectionAvailable = true };
   }
 
   public static UnitAbilityState DisableAbilities(UnitAbilityState? state, int ownerTurns)

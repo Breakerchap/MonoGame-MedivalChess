@@ -1280,4 +1280,69 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static bool IsValidServerBountyTarget(
+    NetworkPiece hunter,
+    NetworkPiece target) =>
+    target.Id != hunter.Id &&
+    target.Team != hunter.Team &&
+    target.Team != NetworkTeam.Neutral &&
+    target.AttachedToId is null &&
+    !RoyalAbilityRules.IsRoyal(
+      target.Type, target.IsRoyalProxy, target.PossessedUnitId);
+
+  private static void ClearServerBountyTargetsFor(
+    Match match,
+    string defeatedId)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Type == nameof(PieceType.BountyHunter) &&
+          string.Equals(
+            piece.AbilityState?.BountyTargetId, defeatedId, StringComparison.Ordinal))
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.ClearBountyTarget(
+            piece.AbilityState)
+        };
+      }
+    }
+  }
+
+  private static void RefreshServerBountySelectionAtOwnerTurnStart(
+    Match match,
+    NetworkTeam team)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece hunter = match.Pieces[index];
+      if (hunter.Team != team ||
+          hunter.Type != nameof(PieceType.BountyHunter))
+      {
+        continue;
+      }
+
+      NetworkPiece? currentTarget =
+        string.IsNullOrWhiteSpace(hunter.AbilityState?.BountyTargetId)
+          ? null
+          : match.Pieces.FirstOrDefault(piece =>
+              piece.Id == hunter.AbilityState!.BountyTargetId);
+
+      if (currentTarget is not null &&
+          IsValidServerBountyTarget(hunter, currentTarget))
+      {
+        continue;
+      }
+
+      match.Pieces[index] = hunter with
+      {
+        AbilityState = AdvancedAbilityRules.EnableBountySelection(
+          AdvancedAbilityRules.ClearBountyTarget(hunter.AbilityState))
+      };
+    }
+  }
+
+
 }

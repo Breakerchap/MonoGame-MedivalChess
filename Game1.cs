@@ -1167,7 +1167,9 @@ internal sealed partial class Game1 : Game
       CannotContributeToConquestThisTurn = _initialBuyPhase is null,
       AbilityState = definition.Type == PieceType.Qilin
         ? new UnitAbilityState { VariableCostValue = qilinCost }
-        : new UnitAbilityState()
+        : definition.Type == PieceType.BountyHunter
+          ? AdvancedAbilityRules.EnableBountySelection(new UnitAbilityState())
+          : new UnitAbilityState()
     };
     pieceSetup.AddPiece(boughtPiece);
     if (definition.Type == PieceType.Shadow && purchaseHost is not null)
@@ -2085,6 +2087,7 @@ internal sealed partial class Game1 : Game
         piece.AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.Position.x, piece.Position.y, piece.CurrentHealth);
       }
     }
+    RefreshLocalBountySelectionAtOwnerTurnStart(teamName);
     SpawnLocalLinkedLichesAtOwnerTurnStart(teamName);
   }
 
@@ -2535,6 +2538,15 @@ internal sealed partial class Game1 : Game
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
+    }
+
+    if (actor.Definition.Type == PieceType.BountyHunter &&
+        actor.AbilityState.BountySelectionAvailable &&
+        target is not null &&
+        IsValidLocalBountyTarget(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "SetBounty", target.NetworkId, target.Position);
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Succubus)
@@ -4213,6 +4225,7 @@ internal sealed partial class Game1 : Game
     {
       ClearLocalPetrificationBy(damagedPiece.NetworkId);
     }
+    ClearLocalBountyTargetsFor(damagedPiece.NetworkId);
     if (damagedPiece.Definition.Type == PieceType.Lich)
     {
       ApplyLocalLichDeathLink(damagedPiece, attackingTeamName);
@@ -4375,6 +4388,12 @@ internal sealed partial class Game1 : Game
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
+    }
+
+    if (actor.Definition.Type == PieceType.BountyHunter &&
+        TrySelectLocalBountyTarget(actor, targetPiece))
+    {
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Succubus &&
@@ -11394,6 +11413,15 @@ internal sealed partial class Game1 : Game
         piece.AbilityState.PendingSelections.Count > 0
         ? "RIGHT-CLICK a legal destination within the selected unit's 3-Square forced move"
         : "RIGHT-CLICK a unit in range, then choose its forced destination";
+    }
+
+    if (piece.Definition.Type == PieceType.BountyHunter)
+    {
+      return piece.AbilityState.BountySelectionAvailable
+        ? "RIGHT-CLICK any enemy non-Royal to assign the bounty"
+        : string.IsNullOrWhiteSpace(piece.AbilityState.BountyTargetId)
+          ? "NEW BOUNTY AVAILABLE NEXT OWNER TURN"
+          : "MAY ATTACK ONLY THE ASSIGNED BOUNTY";
     }
 
     if (piece.HasAttackedThisTurn)

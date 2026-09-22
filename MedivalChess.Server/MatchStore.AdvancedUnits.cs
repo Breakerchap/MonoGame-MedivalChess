@@ -569,6 +569,22 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.BountyHunter):
+        if (!string.Equals(ability, "SetBounty", StringComparison.OrdinalIgnoreCase) ||
+            actor.AbilityState?.BountySelectionAvailable != true ||
+            target is null ||
+            !IsValidServerBountyTarget(actor, target))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          AbilityState = AdvancedAbilityRules.SetBountyTarget(
+            actor.AbilityState, target.Id)
+        };
+        return AdvancedSpecialResult.AppliedWithoutAction;
+
       case nameof(PieceType.GangLeader):
         if (!string.Equals(ability, "Recruit", StringComparison.OrdinalIgnoreCase) ||
             target is null || target.Id == actor.Id ||

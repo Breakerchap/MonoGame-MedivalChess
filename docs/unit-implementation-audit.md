@@ -113,7 +113,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.hired_gun` | Verified | Purchase now charges the immediate 20-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Hired Gun neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
 | `wild_west.buffalo` | Verified | Buffalo may attack by landing on one enemy through the movement path. It deals normal Attack damage, moves onto the destination only if the target dies, otherwise falls back to the previous movement square, pushes a surviving target 1 tile directly away when legal, and consumes its normal attack. Local and authoritative server movement are wired. |
-| `wild_west.bounty_hunter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.bounty_hunter` | Verified | Bounty Hunter now requires an assigned living enemy non-Royal target before it can attack, and it may attack only that target. Purchase enables a free board-wide target choice; if the bounty dies or ceases to be a valid enemy target, the assignment is cleared and a new free selection becomes available at the Hunter's next owner-turn start. Local and authoritative online/server paths are wired. |
 | `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.gang_leader` | Verified | Local/online/server play now supports the codex recruit action once every 3 owner turns. A target must be an enemy, non-neutral, unattached non-Royal in the Gang Leader's attack range; the player pays twice its base cost (including Qilin's chosen X), the unit transfers teams, is locked from acting for the rest of the current turn, and the Gang Leader starts its three-owner-turn cooldown. |
 | `modern.civilian` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -328,3 +328,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Forced movement triggers mines and ability-entity entry effects and can still deliver Plunder treasure or satisfy Escort if the resulting live unit meets those objective rules.
 - Fylgja's attack is consumed only after a valid forced movement completes; an invalid second selection leaves the pending target available for another destination attempt.
 - Added focused regression coverage for the 3-Square geometry used by the forced movement.
+
+
+### 2026-09-22 — Bounty Hunter target lifecycle
+
+- Completed Bounty Hunter's assignment lifecycle using the existing `BountyTargetId` state plus a small selection-availability flag.
+- A newly purchased Bounty Hunter may right-click any enemy, non-neutral, unattached non-Royal on the board to assign its bounty; this target selection is free and does not spend an action.
+- Shared attack validation now rejects every Bounty Hunter attack while no bounty is assigned and rejects attacks against any unit other than the assigned bounty, including Structure attacks with no unit target.
+- When the assigned target dies, the bounty link is cleared immediately but cannot be replaced during the same owner turn. At the Hunter's next owner-turn start, target selection becomes available again.
+- Owner-turn validation also clears a bounty that still exists but is no longer a valid enemy non-Royal, for example after a team-transfer or Royal-proxy change.
+- Added focused regression coverage for unassigned/matching/mismatched bounty attack validation and selection-state transitions.

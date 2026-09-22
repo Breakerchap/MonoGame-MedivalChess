@@ -1391,4 +1391,61 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool IsValidLocalBountyTarget(Piece hunter, Piece target) =>
+    hunter is not null &&
+    target is not null &&
+    target != hunter &&
+    target.Team != hunter.Team &&
+    target.Team != TeamName.Neutral &&
+    target.AttachedTo is null &&
+    !target.IsRoyal;
+
+  private bool TrySelectLocalBountyTarget(Piece hunter, Piece target)
+  {
+    if (hunter.Definition.Type != PieceType.BountyHunter ||
+        !hunter.AbilityState.BountySelectionAvailable ||
+        !IsValidLocalBountyTarget(hunter, target))
+    {
+      return false;
+    }
+
+    hunter.AbilityState = AdvancedAbilityRules.SetBountyTarget(
+      hunter.AbilityState, target.NetworkId);
+    return true;
+  }
+
+  private void ClearLocalBountyTargetsFor(string defeatedId)
+  {
+    foreach (Piece hunter in pieceSetup.Pieces.Where(piece =>
+      piece.Definition.Type == PieceType.BountyHunter &&
+      string.Equals(
+        piece.AbilityState.BountyTargetId, defeatedId, StringComparison.Ordinal)))
+    {
+      hunter.AbilityState = AdvancedAbilityRules.ClearBountyTarget(
+        hunter.AbilityState);
+    }
+  }
+
+  private void RefreshLocalBountySelectionAtOwnerTurnStart(TeamName team)
+  {
+    foreach (Piece hunter in pieceSetup.Pieces.Where(piece =>
+      piece.Team == team && piece.Definition.Type == PieceType.BountyHunter))
+    {
+      Piece currentTarget = string.IsNullOrWhiteSpace(hunter.AbilityState.BountyTargetId)
+        ? null
+        : pieceSetup.Pieces.FirstOrDefault(piece =>
+            piece.NetworkId == hunter.AbilityState.BountyTargetId);
+
+      if (currentTarget is not null && IsValidLocalBountyTarget(hunter, currentTarget))
+      {
+        continue;
+      }
+
+      hunter.AbilityState = AdvancedAbilityRules.EnableBountySelection(
+        AdvancedAbilityRules.ClearBountyTarget(hunter.AbilityState));
+    }
+  }
+
+
 }
