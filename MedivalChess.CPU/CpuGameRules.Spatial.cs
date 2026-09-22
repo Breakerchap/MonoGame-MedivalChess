@@ -27,7 +27,7 @@ public static partial class CpuGameRules
         pieces, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
       rule.MoveRange + (hasPalaceSupport ? 1 : 0),
       position => CanContinueChessPath(pieces, piece, rule, position) &&
-        GetCpuLandingAttackTarget(state, pieces, piece, rule, position) is null
+        GetCpuLandingAttackTarget(source, pieces, piece, rule, position) is null
     );
     AddPawnCapturePaths(source, pieces, piece, rule, paths);
     return paths;

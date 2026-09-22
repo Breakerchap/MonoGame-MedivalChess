@@ -219,13 +219,13 @@ public static partial class CpuGameRules
         {
           NetworkPiece prison = GetCpuSheriffPrison(state.Pieces, actor)!;
           int prisonIndex = FindPieceIndex(state.Pieces, prison.Id);
-          int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+          int sheriffTargetIndex = FindPieceIndex(state.Pieces, target!.Id);
           state.Pieces[prisonIndex] = prison with
           {
             AbilityState = AdvancedAbilityRules.RecordPrisoner(
               prison.AbilityState, target.Id)
           };
-          state.Pieces[targetIndex] = target with
+          state.Pieces[sheriffTargetIndex] = target with
           {
             AttachedToId = prison.Id,
             AttachmentKind = NetworkAttachmentKind.Prisoner,
