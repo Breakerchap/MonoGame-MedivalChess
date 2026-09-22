@@ -32,6 +32,31 @@ public static partial class CpuGameRules
 
     switch (actor.Type)
     {
+      case nameof(PieceType.Sheriff):
+        if (!string.Equals(action.Ability, "Arrest", StringComparison.OrdinalIgnoreCase) ||
+            target is null ||
+            target.Team == actor.Team ||
+            target.Team == NetworkTeam.Neutral ||
+            target.AttachedToId is not null ||
+            !UnitRules.TryGet(target.Type, out UnitRule sheriffTargetRule) ||
+            sheriffTargetRule.Category == RuleCategory.Structure ||
+            RoyalAbilityRules.IsRoyal(
+              target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+            !AdvancedAbilityRules.CanTakeDirectDamage(
+              target.Type, target.AbilityState) ||
+            !HasClearAttackPath(state, state.Pieces, actor, target, state.Barricades))
+        {
+          return false;
+        }
+
+        NetworkPiece? sheriffPrison = GetCpuSheriffPrison(state.Pieces, actor);
+        return sheriffPrison is not null &&
+          AdvancedAbilityRules.CanSheriffArrest(
+            target.Health,
+            targetIsRoyal: false,
+            targetIsStructure: false,
+            sheriffPrison.AbilityState);
+
       case nameof(PieceType.Mason):
         return IsLegalCpuBuilder(state, actor, action,
           new Dictionary<string, (AbilityEntityKind kind, int count, int cost)>(StringComparer.OrdinalIgnoreCase)
@@ -190,6 +215,50 @@ public static partial class CpuGameRules
 
     switch (actor.Type)
     {
+      case nameof(PieceType.Sheriff):
+        {
+          NetworkPiece prison = GetCpuSheriffPrison(state.Pieces, actor)!;
+          int prisonIndex = FindPieceIndex(state.Pieces, prison.Id);
+          int targetIndex = FindPieceIndex(state.Pieces, target!.Id);
+          state.Pieces[prisonIndex] = prison with
+          {
+            AbilityState = AdvancedAbilityRules.RecordPrisoner(
+              prison.AbilityState, target.Id)
+          };
+          state.Pieces[targetIndex] = target with
+          {
+            AttachedToId = prison.Id,
+            AttachmentKind = NetworkAttachmentKind.Prisoner,
+            X = prison.X,
+            Y = prison.Y
+          };
+          for (int attachmentIndex = 0;
+               attachmentIndex < state.Pieces.Count;
+               attachmentIndex++)
+          {
+            NetworkPiece attachment = state.Pieces[attachmentIndex];
+            if (attachment.AttachedToId == target.Id)
+            {
+              state.Pieces[attachmentIndex] = attachment with
+              {
+                X = prison.X,
+                Y = prison.Y
+              };
+            }
+          }
+
+          AttackTurnState attackState = AbilityStateRules.RecordAttack(
+            actor.Type, actor.AttacksThisTurn);
+          state.Pieces[actorIndex] = actor with
+          {
+            AttacksThisTurn = attackState.AttacksThisTurn,
+            HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+            AbilityState = AdvancedAbilityRules.RecordAttack(
+              actor.Type, actor.AbilityState, target.Id)
+          };
+          return true;
+        }
+
       case nameof(PieceType.Mason):
         return ApplyCpuBuilder(state, actorIndex, action,
           new Dictionary<string, (AbilityEntityKind kind, int count, int cost)>(StringComparer.OrdinalIgnoreCase)
@@ -367,6 +436,275 @@ public static partial class CpuGameRules
 
       default:
         return true;
+    }
+  }
+
+
+  private static NetworkPiece? GetCpuSheriffPrison(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece sheriff)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        string.IsNullOrWhiteSpace(sheriff.AbilityState?.LinkedPieceId))
+    {
+      return null;
+    }
+
+    return pieces.FirstOrDefault(piece =>
+      piece.Id == sheriff.AbilityState.LinkedPieceId &&
+      piece.Type == nameof(PieceType.Prison) &&
+      AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+  }
+
+  private static NetworkPiece? GetCpuSheriffNeedingPrison(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkTeam team) =>
+    pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.Type == nameof(PieceType.Sheriff) &&
+      piece.AttachedToId is null &&
+      GetCpuSheriffPrison(pieces, piece) is null);
+
+  private static void TryLinkCpuPurchasedSheriffPrison(
+    CpuMutableGameState state,
+    int prisonIndex)
+  {
+    if (prisonIndex < 0 || prisonIndex >= state.Pieces.Count)
+    {
+      return;
+    }
+
+    NetworkPiece prison = state.Pieces[prisonIndex];
+    if (prison.Type != nameof(PieceType.Prison) ||
+        AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return;
+    }
+
+    NetworkPiece? sheriff = GetCpuSheriffNeedingPrison(
+      state.Pieces, prison.Team);
+    if (sheriff is null)
+    {
+      return;
+    }
+
+    int sheriffIndex = FindPieceIndex(state.Pieces, sheriff.Id);
+    state.Pieces[prisonIndex] = prison with
+    {
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        prison.AbilityState, sheriff.Id)
+    };
+    state.Pieces[sheriffIndex] = sheriff with
+    {
+      AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+        sheriff.AbilityState, prison.Id)
+    };
+  }
+
+  private static bool CanPlaceCpuPrisonRelease(
+    CpuMutableGameState state,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) destination,
+    HashSet<string> ignoredPieceIds)
+  {
+    if (!BoardRules.FootprintFitsBoard(
+          state.Source.Board,
+          destination.x,
+          destination.y,
+          rule.Width,
+          rule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if (state.Terrain.IsLake(square) ||
+          state.Barricades.ContainsKey(square) ||
+          state.AbilityEntities.Any(entity =>
+            entity.X == square.x &&
+            entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team)))
+      {
+        return false;
+      }
+    }
+
+    return !state.Pieces.Any(other =>
+      other.Id != piece.Id &&
+      !ignoredPieceIds.Contains(other.Id) &&
+      other.AttachedToId is null &&
+      other.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        other.X, other.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
+  }
+
+  private static (int x, int y)? FindNearestCpuPrisonPlacement(
+    CpuMutableGameState state,
+    NetworkPiece piece,
+    UnitRule pieceRule,
+    NetworkPiece destroyedPrison,
+    UnitRule prisonRule,
+    HashSet<string> ignoredPieceIds)
+  {
+    foreach ((int x, int y) position in state.Source.Board.Cells
+      .OrderBy(position => AdvancedAbilityRules.GetFootprintChebyshevDistance(
+        destroyedPrison.X, destroyedPrison.Y,
+        prisonRule.Width, prisonRule.Height,
+        position.x, position.y,
+        pieceRule.Width, pieceRule.Height))
+      .ThenByDescending(position => position.y)
+      .ThenByDescending(position => position.x))
+    {
+      if (CanPlaceCpuPrisonRelease(
+        state, piece, pieceRule, position, ignoredPieceIds))
+      {
+        return position;
+      }
+    }
+    return null;
+  }
+
+  private static void ResolveCpuPrisonDestruction(
+    CpuMutableGameState state,
+    NetworkPiece prison)
+  {
+    if (prison.Type != nameof(PieceType.Prison) ||
+        !UnitRules.TryGet(prison.Type, out UnitRule prisonRule))
+    {
+      return;
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState) &&
+        !string.IsNullOrWhiteSpace(prison.AbilityState?.LinkedPieceId))
+    {
+      int sheriffIndex = FindPieceIndex(
+        state.Pieces, prison.AbilityState!.LinkedPieceId);
+      if (sheriffIndex >= 0)
+      {
+        NetworkPiece sheriff = state.Pieces[sheriffIndex];
+        if (sheriff.Type == nameof(PieceType.Sheriff) &&
+            string.Equals(
+              sheriff.AbilityState?.LinkedPieceId,
+              prison.Id,
+              StringComparison.Ordinal))
+        {
+          state.Pieces[sheriffIndex] = sheriff with
+          {
+            AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+              sheriff.AbilityState, null)
+          };
+        }
+      }
+    }
+
+    string[] prisonerIds =
+      prison.AbilityState?.PrisonerIds?.ToArray() ?? Array.Empty<string>();
+    HashSet<string> pendingIds = prisonerIds
+      .Where(id => state.Pieces.Any(piece => piece.Id == id))
+      .ToHashSet(StringComparer.Ordinal);
+
+    foreach (string prisonerId in prisonerIds)
+    {
+      int prisonerIndex = FindPieceIndex(state.Pieces, prisonerId);
+      if (prisonerIndex < 0)
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      NetworkPiece prisoner = state.Pieces[prisonerIndex];
+      if (!UnitRules.TryGet(prisoner.Type, out UnitRule prisonerRule))
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      (int x, int y)? destination = FindNearestCpuPrisonPlacement(
+        state, prisoner, prisonerRule, prison, prisonRule, pendingIds);
+      pendingIds.Remove(prisonerId);
+      if (destination is null)
+      {
+        continue;
+      }
+
+      state.Pieces[prisonerIndex] = prisoner with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y,
+        AttachedToId = null,
+        AttachmentKind = NetworkAttachmentKind.None,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(prisoner.Type),
+        AbilityState = (prisoner.AbilityState ?? new UnitAbilityState()) with
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      };
+      for (int attachmentIndex = 0;
+           attachmentIndex < state.Pieces.Count;
+           attachmentIndex++)
+      {
+        NetworkPiece attachment = state.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == prisoner.Id)
+        {
+          state.Pieces[attachmentIndex] = attachment with
+          {
+            X = destination.Value.x,
+            Y = destination.Value.y
+          };
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return;
+    }
+
+    string[] reinforcements =
+    [
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Brawler),
+      nameof(PieceType.Brawler)
+    ];
+    foreach (string type in reinforcements)
+    {
+      UnitRule rule = UnitRules.GetRequired(type);
+      NetworkPiece probe = new(
+        CreatePieceId(state, type),
+        type,
+        prison.Team,
+        prison.X,
+        prison.Y,
+        rule.Health);
+      (int x, int y)? destination = FindNearestCpuPrisonPlacement(
+        state, probe, rule, prison, prisonRule,
+        new HashSet<string>(StringComparer.Ordinal));
+      if (destination is null)
+      {
+        continue;
+      }
+
+      state.Pieces.Add(probe with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(type),
+        AbilityState = new UnitAbilityState
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      });
     }
   }
 

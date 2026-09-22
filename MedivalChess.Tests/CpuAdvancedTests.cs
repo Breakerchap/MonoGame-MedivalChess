@@ -1238,6 +1238,126 @@ public sealed class CpuAdvancedTests
     Assert.Contains("Threat=", text, StringComparison.Ordinal);
   }
 
+  [Fact]
+  public void CpuSimulation_AbominationLandingAttackKillsAndOccupiesTargetSquare()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-abomination", nameof(PieceType.Abomination), NetworkTeam.Red, 0, 2, 65),
+      new NetworkPiece("blue-peasant", nameof(PieceType.Peasant), NetworkTeam.Blue, 0, 0, 5)
+    );
+    MoveAction landing = new(NetworkTeam.Red, "red-abomination", 0, 0);
+
+    Assert.True(landing.IsLegal(state), landing.Describe());
+    CpuGameState result = landing.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "blue-peasant");
+    NetworkPiece abomination = result.Pieces.Single(piece => piece.Id == "red-abomination");
+    Assert.Equal((0, 0), (abomination.X, abomination.Y));
+    Assert.True(abomination.HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void CpuSimulation_SheriffArrestStoresTargetInLinkedSheriffPrison()
+  {
+    UnitAbilityState sheriffState = AdvancedAbilityRules.LinkSheriffPrison(
+      new UnitAbilityState(), "red-prison");
+    UnitAbilityState prisonState = AdvancedAbilityRules.MarkSheriffPrison(
+      new UnitAbilityState(), "red-sheriff");
+    CpuGameState state = CreateState(
+      new NetworkPiece(
+        "red-sheriff", nameof(PieceType.Sheriff), NetworkTeam.Red, 0, 2, 170,
+        AbilityState: sheriffState),
+      new NetworkPiece(
+        "red-prison", nameof(PieceType.Prison), NetworkTeam.Red, 4, 4, 65,
+        AbilityState: prisonState),
+      new NetworkPiece(
+        "blue-peasant", nameof(PieceType.Peasant), NetworkTeam.Blue, 0, 0, 30)
+    );
+    UseAbilityAction arrest = new(
+      NetworkTeam.Red, "red-sheriff", "Arrest",
+      "blue-peasant", 0, 0);
+
+    Assert.True(arrest.IsLegal(state), arrest.Describe());
+    CpuGameState result = arrest.Apply(state);
+
+    NetworkPiece prisoner = result.Pieces.Single(piece => piece.Id == "blue-peasant");
+    NetworkPiece prison = result.Pieces.Single(piece => piece.Id == "red-prison");
+    NetworkPiece sheriff = result.Pieces.Single(piece => piece.Id == "red-sheriff");
+    Assert.Equal("red-prison", prisoner.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Prisoner, prisoner.AttachmentKind);
+    Assert.Equal((prison.X, prison.Y), (prisoner.X, prisoner.Y));
+    Assert.Contains("blue-peasant", prison.AbilityState!.PrisonerIds);
+    Assert.True(sheriff.HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void CpuSimulation_OrdinaryPrisonDeathSpawnsTwoCowboysAndTwoBrawlers()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-swordsman", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 3, 15),
+      new NetworkPiece("blue-prison", nameof(PieceType.Prison), NetworkTeam.Blue, 0, 0, 1)
+    );
+    AttackAction attack = new(
+      NetworkTeam.Red, "red-swordsman", "blue-prison", 0, 2);
+
+    Assert.True(attack.IsLegal(state), attack.Describe());
+    CpuGameState result = attack.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "blue-prison");
+    Assert.Equal(2, result.Pieces.Count(piece =>
+      piece.Team == NetworkTeam.Blue && piece.Type == nameof(PieceType.Cowboy)));
+    Assert.Equal(2, result.Pieces.Count(piece =>
+      piece.Team == NetworkTeam.Blue && piece.Type == nameof(PieceType.Brawler)));
+    Assert.All(result.Pieces.Where(piece =>
+      piece.Team == NetworkTeam.Blue &&
+      piece.Type is nameof(PieceType.Cowboy) or nameof(PieceType.Brawler)),
+      piece =>
+      {
+        Assert.True(piece.HasMovedThisTurn);
+        Assert.True(piece.HasAttackedThisTurn);
+        Assert.True(piece.AbilityState?.CannotActThisTurn);
+      });
+  }
+
+  [Fact]
+  public void CpuSimulation_SheriffPrisonDeathReleasesWithoutReinforcements()
+  {
+    UnitAbilityState sheriffState = AdvancedAbilityRules.LinkSheriffPrison(
+      new UnitAbilityState(), "blue-prison");
+    UnitAbilityState prisonState = AdvancedAbilityRules.RecordPrisoner(
+      AdvancedAbilityRules.MarkSheriffPrison(
+        new UnitAbilityState(), "blue-sheriff"),
+      "red-peasant");
+    CpuGameState state = CreateState(
+      new NetworkPiece("red-swordsman", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 3, 15),
+      new NetworkPiece(
+        "red-peasant", nameof(PieceType.Peasant), NetworkTeam.Red, 0, 0, 5,
+        AttachedToId: "blue-prison",
+        AttachmentKind: NetworkAttachmentKind.Prisoner),
+      new NetworkPiece(
+        "blue-prison", nameof(PieceType.Prison), NetworkTeam.Blue, 0, 0, 1,
+        AbilityState: prisonState),
+      new NetworkPiece(
+        "blue-sheriff", nameof(PieceType.Sheriff), NetworkTeam.Blue, 4, 4, 170,
+        AbilityState: sheriffState)
+    );
+    AttackAction attack = new(
+      NetworkTeam.Red, "red-swordsman", "blue-prison", 0, 2);
+
+    Assert.True(attack.IsLegal(state), attack.Describe());
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece released = result.Pieces.Single(piece => piece.Id == "red-peasant");
+    NetworkPiece sheriff = result.Pieces.Single(piece => piece.Id == "blue-sheriff");
+    Assert.Null(released.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.None, released.AttachmentKind);
+    Assert.True(released.AbilityState?.CannotActThisTurn);
+    Assert.Null(sheriff.AbilityState?.LinkedPieceId);
+    Assert.DoesNotContain(result.Pieces, piece =>
+      piece.Team == NetworkTeam.Blue &&
+      piece.Type is nameof(PieceType.Cowboy) or nameof(PieceType.Brawler));
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces) => CreateState(pieces, null, null, null, null, 200);
 
   private static CpuGameState CreateBuiltInModeState(string mode)

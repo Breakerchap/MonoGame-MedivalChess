@@ -328,6 +328,10 @@ public static partial class CpuGameRules
     bool royalDeath = IsSharedCpuRoyalDeath(state, piece);
     UnitRules.TryGet(piece.Type, out UnitRule destroyedRule);
     RemovePiece(state, piece.Id);
+    if (piece.Type == nameof(PieceType.Prison))
+    {
+      ResolveCpuPrisonDestruction(state, piece);
+    }
 
     foreach (AbilityDamageInstruction instruction in deathExplosion)
     {

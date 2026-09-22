@@ -62,6 +62,25 @@ public sealed partial class CpuActionGenerator
       return true;
     }
 
+    if (actor.Type == nameof(PieceType.Sheriff))
+    {
+      foreach (NetworkPiece target in state.Pieces
+        .Where(piece =>
+          piece.Team != actor.Team &&
+          piece.Team != NetworkTeam.Neutral &&
+          piece.AttachedToId is null)
+        .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+      {
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(
+            actor.Team, actor.Id, "Arrest",
+            target.Id, targetSquare.x, targetSquare.y), actions);
+        }
+      }
+      return true;
+    }
+
     if (actor.Type == nameof(PieceType.Fafnir))
     {
       AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Transform", null, actor.X, actor.Y), actions);

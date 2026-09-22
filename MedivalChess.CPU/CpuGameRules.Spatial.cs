@@ -26,7 +26,8 @@ public static partial class CpuGameRules
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         pieces, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
       rule.MoveRange + (hasPalaceSupport ? 1 : 0),
-      position => CanContinueChessPath(pieces, piece, rule, position)
+      position => CanContinueChessPath(pieces, piece, rule, position) &&
+        GetCpuLandingAttackTarget(state, pieces, piece, rule, position) is null
     );
     AddPawnCapturePaths(source, pieces, piece, rule, paths);
     return paths;
@@ -54,6 +55,33 @@ public static partial class CpuGameRules
       : rule;
   }
 
+  private static NetworkPiece? GetCpuLandingAttackTarget(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination)
+  {
+    if (!AdvancedAbilityRules.IsLandingAttackUnit(mover.Type))
+    {
+      return null;
+    }
+
+    NetworkPiece[] targets = pieces
+      .Where(piece =>
+        piece.Id != mover.Id &&
+        piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        piece.Team != mover.Team &&
+        AdvancedAbilityRules.CanTakeDirectDamage(piece.Type, piece.AbilityState) &&
+        UnitRules.TryGet(piece.Type, out UnitRule targetRule) &&
+        UnitRules.FootprintsOverlap(
+          destination.x, destination.y, moverRule.Width, moverRule.Height,
+          piece.X, piece.Y, targetRule.Width, targetRule.Height))
+      .ToArray();
+    return targets.Length == 1 ? targets[0] : null;
+  }
+
   private static bool CanLand(
     CpuGameState state,
     IReadOnlyList<NetworkPiece> pieces,
@@ -64,6 +92,8 @@ public static partial class CpuGameRules
   )
   {
     if (CanChessCaptureLand(state, pieces, piece, rule, destination)) return true;
+    bool landingAttack = GetCpuLandingAttackTarget(
+      state, pieces, piece, rule, destination) is not null;
     if (!CanPlace(
       state,
       pieces,
@@ -72,7 +102,7 @@ public static partial class CpuGameRules
       destination.y,
       piece.Id,
       AbilityRules.IgnoresImpassableTerrain(rule),
-      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
+      landingAttack || AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
     ))
     {
       return false;
@@ -145,8 +175,10 @@ public static partial class CpuGameRules
         }
         NetworkPiece? blocker = pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id &&
           other.Type != "Farm" && UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
-        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
-            GetChessCaptureTarget(pieces, piece, rule, position) != blocker)
+        if (blocker is not null &&
+            !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
+            GetChessCaptureTarget(pieces, piece, rule, position) != blocker &&
+            GetCpuLandingAttackTarget(state, pieces, piece, rule, position) != blocker)
         {
           return false;
         }
