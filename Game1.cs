@@ -2549,6 +2549,14 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (actor.Definition.Type == PieceType.Herald &&
+        target is not null &&
+        CanToggleLocalHeraldCompanion(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "ToggleCompanion", target.NetworkId, target.Position);
+      return true;
+    }
+
     if (actor.Definition.Type == PieceType.Succubus)
     {
       if (actor.AttachedTo is null &&
@@ -4396,6 +4404,12 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (actor.Definition.Type == PieceType.Herald &&
+        TryToggleLocalHeraldCompanion(actor, targetPiece))
+    {
+      return true;
+    }
+
     if (actor.Definition.Type == PieceType.Succubus &&
         TryUseLocalSuccubusSpecial(actor, targetPosition, targetPiece))
     {
@@ -5082,11 +5096,19 @@ internal sealed partial class Game1 : Game
     );
     List<Piece> companions = [];
 
-    if (piece.Definition.Type == PieceType.Herald)
+    if (piece.Definition.Type == PieceType.Herald &&
+        string.Equals(piece.AbilityState.PendingAbility, "HeraldCompanions", StringComparison.Ordinal))
     {
+      HashSet<string> selectedIds = piece.AbilityState.PendingSelections
+        .Select(selection => selection.TargetId)
+        .Where(id => !string.IsNullOrWhiteSpace(id))
+        .Take(3)
+        .ToHashSet(StringComparer.Ordinal);
+
       foreach (Piece candidate in pieceSetup.Pieces)
       {
-        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
+        if (selectedIds.Contains(candidate.NetworkId) &&
+            candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
             !IsTreasureCarrier(candidate) &&
             AbilityRules.IsHeraldCompanion(
               UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position))
@@ -5096,7 +5118,19 @@ internal sealed partial class Game1 : Game
       }
     }
 
+    if (companions.Count > 1)
+    {
+      companions = companions
+        .OrderByDescending(companion =>
+          companion.Position.x * displacement.x + companion.Position.y * displacement.y)
+        .ToList();
+    }
+
     pieceSetup.MovePiece(piece, destination);
+    if (piece.Definition.Type == PieceType.Herald)
+    {
+      piece.AbilityState = AdvancedAbilityRules.ClearPendingSelections(piece.AbilityState);
+    }
 
     foreach (Piece companion in companions)
     {
@@ -11422,6 +11456,15 @@ internal sealed partial class Game1 : Game
         : string.IsNullOrWhiteSpace(piece.AbilityState.BountyTargetId)
           ? "NEW BOUNTY AVAILABLE NEXT OWNER TURN"
           : "MAY ATTACK ONLY THE ASSIGNED BOUNTY";
+    }
+
+    if (piece.Definition.Type == PieceType.Herald)
+    {
+      int selectedCompanions = string.Equals(
+        piece.AbilityState.PendingAbility, "HeraldCompanions", StringComparison.Ordinal)
+          ? piece.AbilityState.PendingSelections.Count
+          : 0;
+      return $"RIGHT-CLICK adjacent friendly 1 x 1 units to toggle followers ({selectedCompanions}/3), then move";
     }
 
     if (piece.HasAttackedThisTurn)

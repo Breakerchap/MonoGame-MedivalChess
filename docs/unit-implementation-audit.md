@@ -144,7 +144,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.archangel` | Verified | Placement is restricted to otherwise-legal squares adjacent (including diagonally) to the owning team's current Royal across local/server/CPU, including Royal proxies; CPU purchase coverage verifies adjacent acceptance and non-adjacent rejection. |
 | `angels_demons.archdemon` | Verified | Purchase placement now requires one friendly non-Structure unit under the Archdemon footprint. The 2×2 footprint must fit legal terrain, may be centred from a sacrifice in No-Man's-Land or the normal placement area, the sacrificed unit is removed, and the Archdemon is placed at that unit's position in local and authoritative online/server play. |
 | `angels_demons.imp` | Verified | Imp active attachment is wired across local/server/CPU and online play with one Imp per host; the host dynamically gains +1 Move and +15 Attack and loses 5 Health at each owner-turn start. Shared and CPU runtime coverage is green. |
-| `angels_demons.herald` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.herald` | Verified | Before moving, the Herald may freely toggle up to three adjacent friendly unattached 1×1 units as companions. Only those selected units attempt to preserve their relative positions when the Herald moves; each follower moves only if its translated square is legal, is marked as having moved, and carries its attachments with it. Companion selection clears after the Herald moves. Local and authoritative online/server paths are wired. |
 | `angels_demons.satan` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `chess.pawn` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `chess.chess_knight` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -338,3 +338,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - When the assigned target dies, the bounty link is cleared immediately but cannot be replaced during the same owner turn. At the Hunter's next owner-turn start, target selection becomes available again.
 - Owner-turn validation also clears a bounty that still exists but is no longer a valid enemy non-Royal, for example after a team-transfer or Royal-proxy change.
 - Added focused regression coverage for unassigned/matching/mismatched bounty attack validation and selection-state transitions.
+
+
+### 2026-09-22 — Herald companion selection
+
+- Replaced the old implicit “move every adjacent ally” behaviour with an explicit optional companion selection matching the codex.
+- Before moving, the Herald may right-click adjacent friendly unattached 1×1 units to toggle them into or out of its follower set, capped at three. These selection changes are free and do not spend an action.
+- On movement, only the selected units are considered. Each preserves its relative offset from the Herald when that translated destination is currently legal; an illegal follower destination simply leaves that follower behind rather than invalidating the Herald's move.
+- Selected followers are processed front-to-back along the movement vector so members of the same formation do not incorrectly block one another's translated movement.
+- Followers are marked as moved, their movement state is recorded, and any attachments on those followers move with them on the authoritative server.
+- Herald's pending companion selection is cleared after it moves.
+- Added focused shared regression coverage for toggle semantics and the three-companion cap.

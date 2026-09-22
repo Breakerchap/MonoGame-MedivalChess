@@ -798,4 +798,23 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void HeraldCompanionSelectionTogglesAndCapsAtThree()
+  {
+    UnitAbilityState state = new();
+    state = AdvancedAbilityRules.TogglePendingTarget(state, "HeraldCompanions", "a", 3);
+    state = AdvancedAbilityRules.TogglePendingTarget(state, "HeraldCompanions", "b", 3);
+    state = AdvancedAbilityRules.TogglePendingTarget(state, "HeraldCompanions", "c", 3);
+    state = AdvancedAbilityRules.TogglePendingTarget(state, "HeraldCompanions", "d", 3);
+
+    Assert.Equal(3, state.PendingSelections.Count);
+    Assert.DoesNotContain(state.PendingSelections, selection => selection.TargetId == "d");
+
+    state = AdvancedAbilityRules.TogglePendingTarget(state, "HeraldCompanions", "b", 3);
+    Assert.Equal(2, state.PendingSelections.Count);
+    Assert.DoesNotContain(state.PendingSelections, selection => selection.TargetId == "b");
+  }
+
+
 }

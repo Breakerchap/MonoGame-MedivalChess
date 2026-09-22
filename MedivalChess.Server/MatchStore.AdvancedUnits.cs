@@ -569,6 +569,29 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Herald):
+        if (!string.Equals(ability, "ToggleCompanion", StringComparison.OrdinalIgnoreCase) ||
+            target is null || target.Id == actor.Id ||
+            target.Team != actor.Team || target.AttachedToId is not null ||
+            target.Id == match.TreasureCarrierId ||
+            !AdvancedAbilityRules.CanMove(actor.Type, actor.AbilityState, actor.HasMovedThisTurn) ||
+            !UnitRules.TryGet(target.Type, out UnitRule heraldTargetRule) ||
+            !AbilityRules.IsHeraldCompanion(
+              heraldTargetRule, (actor.X, actor.Y), (target.X, target.Y)))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          AbilityState = AdvancedAbilityRules.TogglePendingTarget(
+            actor.AbilityState,
+            "HeraldCompanions",
+            target.Id,
+            3)
+        };
+        return AdvancedSpecialResult.AppliedWithoutAction;
+
       case nameof(PieceType.BountyHunter):
         if (!string.Equals(ability, "SetBounty", StringComparison.OrdinalIgnoreCase) ||
             actor.AbilityState?.BountySelectionAvailable != true ||

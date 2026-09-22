@@ -1448,4 +1448,40 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool CanToggleLocalHeraldCompanion(Piece herald, Piece target)
+  {
+    if (herald.Definition.Type != PieceType.Herald ||
+        target is null || target == herald ||
+        target.Team != herald.Team ||
+        target.AttachedTo is not null ||
+        target.Definition.Size != (1, 1) ||
+        IsTreasureCarrier(target) ||
+        !CanMoveThisTurn(herald))
+    {
+      return false;
+    }
+
+    return AbilityRules.IsHeraldCompanion(
+      UnitRules.FromPieceDefinition(target.Definition),
+      herald.Position,
+      target.Position);
+  }
+
+  private bool TryToggleLocalHeraldCompanion(Piece herald, Piece target)
+  {
+    if (!CanToggleLocalHeraldCompanion(herald, target))
+    {
+      return false;
+    }
+
+    herald.AbilityState = AdvancedAbilityRules.TogglePendingTarget(
+      herald.AbilityState,
+      "HeraldCompanions",
+      target.NetworkId,
+      3);
+    return true;
+  }
+
+
 }

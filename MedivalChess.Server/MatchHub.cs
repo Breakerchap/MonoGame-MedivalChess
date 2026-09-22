@@ -2263,23 +2263,57 @@ public sealed partial class MatchStore
     if (herald.Type != nameof(PieceType.Herald)) return;
     int deltaX = herald.X - oldX;
     int deltaY = herald.Y - oldY;
-    List<int> companions = match.Pieces
-      .Select((piece, index) => (piece, index))
-      .Where(entry => entry.piece.Id != herald.Id && entry.piece.Id != match.TreasureCarrierId &&
-        entry.piece.Team == herald.Team && entry.piece.AttachedToId is null &&
-        UnitRules.TryGet(entry.piece.Type, out UnitRule rule) &&
-        AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (entry.piece.X, entry.piece.Y)))
-      .Select(entry => entry.index)
+    HashSet<string> selectedIds =
+      string.Equals(herald.AbilityState?.PendingAbility, "HeraldCompanions", StringComparison.Ordinal)
+        ? herald.AbilityState!.PendingSelections
+          .Select(selection => selection.TargetId)
+          .Where(id => !string.IsNullOrWhiteSpace(id))
+          .Take(3)
+          .ToHashSet(StringComparer.Ordinal)
+        : [];
+
+    List<string> companionIds = match.Pieces
+      .Where(piece => selectedIds.Contains(piece.Id) &&
+        piece.Id != herald.Id && piece.Id != match.TreasureCarrierId &&
+        piece.Team == herald.Team && piece.AttachedToId is null &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        AbilityRules.IsHeraldCompanion(rule, (oldX, oldY), (piece.X, piece.Y)))
+      .OrderByDescending(piece => piece.X * deltaX + piece.Y * deltaY)
+      .Select(piece => piece.Id)
       .ToList();
-    foreach (int index in companions)
+
+    foreach (string companionId in companionIds)
     {
+      int index = match.Pieces.FindIndex(piece => piece.Id == companionId);
+      if (index < 0) continue;
       NetworkPiece companion = match.Pieces[index];
       if (!UnitRules.TryGet(companion.Type, out UnitRule rule)) continue;
+      int companionOldX = companion.X;
+      int companionOldY = companion.Y;
       (int x, int y) destination = (companion.X + deltaX, companion.Y + deltaY);
       if (CanLandAt(match, companion, rule, destination))
       {
-        match.Pieces[index] = companion with { X = destination.x, Y = destination.y, HasMovedThisTurn = true };
+        NetworkPiece moved = companion with
+        {
+          X = destination.x,
+          Y = destination.y,
+          HasMovedThisTurn = true,
+          AbilityState = AdvancedAbilityRules.RecordMove(companion.AbilityState)
+        };
+        match.Pieces[index] = moved;
+        MoveAttachedPieces(match, moved, companionOldX, companionOldY);
       }
+    }
+
+    int heraldIndex = match.Pieces.FindIndex(piece => piece.Id == herald.Id);
+    if (heraldIndex >= 0)
+    {
+      NetworkPiece liveHerald = match.Pieces[heraldIndex];
+      match.Pieces[heraldIndex] = liveHerald with
+      {
+        AbilityState = AdvancedAbilityRules.ClearPendingSelections(
+          liveHerald.AbilityState)
+      };
     }
   }
 

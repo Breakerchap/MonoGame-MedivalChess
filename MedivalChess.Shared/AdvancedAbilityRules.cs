@@ -481,6 +481,36 @@ public static class AdvancedAbilityRules
     };
   }
 
+  public static UnitAbilityState TogglePendingTarget(
+    UnitAbilityState? state,
+    string ability,
+    string targetId,
+    int maximumTargets)
+  {
+    state ??= new();
+    IReadOnlyList<AbilitySelection> existing =
+      string.Equals(state.PendingAbility, ability, StringComparison.Ordinal)
+        ? state.PendingSelections
+        : Array.Empty<AbilitySelection>();
+    List<AbilitySelection> selections = existing.ToList();
+    int existingIndex = selections.FindIndex(selection =>
+      string.Equals(selection.TargetId, targetId, StringComparison.Ordinal));
+    if (existingIndex >= 0)
+    {
+      selections.RemoveAt(existingIndex);
+    }
+    else if (selections.Count < Math.Max(0, maximumTargets))
+    {
+      selections.Add(new AbilitySelection(targetId, 0, 0));
+    }
+
+    return state with
+    {
+      PendingAbility = ability,
+      PendingSelections = selections
+    };
+  }
+
   public static UnitAbilityState ClearPendingSelections(UnitAbilityState? state)
   {
     state ??= new();
