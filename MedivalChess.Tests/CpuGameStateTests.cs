@@ -2058,6 +2058,81 @@ public sealed class CpuGameStateTests
     Assert.True(after.Pieces.Single(piece => piece.Id == "mashhit").HasAttackedThisTurn);
   }
 
+  [Fact]
+  public void ArchangelPurchaseRequiresAdjacentFriendlyRoyal()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    Board board = BoardRules.GetBoard(configuration);
+    UnitRule archangelRule = UnitRules.GetRequired(nameof(PieceType.Archangel));
+    UnitRule kingRule = UnitRules.GetRequired(nameof(PieceType.King));
+
+    (int x, int y)[] archangelSquares = board.Cells
+      .Where(square => BoardRules.CanPlaceForTeam(
+        board,
+        configuration.GameMode,
+        configuration.PlayerCount,
+        NetworkTeam.Red,
+        square.x,
+        square.y,
+        archangelRule.Width,
+        archangelRule.Height))
+      .ToArray();
+
+    (int x, int y) royalPosition = board.Cells.First(square =>
+      BoardRules.CanPlaceForTeam(
+        board,
+        configuration.GameMode,
+        configuration.PlayerCount,
+        NetworkTeam.Red,
+        square.x,
+        square.y,
+        kingRule.Width,
+        kingRule.Height) &&
+      archangelSquares.Any(candidate =>
+        AbilityRules.AreAdjacent(
+          archangelRule, candidate, kingRule, square, includeDiagonal: true)));
+
+    (int x, int y) adjacent = archangelSquares.First(candidate =>
+      AbilityRules.AreAdjacent(
+        archangelRule, candidate, kingRule, royalPosition, includeDiagonal: true));
+
+    (int x, int y) far = archangelSquares.First(candidate =>
+      !AbilityRules.AreAdjacent(
+        archangelRule, candidate, kingRule, royalPosition, includeDiagonal: true) &&
+      !UnitRules.FootprintsOverlap(
+        candidate.x, candidate.y, archangelRule.Width, archangelRule.Height,
+        royalPosition.x, royalPosition.y, kingRule.Width, kingRule.Height));
+
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece(
+        "royal", nameof(PieceType.King), NetworkTeam.Red,
+        royalPosition.x, royalPosition.y, kingRule.Health)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 1000, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 1000, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: board
+    );
+
+    PurchaseAction adjacentPurchase = new(
+      NetworkTeam.Red, nameof(PieceType.Archangel), adjacent.x, adjacent.y);
+    PurchaseAction farPurchase = new(
+      NetworkTeam.Red, nameof(PieceType.Archangel), far.x, far.y);
+
+    Assert.True(adjacentPurchase.IsLegal(state));
+    Assert.False(farPurchase.IsLegal(state));
+
+    CpuGameState purchased = adjacentPurchase.Apply(state);
+    Assert.Contains(purchased.Pieces, piece =>
+      piece.Type == nameof(PieceType.Archangel) &&
+      piece.Team == NetworkTeam.Red &&
+      piece.X == adjacent.x &&
+      piece.Y == adjacent.y);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();

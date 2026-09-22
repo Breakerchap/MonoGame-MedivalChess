@@ -141,7 +141,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `angels_demons.archangel` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.archangel` | Verified | Placement is restricted to otherwise-legal squares adjacent (including diagonally) to the owning team's current Royal across local/server/CPU, including Royal proxies; CPU purchase coverage verifies adjacent acceptance and non-adjacent rejection. |
 | `angels_demons.archdemon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.imp` | Verified | Imp active attachment is wired across local/server/CPU and online play with one Imp per host; the host dynamically gains +1 Move and +15 Attack and loses 5 Health at each owner-turn start. Shared and CPU runtime coverage is green. |
 | `angels_demons.herald` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -193,3 +193,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Completed Demolitionist local/client parity and tightened authoritative timing: placing TNT marks the active ability used for that owner turn, so detonation is only legal on a later owner turn. TNT damage is a fixed 30 across local/server/CPU and terrain in the surrounding 3x3 is destroyed.
 - Completed Mashhit local/client parity and corrected the server path so all supported Structure representations, including barricades, can be destroyed in range.
 - Extended CPU runtime regression coverage for the full Hwacha reload cycle, later-turn-only TNT detonation, and Mashhit structure destruction.
+
+### 2026-09-22 — Archangel placement batch
+
+- Added a shared Archangel Royal-adjacency placement requirement.
+- Local purchase placement and previews, authoritative server placement, and CPU purchase legality now all require the Archangel's 2x2 footprint to be adjacent to the owning team's current Royal; Royal proxies are recognised consistently.
+- Added CPU runtime coverage proving a valid adjacent purchase succeeds while an otherwise-valid non-adjacent purchase is rejected.

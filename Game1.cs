@@ -3050,6 +3050,26 @@ internal sealed partial class Game1 : Game
       }
     }
 
+    if (requiredOwner.HasValue &&
+        RoyalAbilityRules.RequiresAdjacentRoyalPlacement(definition.Type.ToString()))
+    {
+      UnitRule placingRule = UnitRules.FromPieceDefinition(definition);
+      bool hasAdjacentRoyal = pieceSetup.Pieces.Any(piece =>
+        piece.Team == requiredOwner.Value &&
+        piece.IsRoyal &&
+        AbilityRules.AreAdjacent(
+          placingRule,
+          position,
+          UnitRules.FromPieceDefinition(piece.Definition),
+          piece.Position,
+          includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+        definition.Type.ToString(), hasAdjacentRoyal))
+      {
+        return false;
+      }
+    }
+
     return pieceSetup.IsFootprintClear(definition, position, ignoredPiece);
   }
 

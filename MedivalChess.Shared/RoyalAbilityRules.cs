@@ -58,6 +58,14 @@ public static class RoyalAbilityRules
     !IsRoyal(targetType, targetIsRoyalProxy, null) &&
     !string.IsNullOrWhiteSpace(targetId);
 
+  public static bool RequiresAdjacentRoyalPlacement(string unitType) =>
+    unitType == nameof(PieceType.Archangel);
+
+  public static bool MeetsAdjacentRoyalPlacementRequirement(
+    string unitType,
+    bool hasAdjacentFriendlyRoyal
+  ) => !RequiresAdjacentRoyalPlacement(unitType) || hasAdjacentFriendlyRoyal;
+
   public static PhantomPossessionState Possess(string targetId) => new(targetId, true);
 
   public static PhantomPossessionState Unpossess() => new(null, false);

@@ -1385,6 +1385,22 @@ public sealed partial class MatchStore
       : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
     if (!inValidTerritory) return false;
 
+    if (RoyalAbilityRules.RequiresAdjacentRoyalPlacement(unit.Type))
+    {
+      UnitRule placingRule = UnitRules.GetRequired(unit.Type);
+      bool hasAdjacentRoyal = match.Pieces.Any(piece =>
+        piece.Team == team &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+        UnitRules.TryGet(piece.Type, out UnitRule royalRule) &&
+        AbilityRules.AreAdjacent(
+          placingRule, (x, y), royalRule, (piece.X, piece.Y), includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+        unit.Type, hasAdjacentRoyal))
+      {
+        return false;
+      }
+    }
+
     for (int offsetY = 0; offsetY < unit.Height; offsetY++)
       for (int offsetX = 0; offsetX < unit.Width; offsetX++)
       {

@@ -332,6 +332,19 @@ public static partial class CpuGameRules
     bool inValidZone = AbilityRules.MayPlaceInNoMansLand(rule.Type) && !initialBuy
       ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
       : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
+
+    if (inValidZone && RoyalAbilityRules.RequiresAdjacentRoyalPlacement(rule.Type))
+    {
+      bool hasAdjacentRoyal = state.Pieces.Any(piece =>
+        piece.Team == action.Team &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+        UnitRules.TryGet(piece.Type, out UnitRule royalRule) &&
+        AbilityRules.AreAdjacent(
+          rule, (action.X, action.Y), royalRule, (piece.X, piece.Y), includeDiagonal: true));
+      inValidZone = RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+        rule.Type, hasAdjacentRoyal);
+    }
+
     // No-Man's-Land units must occupy an empty square. Hiring a neutral Mercenary above is the
     // only intentional occupied-square exception.
     bool noMansLandSquareIsEmpty = !AbilityRules.MayPlaceInNoMansLand(rule.Type) || !state.Pieces.Any(piece =>
