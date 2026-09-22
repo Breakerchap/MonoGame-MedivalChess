@@ -465,6 +465,79 @@ public sealed partial class MatchStore
     return true;
   }
 
+  private static NetworkPiece? GetServerRoyalHealthPayer(Match match, NetworkTeam team) =>
+    match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedToId is null &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .FirstOrDefault();
+
+  private static bool CanPayServerRoyalHealth(Match match, NetworkTeam team, int amount)
+  {
+    NetworkPiece? royal = GetServerRoyalHealthPayer(match, team);
+    return royal is not null && royal.Health > Math.Max(0, amount);
+  }
+
+  private static bool TryPayServerRoyalHealth(Match match, NetworkTeam team, int amount)
+  {
+    NetworkPiece? royal = GetServerRoyalHealthPayer(match, team);
+    int cost = Math.Max(0, amount);
+    if (royal is null || royal.Health <= cost)
+    {
+      return false;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == royal.Id);
+    if (index < 0)
+    {
+      return false;
+    }
+
+    match.Pieces[index] = royal with { Health = royal.Health - cost };
+    return true;
+  }
+
+  private static void ApplyServerContractDemonUpkeep(Match match, NetworkTeam team)
+  {
+    foreach (string demonId in match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedToId is null &&
+        piece.Type == nameof(PieceType.ContractDemon))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      if (TryPayServerRoyalHealth(
+            match, team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+      {
+        continue;
+      }
+
+      int index = match.Pieces.FindIndex(piece => piece.Id == demonId);
+      if (index < 0) continue;
+      NetworkPiece demon = match.Pieces[index];
+      match.Pieces[index] = demon with
+      {
+        Team = NetworkTeam.Neutral,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(demon.Type),
+        AbilityState = (demon.AbilityState ?? new UnitAbilityState()) with
+        {
+          CannotActThisTurn = true,
+          CannotMoveThisTurn = true
+        }
+      };
+    }
+  }
+
   private static int GetSharedServerAttachmentMovementBonus(Match match, NetworkPiece host) =>
     match.Pieces
       .Where(piece => piece.AttachedToId == host.Id)

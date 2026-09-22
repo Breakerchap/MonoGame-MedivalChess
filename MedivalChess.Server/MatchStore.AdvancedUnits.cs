@@ -56,6 +56,66 @@ public sealed partial class MatchStore
       return AdvancedSpecialResult.AppliedAction;
     }
 
+    if (actor.Type == nameof(PieceType.Succubus))
+    {
+      if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+      {
+        return AdvancedSpecialResult.Rejected;
+      }
+
+      if (string.Equals(ability, "Attach", StringComparison.OrdinalIgnoreCase))
+      {
+        if (actor.AttachedToId is not null || target is null ||
+            target.Team == actor.Team || target.AttachedToId is not null ||
+            !AdvancedAbilityRules.CanSuccubusAttach(actor.AbilityState, target.Id))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          AttachedToId = target.Id,
+          AttachmentKind = NetworkAttachmentKind.Succubus,
+          X = target.X,
+          Y = target.Y
+        };
+        return AdvancedSpecialResult.AppliedWithoutAction;
+      }
+
+      if (string.Equals(ability, "Detach", StringComparison.OrdinalIgnoreCase))
+      {
+        if (actor.AttachmentKind != NetworkAttachmentKind.Succubus ||
+            string.IsNullOrWhiteSpace(actor.AttachedToId) ||
+            target is not null ||
+            !UnitRules.TryGet(actor.Type, out UnitRule actorRule))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        NetworkPiece? host = match.Pieces.FirstOrDefault(piece => piece.Id == actor.AttachedToId);
+        if (host is null || !UnitRules.TryGet(host.Type, out UnitRule hostRule) ||
+            !AbilityRules.AreAdjacent(
+              actorRule, (request.TargetX, request.TargetY),
+              hostRule, (host.X, host.Y), includeDiagonal: true) ||
+            !CanDisplaceServerPieceTo(
+              match, actor, actorRule, (request.TargetX, request.TargetY)))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          AttachedToId = null,
+          AttachmentKind = NetworkAttachmentKind.None,
+          X = request.TargetX,
+          Y = request.TargetY
+        };
+        return AdvancedSpecialResult.AppliedWithoutAction;
+      }
+
+      return AdvancedSpecialResult.Rejected;
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return IsAdvancedSpecialUnit(actor.Type) ? AdvancedSpecialResult.Rejected : AdvancedSpecialResult.NotHandled;

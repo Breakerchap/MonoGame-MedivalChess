@@ -138,9 +138,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `angels_demons.gatekeeper` | Verified | Portal/Seal build selection and free demolition are wired in local/online play; Portal pairs are linked and friendly units ending movement on one teleport to the other when the exit is legal. Seal blocking/expiry remains shared with server behaviour. |
 | `angels_demons.beelzebub` | Verified | Shared/local/server/CPU rules already implement terrain immunity, movement through units, push/pull displacement immunity, and the codex retaliation: after a direct attack, the attacker is displaced up to 2 tiles directly away with shortened legal fallback. Focused shared coverage verifies the retaliation and immunity rules. |
-| `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.contract_demon` | Verified | May be purchased in friendly territory or No-Man's-Land. Hiring immediately costs 5 Health from the team's current Royal; each owner-turn start charges another 5 Royal Health per owned Contract Demon, and a Demon that cannot be paid becomes neutral and cannot act that turn. It can also be fired manually on its owner's turn. Local and authoritative server paths are wired. |
 | `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
-| `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.succubus` | Verified | Normal attacks record the attacked target; a surviving target may then be attached to for free by right-clicking it. An attached Succubus moves with its host, may detach for free onto a legal adjacent tile on its owner's turn, and may still attack. The host cannot target its attached Succubus, while another enemy unit can attack the Succubus on the host's square. Local and authoritative server paths are wired. |
 | `angels_demons.archangel` | Verified | Placement is restricted to otherwise-legal squares adjacent (including diagonally) to the owning team's current Royal across local/server/CPU, including Royal proxies; CPU purchase coverage verifies adjacent acceptance and non-adjacent rejection. |
 | `angels_demons.archdemon` | Verified | Purchase placement now requires one friendly non-Structure unit under the Archdemon footprint. The 2×2 footprint must fit legal terrain, may be centred from a sacrifice in No-Man's-Land or the normal placement area, the sacrificed unit is removed, and the Archdemon is placed at that unit's position in local and authoritative online/server play. |
 | `angels_demons.imp` | Verified | Imp active attachment is wired across local/server/CPU and online play with one Imp per host; the host dynamically gains +1 Move and +15 Attack and loses 5 Health at each owner-turn start. Shared and CPU runtime coverage is green. |
@@ -275,3 +275,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Extended Helicopter's existing direct-damage immunity to active-ability targeting and ability-entity damage so units and Structures cannot interact with it through those paths.
 - Verified Beelzebub's remaining audit gap was stale rather than missing implementation: the shared attack planner already retaliates against an attacker with a two-tile shortened-fallback push, while shared movement/displacement rules already grant terrain/unit traversal and push immunity.
 - Added focused shared regression coverage for Beelzebub retaliation/push immunity and Helicopter's No-Man's-Land/direct-interaction rules.
+
+
+### 2026-09-22 — Contract Demon and Succubus batch
+
+- Completed Contract Demon purchase/upkeep flow. It may use either friendly territory or No-Man's-Land, and purchase now requires and immediately deducts the codex 5 Royal Health cost.
+- At each owner-turn start, Contract Demons are processed deterministically and each attempts to deduct another 5 Health from the team's current living Royal. If the cost cannot be paid without reducing the Royal to zero, that Demon becomes neutral and is locked for the turn.
+- Added Contract Demon to the existing free/manual Fire flow so its owner can voluntarily make it neutral on their turn.
+- Completed Succubus's optional post-attack attachment flow. Normal attacks remember the surviving target, and a free right-click follow-up attaches only to that unit.
+- Attached Succubi keep their independent attack capability. The host itself is blocked from targeting its attached Succubus, while another opposing unit can target the attached Succubus on the host's square.
+- Added free owner-turn detachment to a legal adjacent tile in local and authoritative server play.
+- Added focused shared regression coverage for Succubus attack-target state and Contract Demon placement/fire constants.

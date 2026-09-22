@@ -579,7 +579,13 @@ internal sealed partial class Game1 : Game
       }
       else if (selectedPiece == null)
       {
-        if (inspectablePieceAtTarget is not null)
+        Piece ownedAttachedActionUnit =
+          GetOwnedAttachedActionUnitAt(targetPosition, Team.CurrentTurn);
+        if (ownedAttachedActionUnit is not null)
+        {
+          SelectPiece(ownedAttachedActionUnit, allowAttachedPiece: true);
+        }
+        else if (inspectablePieceAtTarget is not null)
         {
           SelectPiece(inspectablePieceAtTarget);
         }
@@ -624,7 +630,8 @@ internal sealed partial class Game1 : Game
       else
       {
         Piece hostilePieceAtTarget = GetUnattachedHostilePieceAt(targetPosition, selectedPiece.Team);
-        Piece normalAttackTarget = hostilePieceAtTarget ??
+        Piece attachedSuccubusTarget = GetAttackableAttachedSuccubusAt(targetPosition, selectedPiece);
+        Piece normalAttackTarget = hostilePieceAtTarget ?? attachedSuccubusTarget ??
           (AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(selectedPiece.Definition.Type.ToString()) &&
            friendlyPieceAtTarget is not null && friendlyPieceAtTarget != selectedPiece
             ? friendlyPieceAtTarget
@@ -1088,7 +1095,11 @@ internal sealed partial class Game1 : Game
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     int selectedPurchasePrice = GetSelectedPurchasePrice(definition);
     bool specialPurchasePlacement = CanPlaceSpecialPurchase(definition, targetPosition);
-    bool canPlace =
+    bool canPayContractRoyalHealth =
+      definition.Type != PieceType.ContractDemon ||
+      CanPayLocalRoyalHealth(
+        Team.CurrentTurn, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep);
+    bool canPlace = canPayContractRoyalHealth &&
       (specialPurchasePlacement ||
        CanPlaceLocalHelicopter(definition, targetPosition) ||
        (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
@@ -1111,6 +1122,12 @@ internal sealed partial class Game1 : Game
     int price = isOpeningFarmPlacement ? 0 : selectedPurchasePrice;
     int immediateUpkeep = isOpeningFarmPlacement ? 0 :
       AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
+    if (definition.Type == PieceType.ContractDemon &&
+        !TryPayLocalRoyalHealth(
+          Team.CurrentTurn, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+    {
+      return;
+    }
     buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price - immediateUpkeep);
     int qilinCost = definition.Type == PieceType.Qilin ? price : 0;
     (int x, int y) purchasePlacement = targetPosition;
@@ -2091,6 +2108,7 @@ internal sealed partial class Game1 : Game
       Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms.");
     }
 
+    ApplyLocalContractDemonUpkeep(teamName);
     ApplySharedAbilityUpkeep(teamName, team);
     if (_screen == Screen.GameOver)
     {
@@ -2516,6 +2534,32 @@ internal sealed partial class Game1 : Game
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
+    }
+
+    if (actor.Definition.Type == PieceType.Succubus)
+    {
+      if (actor.AttachedTo is null &&
+          target is not null &&
+          target.Team != actor.Team &&
+          target.AttachedTo is null &&
+          AdvancedAbilityRules.CanSuccubusAttach(actor.AbilityState, target.NetworkId))
+      {
+        _ = SendOnlineSpecialAsync(actor, "Attach", target.NetworkId, target.Position);
+        return true;
+      }
+
+      if (actor.AttachedTo is not null &&
+          actor.AttachmentKind == AttachmentKind.Succubus &&
+          target is null &&
+          AbilityRules.AreAdjacent(
+            UnitRules.FromPieceDefinition(actor.Definition), targetPosition,
+            UnitRules.FromPieceDefinition(actor.AttachedTo.Definition), actor.AttachedTo.Position,
+            includeDiagonal: true) &&
+          CanDisplaceLocalPieceTo(actor, targetPosition))
+      {
+        _ = SendOnlineSpecialAsync(actor, "Detach", null, targetPosition);
+        return true;
+      }
     }
 
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
@@ -4288,6 +4332,13 @@ internal sealed partial class Game1 : Game
     {
       return false;
     }
+
+    if (actor.Definition.Type == PieceType.Succubus &&
+        TryUseLocalSuccubusSpecial(actor, targetPosition, targetPiece))
+    {
+      return true;
+    }
+
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is

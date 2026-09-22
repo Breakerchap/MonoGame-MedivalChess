@@ -193,7 +193,7 @@ public static class AdvancedAbilityRules
     return state with
     {
       TargetIdsThisTurn = targets,
-      SelectedTargetId = unitType == nameof(PieceType.Duelist) && targetId is not null
+      SelectedTargetId = unitType is nameof(PieceType.Duelist) or nameof(PieceType.Succubus) && targetId is not null
         ? targetId
         : state.SelectedTargetId,
       ReloadRequired = unitType == nameof(PieceType.Hwacha) || state.ReloadRequired,
@@ -265,6 +265,10 @@ public static class AdvancedAbilityRules
   public static bool CanAttachedUnitAttack(string unitType) =>
     unitType is nameof(PieceType.Shadow) or nameof(PieceType.Succubus);
 
+  public static bool CanSuccubusAttach(UnitAbilityState? state, string targetId) =>
+    !string.IsNullOrWhiteSpace(targetId) &&
+    string.Equals(state?.SelectedTargetId, targetId, StringComparison.Ordinal);
+
   public static bool IsBaronSelectedTarget(
     IEnumerable<(string type, NetworkTeam team, string? selectedTargetId)> pieces,
     string targetId,
@@ -314,7 +318,8 @@ public static class AdvancedAbilityRules
   }
 
   public static bool IsUpkeepFireUnit(string unitType) =>
-    unitType is nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun);
+    unitType is nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or
+      nameof(PieceType.HiredGun) or nameof(PieceType.ContractDemon);
 
   public static int GetGoldUpkeep(string unitType) => unitType switch
   {

@@ -685,4 +685,28 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void SuccubusRecordsItsLastAttackedTargetForOptionalAttachment()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.RecordAttack(
+      nameof(PieceType.Succubus), new UnitAbilityState(), "host");
+
+    Assert.Equal("host", state.SelectedTargetId);
+    Assert.True(AdvancedAbilityRules.CanSuccubusAttach(state, "host"));
+    Assert.False(AdvancedAbilityRules.CanSuccubusAttach(state, "other"));
+    Assert.True(AdvancedAbilityRules.CanAttachedUnitAttack(nameof(PieceType.Succubus)));
+  }
+
+  [Fact]
+  public void ContractDemonUsesSharedFireAndNoMansLandRules()
+  {
+    Assert.True(AdvancedAbilityRules.IsUpkeepFireUnit(
+      nameof(PieceType.ContractDemon)));
+    Assert.True(AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(
+      nameof(PieceType.ContractDemon)));
+    Assert.Equal(5, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep);
+  }
+
+
 }

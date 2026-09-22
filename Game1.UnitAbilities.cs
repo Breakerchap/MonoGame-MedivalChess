@@ -291,6 +291,66 @@ internal sealed partial class Game1
     }
   }
 
+  private Piece GetLocalRoyalHealthPayer(TeamName team)
+  {
+    return pieceSetup.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedTo is null &&
+        piece.IsRoyal)
+      .OrderBy(piece => piece.Position.y)
+      .ThenBy(piece => piece.Position.x)
+      .ThenBy(piece => piece.NetworkId, StringComparer.Ordinal)
+      .FirstOrDefault();
+  }
+
+  private bool CanPayLocalRoyalHealth(TeamName team, int amount)
+  {
+    Piece royal = GetLocalRoyalHealthPayer(team);
+    return royal is not null && royal.CurrentHealth > Math.Max(0, amount);
+  }
+
+  private bool TryPayLocalRoyalHealth(TeamName team, int amount)
+  {
+    Piece royal = GetLocalRoyalHealthPayer(team);
+    int cost = Math.Max(0, amount);
+    if (royal is null || royal.CurrentHealth <= cost)
+    {
+      return false;
+    }
+
+    royal.CurrentHealth -= cost;
+    return true;
+  }
+
+  private void ApplyLocalContractDemonUpkeep(TeamName team)
+  {
+    foreach (Piece demon in pieceSetup.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedTo is null &&
+        piece.Definition.Type == PieceType.ContractDemon)
+      .OrderBy(piece => piece.Position.y)
+      .ThenBy(piece => piece.Position.x)
+      .ThenBy(piece => piece.NetworkId, StringComparer.Ordinal)
+      .ToArray())
+    {
+      if (TryPayLocalRoyalHealth(team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+      {
+        continue;
+      }
+
+      demon.Team = TeamName.Neutral;
+      demon.HasMovedThisTurn = true;
+      demon.HasAttackedThisTurn = true;
+      demon.AbilityState = demon.AbilityState with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      };
+    }
+  }
+
   private bool TryUseSharedRoyalAbility(Piece actor, Piece target)
   {
     if (actor.Definition.Type != PieceType.Phantom)
@@ -936,6 +996,78 @@ internal sealed partial class Game1
     {
       pieceSetup.RemovePiece(shadow);
     }
+  }
+
+
+
+  private Piece GetOwnedAttachedActionUnitAt(
+    (int x, int y) position,
+    TeamName team)
+  {
+    return pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedTo is not null &&
+      piece.Position == position &&
+      AdvancedAbilityRules.CanAttachedUnitAttack(piece.Definition.Type.ToString()));
+  }
+
+  private Piece GetAttackableAttachedSuccubusAt(
+    (int x, int y) position,
+    Piece attacker)
+  {
+    return pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.Definition.Type == PieceType.Succubus &&
+      piece.AttachmentKind == AttachmentKind.Succubus &&
+      piece.AttachedTo is not null &&
+      piece.Position == position &&
+      piece.Team != attacker.Team &&
+      piece.AttachedTo != attacker);
+  }
+
+  private bool TryUseLocalSuccubusSpecial(
+    Piece succubus,
+    (int x, int y) targetPosition,
+    Piece target)
+  {
+    if (succubus.Definition.Type != PieceType.Succubus)
+    {
+      return false;
+    }
+
+    if (succubus.AttachedTo is not null)
+    {
+      if (succubus.AttachmentKind != AttachmentKind.Succubus ||
+          target is not null)
+      {
+        return false;
+      }
+
+      Piece host = succubus.AttachedTo;
+      if (!AbilityRules.AreAdjacent(
+            UnitRules.FromPieceDefinition(succubus.Definition), targetPosition,
+            UnitRules.FromPieceDefinition(host.Definition), host.Position,
+            includeDiagonal: true) ||
+          !CanDisplaceLocalPieceTo(succubus, targetPosition))
+      {
+        return false;
+      }
+
+      pieceSetup.Detach(succubus);
+      succubus.Position = targetPosition;
+      pieceSetup.RefreshOccupancy();
+      return true;
+    }
+
+    if (target is null || target == succubus ||
+        target.Team == succubus.Team ||
+        target.AttachedTo is not null ||
+        !AdvancedAbilityRules.CanSuccubusAttach(
+          succubus.AbilityState, target.NetworkId))
+    {
+      return false;
+    }
+
+    return pieceSetup.Attach(succubus, target, AttachmentKind.Succubus);
   }
 
 

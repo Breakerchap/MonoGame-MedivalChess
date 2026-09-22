@@ -601,10 +601,14 @@ public sealed partial class MatchStore
       {
         return new(false, "An attached unit may only attack its carrier.", foundMatch.State());
       }
+      bool attachedSuccubusMayBeTargeted = target is not null &&
+        target.AttachmentKind == NetworkAttachmentKind.Succubus &&
+        !string.Equals(target.AttachedToId, attacker.Id, StringComparison.Ordinal);
       if (target is not null &&
           ((target.Id == attacker.Id) ||
            (target.Team == attacker.Team && !AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Type)) ||
-           target.AttachedToId is not null || !CanUseActionTarget(foundMatch, attacker, target)))
+           (target.AttachedToId is not null && !attachedSuccubusMayBeTargeted) ||
+           !CanUseActionTarget(foundMatch, attacker, target)))
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
@@ -775,7 +779,8 @@ public sealed partial class MatchStore
           nameof(PieceType.Giant) or nameof(PieceType.Cyclops) =>
             TryCarryOrThrow(foundMatch, actorIndex, targetIndex, request.Ability, request.TargetX, request.TargetY),
           "Phantom" => TryUseSharedServerPhantomAbility(foundMatch, actorIndex, targetIndex, request.Ability),
-          nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun) =>
+          nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or
+          nameof(PieceType.HiredGun) or nameof(PieceType.ContractDemon) =>
             TryFireUpkeepUnit(foundMatch, actorIndex, request.Ability),
           _ => false
         };
@@ -1027,6 +1032,9 @@ public sealed partial class MatchStore
       int immediateUpkeep = isOpeningFarmPlacement ? 0 :
         AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
       if ((!isOpeningFarmPlacement && player.Money < (long)purchaseCost + immediateUpkeep) ||
+          (unit.Type == nameof(PieceType.ContractDemon) &&
+           !CanPayServerRoyalHealth(
+             foundMatch, player.Team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep)) ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: true))
       {
         return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
@@ -1064,6 +1072,14 @@ public sealed partial class MatchStore
 
       if (!isOpeningFarmPlacement)
       {
+        if (unit.Type == nameof(PieceType.ContractDemon))
+        {
+          if (!TryPayServerRoyalHealth(
+                foundMatch, player.Team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+          {
+            return new(false, "Your Royal cannot pay the Contract Demon.", foundMatch.State());
+          }
+        }
         player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       }
       foundMatch.Pieces.Add(new NetworkPiece(
@@ -1167,6 +1183,9 @@ public sealed partial class MatchStore
       }
       int immediateUpkeep = AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
       if (player.Money < (long)purchaseCost + immediateUpkeep ||
+          (unit.Type == nameof(PieceType.ContractDemon) &&
+           !CanPayServerRoyalHealth(
+             foundMatch, player.Team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep)) ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: false))
       {
         return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
@@ -1202,6 +1221,12 @@ public sealed partial class MatchStore
         RemovePiece(foundMatch, specialHost.Id);
       }
 
+      if (unit.Type == nameof(PieceType.ContractDemon) &&
+          !TryPayServerRoyalHealth(
+            foundMatch, player.Team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+      {
+        return new(false, "Your Royal cannot pay the Contract Demon.", foundMatch.State());
+      }
       player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       foundMatch.Pieces.Add(new NetworkPiece(
         Guid.NewGuid().ToString("N"), unit.Type, player.Team, placement.x, placement.y, purchaseHealth,
@@ -1566,8 +1591,12 @@ public sealed partial class MatchStore
         match, team, x, y, unit.Width, unit.Height, out _, out _);
     }
 
-    bool inValidTerritory = AbilityRules.MayPlaceInNoMansLand(unit.Type) && !initialBuy
-      ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y)
+    bool mayUseNoMansLand =
+      (AbilityRules.MayPlaceInNoMansLand(unit.Type) && !initialBuy) ||
+      AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(unit.Type);
+    bool inValidTerritory = mayUseNoMansLand
+      ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y) ||
+        NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height)
       : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
     if (!inValidTerritory) return false;
 
@@ -2708,6 +2737,7 @@ public sealed partial class MatchStore
       player.Money = ClampCurrency((long)player.Money + income);
     }
 
+    ApplyServerContractDemonUpkeep(match, team);
     if (!ApplySharedServerAbilityUpkeep(match, team, player))
     {
       return;
