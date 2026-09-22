@@ -35,6 +35,30 @@ public sealed partial class MatchStore
         {
           continue;
         }
+        if (entity.Kind == AbilityEntityKind.Portal && finalStep == step &&
+            entity.Owner == moving.Team)
+        {
+          AbilityEntity linked = AbilityEntityRules.GetLinkedPortal(match.AbilityEntities, entity);
+          if (linked is not null &&
+              CanDisplaceServerPieceTo(match, moving, rule, (linked.X, linked.Y)))
+          {
+            NetworkPiece teleported = moving with { X = linked.X, Y = linked.Y };
+            match.Pieces[pieceIndex] = teleported;
+            ReleaseServerPetrificationIfBroken(match, teleported);
+            for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+            {
+              NetworkPiece attachment = match.Pieces[attachmentIndex];
+              if (attachment.AttachedToId == moving.Id)
+              {
+                match.Pieces[attachmentIndex] = attachment with { X = linked.X, Y = linked.Y };
+              }
+            }
+            moving = teleported;
+          }
+          triggered.Add(entity.Id);
+          continue;
+        }
+
         AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(entity, moving);
         triggered.Add(entity.Id);
 
@@ -74,6 +98,33 @@ public sealed partial class MatchStore
       }
     }
   }
+
+
+  private static bool TryInterceptServerWatchtowerDamage(
+    Match match,
+    NetworkPiece target,
+    int damage)
+  {
+    if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return false;
+    AbilityEntity tower = match.AbilityEntities.FirstOrDefault(entity =>
+      entity.Kind == AbilityEntityKind.Watchtower &&
+      entity.Owner == target.Team &&
+      OccupiedSquares(targetRule, (target.X, target.Y))
+        .Any(square => entity.X == square.x && entity.Y == square.y));
+    if (tower is null) return false;
+
+    int index = match.AbilityEntities.FindIndex(entity => entity.Id == tower.Id);
+    if (index < 0) return false;
+    int remaining = tower.Health - Math.Max(0, damage);
+    if (remaining <= 0) match.AbilityEntities.RemoveAt(index);
+    else match.AbilityEntities[index] = tower with { Health = remaining };
+    return true;
+  }
+
+  private static bool HasServerBridgeAt(Match match, (int x, int y) position) =>
+    match.AbilityEntities.Any(entity =>
+      entity.Kind == AbilityEntityKind.Bridge &&
+      entity.X == position.x && entity.Y == position.y);
 
   private static void TriggerServerPoisonCloudsAtOwnerTurnStart(Match match, NetworkTeam ownerTurn)
   {

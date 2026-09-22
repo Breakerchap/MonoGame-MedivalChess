@@ -552,12 +552,9 @@ public sealed partial class MatchStore
     {
       return AdvancedSpecialResult.Rejected;
     }
-    if (requireBuildableLand && !CanPlaceAbilityEntity(
-          match, option.kind, actor.Team, request.TargetX, request.TargetY))
-    {
-      return AdvancedSpecialResult.Rejected;
-    }
-    if (!requireBuildableLand && !NetworkBoardRules.Contains(match.Configuration, request.TargetX, request.TargetY))
+    if (!CanPlaceAbilityEntity(
+          match, option.kind, actor.Team, request.TargetX, request.TargetY,
+          allowLake: !requireBuildableLand))
     {
       return AdvancedSpecialResult.Rejected;
     }
@@ -582,8 +579,9 @@ public sealed partial class MatchStore
 
     foreach (AbilitySelection selection in state.PendingSelections)
     {
-      if (requireBuildableLand &&
-          !CanPlaceAbilityEntity(match, option.kind, actor.Team, selection.X, selection.Y))
+      if (!CanPlaceAbilityEntity(
+            match, option.kind, actor.Team, selection.X, selection.Y,
+            allowLake: !requireBuildableLand))
       {
         return AdvancedSpecialResult.Rejected;
       }
@@ -678,7 +676,8 @@ public sealed partial class MatchStore
     AbilityEntityKind kind,
     NetworkTeam owner,
     int x,
-    int y
+    int y,
+    bool allowLake = false
   )
   {
     if (!NetworkBoardRules.Contains(match.Configuration, x, y) ||
@@ -690,7 +689,7 @@ public sealed partial class MatchStore
       return false;
     }
 
-    return kind == AbilityEntityKind.Bridge || !match.Terrain.IsLake((x, y));
+    return allowLake || !match.Terrain.IsLake((x, y));
   }
 
   private static AbilityEntity CreateEntity(

@@ -25,7 +25,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.sumo` | Verified | Post-attack two-tile push is wired in local/server/CPU using footprint-centre direction, 2→1→0 legal fallback, preserved target move state, and runtime regression coverage. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
-| `dynasty.carpenter` | Partial | Server/CPU build and demolition actions exist; Watchtower +2 Attack Range is now consumed by local/server/CPU effective rules. Watchtower damage interception, Bridge completion, local action parity, and dedicated coverage remain. |
+| `dynasty.carpenter` | Verified | Local/online build selection now matches the server for two Bridges, one 15-gold Watchtower, and free demolition. Buildable Bridges make Lake tiles traversable and bridge adjacent river edges; occupied friendly Watchtowers grant +2 Attack Range and intercept incoming damage before the unit. |
 | `dynasty.war_drum` | Verified | Refresh is wired across local/server/CPU and online play, clearing a moved friendly unit's moved state and preventing a second refresh that owner turn; green CPU runtime coverage verifies the full flow. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
@@ -129,14 +129,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `modern.command_centre` | Partial | Server/CPU upgrades charge 25 gold and persist; stored Attack/Health/Move upgrades now alter effective runtime stats and healing caps. Local/online client action selection parity remains. |
+| `modern.command_centre` | Verified | Local and online play can choose Attack, Health, or Move upgrades for an eligible friendly non-Royal within 2 Squares, pay 25 gold, enforce one upgrade per unit and once per owner turn, and apply the persistent stat/health effects already shared with server/CPU rules. |
 | `modern.hacker` | Verified | Hack targeting/cooldown is wired across local/server/CPU and online play; all special-action entry points respect disabled state, normal movement/attacks remain available, and green CPU runtime coverage verifies expiry at the end of the target's owner turn. |
 | `angels_demons.fiend` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.cherub` | Verified | Terrain-ignoring movement is shared and enforced by local, server, and CPU pathfinding. |
 | `angels_demons.fallen` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `angels_demons.gatekeeper` | Partial | Server/CPU Portal/Seal construction exists; Seals block movement/attacks and now expire at the start of their owner's next turn across local/server/CPU. Portal transport and local action parity remain. |
+| `angels_demons.gatekeeper` | Verified | Portal/Seal build selection and free demolition are wired in local/online play; Portal pairs are linked and friendly units ending movement on one teleport to the other when the exit is legal. Seal blocking/expiry remains shared with server behaviour. |
 | `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU with runtime coverage; pull-immunity integration will be verified alongside forced-movement abilities such as Fylgja. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
@@ -217,3 +217,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Completed Missile Silo's one-shot attack in local and server play. It may target an empty in-range square, hits all units in the centred 5x5 including friendlies, destroys Structures in the area, and becomes permanently consumed after the first shot.
 - Direct-attack validation now also respects the existing Phylactery/Helicopter/Shadow/Petrified direct-damage immunity state instead of merely carrying that state unused.
 - Added focused shared regression coverage for Duelist mark replacement, petrification damage/range rules, and Missile Silo consumption. CPU-specific action generation was intentionally not expanded in this batch.
+
+
+### 2026-09-22 — Carpenter, Command Centre, and Gatekeeper structure batch
+
+- Completed Carpenter's local/online builder flow: two Bridges, one 15-gold Watchtower, and free demolition use the same selector/pending-selection model as the other builders.
+- Connected buildable Bridges to movement. A Bridge makes its Lake tile traversable and counts as a crossing for river edges touching that tile in both local and authoritative server pathfinding.
+- Completed Watchtower protection in local/server combat: a friendly unit occupying a Watchtower keeps the existing +2 Attack Range and incoming attack damage is taken by the Watchtower instead of the occupant.
+- Completed Command Centre local/online upgrade selection for +10 Attack, +20 maximum Health plus 20 healing, or +1 Move, with the codex 25-gold cost, two-Square range, once-per-owner-turn use, and one-upgrade-per-unit restriction.
+- Completed Gatekeeper local/online Portal/Seal selection and linked Portal creation. Friendly units ending movement on a Portal teleport to its linked partner when that exit is legal; post-teleport movement state now feeds treasure, escort, and Medusa-range checks correctly.
+- Added focused shared coverage for linked Portal lookup and Command Centre's one-upgrade-only state. CPU-specific UI/action polish remains intentionally secondary to completing player-facing abilities.

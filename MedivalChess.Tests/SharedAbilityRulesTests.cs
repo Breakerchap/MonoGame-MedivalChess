@@ -572,4 +572,31 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void LinkedPortalLookupFindsItsPairedPortal()
+  {
+    AbilityEntity first = new(
+      "first", AbilityEntityKind.Portal, NetworkTeam.Red, 1, 1, 0, "second");
+    AbilityEntity second = new(
+      "second", AbilityEntityKind.Portal, NetworkTeam.Red, 5, 5, 0, "first");
+
+    Assert.Equal(second, AbilityEntityRules.GetLinkedPortal([first, second], first));
+    Assert.Equal(first, AbilityEntityRules.GetLinkedPortal([first, second], second));
+  }
+
+  [Fact]
+  public void CommandCentreUpgradeCanOnlyBeAppliedOnce()
+  {
+    UnitAbilityState upgraded = AdvancedAbilityRules.ApplyCommandCentreUpgrade(
+      new UnitAbilityState(), "attack");
+    UnitAbilityState second = AdvancedAbilityRules.ApplyCommandCentreUpgrade(
+      upgraded, "move");
+
+    Assert.True(upgraded.Upgraded);
+    Assert.Equal(AdvancedAbilityRules.CommandCentreAttackBonus, upgraded.AttackBonus);
+    Assert.Equal(upgraded, second);
+  }
+
+
 }

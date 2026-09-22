@@ -198,6 +198,7 @@ internal sealed partial class Game1 : Game
   private int _selectedPurchasePackIndex;
   private EngineerAbility _selectedEngineerAbility;
   private int _selectedCodexBuilderAbilityIndex;
+  private int _selectedCommandCentreUpgradeIndex;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
@@ -539,6 +540,8 @@ internal sealed partial class Game1 : Game
       wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
     bool clickedCodexBuilderPanel =
       wasLeftClick && HandleCodexBuilderAbilityClick(ToUiPoint(mouse.Position));
+    bool clickedCommandCentrePanel =
+      wasLeftClick && HandleCommandCentreUpgradeClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
     bool clickedCarryThrowPanel =
@@ -546,7 +549,7 @@ internal sealed partial class Game1 : Game
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedCommandCentrePanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -2436,7 +2439,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2496,7 +2499,13 @@ internal sealed partial class Game1 : Game
       PieceType.Medusa => target is not null && target != actor && !target.IsRoyal &&
         AdvancedAbilityRules.CanMedusaPetrify(target.Definition.Type.ToString()) &&
         CanAttackSquareWithAttachments(actor, targetPosition),
-      PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith =>
+      PieceType.CommandCentre => target is not null && target != actor &&
+        target.Team == actor.Team && !target.IsRoyal && !target.AbilityState.Upgraded &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition), target.Position, 2),
+      PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
       PieceType.Demolitionist =>
@@ -2560,6 +2569,8 @@ internal sealed partial class Game1 : Game
       ? "Hack"
       : actor.Definition.Type == PieceType.Medusa
       ? "Petrify"
+      : actor.Definition.Type == PieceType.CommandCentre
+      ? $"Upgrade{GetSelectedCommandCentreUpgrade()}"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -3405,7 +3416,8 @@ internal sealed partial class Game1 : Game
     bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
         (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
-        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)) ||
+        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(square =>
+          _terrain.IsLake(square) && !HasLocalBridgeAt(square))) ||
         OccupiedSquares(piece.Definition, destination).Any(square =>
           _abilityEntities.Any(entity =>
             entity.X == square.x && entity.Y == square.y &&
@@ -3433,7 +3445,7 @@ internal sealed partial class Game1 : Game
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
         bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
-        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) ||
+        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare) && !HasLocalBridgeAt(occupiedSquare)) ||
             (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(occupiedSquare)) ||
             _abilityEntities.Any(entity =>
               entity.X == occupiedSquare.x && entity.Y == occupiedSquare.y &&
@@ -3550,7 +3562,10 @@ internal sealed partial class Game1 : Game
   private bool HasUnbridgedRiverBetween((int x, int y) first, (int x, int y) second)
   {
     TileEdge edge = TileEdge.Between(first, second);
-    return _terrain.HasRiverBetween(first, second) && !_riverBridges.Contains(edge);
+    return _terrain.HasRiverBetween(first, second) &&
+      !_riverBridges.Contains(edge) &&
+      !HasLocalBridgeAt(first) &&
+      !HasLocalBridgeAt(second);
   }
 
   private bool HasRiverBridgeBetween((int x, int y) first, (int x, int y) second)
@@ -3897,12 +3912,17 @@ internal sealed partial class Game1 : Game
       stealingTeam.Money = ClampCurrency((long)stealingTeam.Money + stolen);
     }
 
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
+    if (TryInterceptLocalWatchtowerDamage(target, unmitigatedDamage))
+    {
+      return;
+    }
+
     Piece shield = pieceSetup.GetAttachedPiece(target, AttachmentKind.Shieldsman);
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
     Piece damagedPiece = shield ?? guard ?? target;
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
       candidate.AttachedTo == target && AbilityRules.SharesIncomingDamageWithHost(candidate.Definition.Type.ToString()));
-    int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
 
     ApplyDamageToPiece(attacker, damagedPiece, unmitigatedDamage);
     if (oxAttachment is not null && oxAttachment != damagedPiece && pieceSetup.Pieces.Contains(oxAttachment))
@@ -4149,7 +4169,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4180,6 +4200,38 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Medusa)
     {
       return TryPetrifyLocalTarget(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.CommandCentre &&
+        targetPiece is not null && targetPiece != actor &&
+        targetPiece.Team == actor.Team && !targetPiece.IsRoyal &&
+        !targetPiece.AbilityState.Upgraded &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition), targetPiece.Position, 2))
+    {
+      Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
+      if (team is null || team.Money < AdvancedAbilityRules.CommandCentreUpgradeCost)
+      {
+        return false;
+      }
+
+      string upgrade = GetSelectedCommandCentreUpgrade();
+      UnitAbilityState upgraded = AdvancedAbilityRules.ApplyCommandCentreUpgrade(
+        targetPiece.AbilityState, upgrade);
+      team.Money = ClampCurrency((long)team.Money - AdvancedAbilityRules.CommandCentreUpgradeCost);
+      targetPiece.AbilityState = upgraded;
+      if (string.Equals(upgrade, "Health", StringComparison.OrdinalIgnoreCase))
+      {
+        targetPiece.CurrentHealth = Math.Min(
+          AdvancedAbilityRules.GetEffectiveMaximumHealth(
+            UnitRules.FromPieceDefinition(targetPiece.Definition), upgraded),
+          targetPiece.CurrentHealth + AdvancedAbilityRules.CommandCentreHealthBonus);
+      }
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      CompleteAction();
+      return true;
     }
 
     if (IsCodexBuilder(actor.Definition.Type))
@@ -5627,6 +5679,34 @@ internal sealed partial class Game1 : Game
 
     return true;
   }
+
+  private bool HandleCommandCentreUpgradeClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.CommandCentre ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      _selectedCommandCentreUpgradeIndex = (_selectedCommandCentreUpgradeIndex + 2) % 3;
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      _selectedCommandCentreUpgradeIndex = (_selectedCommandCentreUpgradeIndex + 1) % 3;
+    }
+
+    return true;
+  }
+
+  private string GetSelectedCommandCentreUpgrade() =>
+    _selectedCommandCentreUpgradeIndex switch
+    {
+      1 => "Health",
+      2 => "Move",
+      _ => "Attack"
+    };
 
   private bool HandleMercenaryPanelClick(Point mousePosition)
   {
@@ -10637,22 +10717,32 @@ internal sealed partial class Game1 : Game
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
-      selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type) ? "ABILITY" : "ATTACK",
-      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
-        ? "USED"
-        : selectedPiece.Definition.Type == PieceType.Engineer
-          ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
-          : IsCodexBuilder(selectedPiece.Definition.Type)
-            ? GetCodexBuilderStatusLabel(selectedPiece)
-            : selectedPiece.Definition.Attack.ToString(),
-      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
+      selectedPiece.Definition.Type == PieceType.Engineer ||
+        IsCodexBuilder(selectedPiece.Definition.Type) ||
+        selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? "ABILITY" : "ATTACK",
+      selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? selectedPiece.AbilityState.UsedThisTurn
+          ? "USED"
+          : GetSelectedCommandCentreUpgrade().ToUpperInvariant()
+        : canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
+          ? "USED"
+          : selectedPiece.Definition.Type == PieceType.Engineer
+            ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
+            : IsCodexBuilder(selectedPiece.Definition.Type)
+              ? GetCodexBuilderStatusLabel(selectedPiece)
+              : selectedPiece.Definition.Attack.ToString(),
+      selectedPiece.Definition.Type == PieceType.CommandCentre && selectedPiece.AbilityState.UsedThisTurn ||
+        canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
     _ui.StatBlock(
       rangeRow,
-      selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type)
-        ? "BUILD RANGE"
-        : "ATTACK RANGE",
+      selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? "ABILITY RANGE"
+        : selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type)
+          ? "BUILD RANGE"
+          : "ATTACK RANGE",
       UiText.FormatAction(selectedPiece.Definition.AttackRange, selectedPiece.Definition.AttackPattern),
       UiTheme.TextPrimary
     );
@@ -10672,7 +10762,8 @@ internal sealed partial class Game1 : Game
     int abilityInfoY = rangeRow.Bottom + UiTheme.SpaceMd + 44;
     int abilityInfoBottom = selectedPiece.Definition.Type switch
     {
-      PieceType.Engineer or PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith =>
+      PieceType.Engineer or PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or
+        PieceType.Runesmith or PieceType.Gatekeeper or PieceType.CommandCentre =>
         GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
@@ -10697,6 +10788,12 @@ internal sealed partial class Game1 : Game
     if (IsCodexBuilder(selectedPiece.Definition.Type))
     {
       DrawCodexBuilderAbilityControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.CommandCentre)
+    {
+      DrawCommandCentreUpgradeControls();
       return;
     }
 
@@ -10853,6 +10950,20 @@ internal sealed partial class Game1 : Game
     _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
   }
 
+  private void DrawCommandCentreUpgradeControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    string upgrade = GetSelectedCommandCentreUpgrade().ToUpperInvariant();
+
+    _ui.Text("COMMAND UPGRADE", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(upgrade, valueBounds, UiTheme.TextPrimary, 0.72f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text("25 gold; each non-Royal unit can be upgraded once.", new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
   private Piece GetOxCargo(Piece ox)
   {
     return ox.AttachmentKind == AttachmentKind.Carried ? ox.AttachedTo : null;
@@ -10887,6 +10998,13 @@ internal sealed partial class Game1 : Game
       return piece.HasAttackedThisTurn
         ? "ABILITY USED THIS TURN"
         : "RIGHT-CLICK to use the selected build/demolish ability";
+    }
+
+    if (piece.Definition.Type == PieceType.CommandCentre)
+    {
+      return piece.AbilityState.UsedThisTurn
+        ? "UPGRADE USED THIS TURN"
+        : "RIGHT-CLICK a friendly non-Royal within 2 squares to upgrade";
     }
 
     if (piece.HasAttackedThisTurn)

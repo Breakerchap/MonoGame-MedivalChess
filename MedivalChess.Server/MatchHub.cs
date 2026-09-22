@@ -471,12 +471,14 @@ public sealed partial class MatchStore
       ReleaseServerPetrificationIfBroken(foundMatch, piece);
       TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
       TriggerServerAbilityEntitiesAlongMovement(foundMatch, piece.Id, actualMovementPath);
-      if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
+      int livePieceIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
+      if (livePieceIndex >= 0)
       {
+        piece = foundMatch.Pieces[livePieceIndex];
         TryDeliverTreasure(foundMatch, piece);
       }
-      if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id) &&
-          IsEscortVictory(foundMatch, piece, finalX, finalY))
+      if (livePieceIndex >= 0 &&
+          IsEscortVictory(foundMatch, piece, piece.X, piece.Y))
       {
         foundMatch.Winner = piece.Team;
       }
@@ -1489,7 +1491,7 @@ public sealed partial class MatchStore
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
-      if ((!ignoresTerrain && match.Terrain.IsLake(square)) ||
+      if ((!ignoresTerrain && match.Terrain.IsLake(square) && !HasServerBridgeAt(match, square)) ||
           (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
           match.AbilityEntities.Any(entity =>
             entity.X == square.x && entity.Y == square.y &&
@@ -1541,7 +1543,7 @@ public sealed partial class MatchStore
       {
         bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
         if (!NetworkBoardRules.Contains(match.Configuration, square.x, square.y) ||
-            (!ignoresTerrain && match.Terrain.IsLake(square)) ||
+            (!ignoresTerrain && match.Terrain.IsLake(square) && !HasServerBridgeAt(match, square)) ||
             (!AbilityRules.IgnoresStructures(rule) && match.Barricades.ContainsKey(square)) ||
             match.AbilityEntities.Any(entity =>
               entity.X == square.x && entity.Y == square.y &&
@@ -1598,7 +1600,10 @@ public sealed partial class MatchStore
       var toSquare = (fromSquare.x + to.x - from.x, fromSquare.y + to.y - from.y);
       foreach (((int x, int y) first, (int x, int y) second) edge in StepsBetween(fromSquare, toSquare))
       {
-        if (match.Terrain.HasRiverBetween(edge.first, edge.second) && !match.RiverBridges.Contains(TileEdge.Between(edge.first, edge.second))) return true;
+        if (match.Terrain.HasRiverBetween(edge.first, edge.second) &&
+            !match.RiverBridges.Contains(TileEdge.Between(edge.first, edge.second)) &&
+            !HasServerBridgeAt(match, edge.first) &&
+            !HasServerBridgeAt(match, edge.second)) return true;
       }
     }
     return false;
@@ -1682,6 +1687,12 @@ public sealed partial class MatchStore
         attackingPlayer.Money = ClampCurrency((long)attackingPlayer.Money + stolen);
       }
     }
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
+    if (TryInterceptServerWatchtowerDamage(match, target, unmitigatedDamage))
+    {
+      return;
+    }
+
     NetworkPiece? shield = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Shieldsman);
     NetworkPiece? guard = match.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
@@ -1691,7 +1702,6 @@ public sealed partial class MatchStore
       ? match.Pieces.FirstOrDefault(piece =>
         piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)
       : null;
-    int unmitigatedDamage = damageOverride ?? GetAttackDamage(match, attacker, target);
     ApplyDamageToPiece(match, attacker, attackingPlayer, damagedPiece, unmitigatedDamage);
     if (oxAttachment is not null && oxAttachment.Id != damagedPiece.Id && match.Pieces.Any(piece => piece.Id == oxAttachment.Id))
     {

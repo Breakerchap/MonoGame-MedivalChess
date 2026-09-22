@@ -43,6 +43,25 @@ internal sealed partial class Game1
         {
           continue;
         }
+        if (entity.Kind == AbilityEntityKind.Portal && finalStep == step &&
+            entity.Owner == moving.Team)
+        {
+          AbilityEntity linked = AbilityEntityRules.GetLinkedPortal(_abilityEntities, entity);
+          if (linked is not null &&
+              CanDisplaceLocalPieceTo(movingPiece, (linked.X, linked.Y)))
+          {
+            movingPiece.Position = (linked.X, linked.Y);
+            ReleaseLocalPetrificationIfBroken(movingPiece);
+            foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == movingPiece))
+            {
+              attachment.Position = movingPiece.Position;
+            }
+            pieceSetup.RefreshOccupancy();
+          }
+          triggered.Add(entity.Id);
+          continue;
+        }
+
         AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(entity, moving);
         triggered.Add(entity.Id);
 
@@ -155,6 +174,23 @@ internal sealed partial class Game1
       _restoredLakeTiles.Remove(position);
   }
 
+
+  private bool TryInterceptLocalWatchtowerDamage(Piece target, int damage)
+  {
+    AbilityEntity tower = _abilityEntities.FirstOrDefault(entity =>
+      entity.Kind == AbilityEntityKind.Watchtower &&
+      entity.Owner == target.Team.ToNetworkTeam() &&
+      target.OccupiedSquares().Any(square => entity.X == square.x && entity.Y == square.y));
+    if (tower is null) return false;
+
+    int index = _abilityEntities.FindIndex(entity => entity.Id == tower.Id);
+    if (index < 0) return false;
+    int remaining = tower.Health - Math.Max(0, damage);
+    if (remaining <= 0) _abilityEntities.RemoveAt(index);
+    else _abilityEntities[index] = tower with { Health = remaining };
+    return true;
+  }
+
   private void DetonateLocalTnt(Piece demolitionist, AbilityEntity tnt)
   {
     _abilityEntities.RemoveAll(entity => entity.Id == tnt.Id);
@@ -176,14 +212,19 @@ internal sealed partial class Game1
     }
   }
 
-  private bool CanPlaceLocalAbilityEntity((int x, int y) position)
+  private bool CanPlaceLocalAbilityEntity((int x, int y) position, bool allowLake = false)
   {
     return IsBoardCell(position.x - _board.MinX, position.y - _board.MinY) &&
-      !_terrain.IsLake(position) &&
+      (allowLake || !_terrain.IsLake(position)) &&
       !_barricades.ContainsKey(position) &&
       pieceSetup.GetPieceAt(position) is null &&
       !_abilityEntities.Any(entity => entity.X == position.x && entity.Y == position.y);
   }
+
+  private bool HasLocalBridgeAt((int x, int y) position) =>
+    _abilityEntities.Any(entity =>
+      entity.Kind == AbilityEntityKind.Bridge &&
+      entity.X == position.x && entity.Y == position.y);
 
   private AbilityEntity CreateLocalAbilityEntity(
     AbilityEntityKind kind,
@@ -202,13 +243,16 @@ internal sealed partial class Game1
   }
 
   private static bool IsCodexBuilder(PieceType type) =>
-    type is PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith;
+    type is PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or
+      PieceType.Runesmith or PieceType.Gatekeeper;
 
   private static string[] GetCodexBuilderAbilities(PieceType type) => type switch
   {
     PieceType.Mason => ["StoneWall", "Gatehouse", "Demolish"],
+    PieceType.Carpenter => ["Bridge", "Watchtower", "Demolish"],
     PieceType.Daedalus => ["Gate", "Snare", "Demolish"],
     PieceType.Runesmith => ["RuneAttack", "RuneMovement", "RuneHealth", "RuneRange", "Demolish"],
+    PieceType.Gatekeeper => ["Portal", "Seal", "Demolish"],
     _ => Array.Empty<string>()
   };
 
@@ -242,12 +286,16 @@ internal sealed partial class Game1
   {
     (PieceType.Mason, "StoneWall") => "Place 2 walls; costs 10 gold total.",
     (PieceType.Mason, "Gatehouse") => "Place 2 friendly-pass gatehouses.",
+    (PieceType.Carpenter, "Bridge") => "Place 2 bridges over water/river crossings.",
+    (PieceType.Carpenter, "Watchtower") => "15 HP tower; costs 15 gold and protects its occupant.",
     (PieceType.Daedalus, "Gate") => "Place 3 friendly-pass gates.",
     (PieceType.Daedalus, "Snare") => "Place 1 movement-locking snare.",
     (PieceType.Runesmith, "RuneAttack") => "5 HP rune; nearby allies gain +10 Attack.",
     (PieceType.Runesmith, "RuneMovement") => "5 HP rune; nearby allies gain +1 Move.",
     (PieceType.Runesmith, "RuneHealth") => "5 HP rune; nearby allies take 5 less damage.",
     (PieceType.Runesmith, "RuneRange") => "5 HP rune; nearby allies gain +2 Attack Range.",
+    (PieceType.Gatekeeper, "Portal") => "Place 2 linked portals for friendly teleportation.",
+    (PieceType.Gatekeeper, "Seal") => "Place 2 temporary impassable seals.",
     (_, "Demolish") => "Destroy an in-range structure for free.",
     _ => "RIGHT-CLICK a legal square to use."
   };
@@ -300,12 +348,16 @@ internal sealed partial class Game1
     {
       (PieceType.Mason, "StoneWall") => (AbilityEntityKind.StoneWall, 2, 10),
       (PieceType.Mason, "Gatehouse") => (AbilityEntityKind.Gatehouse, 2, 0),
+      (PieceType.Carpenter, "Bridge") => (AbilityEntityKind.Bridge, 2, 0),
+      (PieceType.Carpenter, "Watchtower") => (AbilityEntityKind.Watchtower, 1, 15),
       (PieceType.Daedalus, "Gate") => (AbilityEntityKind.Gate, 3, 0),
       (PieceType.Daedalus, "Snare") => (AbilityEntityKind.Snare, 1, 0),
       (PieceType.Runesmith, "RuneAttack") => (AbilityEntityKind.RuneAttack, 1, 0),
       (PieceType.Runesmith, "RuneMovement") => (AbilityEntityKind.RuneMovement, 1, 0),
       (PieceType.Runesmith, "RuneHealth") => (AbilityEntityKind.RuneHealth, 1, 0),
       (PieceType.Runesmith, "RuneRange") => (AbilityEntityKind.RuneRange, 1, 0),
+      (PieceType.Gatekeeper, "Portal") => (AbilityEntityKind.Portal, 2, 0),
+      (PieceType.Gatekeeper, "Seal") => (AbilityEntityKind.Seal, 2, 0),
       _ => null
     };
     if (option is null) return false;
@@ -330,8 +382,8 @@ internal sealed partial class Game1
       return IsLocalStructureAt(position);
     }
 
-    return TryGetCodexBuilderOption(actor.Definition.Type, ability, out _, out _, out _) &&
-      CanPlaceLocalAbilityEntity(position);
+    return TryGetCodexBuilderOption(actor.Definition.Type, ability, out AbilityEntityKind kind, out _, out _) &&
+      CanPlaceLocalAbilityEntity(position, allowLake: kind == AbilityEntityKind.Bridge);
   }
 
   private bool TryUseCodexBuilderAbility(
@@ -382,16 +434,33 @@ internal sealed partial class Game1
     Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
     if (team is null || team.Money < totalCost ||
         pending.PendingSelections.Any(selection =>
-          !CanPlaceLocalAbilityEntity((selection.X, selection.Y))))
+          !CanPlaceLocalAbilityEntity(
+            (selection.X, selection.Y), allowLake: kind == AbilityEntityKind.Bridge)))
     {
       return false;
     }
 
     team.Money = ClampCurrency((long)team.Money - totalCost);
-    foreach (AbilitySelection selection in pending.PendingSelections)
+    if (kind == AbilityEntityKind.Portal)
     {
-      _abilityEntities.Add(CreateLocalAbilityEntity(
-        kind, actor, (selection.X, selection.Y)));
+      AbilitySelection first = pending.PendingSelections[0];
+      AbilitySelection second = pending.PendingSelections[1];
+      string firstId = Guid.NewGuid().ToString("N");
+      string secondId = Guid.NewGuid().ToString("N");
+      _abilityEntities.Add(new AbilityEntity(
+        firstId, kind, actor.Team.ToNetworkTeam(), first.X, first.Y, 0,
+        secondId, SourcePieceId: actor.NetworkId));
+      _abilityEntities.Add(new AbilityEntity(
+        secondId, kind, actor.Team.ToNetworkTeam(), second.X, second.Y, 0,
+        firstId, SourcePieceId: actor.NetworkId));
+    }
+    else
+    {
+      foreach (AbilitySelection selection in pending.PendingSelections)
+      {
+        _abilityEntities.Add(CreateLocalAbilityEntity(
+          kind, actor, (selection.X, selection.Y)));
+      }
     }
 
     actor.AbilityState = AdvancedAbilityRules.ClearPendingSelections(pending);
