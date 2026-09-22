@@ -2085,6 +2085,7 @@ internal sealed partial class Game1 : Game
         piece.AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.Position.x, piece.Position.y, piece.CurrentHealth);
       }
     }
+    SpawnLocalLinkedLichesAtOwnerTurnStart(teamName);
   }
 
   private void ApplyTurnEconomy(TeamName teamName)
@@ -3570,6 +3571,11 @@ internal sealed partial class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination, bool mayUsePalaceSupport)
   {
+    if (!IsLocalLichDestinationWithinLink(piece, destination))
+    {
+      return false;
+    }
+
     UnitRule rule = GetEffectiveMovementRule(piece);
     if (CanLocalChessCaptureLand(piece, rule, destination))
     {
@@ -4181,6 +4187,10 @@ internal sealed partial class Game1 : Game
     if (damagedPiece.Definition.Type == PieceType.Medusa)
     {
       ClearLocalPetrificationBy(damagedPiece.NetworkId);
+    }
+    if (damagedPiece.Definition.Type == PieceType.Lich)
+    {
+      ApplyLocalLichDeathLink(damagedPiece, attackingTeamName);
     }
 
     RemoveLocalShadowsAttachedTo(damagedPiece);

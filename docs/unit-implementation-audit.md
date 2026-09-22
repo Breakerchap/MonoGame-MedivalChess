@@ -66,8 +66,8 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.wisp` | Verified | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks, with green CPU runtime regression coverage. |
 | `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.skinwalker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.lich` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.phylactery` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.lich` | Verified | A linked Lich is spawned adjacent to its Phylactery when missing at the start of the owner's turn. Its movement destinations are constrained to remain within 4 Diamond of that linked Phylactery. On death, it clears the link and deals 5 Health to the Phylactery; the fourth linked Lich death defeats the Phylactery regardless of healing or Odin protection. Local and authoritative server paths are wired. |
+| `undead.phylactery` | Verified | Direct damage immunity is enforced by the shared targeting rule. At owner-turn start, if its linked Lich is absent, it spawns one on the first legal adjacent tile and links both units. Each linked Lich death deals 5 Health and increments the death count; the fourth death forcibly defeats the Royal. Local and authoritative server behaviour are wired. |
 | `undead.phantom` | Verified | Possess/unpossess is wired in local/server/CPU, royal identity moves to the possessed friendly non-Royal, possessed-unit death also kills the Phantom, and unpossessing locks the Phantom from moving/acting for the rest of that owner turn. Runtime regression coverage verifies the flow. |
 | `greek.heracles` | Implemented | Core definition is loaded from the authoritative specification. |
 | `greek.ares` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -296,3 +296,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Historical destinations must still be legal in the current board state and may not overlap another unit after the two rewinds; otherwise the action is rejected rather than creating invalid occupancy.
 - Rewind starts the shared five-owner-turn cooldown, which is decremented by the existing owner-turn-start state transition.
 - Added focused regression coverage for snapshot shifting and cooldown ticking.
+
+
+### 2026-09-22 — Phylactery and Lich link loop
+
+- Completed the Phylactery/Lich lifecycle in local and authoritative server play.
+- At the start of a Phylactery owner's turn, a missing linked Lich is respawned on a legal adjacent tile. If no adjacent tile is currently legal, the spawn is simply retried at the next owner-turn start.
+- Both pieces store the relationship through the existing `LinkedPieceId` ability state so the Lich can enforce its 4-Diamond leash from the correct Phylactery.
+- Lich movement now rejects destinations more than 4 Diamond from its linked Phylactery.
+- Every linked Lich death clears the stale link, increments `LinkedDeaths`, and deals 5 Health to the Phylactery. The fourth linked death forces the Phylactery to zero Health even if it was healed or had Odin protection, matching the codex's explicit four-death defeat condition.
+- Phylactery's existing shared direct-damage immunity remains the common attack rule.
+- Added focused shared regression coverage for link state, direct-damage immunity and the 5-Health death cost.

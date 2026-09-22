@@ -1127,4 +1127,115 @@ internal sealed partial class Game1
   }
 
 
+
+  private Piece GetLocalLinkedPhylactery(Piece lich)
+  {
+    string phylacteryId = lich.AbilityState.LinkedPieceId;
+    return string.IsNullOrWhiteSpace(phylacteryId)
+      ? null
+      : pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.NetworkId == phylacteryId &&
+          piece.Definition.Type == PieceType.Phylactery &&
+          piece.Team == lich.Team);
+  }
+
+  private bool IsLocalLichDestinationWithinLink(Piece piece, (int x, int y) destination)
+  {
+    if (piece.Definition.Type != PieceType.Lich)
+    {
+      return true;
+    }
+
+    Piece phylactery = GetLocalLinkedPhylactery(piece);
+    return phylactery is not null &&
+      Math.Abs(destination.x - phylactery.Position.x) +
+      Math.Abs(destination.y - phylactery.Position.y) <= 4;
+  }
+
+  private void SpawnLocalLinkedLichesAtOwnerTurnStart(TeamName team)
+  {
+    PieceDefinition lichDefinition = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Lich);
+    (int x, int y)[] offsets =
+    [
+      (0, -1), (1, 0), (0, 1), (-1, 0),
+      (1, -1), (1, 1), (-1, 1), (-1, -1)
+    ];
+
+    foreach (Piece phylactery in pieceSetup.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.Definition.Type == PieceType.Phylactery)
+      .OrderBy(piece => piece.Position.y)
+      .ThenBy(piece => piece.Position.x)
+      .ThenBy(piece => piece.NetworkId, StringComparer.Ordinal)
+      .ToArray())
+    {
+      Piece linked = string.IsNullOrWhiteSpace(phylactery.AbilityState.LinkedPieceId)
+        ? null
+        : pieceSetup.Pieces.FirstOrDefault(piece =>
+            piece.NetworkId == phylactery.AbilityState.LinkedPieceId &&
+            piece.Definition.Type == PieceType.Lich &&
+            piece.Team == team);
+      if (linked is not null)
+      {
+        continue;
+      }
+
+      foreach ((int x, int y) offset in offsets)
+      {
+        (int x, int y) destination = (
+          phylactery.Position.x + offset.x,
+          phylactery.Position.y + offset.y);
+        if (!CanPlacePiece(lichDefinition, destination, null) ||
+            _barricades.ContainsKey(destination) ||
+            _abilityEntities.Any(entity =>
+              entity.X == destination.x && entity.Y == destination.y &&
+              AbilityEntityRules.BlocksLandingFor(entity, team.ToNetworkTeam())))
+        {
+          continue;
+        }
+
+        Piece lich = new(lichDefinition, destination, team)
+        {
+          AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+            new UnitAbilityState(), phylactery.NetworkId)
+        };
+        pieceSetup.AddPiece(lich);
+        phylactery.AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+          phylactery.AbilityState, lich.NetworkId);
+        break;
+      }
+    }
+  }
+
+  private void ApplyLocalLichDeathLink(Piece lich, TeamName? attackingTeam)
+  {
+    if (lich.Definition.Type != PieceType.Lich)
+    {
+      return;
+    }
+
+    Piece phylactery = GetLocalLinkedPhylactery(lich);
+    if (phylactery is null || !pieceSetup.Pieces.Contains(phylactery))
+    {
+      return;
+    }
+
+    int linkedDeaths = phylactery.AbilityState.LinkedDeaths + 1;
+    phylactery.AbilityState = (AdvancedAbilityRules.SetLinkedPiece(
+      phylactery.AbilityState, null)) with
+    {
+      LinkedDeaths = linkedDeaths,
+      OdinProtectionAvailable = linkedDeaths >= 4
+        ? false
+        : phylactery.AbilityState.OdinProtectionAvailable
+    };
+    phylactery.CurrentHealth = linkedDeaths >= 4
+      ? 0
+      : phylactery.CurrentHealth - AdvancedAbilityRules.LichDeathDamage;
+    HandlePieceDestroyed(phylactery, attackingTeam);
+  }
+
+
 }

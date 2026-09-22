@@ -727,4 +727,18 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void PhylacteryLinkStateAndLichDeathRulesMatchTheCodex()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.SetLinkedPiece(
+      new UnitAbilityState(), "lich");
+
+    Assert.Equal("lich", state.LinkedPieceId);
+    Assert.False(AdvancedAbilityRules.CanTakeDirectDamage(
+      nameof(PieceType.Phylactery), state));
+    Assert.Equal(5, AdvancedAbilityRules.LichDeathDamage);
+  }
+
+
 }

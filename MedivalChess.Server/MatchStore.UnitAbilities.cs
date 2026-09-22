@@ -1145,4 +1145,139 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static NetworkPiece? GetServerLinkedPhylactery(
+    Match match,
+    NetworkPiece lich)
+  {
+    string? phylacteryId = lich.AbilityState?.LinkedPieceId;
+    return string.IsNullOrWhiteSpace(phylacteryId)
+      ? null
+      : match.Pieces.FirstOrDefault(piece =>
+          piece.Id == phylacteryId &&
+          piece.Type == nameof(PieceType.Phylactery) &&
+          piece.Team == lich.Team);
+  }
+
+  private static bool IsServerLichDestinationWithinLink(
+    Match match,
+    NetworkPiece piece,
+    (int x, int y) destination)
+  {
+    if (piece.Type != nameof(PieceType.Lich))
+    {
+      return true;
+    }
+
+    NetworkPiece? phylactery = GetServerLinkedPhylactery(match, piece);
+    return phylactery is not null &&
+      Math.Abs(destination.x - phylactery.X) +
+      Math.Abs(destination.y - phylactery.Y) <= 4;
+  }
+
+  private static void SpawnServerLinkedLichesAtOwnerTurnStart(
+    Match match,
+    NetworkTeam team)
+  {
+    (int x, int y)[] offsets =
+    [
+      (0, -1), (1, 0), (0, 1), (-1, 0),
+      (1, -1), (1, 1), (-1, 1), (-1, -1)
+    ];
+
+    foreach (string phylacteryId in match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.Type == nameof(PieceType.Phylactery))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      int phylacteryIndex = match.Pieces.FindIndex(piece => piece.Id == phylacteryId);
+      if (phylacteryIndex < 0) continue;
+      NetworkPiece phylactery = match.Pieces[phylacteryIndex];
+
+      NetworkPiece? linked = string.IsNullOrWhiteSpace(phylactery.AbilityState?.LinkedPieceId)
+        ? null
+        : match.Pieces.FirstOrDefault(piece =>
+            piece.Id == phylactery.AbilityState!.LinkedPieceId &&
+            piece.Type == nameof(PieceType.Lich) &&
+            piece.Team == team);
+      if (linked is not null)
+      {
+        continue;
+      }
+
+      foreach ((int x, int y) offset in offsets)
+      {
+        int x = phylactery.X + offset.x;
+        int y = phylactery.Y + offset.y;
+        if (!CanPlaceNetworkPiece(match, nameof(PieceType.Lich), team, x, y))
+        {
+          continue;
+        }
+
+        NetworkPiece lich = SpawnNetworkPiece(
+          match, nameof(PieceType.Lich), team, x, y);
+        int lichIndex = match.Pieces.FindIndex(piece => piece.Id == lich.Id);
+        match.Pieces[lichIndex] = lich with
+        {
+          AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+            lich.AbilityState, phylactery.Id)
+        };
+        match.Pieces[phylacteryIndex] = phylactery with
+        {
+          AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+            phylactery.AbilityState, lich.Id)
+        };
+        break;
+      }
+    }
+  }
+
+  private static void ApplyServerLichDeathLink(
+    Match match,
+    NetworkPiece lich,
+    PlayerSlot attackingPlayer)
+  {
+    if (lich.Type != nameof(PieceType.Lich))
+    {
+      return;
+    }
+
+    NetworkPiece? phylactery = GetServerLinkedPhylactery(match, lich);
+    if (phylactery is null)
+    {
+      return;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == phylactery.Id);
+    if (index < 0) return;
+
+    int linkedDeaths = (phylactery.AbilityState?.LinkedDeaths ?? 0) + 1;
+    UnitAbilityState state = AdvancedAbilityRules.SetLinkedPiece(
+      phylactery.AbilityState, null) with
+    {
+      LinkedDeaths = linkedDeaths,
+      OdinProtectionAvailable = linkedDeaths >= 4
+        ? false
+        : phylactery.AbilityState?.OdinProtectionAvailable ?? false
+    };
+    int remaining = linkedDeaths >= 4
+      ? 0
+      : phylactery.Health - AdvancedAbilityRules.LichDeathDamage;
+    match.Pieces[index] = phylactery with
+    {
+      Health = Math.Max(0, remaining),
+      AbilityState = state
+    };
+    if (remaining <= 0)
+    {
+      HandlePieceDestroyed(match, match.Pieces[index], attackingPlayer);
+    }
+  }
+
+
 }

@@ -1688,6 +1688,7 @@ public sealed partial class MatchStore
     bool mayUsePalaceSupport = false
   )
   {
+    if (!IsServerLichDestinationWithinLink(match, piece, destination)) return false;
     if (CanServerChessCaptureLand(match, piece, rule, destination)) return true;
     bool landingAttack = CanServerLandingAttackLand(match, piece, rule, destination);
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
@@ -2084,6 +2085,10 @@ public sealed partial class MatchStore
     if (defeatedPiece.Type == nameof(PieceType.Medusa))
     {
       ClearServerPetrificationBy(match, defeatedPiece.Id);
+    }
+    if (defeatedPiece.Type == nameof(PieceType.Lich))
+    {
+      ApplyServerLichDeathLink(match, defeatedPiece, attackingPlayer);
     }
 
     RemoveServerShadowsAttachedTo(match, defeatedPiece.Id);
@@ -2601,6 +2606,7 @@ public sealed partial class MatchStore
         };
       }
     }
+    SpawnServerLinkedLichesAtOwnerTurnStart(match, team);
   }
 
   private static void SpendAction(Match match, PlayerSlot player)
