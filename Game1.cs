@@ -199,6 +199,7 @@ internal sealed partial class Game1 : Game
   private EngineerAbility _selectedEngineerAbility;
   private int _selectedCodexBuilderAbilityIndex;
   private int _selectedCommandCentreUpgradeIndex;
+  private int _selectedThorStormIndex;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
@@ -542,6 +543,8 @@ internal sealed partial class Game1 : Game
       wasLeftClick && HandleCodexBuilderAbilityClick(ToUiPoint(mouse.Position));
     bool clickedCommandCentrePanel =
       wasLeftClick && HandleCommandCentreUpgradeClick(ToUiPoint(mouse.Position));
+    bool clickedThorPanel =
+      wasLeftClick && HandleThorAbilityClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
     bool clickedCarryThrowPanel =
@@ -549,7 +552,7 @@ internal sealed partial class Game1 : Game
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedCommandCentrePanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedCommandCentrePanel && !clickedThorPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -2439,7 +2442,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2505,6 +2508,13 @@ internal sealed partial class Game1 : Game
         AbilityRules.IsWithinSquareRadius(
           UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
           UnitRules.FromPieceDefinition(target.Definition), target.Position, 2),
+      PieceType.Fafnir => targetPosition == actor.Position &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        IsFootprintOnBoard(
+          PieceDefinitions.All.First(definition => definition.Type == PieceType.FafnirDragon),
+          actor.Position),
+      PieceType.Thor => AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
@@ -2571,6 +2581,10 @@ internal sealed partial class Game1 : Game
       ? "Petrify"
       : actor.Definition.Type == PieceType.CommandCentre
       ? $"Upgrade{GetSelectedCommandCentreUpgrade()}"
+      : actor.Definition.Type == PieceType.Fafnir
+      ? "Transform"
+      : actor.Definition.Type == PieceType.Thor
+      ? "Thunderstorm"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -2588,10 +2602,13 @@ internal sealed partial class Game1 : Game
         : actor.Definition.Type == PieceType.Phantom
           ? string.IsNullOrEmpty(actor.PossessedUnitId) ? "Possess" : "Unpossess"
           : string.Empty;
+    string? specialTargetId = actor.Definition.Type == PieceType.Thor
+      ? GetSelectedLocalThorStormId(actor)
+      : target?.NetworkId;
     _ = SendOnlineSpecialAsync(
       actor,
       ability,
-      target?.NetworkId,
+      specialTargetId,
       AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) ? actor.Position : targetPosition);
     return !IsCodexBuilder(actor.Definition.Type) ||
       CodexBuilderSelectionCompletesAction(actor, ability);
@@ -4169,7 +4186,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4200,6 +4217,17 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Medusa)
     {
       return TryPetrifyLocalTarget(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Fafnir &&
+        targetPosition == actor.Position)
+    {
+      return TryTransformLocalFafnir(actor);
+    }
+
+    if (actor.Definition.Type == PieceType.Thor)
+    {
+      return TryUseLocalThorAbility(actor, targetPosition);
     }
 
     if (actor.Definition.Type == PieceType.CommandCentre &&
@@ -5707,6 +5735,26 @@ internal sealed partial class Game1 : Game
       2 => "Move",
       _ => "Attack"
     };
+
+  private bool HandleThorAbilityClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Thor ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      CycleThorStorm(selectedPiece, -1);
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      CycleThorStorm(selectedPiece, 1);
+    }
+
+    return true;
+  }
 
   private bool HandleMercenaryPanelClick(Point mousePosition)
   {
@@ -10763,7 +10811,7 @@ internal sealed partial class Game1 : Game
     int abilityInfoBottom = selectedPiece.Definition.Type switch
     {
       PieceType.Engineer or PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or
-        PieceType.Runesmith or PieceType.Gatekeeper or PieceType.CommandCentre =>
+        PieceType.Runesmith or PieceType.Gatekeeper or PieceType.CommandCentre or PieceType.Thor =>
         GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
@@ -10794,6 +10842,12 @@ internal sealed partial class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.CommandCentre)
     {
       DrawCommandCentreUpgradeControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.Thor)
+    {
+      DrawThorAbilityControls();
       return;
     }
 
@@ -10964,6 +11018,18 @@ internal sealed partial class Game1 : Game
     _ui.Text("25 gold; each non-Royal unit can be upgraded once.", new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
   }
 
+  private void DrawThorAbilityControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    _ui.Text("THUNDERSTORM", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(GetSelectedThorStormLabel(selectedPiece), valueBounds, UiTheme.TextPrimary, 0.72f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text("NEW creates a storm; select a storm to move it.", new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
   private Piece GetOxCargo(Piece ox)
   {
     return ox.AttachmentKind == AttachmentKind.Carried ? ox.AttachedTo : null;
@@ -11005,6 +11071,18 @@ internal sealed partial class Game1 : Game
       return piece.AbilityState.UsedThisTurn
         ? "UPGRADE USED THIS TURN"
         : "RIGHT-CLICK a friendly non-Royal within 2 squares to upgrade";
+    }
+
+    if (piece.Definition.Type == PieceType.Fafnir)
+    {
+      return "RIGHT-CLICK this unit to transform for 125 gold";
+    }
+
+    if (piece.Definition.Type == PieceType.Thor)
+    {
+      return piece.AbilityState.UsedThisTurn
+        ? "THUNDERSTORM USED THIS TURN"
+        : "RIGHT-CLICK an in-range tile to create/move the selected storm";
     }
 
     if (piece.HasAttackedThisTurn)

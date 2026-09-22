@@ -96,11 +96,11 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.runesmith` | Verified | All four Rune builds, non-stacking Rune auras, and free demolition are wired across local/server/CPU and online play with local ability-mode selection. |
 | `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
 | `norse.flying_longboat` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `norse.fafnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `norse.fafnir_dragon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.fafnir` | Verified | Its 125-gold active transformation is wired in local/online/server play, requires the resulting 3×3 Fafnir Dragon footprint to fit the board, replaces Fafnir with the Dragon at full Dragon Health, and consumes the once-per-owner-turn ability use. |
+| `norse.fafnir_dragon` | Verified | Fafnir Dragon inherits shared terrain immunity; transformation destroys overlapping terrain and Structures, destroys overlapping Farm structures, and pushes other overlapping units with their attachments to the nearest legal empty positions in local/server play. |
 | `norse.fylgja` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.odin` | Verified | Protect, cooldown, first-lethal survival at 1 Health, consumption, and expiry before next-owner-turn effects are wired across local/server/CPU and online play; green CPU runtime coverage verifies the lifecycle. |
-| `norse.thor` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.thor` | Verified | Thor can create a new Thunderstorm or select and move an existing one in local/online/server play, once per owner turn with at most three active storms. Enemy storm-entry damage remains wired through the shared ability-entity movement effects. |
 | `wild_west.brawler` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
@@ -227,3 +227,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Completed Command Centre local/online upgrade selection for +10 Attack, +20 maximum Health plus 20 healing, or +1 Move, with the codex 25-gold cost, two-Square range, once-per-owner-turn use, and one-upgrade-per-unit restriction.
 - Completed Gatekeeper local/online Portal/Seal selection and linked Portal creation. Friendly units ending movement on a Portal teleport to its linked partner when that exit is legal; post-teleport movement state now feeds treasure, escort, and Medusa-range checks correctly.
 - Added focused shared coverage for linked Portal lookup and Command Centre's one-upgrade-only state. CPU-specific UI/action polish remains intentionally secondary to completing player-facing abilities.
+
+
+### 2026-09-22 — Fafnir and Thor active-ability batch
+
+- Completed player-facing Fafnir transformation for 125 gold in local and online play, with authoritative server validation that the Dragon's 3×3 footprint fits the board.
+- Fafnir Dragon transformation now destroys overlapping terrain and Structure representations, destroys overlapping Farm structures, and relocates engulfed non-Structure units to their nearest legal empty positions while keeping attachments with their hosts.
+- Completed Thor's local/online Thunderstorm selector. With fewer than three storms the player may create a new one or select an existing storm to move; at three storms only existing storms are available to move.
+- Fixed authoritative Thor handling so an explicitly selected Thunderstorm can be moved at any active-storm count rather than only after the three-storm cap is reached.
+- Existing shared Thunderstorm entry damage and Fafnir Dragon terrain immunity remain the common runtime rules; existing CPU regression coverage already exercises Fafnir transformation and Thor storm creation/movement, so no extra CPU work was added here.

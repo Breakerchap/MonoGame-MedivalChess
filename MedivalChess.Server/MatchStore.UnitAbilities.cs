@@ -576,4 +576,84 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static void PushServerUnitsOutOfFafnirFootprint(
+    Match match,
+    NetworkPiece dragon,
+    UnitRule dragonRule,
+    PlayerSlot source)
+  {
+    string[] farmIds = match.Pieces
+      .Where(piece => piece.Id != dragon.Id && piece.AttachedToId is null &&
+        piece.Type == nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule farmRule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, farmRule.Width, farmRule.Height,
+          dragon.X, dragon.Y, dragonRule.Width, dragonRule.Height))
+      .Select(piece => piece.Id)
+      .ToArray();
+    foreach (string farmId in farmIds)
+    {
+      NetworkPiece farm = match.Pieces.FirstOrDefault(piece => piece.Id == farmId);
+      if (farm is not null)
+      {
+        HandlePieceDestroyed(match, farm with { Health = 0 }, source);
+      }
+    }
+
+    string[] overlappingIds = match.Pieces
+      .Where(piece => piece.Id != dragon.Id && piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, rule.Width, rule.Height,
+          dragon.X, dragon.Y, dragonRule.Width, dragonRule.Height))
+      .Select(piece => piece.Id)
+      .ToArray();
+
+    var board = BoardRules.GetBoard(match.Configuration);
+    foreach (string pieceId in overlappingIds)
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == pieceId);
+      if (index < 0) continue;
+      NetworkPiece moving = match.Pieces[index];
+      if (!UnitRules.TryGet(moving.Type, out UnitRule movingRule)) continue;
+
+      (int x, int y)? destination = null;
+      foreach ((int x, int y) candidate in board.Cells
+        .OrderBy(position => Math.Max(
+          Math.Abs(position.x - moving.X),
+          Math.Abs(position.y - moving.Y)))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x))
+      {
+        if (CanDisplaceServerPieceTo(match, moving, movingRule, candidate))
+        {
+          destination = candidate;
+          break;
+        }
+      }
+      if (destination is null) continue;
+
+      match.Pieces[index] = moving with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y
+      };
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == moving.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with
+          {
+            X = destination.Value.x,
+            Y = destination.Value.y
+          };
+        }
+      }
+    }
+  }
+
+
 }

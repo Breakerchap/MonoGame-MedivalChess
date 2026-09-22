@@ -286,13 +286,15 @@ public sealed partial class MatchStore
         return AdvancedSpecialResult.AppliedAction;
 
       case nameof(PieceType.Fafnir):
+        UnitRule fafnirDragon = UnitRules.GetRequired(nameof(PieceType.FafnirDragon));
         if (!string.Equals(ability, "Transform", StringComparison.OrdinalIgnoreCase) ||
             !AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) ||
-            player.Money < AdvancedAbilityRules.FafnirTransformCost)
+            player.Money < AdvancedAbilityRules.FafnirTransformCost ||
+            !NetworkPieceRules.FootprintFitsBoard(
+              match.Configuration, actor.X, actor.Y, fafnirDragon.Width, fafnirDragon.Height))
         {
           return AdvancedSpecialResult.Rejected;
         }
-        UnitRule fafnirDragon = UnitRules.GetRequired(nameof(PieceType.FafnirDragon));
         player.Money = ClampCurrency((long)player.Money - AdvancedAbilityRules.FafnirTransformCost);
         match.Pieces[actorIndex] = actor with
         {
@@ -301,6 +303,7 @@ public sealed partial class MatchStore
           AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState)
         };
         DestroyOverlappedTerrainAndEntities(match, match.Pieces[actorIndex], fafnirDragon);
+        PushServerUnitsOutOfFafnirFootprint(match, match.Pieces[actorIndex], fafnirDragon, player);
         return AdvancedSpecialResult.AppliedAction;
 
       case nameof(PieceType.Odin):
@@ -331,23 +334,31 @@ public sealed partial class MatchStore
         List<AbilityEntity> storms = match.AbilityEntities
           .Where(entity => entity.Kind == AbilityEntityKind.Thunderstorm && entity.SourcePieceId == actor.Id)
           .ToList();
-        AbilityEntity? existingStorm = storms.FirstOrDefault(entity =>
+        AbilityEntity? chosenStorm = string.IsNullOrWhiteSpace(request.TargetId)
+          ? null
+          : storms.FirstOrDefault(entity => entity.Id == request.TargetId);
+        bool destinationOccupiedByOtherStorm = storms.Any(entity =>
+          entity.Id != chosenStorm?.Id &&
           entity.X == request.TargetX && entity.Y == request.TargetY);
-        if (existingStorm is null && storms.Count >= 3)
+        if (destinationOccupiedByOtherStorm)
         {
-          // Moving an existing storm is explicit: target its entity ID through TargetId.
-          AbilityEntity? chosen = match.AbilityEntities.FirstOrDefault(entity =>
-            entity.Id == request.TargetId && entity.Kind == AbilityEntityKind.Thunderstorm &&
-            entity.SourcePieceId == actor.Id);
-          if (chosen is null)
+          return AdvancedSpecialResult.Rejected;
+        }
+        if (chosenStorm is not null)
+        {
+          int chosenIndex = match.AbilityEntities.FindIndex(entity => entity.Id == chosenStorm.Id);
+          match.AbilityEntities[chosenIndex] = chosenStorm with
+          {
+            X = request.TargetX,
+            Y = request.TargetY
+          };
+        }
+        else
+        {
+          if (storms.Count >= 3)
           {
             return AdvancedSpecialResult.Rejected;
           }
-          int chosenIndex = match.AbilityEntities.IndexOf(chosen);
-          match.AbilityEntities[chosenIndex] = chosen with { X = request.TargetX, Y = request.TargetY };
-        }
-        else if (existingStorm is null)
-        {
           match.AbilityEntities.Add(CreateEntity(
             AbilityEntityKind.Thunderstorm, actor.Team, request.TargetX, request.TargetY, actor.Id));
         }

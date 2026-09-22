@@ -457,4 +457,178 @@ internal sealed partial class Game1
     }
   }
 
+
+  private bool TryTransformLocalFafnir(Piece fafnir)
+  {
+    PieceDefinition dragon = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.FafnirDragon);
+    Team team = _teams.Find(candidate => candidate.TeamName == fafnir.Team);
+    if (team is null ||
+        team.Money < AdvancedAbilityRules.FafnirTransformCost ||
+        !AdvancedAbilityRules.CanUseOncePerOwnerTurn(fafnir.AbilityState) ||
+        !IsFootprintOnBoard(dragon, fafnir.Position))
+    {
+      return false;
+    }
+
+    team.Money = ClampCurrency((long)team.Money - AdvancedAbilityRules.FafnirTransformCost);
+    fafnir.TransformTo(dragon);
+    fafnir.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(fafnir.AbilityState);
+
+    foreach ((int x, int y) square in fafnir.OccupiedSquares().ToArray())
+    {
+      _terrain.DestroyTile(square);
+      TryDestroyLocalStructure(square);
+    }
+
+    Piece[] overlappingFarms = pieceSetup.Pieces
+      .Where(piece => piece != fafnir && piece.AttachedTo is null &&
+        piece.Definition.Type == PieceType.Farm &&
+        UnitRules.FootprintsOverlap(
+          piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+          fafnir.Position.x, fafnir.Position.y, fafnir.Definition.Size.x, fafnir.Definition.Size.y))
+      .ToArray();
+    foreach (Piece farm in overlappingFarms)
+    {
+      farm.CurrentHealth = 0;
+      HandlePieceDestroyed(farm, fafnir.Team);
+    }
+
+    Piece[] overlapping = pieceSetup.Pieces
+      .Where(piece => piece != fafnir && piece.AttachedTo is null &&
+        piece.Definition.Type != PieceType.Farm &&
+        UnitRules.FootprintsOverlap(
+          piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+          fafnir.Position.x, fafnir.Position.y, fafnir.Definition.Size.x, fafnir.Definition.Size.y))
+      .ToArray();
+
+    foreach (Piece moving in overlapping)
+    {
+      (int x, int y)? destination = FindNearestLocalLegalDisplacement(moving);
+      if (destination is null) continue;
+      moving.Position = destination.Value;
+      foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == moving))
+      {
+        attachment.Position = destination.Value;
+      }
+      pieceSetup.RefreshOccupancy();
+    }
+
+    CompleteAction();
+    return true;
+  }
+
+  private (int x, int y)? FindNearestLocalLegalDisplacement(Piece moving)
+  {
+    List<(int x, int y)> cells = [];
+    for (int arrayY = 0; arrayY < _board.BoardArray.GetLength(0); arrayY++)
+    for (int arrayX = 0; arrayX < _board.BoardArray.GetLength(1); arrayX++)
+    {
+      if (_board.BoardArray[arrayY, arrayX] != 1) continue;
+      cells.Add((_board.MinX + arrayX, _board.MinY + arrayY));
+    }
+
+    foreach ((int x, int y) candidate in cells
+      .OrderBy(position => Math.Max(
+        Math.Abs(position.x - moving.Position.x),
+        Math.Abs(position.y - moving.Position.y)))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x))
+    {
+      if (CanDisplaceLocalPieceTo(moving, candidate))
+      {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  private string? GetSelectedLocalThorStormId(Piece thor)
+  {
+    AbilityEntity[] storms = _abilityEntities
+      .Where(entity => entity.Kind == AbilityEntityKind.Thunderstorm &&
+        entity.SourcePieceId == thor.NetworkId)
+      .OrderBy(entity => entity.Id, StringComparer.Ordinal)
+      .ToArray();
+    int optionCount = storms.Length < 3 ? storms.Length + 1 : storms.Length;
+    if (optionCount == 0) return null;
+    int index = ((_selectedThorStormIndex % optionCount) + optionCount) % optionCount;
+    if (storms.Length < 3)
+    {
+      if (index == 0) return null;
+      return storms[index - 1].Id;
+    }
+    return storms[index].Id;
+  }
+
+  private string GetSelectedThorStormLabel(Piece thor)
+  {
+    AbilityEntity[] storms = _abilityEntities
+      .Where(entity => entity.Kind == AbilityEntityKind.Thunderstorm &&
+        entity.SourcePieceId == thor.NetworkId)
+      .OrderBy(entity => entity.Id, StringComparer.Ordinal)
+      .ToArray();
+    int optionCount = storms.Length < 3 ? storms.Length + 1 : storms.Length;
+    if (optionCount == 0) return "NEW";
+    int index = ((_selectedThorStormIndex % optionCount) + optionCount) % optionCount;
+    if (storms.Length < 3 && index == 0) return "NEW";
+    int stormIndex = storms.Length < 3 ? index - 1 : index;
+    return $"STORM {stormIndex + 1}";
+  }
+
+  private void CycleThorStorm(Piece thor, int direction)
+  {
+    int stormCount = _abilityEntities.Count(entity =>
+      entity.Kind == AbilityEntityKind.Thunderstorm &&
+      entity.SourcePieceId == thor.NetworkId);
+    int optionCount = stormCount < 3 ? stormCount + 1 : stormCount;
+    if (optionCount <= 0) return;
+    _selectedThorStormIndex =
+      ((_selectedThorStormIndex + direction) % optionCount + optionCount) % optionCount;
+  }
+
+  private bool TryUseLocalThorAbility(Piece thor, (int x, int y) targetPosition)
+  {
+    if (!AdvancedAbilityRules.CanUseOncePerOwnerTurn(thor.AbilityState) ||
+        !CanAttackSquareWithAttachments(thor, targetPosition))
+    {
+      return false;
+    }
+
+    string? selectedStormId = GetSelectedLocalThorStormId(thor);
+    AbilityEntity selectedStorm = selectedStormId is null
+      ? null
+      : _abilityEntities.FirstOrDefault(entity => entity.Id == selectedStormId);
+    if (selectedStorm is null)
+    {
+      int count = _abilityEntities.Count(entity =>
+        entity.Kind == AbilityEntityKind.Thunderstorm &&
+        entity.SourcePieceId == thor.NetworkId);
+      if (count >= 3) return false;
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.Thunderstorm, thor, targetPosition));
+    }
+    else
+    {
+      int index = _abilityEntities.FindIndex(entity => entity.Id == selectedStorm.Id);
+      if (index < 0) return false;
+      if (_abilityEntities.Any(entity =>
+        entity.Id != selectedStorm.Id &&
+        entity.X == targetPosition.x && entity.Y == targetPosition.y))
+      {
+        return false;
+      }
+      _abilityEntities[index] = selectedStorm with
+      {
+        X = targetPosition.x,
+        Y = targetPosition.y
+      };
+    }
+
+    thor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(thor.AbilityState);
+    CompleteAction();
+    return true;
+  }
+
+
 }
