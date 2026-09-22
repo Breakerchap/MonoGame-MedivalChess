@@ -445,3 +445,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Added CPU Sheriff Arrest legality, generation, and application. The simulator respects the linked Sheriff Prison, 30-Health threshold, non-Royal/non-Structure restriction, capacity three, attack range/line of sight, and stores the prisoner as an attached non-acting unit.
 - Added CPU Prison death resolution with ordered prisoner release, closest-legal placement and down-right tie preference. Ordinary Prisons spawn two Cowboys and two Brawlers; Sheriff Prisons do not. CPU-purchased replacement Prisons relink to a Sheriff missing its Prison.
 - Added CPU regression tests covering lethal Abomination landing, Sheriff Arrest, ordinary Prison reinforcement spawning, and Sheriff Prison release without reinforcements.
+
+
+### 2026-09-23 — Sheriff authoritative type correction
+
+- Removed the stale catalogue alias that mapped the authoritative `wild_west.sheriff` row to the legacy misspelled `Sherrif` enum. The codex Sheriff now resolves to `PieceType.Sheriff`, matching the completed Sheriff mechanics while leaving the old legacy `Sherrif` definition untouched and out of scope.
+- Added an explicit catalogue regression assertion that `wild_west.sheriff` resolves to `PieceType.Sheriff` and remains a Royal.

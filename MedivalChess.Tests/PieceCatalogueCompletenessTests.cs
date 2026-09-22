@@ -37,12 +37,17 @@ public sealed class PieceCatalogueCompletenessTests
     [
       "Swordsman", "Ashigaru", "Sumo", "Carpenter", "Banshee", "Abomination", "Elf", "Witch",
       "Officer", "Brawler", "Demolitionist", "Pickpocket", "Stagecoach", "Spartan", "Hunter", "Valkyrie",
-      "Runesmith", "Daedalus", "Atlas", "Chronos", "Mason", "Reaper", "Lich", "Phylactery", "Sherrif"
+      "Runesmith", "Daedalus", "Atlas", "Chronos", "Mason", "Reaper", "Lich", "Phylactery", "Sheriff"
       , "Giant", "Cyclops", "Fiend", "Cherub", "Fallen", "Gatekeeper", "Archangel", "Archdemon", "Succubus", "Herald",
       "Pawn", "ChessKnight", "Bishop", "Rook", "Queen"
     ];
 
     Assert.All(identifiers, identifier => Assert.True(UnitRules.TryGet(identifier, out _), identifier));
+
+    PieceDefinition sheriff = PieceDefinitions.All.Single(unit =>
+      unit.SourceUnitId == "wild_west.sheriff");
+    Assert.Equal(PieceType.Sheriff, sheriff.Type);
+    Assert.Equal(PieceCategory.Royal, sheriff.Category);
   }
 
   [Fact]

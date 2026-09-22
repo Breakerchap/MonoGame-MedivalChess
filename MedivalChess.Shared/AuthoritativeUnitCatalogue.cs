@@ -10,8 +10,7 @@ internal static class AuthoritativeUnitCatalogue
 
   private static readonly Dictionary<string, PieceType> TypeAliases = new(StringComparer.Ordinal)
   {
-    ["norse.beserker"] = PieceType.Beserker,
-    ["wild_west.sheriff"] = PieceType.Sherrif
+    ["norse.beserker"] = PieceType.Beserker
   };
 
   private static Dictionary<string, bool>? _royals;

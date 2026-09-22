@@ -180,7 +180,7 @@ public sealed class PieceDefinition
     PieceType.King or PieceType.Baron or PieceType.Sorceress or PieceType.Palace or PieceType.Emperor or
     PieceType.TerracottaWarrior or PieceType.GoblinRoyalty or PieceType.Atlas or PieceType.Chronos or
     PieceType.President or PieceType.Jarl or PieceType.Phylactery or PieceType.Phantom or PieceType.Sherrif or
-    PieceType.Herald or PieceType.ChessKing => PieceCategory.Royal,
+    PieceType.Sheriff or PieceType.Herald or PieceType.ChessKing => PieceCategory.Royal,
     _ => PieceCategory.Melee
   };
 }
