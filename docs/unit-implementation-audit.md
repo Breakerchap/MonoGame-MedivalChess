@@ -451,3 +451,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 
 - Removed the stale catalogue alias that mapped the authoritative `wild_west.sheriff` row to the legacy misspelled `Sherrif` enum. The codex Sheriff now resolves to `PieceType.Sheriff`, matching the completed Sheriff mechanics while leaving the old legacy `Sherrif` definition untouched and out of scope.
 - Added an explicit catalogue regression assertion that `wild_west.sheriff` resolves to `PieceType.Sheriff` and remains a Royal.
+
+
+### 2026-09-23 — broad unit stress/regression pass
+
+- Added a broad stress suite over every non-Legacy, non-Chess authoritative unit. It checks catalogue/shared-rule consistency, CPU movement generation, generated action legality, action application invariants, and spawned/attached piece validity.
+- Added 24 deterministic mixed-roster fuzz states covering random combinations of in-scope units. Up to 50 generated actions per state are independently simulated and checked for legal board footprints, valid live health, known runtime unit types, valid attachment hosts, and unique piece IDs.
+- Added authoritative server setup coverage for every selectable in-scope Royal, with dedicated Sheriff two-stage placement checks including rejection/recovery from an illegal Prison placement.
+- Added owner-turn state coverage ensuring release locks clear at the next owner turn while Sheriff Prison identity/link/prisoner ordering state persists.
+- These tests are intentionally broader than the unit-specific regression suite and are used as a bug-finding pass; any failures are fixed before this audit is considered complete.
