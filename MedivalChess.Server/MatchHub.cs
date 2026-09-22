@@ -714,6 +714,10 @@ public sealed partial class MatchStore
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
+      if (target?.Type == nameof(PieceType.Helicopter))
+      {
+        return new(false, "Helicopter cannot be targeted by unit abilities.", foundMatch.State());
+      }
       if (actor.Type != nameof(PieceType.Mimic) &&
           !AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
       {
@@ -1030,7 +1034,13 @@ public sealed partial class MatchStore
 
       NetworkPiece? specialHost = null;
       (int x, int y) placement = (request.X, request.Y);
-      if (unit.Type == nameof(PieceType.Shadow))
+      if (TryGetServerHelicopterDeployment(
+            foundMatch, unit, player.Team, request.X, request.Y,
+            out NetworkPiece? deploymentHelicopter, out placement))
+      {
+        RemovePiece(foundMatch, deploymentHelicopter!.Id);
+      }
+      else if (unit.Type == nameof(PieceType.Shadow))
       {
         specialHost = GetServerSpecialPurchaseHost(
           foundMatch, player.Team, request.X, request.Y, requireNonRoyal: true);
@@ -1164,7 +1174,13 @@ public sealed partial class MatchStore
 
       NetworkPiece? specialHost = null;
       (int x, int y) placement = (request.X, request.Y);
-      if (unit.Type == nameof(PieceType.Shadow))
+      if (TryGetServerHelicopterDeployment(
+            foundMatch, unit, player.Team, request.X, request.Y,
+            out NetworkPiece? deploymentHelicopter, out placement))
+      {
+        RemovePiece(foundMatch, deploymentHelicopter!.Id);
+      }
+      else if (unit.Type == nameof(PieceType.Shadow))
       {
         specialHost = GetServerSpecialPurchaseHost(
           foundMatch, player.Team, request.X, request.Y, requireNonRoyal: true);
@@ -1530,6 +1546,15 @@ public sealed partial class MatchStore
     bool initialBuy
   )
   {
+    if (unit.Type == nameof(PieceType.Helicopter))
+    {
+      return CanPlaceServerHelicopter(match, team, x, y, unit.Width, unit.Height);
+    }
+    if (TryGetServerHelicopterDeployment(
+          match, unit, team, x, y, out _, out _))
+    {
+      return true;
+    }
     if (unit.Type == nameof(PieceType.Shadow))
     {
       return GetServerSpecialPurchaseHost(

@@ -936,14 +936,16 @@ public sealed partial class MatchStore
       }
     }
 
+    string sacrificeId = sacrifice.Id;
+    (int x, int y) resolvedPlacement = placement;
     return !match.Pieces.Any(piece =>
-      piece.Id != sacrifice.Id &&
+      piece.Id != sacrificeId &&
       piece.AttachedToId is null &&
       piece.Type != nameof(PieceType.Farm) &&
       UnitRules.TryGet(piece.Type, out UnitRule rule) &&
       UnitRules.FootprintsOverlap(
         piece.X, piece.Y, rule.Width, rule.Height,
-        placement.x, placement.y, width, height));
+        resolvedPlacement.x, resolvedPlacement.y, width, height));
   }
 
   private static void RemoveServerShadowsAttachedTo(Match match, string hostId)
@@ -957,6 +959,116 @@ public sealed partial class MatchStore
     {
       RemovePiece(match, shadowId);
     }
+  }
+
+
+
+  private static NetworkPiece? GetServerHelicopterAt(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y)
+  {
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.Helicopter) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        x, y, 1, 1));
+  }
+
+  private static bool CanPlaceServerHelicopter(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    for (int oy = 0; oy < height; oy++)
+    for (int ox = 0; ox < width; ox++)
+    {
+      NetworkTeam? owner = MatchRules.GetSquareOwner(
+        board, match.Configuration.GameMode, (x + ox, y + oy), match.Configuration.PlayerCount);
+      if (owner is not null && owner != team)
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(piece =>
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        x, y, width, height));
+  }
+
+  private static bool TryGetServerHelicopterDeployment(
+    Match match,
+    UnitPurchaseInfo unit,
+    NetworkTeam team,
+    int clickedX,
+    int clickedY,
+    out NetworkPiece? helicopter,
+    out (int x, int y) placement)
+  {
+    helicopter = GetServerHelicopterAt(match, team, clickedX, clickedY);
+    placement = helicopter is null ? (clickedX, clickedY) : (helicopter.X, helicopter.Y);
+    if (helicopter is null ||
+        unit.Type is nameof(PieceType.Farm) or nameof(PieceType.Helicopter) or
+          nameof(PieceType.Shadow) or nameof(PieceType.Archdemon) ||
+        !NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration, placement.x, placement.y, unit.Width, unit.Height))
+    {
+      return false;
+    }
+
+    for (int y = 0; y < unit.Height; y++)
+    for (int x = 0; x < unit.Width; x++)
+    {
+      if (match.Terrain.IsLake((placement.x + x, placement.y + y)))
+      {
+        return false;
+      }
+    }
+
+    if (RoyalAbilityRules.RequiresAdjacentRoyalPlacement(unit.Type))
+    {
+      UnitRule placingRule = UnitRules.GetRequired(unit.Type);
+      string helicopterId = helicopter.Id;
+      (int x, int y) resolvedPlacement = placement;
+      bool hasAdjacentRoyal = match.Pieces.Any(piece =>
+        piece.Id != helicopterId &&
+        piece.Team == team &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+        UnitRules.TryGet(piece.Type, out UnitRule royalRule) &&
+        AbilityRules.AreAdjacent(
+          placingRule, resolvedPlacement, royalRule, (piece.X, piece.Y), includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(unit.Type, hasAdjacentRoyal))
+      {
+        return false;
+      }
+    }
+
+    string ignoredHelicopterId = helicopter.Id;
+    (int x, int y) resolvedDeployment = placement;
+    return !match.Pieces.Any(piece =>
+      piece.Id != ignoredHelicopterId &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        resolvedDeployment.x, resolvedDeployment.y, unit.Width, unit.Height));
   }
 
 

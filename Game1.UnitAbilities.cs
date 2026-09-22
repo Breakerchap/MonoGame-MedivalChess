@@ -837,13 +837,82 @@ internal sealed partial class Game1
       }
     }
 
+    Piece sacrificePiece = sacrifice;
+    (int x, int y) resolvedPlacement = placement;
     return !pieceSetup.Pieces.Any(piece =>
-      piece != sacrifice &&
+      piece != sacrificePiece &&
       piece.AttachedTo is null &&
       piece.Definition.Type != PieceType.Farm &&
       UnitRules.FootprintsOverlap(
         piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
-        placement.x, placement.y, archdemon.Size.x, archdemon.Size.y));
+        resolvedPlacement.x, resolvedPlacement.y, archdemon.Size.x, archdemon.Size.y));
+  }
+
+  private bool TryGetLocalHelicopterDeployment(
+    PieceDefinition definition,
+    (int x, int y) clickedPosition,
+    out Piece helicopter,
+    out (int x, int y) placement)
+  {
+    helicopter = GetUnattachedPieceAt(clickedPosition, Team.CurrentTurn);
+    placement = helicopter?.Position ?? clickedPosition;
+    if (helicopter?.Definition.Type != PieceType.Helicopter ||
+        definition.Type is PieceType.Farm or PieceType.Helicopter or PieceType.Shadow or PieceType.Archdemon ||
+        !IsFootprintOnBoard(definition, placement))
+    {
+      return false;
+    }
+
+    if (OccupiedSquares(definition, placement).Any(_terrain.IsLake))
+    {
+      return false;
+    }
+
+    if (RoyalAbilityRules.RequiresAdjacentRoyalPlacement(definition.Type.ToString()))
+    {
+      UnitRule placingRule = UnitRules.FromPieceDefinition(definition);
+      Piece deploymentHelicopter = helicopter;
+      (int x, int y) deploymentPlacement = placement;
+      bool hasAdjacentRoyal = pieceSetup.Pieces.Any(piece =>
+        piece.Team == Team.CurrentTurn &&
+        piece != deploymentHelicopter &&
+        piece.IsRoyal &&
+        AbilityRules.AreAdjacent(
+          placingRule, deploymentPlacement,
+          UnitRules.FromPieceDefinition(piece.Definition), piece.Position,
+          includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+            definition.Type.ToString(), hasAdjacentRoyal))
+      {
+        return false;
+      }
+    }
+
+    Piece ignoredHelicopter = helicopter;
+    (int x, int y) resolvedDeployment = placement;
+    return !pieceSetup.Pieces.Any(piece =>
+      piece != ignoredHelicopter &&
+      piece.AttachedTo is null &&
+      piece.Definition.Type != PieceType.Farm &&
+      UnitRules.FootprintsOverlap(
+        piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+        resolvedDeployment.x, resolvedDeployment.y, definition.Size.x, definition.Size.y));
+  }
+
+  private bool CanPlaceLocalHelicopter(
+    PieceDefinition definition,
+    (int x, int y) position)
+  {
+    if (definition.Type != PieceType.Helicopter || !IsFootprintOnBoard(definition, position))
+    {
+      return false;
+    }
+    TeamName? owner = GetSquareOwner(position);
+    if (owner.HasValue && owner.Value != Team.CurrentTurn)
+    {
+      return false;
+    }
+    return pieceSetup.IsFootprintClear(definition, position);
   }
 
   private bool CanPlaceSpecialPurchase(
@@ -855,7 +924,8 @@ internal sealed partial class Game1
       PieceType.Shadow => TryGetLocalShadowHost(clickedPosition, out _),
       PieceType.Archdemon => TryGetLocalArchdemonSacrifice(
         definition, clickedPosition, out _, out _),
-      _ => false
+      _ => TryGetLocalHelicopterDeployment(
+        definition, clickedPosition, out _, out _)
     };
   }
 

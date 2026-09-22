@@ -126,7 +126,7 @@ internal sealed partial class Game1
 
   private void ApplyLocalAbilityEntityDamage(Piece target, NetworkTeam sourceTeam, int damage)
   {
-    if (!pieceSetup.Pieces.Contains(target)) return;
+    if (!pieceSetup.Pieces.Contains(target) || target.Definition.Type == PieceType.Helicopter) return;
     int applied = ApplyLocalChessKingDeathRule(
       target,
       AbilityRules.LimitIncomingDamage(UnitRules.FromPieceDefinition(target.Definition), damage));

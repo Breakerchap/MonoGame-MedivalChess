@@ -1090,9 +1090,13 @@ internal sealed partial class Game1 : Game
     bool specialPurchasePlacement = CanPlaceSpecialPurchase(definition, targetPosition);
     bool canPlace =
       (specialPurchasePlacement ||
+       CanPlaceLocalHelicopter(definition, targetPosition) ||
        (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
         ? CanPlaceNoMansLand(definition, targetPosition)
-        : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
+        : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+          ? CanPlaceNoMansLand(definition, targetPosition) ||
+            CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+          : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
       (isOpeningFarmPlacement || buyingTeam.Money >=
         (long)selectedPurchasePrice + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
@@ -1128,6 +1132,11 @@ internal sealed partial class Game1 : Game
       }
       RemoveLocalShadowsAttachedTo(sacrifice);
       pieceSetup.RemovePiece(sacrifice);
+    }
+    else if (TryGetLocalHelicopterDeployment(
+      definition, targetPosition, out Piece helicopter, out purchasePlacement))
+    {
+      pieceSetup.RemovePiece(helicopter);
     }
 
     Piece boughtPiece = new(definition, purchasePlacement, buyingTeam.TeamName)
@@ -2491,6 +2500,11 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (target?.Definition.Type == PieceType.Helicopter)
+    {
+      return false;
+    }
+
     if (actor.Definition.Type == PieceType.Mimic &&
         target is not null &&
         CanUseLocalMimicSwap(actor, target))
@@ -3274,9 +3288,13 @@ internal sealed partial class Game1 : Game
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
        CanPlaceSpecialPurchase(definition, targetPosition) ||
+       CanPlaceLocalHelicopter(definition, targetPosition) ||
        (definition.Type == PieceType.Mercenary
          ? CanPlaceMercenary(targetPosition)
-         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
+         : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+           ? CanPlaceNoMansLand(definition, targetPosition) ||
+             CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+           : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
 
     canPurchaseAtTarget = isEligibleForPurchase && hasEnoughGold;
     return true;
@@ -4253,6 +4271,11 @@ internal sealed partial class Game1 : Game
       actor.HasAttackedThisTurn = true;
       CompleteAction();
       return true;
+    }
+
+    if (targetPiece?.Definition.Type == PieceType.Helicopter)
+    {
+      return false;
     }
 
     if (actor.Definition.Type == PieceType.Mimic &&

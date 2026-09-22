@@ -128,7 +128,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.missile_silo` | Verified | The first Missile Silo attack may target an empty square and deals its 65 Attack to every unit in the centred 5×5 area, including friendlies, while destroying Structures in that area; the shared consumed flag permanently prevents another attack. Local and authoritative server paths are wired with regression coverage for one-shot state. |
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.armoured_truck` | Verified | Armoured Truck may make its codex landing attack through movement without spending its normal attack: normal Attack damage is applied, a killed target frees the landing square, a survivor causes fallback to the previous movement square, and the survivor is pushed up to 2 tiles with shortened legal fallback. Local and authoritative server movement are wired. |
-| `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.helicopter` | Verified | Helicopter may be purchased in friendly territory or No-Man's-Land without terrain restrictions, cannot be directly attacked or targeted by active abilities, ignores ability-entity damage, and acts as a deployment point: purchasing a friendly non-Structure unit onto its tile destroys the Helicopter and bypasses ordinary territory/structure placement restrictions while still enforcing Lakes, unit collisions, board fit and unit-specific placement requirements. Local and authoritative server paths are wired. |
 | `modern.command_centre` | Verified | Local and online play can choose Attack, Health, or Move upgrades for an eligible friendly non-Royal within 2 Squares, pay 25 gold, enforce one upgrade per unit and once per owner turn, and apply the persistent stat/health effects already shared with server/CPU rules. |
 | `modern.hacker` | Verified | Hack targeting/cooldown is wired across local/server/CPU and online play; all special-action entry points respect disabled state, normal movement/attacks remain available, and green CPU runtime coverage verifies expiry at the end of the target's owner turn. |
 | `angels_demons.fiend` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -137,7 +137,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `angels_demons.gatekeeper` | Verified | Portal/Seal build selection and free demolition are wired in local/online play; Portal pairs are linked and friendly units ending movement on one teleport to the other when the exit is legal. Seal blocking/expiry remains shared with server behaviour. |
-| `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU with runtime coverage; pull-immunity integration will be verified alongside forced-movement abilities such as Fylgja. |
+| `angels_demons.beelzebub` | Verified | Shared/local/server/CPU rules already implement terrain immunity, movement through units, push/pull displacement immunity, and the codex retaliation: after a direct attack, the attacker is displaced up to 2 tiles directly away with shortened legal fallback. Focused shared coverage verifies the retaliation and immunity rules. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -266,3 +266,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Shadow attachments are explicitly removed when their host dies instead of being detached and left behind.
 - Implemented Archdemon purchase placement on top of one friendly non-Farm unit. Its full 2×2 footprint must fit the board and traversable terrain without overlapping another ordinary unit; the sacrificed unit is removed before the Archdemon is created at its position. This works in normal territory and No-Man's-Land as required by the codex.
 - Added focused shared coverage confirming Shadow's LOS and direct-target rules. CPU purchase behaviour was not expanded.
+
+
+### 2026-09-22 — Helicopter deployment and Beelzebub verification
+
+- Completed Helicopter purchase placement in local and authoritative online/server play. Its normal purchase zone is extended into No-Man's-Land, and Helicopter placement itself ignores terrain restrictions as required by its interaction immunity.
+- Added Helicopter deployment purchasing: a friendly ordinary unit may be bought onto a friendly Helicopter's tile, destroying the Helicopter. Deployment ignores normal territory and Structure restrictions but still rejects Lakes, unit collisions, off-board footprints, and known unit-specific placement requirements.
+- Extended Helicopter's existing direct-damage immunity to active-ability targeting and ability-entity damage so units and Structures cannot interact with it through those paths.
+- Verified Beelzebub's remaining audit gap was stale rather than missing implementation: the shared attack planner already retaliates against an attacker with a two-tile shortened-fallback push, while shared movement/displacement rules already grant terrain/unit traversal and push immunity.
+- Added focused shared regression coverage for Beelzebub retaliation/push immunity and Helicopter's No-Man's-Land/direct-interaction rules.

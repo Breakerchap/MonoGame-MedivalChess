@@ -156,7 +156,8 @@ public sealed partial class MatchStore
     int damage)
   {
     int index = match.Pieces.FindIndex(piece => piece.Id == targetId);
-    if (index < 0 || !UnitRules.TryGet(match.Pieces[index].Type, out UnitRule targetRule))
+    if (index < 0 || match.Pieces[index].Type == nameof(PieceType.Helicopter) ||
+        !UnitRules.TryGet(match.Pieces[index].Type, out UnitRule targetRule))
     {
       return;
     }

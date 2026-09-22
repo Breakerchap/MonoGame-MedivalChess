@@ -656,4 +656,33 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void BeelzebubRetaliatesByPushingItsAttackerTwoTiles()
+  {
+    AbilityUnitSnapshot attacker = new(
+      "attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 1, 1);
+    AbilityUnitSnapshot beelzebub = new(
+      "beelzebub", nameof(PieceType.Beelzebub), NetworkTeam.Blue, 1, 0, 3, 3);
+
+    AbilityAttackPlan plan = AbilityAttackRules.BuildAttackPlan(
+      attacker, beelzebub, [attacker, beelzebub]);
+
+    AbilityDisplacementInstruction push = Assert.Single(
+      plan.Displacements!, instruction => instruction.UnitId == attacker.Id);
+    Assert.Equal(2, push.MaximumDistance);
+    Assert.False(push.RequireFullDistance);
+    Assert.False(DisplacementRules.CanBePushed(nameof(PieceType.Beelzebub)));
+  }
+
+  [Fact]
+  public void HelicopterUsesNoMansLandPlacementAndInteractionImmunityRules()
+  {
+    Assert.True(AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(
+      nameof(PieceType.Helicopter)));
+    Assert.False(AdvancedAbilityRules.CanTakeDirectDamage(
+      nameof(PieceType.Helicopter), new UnitAbilityState()));
+  }
+
+
 }
