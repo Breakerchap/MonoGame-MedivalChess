@@ -1015,9 +1015,13 @@ public sealed partial class MatchStore
       }
 
       bool isOpeningFarmPlacement = buyPhase.IsFarmPlacementPhase && unit.Type == "Farm";
+      if (!TryResolvePurchaseVariant(unit, request.VariantCost, out int purchaseCost, out int purchaseHealth, out UnitAbilityState purchaseState))
+      {
+        return new(false, "That unit variant is not valid.", foundMatch.State());
+      }
       int immediateUpkeep = isOpeningFarmPlacement ? 0 :
         AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
-      if ((!isOpeningFarmPlacement && player.Money < (long)unit.Cost + immediateUpkeep) ||
+      if ((!isOpeningFarmPlacement && player.Money < (long)purchaseCost + immediateUpkeep) ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: true))
       {
         return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
@@ -1025,9 +1029,13 @@ public sealed partial class MatchStore
 
       if (!isOpeningFarmPlacement)
       {
-        player.Money = ClampCurrency((long)player.Money - unit.Cost - immediateUpkeep);
+        player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       }
-      foundMatch.Pieces.Add(new NetworkPiece(Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health));
+      foundMatch.Pieces.Add(new NetworkPiece(
+        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y,
+        isOpeningFarmPlacement ? unit.Health : purchaseHealth,
+        LastBid: isOpeningFarmPlacement ? 0 : purchaseCost,
+        AbilityState: isOpeningFarmPlacement ? new UnitAbilityState() : purchaseState));
       buyPhase.RecordPurchase();
       if (buyPhase.IsComplete)
       {
@@ -1114,20 +1122,25 @@ public sealed partial class MatchStore
         return new(false, "That unit is not available for purchase.", foundMatch.State());
       }
 
+      if (!TryResolvePurchaseVariant(unit, request.VariantCost, out int purchaseCost, out int purchaseHealth, out UnitAbilityState purchaseState))
+      {
+        return new(false, "That unit variant is not valid.", foundMatch.State());
+      }
       int immediateUpkeep = AdvancedAbilityRules.GetImmediateGoldUpkeep(unit.Type);
-      if (player.Money < (long)unit.Cost + immediateUpkeep ||
+      if (player.Money < (long)purchaseCost + immediateUpkeep ||
           !CanPlacePurchasedUnit(foundMatch, unit, player.Team, request.X, request.Y, initialBuy: false))
       {
         return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
       }
 
-      player.Money = ClampCurrency((long)player.Money - unit.Cost - immediateUpkeep);
+      player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       foundMatch.Pieces.Add(new NetworkPiece(
-        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, unit.Health,
+        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, purchaseHealth,
         HasMovedThisTurn: true,
         HasAttackedThisTurn: true,
-        LastBid: unit.Cost,
-        CannotContributeToConquestThisTurn: true
+        LastBid: purchaseCost,
+        CannotContributeToConquestThisTurn: true,
+        AbilityState: purchaseState
       ));
       SpendAction(foundMatch, player);
       foundMatch.Version++;
@@ -1376,6 +1389,44 @@ public sealed partial class MatchStore
     return true;
   }
 
+  private static bool TryResolvePurchaseVariant(
+    UnitPurchaseInfo unit,
+    int? variantCost,
+    out int cost,
+    out int health,
+    out UnitAbilityState state)
+  {
+    if (unit.Type == nameof(PieceType.Qilin))
+    {
+      int selected = variantCost ?? 40;
+      if (!AdvancedAbilityRules.IsValidQilinCost(selected))
+      {
+        cost = 0;
+        health = 0;
+        state = new UnitAbilityState();
+        return false;
+      }
+
+      cost = selected;
+      health = AdvancedAbilityRules.GetQilinHealth(selected);
+      state = new UnitAbilityState { VariableCostValue = selected };
+      return true;
+    }
+
+    if (variantCost is not null)
+    {
+      cost = 0;
+      health = 0;
+      state = new UnitAbilityState();
+      return false;
+    }
+
+    cost = unit.Cost;
+    health = unit.Health;
+    state = new UnitAbilityState();
+    return true;
+  }
+
   private static int GetUnitCost(Match match, string type)
   {
     return TryGetPurchasableUnit(match, type, out UnitPurchaseInfo unit, includeMercenary: true) ? unit.Cost : 0;
@@ -1388,14 +1439,20 @@ public sealed partial class MatchStore
       : EconomyRules.GetUnitPrice(rule.Cost, match.Configuration.UnitPricePercent);
   }
 
-  private static int GetUnitMaintenance(Match match, UnitRule rule)
+  private static int GetUnitMaintenance(Match match, NetworkPiece piece)
   {
-    return rule.Type == "Farm"
-      ? 0
-      : EconomyRules.GetUnitMaintenance(
-        rule.Cost,
-        match.Configuration.UnitMaintenancePercent
-      );
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || rule.Type == "Farm")
+    {
+      return 0;
+    }
+    int baseCost = rule.Type == nameof(PieceType.Qilin) &&
+      AdvancedAbilityRules.IsValidQilinCost(piece.AbilityState?.VariableCostValue ?? 0)
+        ? piece.AbilityState!.VariableCostValue
+        : rule.Cost;
+    return EconomyRules.GetUnitMaintenance(
+      baseCost,
+      match.Configuration.UnitMaintenancePercent
+    );
   }
 
   private static bool FootprintsOverlap(NetworkPiece existing, int x, int y, int width, int height)
@@ -1948,7 +2005,10 @@ public sealed partial class MatchStore
       return;
     }
 
-    int unitCost = GetUnitCost(match, defeatedPiece.Type);
+    int unitCost = defeatedPiece.Type == nameof(PieceType.Qilin) &&
+      AdvancedAbilityRules.IsValidQilinCost(defeatedPiece.AbilityState?.VariableCostValue ?? 0)
+        ? defeatedPiece.AbilityState!.VariableCostValue
+        : GetUnitCost(match, defeatedPiece.Type);
     PlayerSlot? defeatedPlayer = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team);
     if (attackingPlayer.Team != defeatedPiece.Team)
     {
@@ -2561,9 +2621,7 @@ public sealed partial class MatchStore
     if (!match.Configuration.UnitMaintenanceEnabled || match.Configuration.UnitMaintenancePercent <= 0) return;
     long upkeep = match.Pieces
       .Where(piece => piece.Team == team && piece.AttachedToId is null)
-      .Sum(piece => UnitRules.TryGet(piece.Type, out UnitRule rule)
-        ? (long)GetUnitMaintenance(match, rule)
-        : 0L);
+      .Sum(piece => (long)GetUnitMaintenance(match, piece));
     if (upkeep > 0)
     {
       player.Money = ClampCurrency((long)player.Money - upkeep);

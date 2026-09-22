@@ -473,16 +473,29 @@ public static class AdvancedAbilityRules
   public static UnitRule ApplyPersistentBonuses(UnitRule rule, UnitAbilityState? state)
   {
     state ??= new();
+    int baseAttack = rule.Type == nameof(PieceType.Qilin) && IsValidQilinCost(state.VariableCostValue)
+      ? GetQilinAttack(state.VariableCostValue)
+      : rule.Attack;
+    int baseHealth = rule.Type == nameof(PieceType.Qilin) && IsValidQilinCost(state.VariableCostValue)
+      ? GetQilinHealth(state.VariableCostValue)
+      : rule.Health;
     return rule with
     {
-      Attack = rule.Attack + GetEffectiveAttackBonus(state),
+      Attack = baseAttack + GetEffectiveAttackBonus(state),
+      Health = baseHealth,
       MoveRange = rule.MoveRange + GetEffectiveMoveBonus(state),
       AttackRange = rule.AttackRange + GetEffectiveRangeBonus(state)
     };
   }
 
-  public static int GetEffectiveMaximumHealth(UnitRule rule, UnitAbilityState? state) =>
-    rule.Health + GetEffectiveMaxHealthBonus(state);
+  public static int GetEffectiveMaximumHealth(UnitRule rule, UnitAbilityState? state)
+  {
+    state ??= new();
+    int baseHealth = rule.Type == nameof(PieceType.Qilin) && IsValidQilinCost(state.VariableCostValue)
+      ? GetQilinHealth(state.VariableCostValue)
+      : rule.Health;
+    return baseHealth + GetEffectiveMaxHealthBonus(state);
+  }
 
   public static int GetEffectiveAttackBonus(UnitAbilityState? state) => Math.Max(0, state?.AttackBonus ?? 0);
   public static int GetEffectiveMoveBonus(UnitAbilityState? state) => Math.Max(0, state?.MoveBonus ?? 0);

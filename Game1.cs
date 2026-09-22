@@ -196,6 +196,7 @@ internal sealed partial class Game1 : Game
   private bool _isPurchaseUnitListExpanded;
   private int _selectedPurchaseIndex;
   private int _selectedPurchasePackIndex;
+  private int _selectedQilinCost = 40;
   private EngineerAbility _selectedEngineerAbility;
   private int _selectedCodexBuilderAbilityIndex;
   private int _selectedCommandCentreUpgradeIndex;
@@ -1072,12 +1073,13 @@ internal sealed partial class Game1 : Game
     }
 
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
+    int selectedPurchasePrice = GetSelectedPurchasePrice(definition);
     bool canPlace =
       (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
         ? CanPlaceNoMansLand(definition, targetPosition)
         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
       (isOpeningFarmPlacement || buyingTeam.Money >=
-        (long)GetUnitPrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
+        (long)selectedPurchasePrice + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
     if (!canPlace)
     {
@@ -1087,16 +1089,23 @@ internal sealed partial class Game1 : Game
       return;
     }
 
-    int price = isOpeningFarmPlacement ? 0 : GetUnitPrice(definition);
+    int price = isOpeningFarmPlacement ? 0 : selectedPurchasePrice;
     int immediateUpkeep = isOpeningFarmPlacement ? 0 :
       AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
     buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price - immediateUpkeep);
+    int qilinCost = definition.Type == PieceType.Qilin ? price : 0;
     Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
     {
       LastBid = price,
+      CurrentHealth = definition.Type == PieceType.Qilin
+        ? AdvancedAbilityRules.GetQilinHealth(qilinCost)
+        : definition.Health,
       HasMovedThisTurn = _initialBuyPhase is null,
       HasAttackedThisTurn = _initialBuyPhase is null,
-      CannotContributeToConquestThisTurn = _initialBuyPhase is null
+      CannotContributeToConquestThisTurn = _initialBuyPhase is null,
+      AbilityState = definition.Type == PieceType.Qilin
+        ? new UnitAbilityState { VariableCostValue = qilinCost }
+        : new UnitAbilityState()
     };
     pieceSetup.AddPiece(boughtPiece);
 
@@ -2063,7 +2072,7 @@ internal sealed partial class Game1 : Game
 
     long upkeep = pieceSetup.Pieces
       .Where(piece => piece.Team == teamName && piece.AttachedTo is null)
-      .Sum(piece => (long)GetUnitMaintenance(piece.Definition));
+      .Sum(piece => (long)GetUnitMaintenance(piece));
     return ClampCurrency(upkeep);
   }
 
@@ -2072,10 +2081,19 @@ internal sealed partial class Game1 : Game
       ? definition.Cost
       : EconomyRules.GetUnitPrice(definition.Cost, _unitPricePercent);
 
-  private int GetUnitMaintenance(PieceDefinition definition) =>
-    definition.Type == PieceType.Farm
+  private int GetSelectedPurchasePrice(PieceDefinition definition) =>
+    definition.Type == PieceType.Qilin ? _selectedQilinCost : GetUnitPrice(definition);
+
+  private int GetPieceBaseCost(Piece piece) =>
+    piece.Definition.Type == PieceType.Qilin &&
+    AdvancedAbilityRules.IsValidQilinCost(piece.AbilityState.VariableCostValue)
+      ? piece.AbilityState.VariableCostValue
+      : piece.Definition.Cost;
+
+  private int GetUnitMaintenance(Piece piece) =>
+    piece.Definition.Type == PieceType.Farm
       ? 0
-      : EconomyRules.GetUnitMaintenance(definition.Cost, _unitMaintenancePercent);
+      : EconomyRules.GetUnitMaintenance(GetPieceBaseCost(piece), _unitMaintenancePercent);
 
   private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
   {
@@ -2679,7 +2697,9 @@ internal sealed partial class Game1 : Game
   {
     try
     {
-      ActionResult result = await _onlineClient.PurchaseInitialUnitAsync(definition.Type.ToString(), position.x, position.y);
+      ActionResult result = await _onlineClient.PurchaseInitialUnitAsync(
+        definition.Type.ToString(), position.x, position.y,
+        definition.Type == PieceType.Qilin ? _selectedQilinCost : null);
       if (!result.Accepted)
       {
         _onlineError = result.Error ?? "That purchase was rejected.";
@@ -2699,7 +2719,9 @@ internal sealed partial class Game1 : Game
   {
     try
     {
-      ActionResult result = await _onlineClient.PurchaseUnitAsync(definition.Type.ToString(), position.x, position.y);
+      ActionResult result = await _onlineClient.PurchaseUnitAsync(
+        definition.Type.ToString(), position.x, position.y,
+        definition.Type == PieceType.Qilin ? _selectedQilinCost : null);
       if (!result.Accepted)
       {
         _onlineError = result.Error ?? "That purchase was rejected.";
@@ -3207,7 +3229,7 @@ internal sealed partial class Game1 : Game
       : isNeutralMercenaryHire
       ? buyingTeam.Money >= PieceDefinitions.NeutralMercenaryHireCost
       : buyingTeam.Money >=
-        (long)GetUnitPrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
+        (long)GetSelectedPurchasePrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
@@ -4092,7 +4114,7 @@ internal sealed partial class Game1 : Game
         defeatedTeam,
         _killerRefundMultiplier,
         _defeatedTeamRefundMultiplier,
-        GetUnitPrice(damagedPiece.Definition)
+        GetPieceBaseCost(damagedPiece)
       );
     }
 
@@ -5435,6 +5457,26 @@ internal sealed partial class Game1 : Game
     return new Rectangle(panel.X + 98, panel.Bottom - 68, panel.Width - 196, UiTheme.ButtonHeight);
   }
 
+  private Rectangle GetQilinCostControlBounds()
+  {
+    Rectangle panel = GetPurchasePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    int previewSize = panel.Height < 500 ? 76 : 84;
+    const int statHeight = 44;
+    const int statRowGap = 4;
+    Rectangle statGrid = new(
+      content.X,
+      content.Y + 46 + previewSize + UiTheme.SpaceLg,
+      content.Width,
+      statHeight * 3 + statRowGap * 2);
+    Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
+    return new Rectangle(
+      rightColumn.X,
+      statGrid.Y + (statHeight + statRowGap) * 2,
+      rightColumn.Width,
+      statHeight);
+  }
+
   private Rectangle GetPurchaseUnitListToggleBounds()
   {
     Rectangle panel = GetPurchasePanelBounds();
@@ -5644,6 +5686,13 @@ internal sealed partial class Game1 : Game
           break;
         }
       }
+    }
+    else if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Qilin &&
+        GetQilinCostControlBounds().Contains(mousePosition))
+    {
+      Rectangle control = GetQilinCostControlBounds();
+      int direction = mousePosition.X < control.Center.X ? -1 : 1;
+      _selectedQilinCost = Math.Clamp(_selectedQilinCost + direction * 20, 40, 160);
     }
     else if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
     {
@@ -6002,7 +6051,10 @@ internal sealed partial class Game1 : Game
           new Rectangle(
             healthBounds.X,
             healthBounds.Y,
-            (int)(healthBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+            (int)(healthBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(
+              1,
+              AdvancedAbilityRules.GetEffectiveMaximumHealth(
+                UnitRules.FromPieceDefinition(piece.Definition), piece.AbilityState)), 0f, 1f)),
             healthBounds.Height
           ),
           UiTheme.Health,
@@ -6045,7 +6097,10 @@ internal sealed partial class Game1 : Game
         new Rectangle(
           healthBarBounds.X,
           healthBarBounds.Y,
-          (int)(healthBarBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+          (int)(healthBarBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(
+              1,
+              AdvancedAbilityRules.GetEffectiveMaximumHealth(
+                UnitRules.FromPieceDefinition(piece.Definition), piece.AbilityState)), 0f, 1f)),
           healthBarBounds.Height
         ),
         UiTheme.Health,
@@ -6187,7 +6242,7 @@ internal sealed partial class Game1 : Game
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     _ui.Text(
-      isOpeningFarmPlacement ? "FREE OPENING FARM" : $"{GetUnitPrice(definition)} GOLD",
+      isOpeningFarmPlacement ? "FREE OPENING FARM" : $"{GetSelectedPurchasePrice(definition)} GOLD",
       new Vector2(detailX, previewBounds.Y + 56),
       UiTheme.Gold,
       0.84f
@@ -6198,12 +6253,30 @@ internal sealed partial class Game1 : Game
     Rectangle leftColumn = UiLayout.HorizontalSlot(statGrid, 2, 0, UiTheme.SpaceSm);
     Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
     const float purchaseStatFontScale = 1.50f;
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health, purchaseStatFontScale);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack, purchaseStatFontScale);
+    int previewHealth = definition.Type == PieceType.Qilin
+      ? AdvancedAbilityRules.GetQilinHealth(_selectedQilinCost)
+      : definition.Health;
+    int previewAttack = definition.Type == PieceType.Qilin
+      ? AdvancedAbilityRules.GetQilinAttack(_selectedQilinCost)
+      : definition.Attack;
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", previewHealth.ToString(), UiTheme.Health, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", previewAttack.ToString(), UiTheme.Attack, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + statHeight + statRowGap, leftColumn.Width, statHeight), "MOVE RANGE", UiText.FormatAction(definition.Movement), UiTheme.Move, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + statHeight + statRowGap, rightColumn.Width, statHeight), "ATTACK RANGE", UiText.FormatAction(definition.AttackRange, definition.AttackPattern), UiTheme.TextPrimary, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary, purchaseStatFontScale);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
+    Rectangle finalRightStat = new(
+      rightColumn.X,
+      statGrid.Y + (statHeight + statRowGap) * 2,
+      rightColumn.Width,
+      statHeight);
+    if (definition.Type == PieceType.Qilin)
+    {
+      _ui.StatBlock(finalRightStat, "QILIN COST", $"< {_selectedQilinCost} >", UiTheme.Gold, purchaseStatFontScale);
+    }
+    else
+    {
+      _ui.StatBlock(finalRightStat, "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
+    }
 
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
@@ -10776,12 +10849,15 @@ internal sealed partial class Game1 : Game
     _ui.LabelValueRow(
       new Rectangle(details.X, details.Y + 47, details.Width, 22),
       "HEALTH",
-      $"{selectedPiece.CurrentHealth}/{selectedPiece.Definition.Health}",
+      $"{selectedPiece.CurrentHealth}/{AdvancedAbilityRules.GetEffectiveMaximumHealth(UnitRules.FromPieceDefinition(selectedPiece.Definition), selectedPiece.AbilityState)}",
       UiTheme.Health
     );
     DrawProgressBar(
       new Rectangle(details.X, details.Bottom - 10, details.Width, 10),
-      selectedPiece.CurrentHealth / (float)Math.Max(1, selectedPiece.Definition.Health),
+      selectedPiece.CurrentHealth / (float)Math.Max(
+        1,
+        AdvancedAbilityRules.GetEffectiveMaximumHealth(
+          UnitRules.FromPieceDefinition(selectedPiece.Definition), selectedPiece.AbilityState)),
       UiTheme.Health
     );
 

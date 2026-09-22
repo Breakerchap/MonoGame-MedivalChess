@@ -627,4 +627,22 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void QilinVariableCostControlsItsEffectiveAttackAndHealth()
+  {
+    UnitRule baseRule = UnitRules.GetRequired(nameof(PieceType.Qilin));
+    UnitAbilityState state = new() { VariableCostValue = 120 };
+
+    UnitRule effective = AdvancedAbilityRules.ApplyPersistentBonuses(baseRule, state);
+
+    Assert.Equal(AdvancedAbilityRules.GetQilinAttack(120), effective.Attack);
+    Assert.Equal(AdvancedAbilityRules.GetQilinHealth(120), effective.Health);
+    Assert.Equal(AdvancedAbilityRules.GetQilinHealth(120),
+      AdvancedAbilityRules.GetEffectiveMaximumHealth(baseRule, state));
+    Assert.False(AdvancedAbilityRules.IsValidQilinCost(110));
+    Assert.True(AdvancedAbilityRules.IsValidQilinCost(160));
+  }
+
+
 }

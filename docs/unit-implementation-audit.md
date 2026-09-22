@@ -28,7 +28,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.carpenter` | Verified | Local/online build selection now matches the server for two Bridges, one 15-gold Watchtower, and free demolition. Buildable Bridges make Lake tiles traversable and bridge adjacent river edges; occupied friendly Watchtowers grant +2 Attack Range and intercept incoming damage before the unit. |
 | `dynasty.war_drum` | Verified | Refresh is wired across local/server/CPU and online play, clearing a moved friendly unit's moved state and preventing a second refresh that owner turn; green CPU runtime coverage verifies the full flow. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
-| `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
+| `dynasty.qilin` | Verified | Purchase UI lets the player choose X from 40–160 gold in 20-gold steps. The selected X is sent through online purchases, persisted in ability state, charged as the unit's cost, and drives Attack = 10 + X/4 and maximum Health = 20 + X/2 in local/server combat, health UI, refunds, and maintenance. |
 | `dynasty.hwacha` | Verified | Shared splash targeting, persistent reload requirement, adjacent-friendly reload assist, and the no-fire-and-reload-on-one-owner-turn rule are wired across local/server/CPU. CPU runtime coverage exercises the reload turn cycle. |
 | `dynasty.harvester` | Verified | Harvest is wired in server, CPU, offline local, and online client flows; it destroys in-range terrain, grants 15 gold, consumes the attack, preserves simulation snapshots, and has regression coverage. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -246,3 +246,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Buffalo consumes its normal attack, pushes a surviving target 1 tile directly away when possible, and falls back to the previous movement square if the target survives.
 - Armoured Truck keeps its normal attack available, pushes a surviving target up to 2 tiles with the shared shortened fallback, and likewise returns to the previous movement square when the landing target survives.
 - Added small shared regression checks for Mimic movement-state semantics and the two landing units' codex push/attack-consumption constants. CPU action generation was left untouched.
+
+
+### 2026-09-22 — Qilin variable-cost purchase
+
+- Added an in-shop Qilin cost selector covering the codex-valid 40–160 range in 20-gold steps; the panel previews the resulting Attack and Health before placement.
+- Reused the existing network `PurchaseRequest.VariantCost` field so online initial and normal purchases carry the chosen X to the authoritative server.
+- Persisted X in `UnitAbilityState.VariableCostValue` and wired it into shared effective Attack and maximum-Health rules, keeping local and server combat consistent after synchronisation.
+- Qilin purchases now charge the chosen X, initialise at `20 + X/2` Health, and use X for death refunds and percentage-based maintenance rather than silently reverting to the catalogue's X=40 baseline.
+- Health displays now use effective maximum Health, which also fixes display accuracy for Command Centre maximum-Health upgrades.
+- Added focused shared regression coverage for valid Qilin costs and effective stat resolution.
