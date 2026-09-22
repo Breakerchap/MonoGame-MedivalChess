@@ -1125,15 +1125,20 @@ internal sealed partial class Game1 : Game
       definition.Type != PieceType.ContractDemon ||
       CanPayLocalRoyalHealth(
         Team.CurrentTurn, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep);
+    bool serpentFormationPlacement =
+      definition.Type == PieceType.Serpent &&
+      CanPlaceLocalSerpentFormation(definition, targetPosition, Team.CurrentTurn);
     bool canPlace = canPayContractRoyalHealth &&
-      (specialPurchasePlacement ||
-       CanPlaceLocalHelicopter(definition, targetPosition) ||
-       (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
-        ? CanPlaceNoMansLand(definition, targetPosition)
-        : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
-          ? CanPlaceNoMansLand(definition, targetPosition) ||
-            CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
-          : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
+      (definition.Type == PieceType.Serpent
+        ? serpentFormationPlacement
+        : specialPurchasePlacement ||
+          CanPlaceLocalHelicopter(definition, targetPosition) ||
+          (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+            ? CanPlaceNoMansLand(definition, targetPosition)
+            : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+              ? CanPlaceNoMansLand(definition, targetPosition) ||
+                CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+              : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
       (isOpeningFarmPlacement || buyingTeam.Money >=
         (long)selectedPurchasePrice + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
@@ -1198,6 +1203,10 @@ internal sealed partial class Game1 : Game
           : new UnitAbilityState()
     };
     pieceSetup.AddPiece(boughtPiece);
+    if (definition.Type == PieceType.Serpent)
+    {
+      CreateLocalSerpentFollowers(boughtPiece);
+    }
     if (definition.Type == PieceType.Shadow && purchaseHost is not null)
     {
       pieceSetup.Attach(boughtPiece, purchaseHost, AttachmentKind.Shadow);
@@ -2190,12 +2199,18 @@ internal sealed partial class Game1 : Game
     piece.Definition.Type == PieceType.Qilin &&
     AdvancedAbilityRules.IsValidQilinCost(piece.AbilityState.VariableCostValue)
       ? piece.AbilityState.VariableCostValue
-      : piece.Definition.Cost;
+      : piece.Definition.Type == PieceType.Serpent
+        ? piece.Definition.Cost / 3
+        : piece.Definition.Cost;
 
   private int GetUnitMaintenance(Piece piece) =>
-    piece.Definition.Type == PieceType.Farm
+    piece.Definition.Type == PieceType.Farm || IsLocalSerpentFollower(piece)
       ? 0
-      : EconomyRules.GetUnitMaintenance(GetPieceBaseCost(piece), _unitMaintenancePercent);
+      : EconomyRules.GetUnitMaintenance(
+        piece.Definition.Type == PieceType.Serpent
+          ? piece.Definition.Cost
+          : GetPieceBaseCost(piece),
+        _unitMaintenancePercent);
 
   private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
   {
@@ -3463,14 +3478,16 @@ internal sealed partial class Game1 : Game
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
-       CanPlaceSpecialPurchase(definition, targetPosition) ||
-       CanPlaceLocalHelicopter(definition, targetPosition) ||
-       (definition.Type == PieceType.Mercenary
-         ? CanPlaceMercenary(targetPosition)
-         : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
-           ? CanPlaceNoMansLand(definition, targetPosition) ||
-             CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
-           : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
+       (definition.Type == PieceType.Serpent
+         ? CanPlaceLocalSerpentFormation(definition, targetPosition, Team.CurrentTurn)
+         : CanPlaceSpecialPurchase(definition, targetPosition) ||
+           CanPlaceLocalHelicopter(definition, targetPosition) ||
+           (definition.Type == PieceType.Mercenary
+             ? CanPlaceMercenary(targetPosition)
+             : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+               ? CanPlaceNoMansLand(definition, targetPosition) ||
+                 CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+               : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))));
 
     canPurchaseAtTarget = isEligibleForPurchase && hasEnoughGold;
     return true;
@@ -3652,7 +3669,8 @@ internal sealed partial class Game1 : Game
     return false;
   }
 
-  private static bool CanMoveThisTurn(Piece piece) =>
+  private bool CanMoveThisTurn(Piece piece) =>
+    !IsLocalSerpentFollower(piece) &&
     (piece.AttachedTo is null ||
      (piece.AttachmentKind == AttachmentKind.Carried && piece.Definition.Type == PieceType.Ox)) &&
     (AdvancedAbilityRules.CanMove(piece.Definition.Type.ToString(), piece.AbilityState, piece.HasMovedThisTurn) ||
@@ -4160,7 +4178,8 @@ internal sealed partial class Game1 : Game
   }
 
   private bool CanActWithPiece(Piece piece) =>
-    piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn();
+    piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn() &&
+    !IsLocalSerpentFollower(piece);
 
   private static bool AreAdjacent(Piece first, Piece second)
   {
@@ -4370,6 +4389,7 @@ internal sealed partial class Game1 : Game
     if (damagedPiece.Team == TeamName.Neutral)
     {
       pieceSetup.RemovePiece(damagedPiece);
+      ReconnectLocalSerpentAfterDeath(damagedPiece);
       return;
     }
 
@@ -4389,6 +4409,7 @@ internal sealed partial class Game1 : Game
 
     bool royalDeath = IsSharedRoyalDeath(damagedPiece);
     pieceSetup.RemovePiece(damagedPiece);
+    ReconnectLocalSerpentAfterDeath(damagedPiece);
     if (royalDeath && _gameMode == GameMode.Regicide)
     {
       if (attackingTeamName is TeamName winner && winner != damagedPiece.Team)
@@ -5375,7 +5396,15 @@ internal sealed partial class Game1 : Game
     bool boardedLongboat = TryBoardLocalLongboat(movedPiece, destination);
     if (!boardedLongboat)
     {
-      MovePieceWithCompanions(movedPiece, destination);
+      if (movedPiece.Definition.Type == PieceType.Serpent &&
+          !IsLocalSerpentFollower(movedPiece))
+      {
+        MoveLocalSerpentFormation(movedPiece, completedAnimation.Path, destination);
+      }
+      else
+      {
+        MovePieceWithCompanions(movedPiece, destination);
+      }
       ReleaseLocalPetrificationIfBroken(movedPiece);
     }
     if (usesCavalierFollowUpMove)

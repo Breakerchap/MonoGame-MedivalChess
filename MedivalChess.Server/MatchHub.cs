@@ -374,6 +374,10 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece piece = foundMatch.Pieces[index];
+      if (IsServerSerpentFollower(piece))
+      {
+        return new(false, "Only the Serpent front may move.", foundMatch.State());
+      }
       if (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
           !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable))
       {
@@ -502,17 +506,28 @@ public sealed partial class MatchStore
       List<(int x, int y)> actualMovementPath = chessCaptureSurvived && movementPath.Count > 0
         ? movementPath[..^1]
         : movementPath;
-      piece = foundMatch.Pieces[pieceIndex] with
+      if (piece.Type == nameof(PieceType.Serpent) && !IsServerSerpentFollower(piece))
       {
-        X = finalX,
-        Y = finalY,
-        HasMovedThisTurn = true,
-        HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamagedAnEnemy || foundMatch.Pieces[pieceIndex].HasAttackedThisTurn,
-        CavalierFollowUpMoveAvailable = false,
-        AbilityState = AdvancedAbilityRules.RecordMove(foundMatch.Pieces[pieceIndex].AbilityState)
-      };
-      foundMatch.Pieces[pieceIndex] = piece;
-      MoveAttachedPieces(foundMatch, piece, oldX, oldY);
+        piece = MoveServerSerpentFormation(
+          foundMatch,
+          pieceIndex,
+          actualMovementPath,
+          (finalX, finalY));
+      }
+      else
+      {
+        piece = foundMatch.Pieces[pieceIndex] with
+        {
+          X = finalX,
+          Y = finalY,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = chessCaptureTarget is not null || elephantDamagedAnEnemy || foundMatch.Pieces[pieceIndex].HasAttackedThisTurn,
+          CavalierFollowUpMoveAvailable = false,
+          AbilityState = AdvancedAbilityRules.RecordMove(foundMatch.Pieces[pieceIndex].AbilityState)
+        };
+        foundMatch.Pieces[pieceIndex] = piece;
+        MoveAttachedPieces(foundMatch, piece, oldX, oldY);
+      }
       MoveHeraldCompanions(foundMatch, piece, oldX, oldY);
       ReleaseServerPetrificationIfBroken(foundMatch, piece);
       TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
@@ -583,7 +598,7 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece attacker = foundMatch.Pieces[attackerIndex];
-      if (attacker.Team != player.Team)
+      if (attacker.Team != player.Team || IsServerSerpentFollower(attacker))
       {
         return new(false, "That attack is not available.", foundMatch.State());
       }
@@ -1121,6 +1136,10 @@ public sealed partial class MatchStore
           : NetworkAttachmentKind.None,
         LastBid: isOpeningFarmPlacement ? 0 : purchaseCost,
         AbilityState: isOpeningFarmPlacement ? new UnitAbilityState() : purchaseState));
+      if (unit.Type == nameof(PieceType.Serpent))
+      {
+        CreateServerSerpentFollowers(foundMatch, foundMatch.Pieces.Count - 1);
+      }
       if (unit.Type == nameof(PieceType.Necromancer))
       {
         SpawnServerSkeletonForNecromancer(
@@ -1275,6 +1294,10 @@ public sealed partial class MatchStore
         CannotContributeToConquestThisTurn: true,
         AbilityState: purchaseState
       ));
+      if (unit.Type == nameof(PieceType.Serpent))
+      {
+        CreateServerSerpentFollowers(foundMatch, foundMatch.Pieces.Count - 1);
+      }
       if (unit.Type == nameof(PieceType.Necromancer))
       {
         SpawnServerSkeletonForNecromancer(
@@ -1581,7 +1604,8 @@ public sealed partial class MatchStore
 
   private static int GetUnitMaintenance(Match match, NetworkPiece piece)
   {
-    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || rule.Type == "Farm")
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || rule.Type == "Farm" ||
+        IsServerSerpentFollower(piece))
     {
       return 0;
     }
@@ -1613,6 +1637,10 @@ public sealed partial class MatchStore
     bool initialBuy
   )
   {
+    if (unit.Type == nameof(PieceType.Serpent))
+    {
+      return CanPlaceServerSerpentFormation(match, team, x, y);
+    }
     if (unit.Type == nameof(PieceType.Helicopter))
     {
       return CanPlaceServerHelicopter(match, team, x, y, unit.Width, unit.Height);
@@ -2194,13 +2222,16 @@ public sealed partial class MatchStore
     if (defeatedPiece.Team == NetworkTeam.Neutral)
     {
       RemovePiece(match, defeatedPiece.Id);
+      ReconnectServerSerpentAfterDeath(match, defeatedPiece);
       return;
     }
 
     int unitCost = defeatedPiece.Type == nameof(PieceType.Qilin) &&
       AdvancedAbilityRules.IsValidQilinCost(defeatedPiece.AbilityState?.VariableCostValue ?? 0)
         ? defeatedPiece.AbilityState!.VariableCostValue
-        : GetUnitCost(match, defeatedPiece.Type);
+        : defeatedPiece.Type == nameof(PieceType.Serpent)
+          ? GetUnitCost(match, defeatedPiece.Type) / 3
+          : GetUnitCost(match, defeatedPiece.Type);
     PlayerSlot? defeatedPlayer = match.Players.FirstOrDefault(player => player.Team == defeatedPiece.Team);
     if (attackingPlayer.Team != defeatedPiece.Team)
     {
@@ -2215,6 +2246,7 @@ public sealed partial class MatchStore
 
     bool royalDeath = IsSharedServerRoyalDeath(match, defeatedPiece);
     RemovePiece(match, defeatedPiece.Id);
+    ReconnectServerSerpentAfterDeath(match, defeatedPiece);
     ApplySharedServerDeathExplosion(match, defeatedPiece, explosionSource, deathExplosion);
     if (!royalDeath || !UnitRules.TryGet(defeatedPiece.Type, out UnitRule rule)) return;
     if (match.Configuration.GameMode == "Regicide" && attackingPlayer.Team != defeatedPiece.Team)

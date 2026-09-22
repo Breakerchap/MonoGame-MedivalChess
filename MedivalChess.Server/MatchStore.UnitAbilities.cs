@@ -1788,4 +1788,253 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static bool IsServerSerpentFollower(NetworkPiece piece) =>
+    piece.Type == nameof(PieceType.Serpent) &&
+    !string.IsNullOrWhiteSpace(piece.AbilityState?.LinkedPieceId);
+
+  private static bool CanPlaceServerSerpentFormation(
+    Match match,
+    NetworkTeam team,
+    int frontX,
+    int frontY)
+  {
+    UnitRule rule = UnitRules.GetRequired(nameof(PieceType.Serpent));
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    (int x, int y)[] positions =
+    [
+      (frontX, frontY),
+      (frontX - forward.x, frontY - forward.y),
+      (frontX - forward.x * 2, frontY - forward.y * 2)
+    ];
+
+    foreach ((int x, int y) position in positions)
+    {
+      if (!NetworkBoardRules.CanPlaceForTeam(
+            match.Configuration, team, position.x, position.y,
+            rule.Width, rule.Height))
+      {
+        return false;
+      }
+
+      foreach ((int x, int y) square in OccupiedSquares(rule, position))
+      {
+        if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square))
+        {
+          return false;
+        }
+      }
+
+      if (match.Pieces.Any(piece =>
+        piece.Type != nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, otherRule.Width, otherRule.Height,
+          position.x, position.y, rule.Width, rule.Height)))
+      {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private static void CreateServerSerpentFollowers(Match match, int frontIndex)
+  {
+    if (frontIndex < 0 || frontIndex >= match.Pieces.Count) return;
+    NetworkPiece front = match.Pieces[frontIndex];
+    if (front.Type != nameof(PieceType.Serpent) || IsServerSerpentFollower(front)) return;
+
+    UnitRule rule = UnitRules.GetRequired(nameof(PieceType.Serpent));
+    (int x, int y) forward = TeamRules.GetForwardDirection(front.Team);
+    (int x, int y) middlePosition = (front.X - forward.x, front.Y - forward.y);
+    (int x, int y) backPosition = (front.X - forward.x * 2, front.Y - forward.y * 2);
+    string middleId = Guid.NewGuid().ToString("N");
+    string backId = Guid.NewGuid().ToString("N");
+
+    NetworkPiece middle = new(
+      middleId, front.Type, front.Team, middlePosition.x, middlePosition.y, rule.Health,
+      HasMovedThisTurn: front.HasMovedThisTurn,
+      HasAttackedThisTurn: true,
+      LastBid: 0,
+      CannotContributeToConquestThisTurn: front.CannotContributeToConquestThisTurn,
+      AbilityState: new UnitAbilityState { LinkedPieceId = front.Id });
+    NetworkPiece back = new(
+      backId, front.Type, front.Team, backPosition.x, backPosition.y, rule.Health,
+      HasMovedThisTurn: front.HasMovedThisTurn,
+      HasAttackedThisTurn: true,
+      LastBid: 0,
+      CannotContributeToConquestThisTurn: front.CannotContributeToConquestThisTurn,
+      AbilityState: new UnitAbilityState { LinkedPieceId = front.Id });
+
+    match.Pieces[frontIndex] = front with
+    {
+      AbilityState = (front.AbilityState ?? new UnitAbilityState()) with
+      {
+        PendingAbility = "SerpentSegments",
+        PendingSelections =
+        [
+          new AbilitySelection(middleId, middlePosition.x, middlePosition.y),
+          new AbilitySelection(backId, backPosition.x, backPosition.y)
+        ]
+      }
+    };
+    match.Pieces.Add(middle);
+    match.Pieces.Add(back);
+  }
+
+  private static IReadOnlyList<NetworkPiece> GetServerSerpentFormation(
+    Match match,
+    NetworkPiece front)
+  {
+    if (front.Type != nameof(PieceType.Serpent) || IsServerSerpentFollower(front))
+    {
+      return [front];
+    }
+
+    List<NetworkPiece> formation = [front];
+    if (string.Equals(front.AbilityState?.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      foreach (AbilitySelection selection in front.AbilityState!.PendingSelections)
+      {
+        if (string.IsNullOrWhiteSpace(selection.TargetId)) continue;
+        NetworkPiece? segment = match.Pieces.FirstOrDefault(piece =>
+          piece.Id == selection.TargetId &&
+          piece.Type == nameof(PieceType.Serpent));
+        if (segment is not null) formation.Add(segment);
+      }
+    }
+    return formation;
+  }
+
+  private static NetworkPiece MoveServerSerpentFormation(
+    Match match,
+    int frontIndex,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) destination)
+  {
+    NetworkPiece front = match.Pieces[frontIndex];
+    IReadOnlyList<NetworkPiece> formation = GetServerSerpentFormation(match, front);
+    if (formation.Count <= 1)
+    {
+      NetworkPiece movedSingle = front with
+      {
+        X = destination.x,
+        Y = destination.y,
+        HasMovedThisTurn = true,
+        AbilityState = AdvancedAbilityRules.RecordMove(front.AbilityState)
+      };
+      match.Pieces[frontIndex] = movedSingle;
+      return movedSingle;
+    }
+
+    List<(int x, int y)> trail = formation
+      .Reverse()
+      .Select(segment => (segment.X, segment.Y))
+      .ToList();
+    trail.AddRange(path);
+    List<(int x, int y)> finalPositions = trail
+      .Skip(Math.Max(0, trail.Count - formation.Count))
+      .Take(formation.Count)
+      .ToList();
+    finalPositions.Reverse();
+
+    for (int formationIndex = 0; formationIndex < formation.Count; formationIndex++)
+    {
+      NetworkPiece segment = formation[formationIndex];
+      int index = match.Pieces.FindIndex(piece => piece.Id == segment.Id);
+      if (index < 0) continue;
+      match.Pieces[index] = segment with
+      {
+        X = finalPositions[formationIndex].x,
+        Y = finalPositions[formationIndex].y,
+        HasMovedThisTurn = true,
+        AbilityState = formationIndex == 0
+          ? AdvancedAbilityRules.RecordMove(segment.AbilityState)
+          : segment.AbilityState
+      };
+    }
+
+    return match.Pieces.First(piece => piece.Id == front.Id);
+  }
+
+  private static void ReconnectServerSerpentAfterDeath(
+    Match match,
+    NetworkPiece defeated)
+  {
+    if (defeated.Type != nameof(PieceType.Serpent)) return;
+
+    NetworkPiece? front = string.IsNullOrWhiteSpace(defeated.AbilityState?.LinkedPieceId)
+      ? defeated
+      : match.Pieces.FirstOrDefault(piece =>
+          piece.Id == defeated.AbilityState!.LinkedPieceId &&
+          piece.Type == nameof(PieceType.Serpent));
+    if (front is null) return;
+
+    List<string> orderedIds = [front.Id];
+    if (string.Equals(front.AbilityState?.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      orderedIds.AddRange(front.AbilityState!.PendingSelections
+        .Select(selection => selection.TargetId)
+        .Where(id => !string.IsNullOrWhiteSpace(id))!);
+    }
+
+    int defeatedIndex = orderedIds.FindIndex(id => id == defeated.Id);
+    if (defeatedIndex < 0) return;
+
+    if (defeatedIndex > 0 && defeatedIndex < orderedIds.Count - 1)
+    {
+      int trailingIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == orderedIds[defeatedIndex + 1]);
+      if (trailingIndex >= 0)
+      {
+        NetworkPiece trailing = match.Pieces[trailingIndex];
+        match.Pieces[trailingIndex] = trailing with
+        {
+          X = defeated.X,
+          Y = defeated.Y
+        };
+      }
+    }
+
+    orderedIds.RemoveAt(defeatedIndex);
+    List<NetworkPiece> remaining = orderedIds
+      .Select(id => match.Pieces.FirstOrDefault(piece => piece.Id == id))
+      .Where(piece => piece is not null)
+      .ToList()!;
+    if (remaining.Count == 0) return;
+
+    NetworkPiece newFront = remaining[0];
+    int newFrontIndex = match.Pieces.FindIndex(piece => piece.Id == newFront.Id);
+    match.Pieces[newFrontIndex] = newFront with
+    {
+      HasAttackedThisTurn = false,
+      AbilityState = (newFront.AbilityState ?? new UnitAbilityState()) with
+      {
+        LinkedPieceId = null,
+        PendingAbility = "SerpentSegments",
+        PendingSelections = remaining.Skip(1)
+          .Select(piece => new AbilitySelection(piece.Id, piece.X, piece.Y))
+          .ToArray()
+      }
+    };
+
+    foreach (NetworkPiece follower in remaining.Skip(1))
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == follower.Id);
+      if (index < 0) continue;
+      match.Pieces[index] = follower with
+      {
+        HasAttackedThisTurn = true,
+        AbilityState = (follower.AbilityState ?? new UnitAbilityState()) with
+        {
+          LinkedPieceId = newFront.Id,
+          PendingAbility = null,
+          PendingSelections = Array.Empty<AbilitySelection>()
+        }
+      };
+    }
+  }
+
+
 }

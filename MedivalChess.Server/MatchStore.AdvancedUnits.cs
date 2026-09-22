@@ -585,8 +585,8 @@ public sealed partial class MatchStore
           {
             if (heldIndex >= 0 || target is null || target.Id == actor.Id ||
                 target.AttachedToId is not null ||
-                !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
-                targetRule.Category != RuleCategory.Structure ||
+                !UnitRules.TryGet(target.Type, out UnitRule structureRule) ||
+                structureRule.Category != RuleCategory.Structure ||
                 !CanUseActionTarget(match, actor, target))
             {
               return AdvancedSpecialResult.Rejected;

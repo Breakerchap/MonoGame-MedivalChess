@@ -94,7 +94,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.valkyrie` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `norse.shieldsman` | Verified | Shieldsman attachment is wired across local/server/CPU and online play, limited to friendly non-Royals with one Shieldsman per host; incoming host damage is redirected to the Shieldsman. CPU runtime coverage is green. |
 | `norse.runesmith` | Verified | All four Rune builds, non-stacking Rune auras, and free demolition are wired across local/server/CPU and online play with local ability-mode selection. |
-| `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
+| `norse.serpent` | Verified | Serpent now purchases as a three-segment 1×1 formation (front/middle/back), each with 40 Health. Only the front can move or attack; middle/back are linked followers. Movement snakes the segments along the front's actual path, and destroying a segment reconnects the remaining chain and promotes the leading survivor to front. Local and authoritative server play are wired; the whole formation costs/maintains as one 150-gold unit while death refunds are split across its three segments. |
 | `norse.flying_longboat` | Verified | Friendly unattached 1×1 units may board by ending movement on the Longboat, up to three passengers. Passenger boarding order is persisted, riders move with the Longboat and cannot act while aboard, attached riders can be cycled/selected through the Longboat and disembark onto a legal adjacent tile as their action, and Longboat death places surviving riders onto nearest legal tiles in boarding order. Local and authoritative server paths are wired. |
 | `norse.fafnir` | Verified | Its 125-gold active transformation is wired in local/online/server play, requires the resulting 3×3 Fafnir Dragon footprint to fit the board, replaces Fafnir with the Dragon at full Dragon Health, and consumes the once-per-owner-turn ability use. |
 | `norse.fafnir_dragon` | Verified | Fafnir Dragon inherits shared terrain immunity; transformation destroys overlapping terrain and Structures, destroys overlapping Farm structures, and pushes other overlapping units with their attachments to the nearest legal empty positions in local/server play. |
@@ -397,3 +397,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - If it is already carrying a Structure, right-click a legal empty in-range destination to place that Structure. The full Structure footprint must fit and obey normal landing/collision restrictions.
 - Pickup or placement consumes the Poltergeist's once-per-owner-turn active use; it cannot pick up and place in the same owner turn.
 - Classified Prison alongside Farm as a board-piece Structure so Poltergeist targeting and later Prison lifecycle rules use the same category semantics.
+
+
+### 2026-09-22 — Serpent three-segment formation
+
+- Serpent purchases now create a front, middle and back segment, each as a separate 1×1, 40-Health board piece. The clicked purchase square is the front; middle and back initially trail directly opposite the owning team's forward direction.
+- Purchase is all-or-nothing: all three starting squares must fit the board, belong to the buying team, be traversable, and be free for the formation.
+- Only the current front is actionable. Middle/back segments are linked followers and cannot move or attack independently in either local or authoritative server play.
+- When the front moves, the other segments follow the exact travelled path like a snake rather than stacking on the front.
+- When a segment dies, the surviving chain is re-linked; if the middle is destroyed the trailing segment closes the gap, and if the front is destroyed the leading survivor becomes the new front.
+- The formation is charged once at 150 gold and only its front contributes unit maintenance. Kill/death refund value is split evenly across the three 40-Health segments so destroying one segment does not refund the full unit cost.
+- This commit also fixes the Poltergeist server compile error from the previous batch by avoiding a local-variable name collision.

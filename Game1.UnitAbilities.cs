@@ -2023,4 +2023,184 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool IsLocalSerpentFollower(Piece piece) =>
+    piece?.Definition.Type == PieceType.Serpent &&
+    !string.IsNullOrWhiteSpace(piece.AbilityState.LinkedPieceId);
+
+  private IReadOnlyList<Piece> GetLocalSerpentFormation(Piece front)
+  {
+    if (front?.Definition.Type != PieceType.Serpent || IsLocalSerpentFollower(front))
+    {
+      return front is null ? Array.Empty<Piece>() : [front];
+    }
+
+    List<Piece> formation = [front];
+    if (string.Equals(front.AbilityState.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      foreach (AbilitySelection selection in front.AbilityState.PendingSelections)
+      {
+        if (string.IsNullOrWhiteSpace(selection.TargetId)) continue;
+        Piece segment = pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.NetworkId == selection.TargetId &&
+          piece.Definition.Type == PieceType.Serpent);
+        if (segment is not null) formation.Add(segment);
+      }
+    }
+    return formation;
+  }
+
+  private bool CanPlaceLocalSerpentFormation(
+    PieceDefinition definition,
+    (int x, int y) frontPosition,
+    TeamName team)
+  {
+    if (definition.Type != PieceType.Serpent) return false;
+    (int x, int y) forward = TeamRules.GetForwardDirection(team.ToNetworkTeam());
+    (int x, int y) middle = (frontPosition.x - forward.x, frontPosition.y - forward.y);
+    (int x, int y) back = (frontPosition.x - forward.x * 2, frontPosition.y - forward.y * 2);
+    return CanPlacePiece(definition, frontPosition, team) &&
+      CanPlacePiece(definition, middle, team) &&
+      CanPlacePiece(definition, back, team);
+  }
+
+  private void CreateLocalSerpentFollowers(Piece front)
+  {
+    if (front.Definition.Type != PieceType.Serpent || IsLocalSerpentFollower(front)) return;
+
+    (int x, int y) forward = TeamRules.GetForwardDirection(front.Team.ToNetworkTeam());
+    (int x, int y) middlePosition = (
+      front.Position.x - forward.x,
+      front.Position.y - forward.y);
+    (int x, int y) backPosition = (
+      front.Position.x - forward.x * 2,
+      front.Position.y - forward.y * 2);
+
+    Piece middle = new(front.Definition, middlePosition, front.Team)
+    {
+      CurrentHealth = front.Definition.Health,
+      HasMovedThisTurn = front.HasMovedThisTurn,
+      HasAttackedThisTurn = true,
+      AbilityState = new UnitAbilityState { LinkedPieceId = front.NetworkId }
+    };
+    Piece back = new(front.Definition, backPosition, front.Team)
+    {
+      CurrentHealth = front.Definition.Health,
+      HasMovedThisTurn = front.HasMovedThisTurn,
+      HasAttackedThisTurn = true,
+      AbilityState = new UnitAbilityState { LinkedPieceId = front.NetworkId }
+    };
+    pieceSetup.AddPiece(middle);
+    pieceSetup.AddPiece(back);
+    front.AbilityState = front.AbilityState with
+    {
+      PendingAbility = "SerpentSegments",
+      PendingSelections =
+      [
+        new AbilitySelection(middle.NetworkId, middlePosition.x, middlePosition.y),
+        new AbilitySelection(back.NetworkId, backPosition.x, backPosition.y)
+      ]
+    };
+  }
+
+  private void MoveLocalSerpentFormation(
+    Piece front,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) destination)
+  {
+    IReadOnlyList<Piece> formation = GetLocalSerpentFormation(front);
+    if (formation.Count <= 1)
+    {
+      MovePieceWithCompanions(front, destination);
+      return;
+    }
+
+    List<(int x, int y)> trail = formation
+      .Reverse()
+      .Select(segment => segment.Position)
+      .ToList();
+    trail.AddRange(path);
+
+    int count = formation.Count;
+    List<(int x, int y)> finalPositions = trail
+      .Skip(Math.Max(0, trail.Count - count))
+      .Take(count)
+      .ToList();
+    finalPositions.Reverse();
+
+    for (int index = 0; index < formation.Count; index++)
+    {
+      Piece segment = formation[index];
+      segment.Position = finalPositions[index];
+      segment.HasMovedThisTurn = true;
+      segment.AbilityState = index == 0
+        ? AdvancedAbilityRules.RecordMove(segment.AbilityState)
+        : segment.AbilityState;
+    }
+    pieceSetup.RefreshOccupancy();
+  }
+
+  private void ReconnectLocalSerpentAfterDeath(Piece defeated)
+  {
+    if (defeated.Definition.Type != PieceType.Serpent) return;
+
+    Piece front = string.IsNullOrWhiteSpace(defeated.AbilityState.LinkedPieceId)
+      ? defeated
+      : pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.NetworkId == defeated.AbilityState.LinkedPieceId &&
+          piece.Definition.Type == PieceType.Serpent);
+    if (front is null) return;
+
+    List<string> orderedIds = [front.NetworkId];
+    if (string.Equals(front.AbilityState.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      orderedIds.AddRange(front.AbilityState.PendingSelections
+        .Select(selection => selection.TargetId)
+        .Where(id => !string.IsNullOrWhiteSpace(id))!);
+    }
+
+    int defeatedIndex = orderedIds.FindIndex(id => id == defeated.NetworkId);
+    if (defeatedIndex < 0) return;
+
+    if (defeatedIndex > 0 && defeatedIndex < orderedIds.Count - 1)
+    {
+      Piece trailing = pieceSetup.Pieces.FirstOrDefault(piece =>
+        piece.NetworkId == orderedIds[defeatedIndex + 1]);
+      if (trailing is not null)
+      {
+        trailing.Position = defeated.Position;
+      }
+    }
+
+    orderedIds.RemoveAt(defeatedIndex);
+    List<Piece> remaining = orderedIds
+      .Select(id => pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == id))
+      .Where(piece => piece is not null)
+      .ToList()!;
+    if (remaining.Count == 0) return;
+
+    Piece newFront = remaining[0];
+    newFront.AbilityState = newFront.AbilityState with
+    {
+      LinkedPieceId = null,
+      PendingAbility = "SerpentSegments",
+      PendingSelections = remaining.Skip(1)
+        .Select(piece => new AbilitySelection(
+          piece.NetworkId, piece.Position.x, piece.Position.y))
+        .ToArray()
+    };
+    foreach (Piece follower in remaining.Skip(1))
+    {
+      follower.AbilityState = follower.AbilityState with
+      {
+        LinkedPieceId = newFront.NetworkId,
+        PendingAbility = null,
+        PendingSelections = Array.Empty<AbilitySelection>()
+      };
+      follower.HasAttackedThisTurn = true;
+    }
+    pieceSetup.RefreshOccupancy();
+  }
+
+
 }
