@@ -460,3 +460,11 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Added authoritative server setup coverage for every selectable in-scope Royal, with dedicated Sheriff two-stage placement checks including rejection/recovery from an illegal Prison placement.
 - Added owner-turn state coverage ensuring release locks clear at the next owner turn while Sheriff Prison identity/link/prisoner ordering state persists.
 - These tests are intentionally broader than the unit-specific regression suite and are used as a bug-finding pass; any failures are fixed before this audit is considered complete.
+
+
+### 2026-09-23 — stress-pass bugs and hardening
+
+- The first broad stress run exposed two false assumptions in the new harness rather than gameplay defects: Helicopter intentionally has 0 Health in the authoritative codex because it is non-interactable, and fixed edge coordinates cannot host arbitrary large random units. The stress harness now honours authoritative zero-Health units and deterministically finds legal non-overlapping footprints for mixed rosters.
+- Fixed a local Royal-setup rollback bug. Backing up now removes the complete previous Royal group rather than one Royal piece, so four-piece Goblin Royalty cannot leave orphaned members. A linked Sheriff Prison is also removed with its Sheriff, and backing out while waiting to place the free Sheriff Prison cleanly cancels that Sheriff's setup.
+- Fixed a prisoner-action loophole in the local client. A jailed Succubus could previously be discovered through the generic attached-unit action selector because Succubi normally remain actionable while attached. `Prisoner` attachments are now explicitly rejected by selection, action ownership, normal attacks, CPU-to-local attacks, and local/online special-action dispatch.
+- Added regression coverage asserting that a Succubus attached as a Prisoner cannot move, attack, detach, or produce CPU actions.

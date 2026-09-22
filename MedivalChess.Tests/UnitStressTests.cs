@@ -42,7 +42,7 @@ public sealed class UnitStressTests
       Assert.Equal(definition.Cost, byType.Cost);
 
       Assert.True(byType.Width > 0 && byType.Height > 0, definition.SourceUnitId);
-      Assert.True(byType.Health > 0, definition.SourceUnitId);
+      Assert.True(byType.Health >= 0, definition.SourceUnitId);
       Assert.True(byType.Attack >= 0, definition.SourceUnitId);
       Assert.True(byType.Cost >= 0, definition.SourceUnitId);
       Assert.InRange(byType.MinimumMoveRange, 0, byType.MoveRange);
@@ -116,26 +116,17 @@ public sealed class UnitStressTests
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
     CpuActionGenerator generator = new();
-    (int x, int y)[] redPositions =
-    [
-      (-8, 7), (-4, 7), (0, 7), (4, 7), (8, 7),
-      (-8, 3), (-4, 3), (0, 3)
-    ];
-    (int x, int y)[] bluePositions =
-    [
-      (-8, -9), (-4, -9), (0, -9), (4, -9), (8, -9),
-      (-8, -5), (-4, -5), (0, -5)
-    ];
 
     for (int seed = 0; seed < 24; seed++)
     {
       Random random = new(seed * 7919 + 17);
       List<NetworkPiece> pieces = [];
-      for (int index = 0; index < redPositions.Length; index++)
+      for (int index = 0; index < 8; index++)
       {
         PieceDefinition definition = InScopeUnits[random.Next(InScopeUnits.Length)];
         UnitRule rule = UnitRules.GetRequired(definition.Type.ToString());
-        (int x, int y) position = redPositions[index];
+        (int x, int y) position = FindStressPlacement(
+          configuration, definition, pieces, NetworkTeam.Red);
         pieces.Add(new NetworkPiece(
           $"r-{seed}-{index}",
           definition.Type.ToString(),
@@ -144,11 +135,12 @@ public sealed class UnitStressTests
           position.y,
           rule.Health));
       }
-      for (int index = 0; index < bluePositions.Length; index++)
+      for (int index = 0; index < 8; index++)
       {
         PieceDefinition definition = InScopeUnits[random.Next(InScopeUnits.Length)];
         UnitRule rule = UnitRules.GetRequired(definition.Type.ToString());
-        (int x, int y) position = bluePositions[index];
+        (int x, int y) position = FindStressPlacement(
+          configuration, definition, pieces, NetworkTeam.Blue);
         pieces.Add(new NetworkPiece(
           $"b-{seed}-{index}",
           definition.Type.ToString(),
@@ -286,6 +278,43 @@ public sealed class UnitStressTests
   }
 
   [Fact]
+  public void PrisonerSuccubusCannotMoveAttackOrUseItsAttachedAbility()
+  {
+    CpuGameState state = CreateCpuState(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "prison", nameof(PieceType.Prison), NetworkTeam.Blue, 4, 4, 65,
+          AbilityState: AdvancedAbilityRules.RecordPrisoner(
+            AdvancedAbilityRules.MarkSheriffPrison(
+              new UnitAbilityState(), "sheriff"),
+            "succubus")),
+        new NetworkPiece(
+          "succubus", nameof(PieceType.Succubus), NetworkTeam.Red, 4, 4, 30,
+          AttachedToId: "prison",
+          AttachmentKind: NetworkAttachmentKind.Prisoner),
+        new NetworkPiece(
+          "enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 3, 30)
+      ]);
+
+    Assert.False(new MoveAction(NetworkTeam.Red, "succubus", 5, 4).IsLegal(state));
+    Assert.False(new AttackAction(
+      NetworkTeam.Red, "succubus", "enemy", 4, 3).IsLegal(state));
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "succubus", "Detach", null, 5, 4).IsLegal(state));
+
+    IReadOnlyList<ICpuGameAction> actions =
+      new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red);
+    Assert.DoesNotContain(actions, action => action switch
+    {
+      MoveAction move => move.PieceId == "succubus",
+      AttackAction attack => attack.AttackerId == "succubus",
+      UseAbilityAction ability => ability.ActorId == "succubus",
+      _ => false
+    });
+  }
+
+  [Fact]
   public void PrisonerTurnLocksClearAtNextOwnerTurnButPrisonLinksPersist()
   {
     UnitAbilityState prison = AdvancedAbilityRules.RecordPrisoner(
@@ -306,6 +335,41 @@ public sealed class UnitStressTests
     Assert.True(AdvancedAbilityRules.IsSheriffPrison(prison));
     Assert.Equal("sheriff", prison.LinkedPieceId);
     Assert.Equal(["prisoner"], prison.PrisonerIds);
+  }
+
+  private static (int x, int y) FindStressPlacement(
+    NetworkMatchConfiguration configuration,
+    PieceDefinition definition,
+    IReadOnlyList<NetworkPiece> existing,
+    NetworkTeam team)
+  {
+    Board board = BoardRules.GetBoard(configuration);
+    UnitRule rule = UnitRules.GetRequired(definition.Type.ToString());
+    IEnumerable<(int x, int y)> candidates = team == NetworkTeam.Red
+      ? board.Cells.OrderByDescending(position => position.y).ThenBy(position => position.x)
+      : board.Cells.OrderBy(position => position.y).ThenBy(position => position.x);
+
+    foreach ((int x, int y) position in candidates)
+    {
+      if (!BoardRules.FootprintFitsBoard(
+            board, position.x, position.y, rule.Width, rule.Height))
+      {
+        continue;
+      }
+
+      bool overlaps = existing.Any(piece =>
+        UnitRules.TryGet(piece.Type, out UnitRule? existingRule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, existingRule.Width, existingRule.Height,
+          position.x, position.y, rule.Width, rule.Height));
+      if (!overlaps)
+      {
+        return position;
+      }
+    }
+
+    throw new InvalidOperationException(
+      $"Could not place stress unit {definition.SourceUnitId} for {team}.");
   }
 
   private static CpuGameState CreateCpuState(
@@ -389,9 +453,11 @@ public sealed class UnitStressTests
 
     foreach (NetworkPiece piece in state.Pieces)
     {
-      Assert.True(piece.Health > 0, $"{context}: living {piece.Id} has {piece.Health} health.");
       Assert.True(UnitRules.TryGet(piece.Type, out UnitRule? rule),
         $"{context}: unknown unit type {piece.Type}.");
+      Assert.True(
+        piece.Health > 0 || rule.Health == 0,
+        $"{context}: living {piece.Id} has invalid {piece.Health} health for base health {rule.Health}.");
       if (piece.AttachedToId is null)
       {
         Assert.True(BoardRules.FootprintFitsBoard(
