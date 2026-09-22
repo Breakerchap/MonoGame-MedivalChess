@@ -569,6 +569,49 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.GangLeader):
+        if (!string.Equals(ability, "Recruit", StringComparison.OrdinalIgnoreCase) ||
+            target is null || target.Id == actor.Id ||
+            target.Team == actor.Team || target.Team == NetworkTeam.Neutral ||
+            target.AttachedToId is not null ||
+            RoyalAbilityRules.IsRoyal(target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+            (actor.AbilityState?.CooldownOwnerTurns ?? 0) > 0 ||
+            !CanUseActionTarget(match, actor, target) ||
+            !UnitRules.TryGet(target.Type, out UnitRule recruitedRule))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        int recruitedBaseCost = target.Type == nameof(PieceType.Qilin) &&
+          AdvancedAbilityRules.IsValidQilinCost(target.AbilityState?.VariableCostValue ?? 0)
+            ? target.AbilityState!.VariableCostValue
+            : recruitedRule.Cost;
+        int recruitCost = Math.Max(0, recruitedBaseCost) * 2;
+        if (player.Money < recruitCost)
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        player.Money = ClampCurrency((long)player.Money - recruitCost);
+        match.Pieces[targetIndex] = target with
+        {
+          Team = actor.Team,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true,
+          AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(target.Type),
+          AbilityState = (target.AbilityState ?? new UnitAbilityState()) with
+          {
+            CannotActThisTurn = true,
+            CannotMoveThisTurn = true
+          }
+        };
+        match.Pieces[actorIndex] = actor with
+        {
+          AbilityState = AdvancedAbilityRules.StartCooldown(
+            actor.AbilityState, AdvancedAbilityRules.GangLeaderCooldownTurns)
+        };
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.Hacker):
         if (!string.Equals(ability, "Hack", StringComparison.OrdinalIgnoreCase) ||
             (actor.AbilityState?.CooldownOwnerTurns ?? 0) > 0 || target is null || target.Team == actor.Team ||

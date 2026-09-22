@@ -741,4 +741,17 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void GangLeaderUsesAThreeOwnerTurnCooldown()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.StartCooldown(
+      new UnitAbilityState(), AdvancedAbilityRules.GangLeaderCooldownTurns);
+
+    Assert.Equal(3, state.CooldownOwnerTurns);
+    state = AdvancedAbilityRules.StartOwnerTurn(state, 0, 0, 100);
+    Assert.Equal(2, state.CooldownOwnerTurns);
+  }
+
+
 }

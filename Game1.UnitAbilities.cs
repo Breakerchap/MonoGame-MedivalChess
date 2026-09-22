@@ -1238,4 +1238,52 @@ internal sealed partial class Game1
   }
 
 
+
+  private int GetLocalGangLeaderRecruitCost(Piece target)
+  {
+    int baseCost = target.Definition.Type == PieceType.Qilin &&
+      AdvancedAbilityRules.IsValidQilinCost(target.AbilityState.VariableCostValue)
+        ? target.AbilityState.VariableCostValue
+        : target.Definition.Cost;
+    return Math.Max(0, baseCost) * 2;
+  }
+
+  private bool TryUseLocalGangLeaderRecruit(Piece gangLeader, Piece target)
+  {
+    if (gangLeader.Definition.Type != PieceType.GangLeader ||
+        target is null || target == gangLeader ||
+        target.Team == gangLeader.Team || target.Team == TeamName.Neutral ||
+        target.AttachedTo is not null || target.IsRoyal ||
+        gangLeader.AbilityState.CooldownOwnerTurns > 0 ||
+        !target.OccupiedSquares().Any(square =>
+          CanAttackSquareWithAttachments(gangLeader, square)))
+    {
+      return false;
+    }
+
+    Team team = _teams.Find(candidate => candidate.TeamName == gangLeader.Team);
+    int cost = GetLocalGangLeaderRecruitCost(target);
+    if (team is null || team.Money < cost)
+    {
+      return false;
+    }
+
+    team.Money = ClampCurrency((long)team.Money - cost);
+    target.Team = gangLeader.Team;
+    target.HasMovedThisTurn = true;
+    target.HasAttackedThisTurn = true;
+    target.AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(
+      target.Definition.Type.ToString());
+    target.AbilityState = target.AbilityState with
+    {
+      CannotActThisTurn = true,
+      CannotMoveThisTurn = true
+    };
+    gangLeader.AbilityState = AdvancedAbilityRules.StartCooldown(
+      gangLeader.AbilityState, AdvancedAbilityRules.GangLeaderCooldownTurns);
+    CompleteAction();
+    return true;
+  }
+
+
 }

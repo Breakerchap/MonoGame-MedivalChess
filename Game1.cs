@@ -2568,7 +2568,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2648,6 +2648,12 @@ internal sealed partial class Game1 : Game
         actor.AbilityState.PreviousOwnerTurnStart is not null &&
         target.AbilityState.PreviousOwnerTurnStart is not null &&
         IsWithinLocalCircleRange(actor, target, 3),
+      PieceType.GangLeader => target is not null && target != actor &&
+        target.Team != actor.Team && target.Team != TeamName.Neutral &&
+        target.AttachedTo is null && !target.IsRoyal &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        target.OccupiedSquares().Any(square =>
+          CanAttackSquareWithAttachments(actor, square)),
       PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
@@ -2722,6 +2728,8 @@ internal sealed partial class Game1 : Game
       ? "Thunderstorm"
       : actor.Definition.Type == PieceType.Chronos
       ? "Rewind"
+      : actor.Definition.Type == PieceType.GangLeader
+      ? "Recruit"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -4363,7 +4371,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4415,6 +4423,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Chronos && targetPiece is not null)
     {
       return TryUseLocalChronosRewind(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.GangLeader && targetPiece is not null)
+    {
+      return TryUseLocalGangLeaderRecruit(actor, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.CommandCentre &&
@@ -11344,6 +11357,13 @@ internal sealed partial class Game1 : Game
       return piece.AbilityState.CooldownOwnerTurns > 0
         ? $"REWIND READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
         : "RIGHT-CLICK a friendly unit within 3 Circle to rewind both";
+    }
+
+    if (piece.Definition.Type == PieceType.GangLeader)
+    {
+      return piece.AbilityState.CooldownOwnerTurns > 0
+        ? $"RECRUIT READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
+        : "RIGHT-CLICK an enemy non-Royal in range to buy it for 2x base cost";
     }
 
     if (piece.HasAttackedThisTurn)

@@ -115,7 +115,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.buffalo` | Verified | Buffalo may attack by landing on one enemy through the movement path. It deals normal Attack damage, moves onto the destination only if the target dies, otherwise falls back to the previous movement square, pushes a surviving target 1 tile directly away when legal, and consumes its normal attack. Local and authoritative server movement are wired. |
 | `wild_west.bounty_hunter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `wild_west.gang_leader` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.gang_leader` | Verified | Local/online/server play now supports the codex recruit action once every 3 owner turns. A target must be an enemy, non-neutral, unattached non-Royal in the Gang Leader's attack range; the player pays twice its base cost (including Qilin's chosen X), the unit transfers teams, is locked from acting for the rest of the current turn, and the Gang Leader starts its three-owner-turn cooldown. |
 | `modern.civilian` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.officer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `modern.gunman` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -307,3 +307,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Every linked Lich death clears the stale link, increments `LinkedDeaths`, and deals 5 Health to the Phylactery. The fourth linked death forces the Phylactery to zero Health even if it was healed or had Odin protection, matching the codex's explicit four-death defeat condition.
 - Phylactery's existing shared direct-damage immunity remains the common attack rule.
 - Added focused shared regression coverage for link state, direct-damage immunity and the 5-Health death cost.
+
+
+### 2026-09-22 — Gang Leader recruitment
+
+- Completed Gang Leader's recruit action in local and authoritative online/server play.
+- Right-clicking an enemy non-Royal in the Gang Leader's 1–2 Square range attempts recruitment; neutral, attached and Royal/Royal-proxy units are rejected.
+- Recruitment costs twice the target's base cost. Qilin correctly uses its chosen variable cost X rather than the catalogue baseline; ordinary units use their codex base cost.
+- A recruited unit changes team immediately but is marked moved/attacked and cannot act again until its new team's next owner-turn start.
+- The Gang Leader begins the shared three-owner-turn cooldown after a successful recruitment.
+- Added focused regression coverage for the cooldown duration/tick.
