@@ -1345,4 +1345,64 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static void TransformServerSkinwalkerAfterKill(
+    Match match,
+    NetworkPiece skinwalker,
+    NetworkPiece defeated)
+  {
+    if (skinwalker.Type != nameof(PieceType.Skinwalker) ||
+        defeated.Type == nameof(PieceType.Farm) ||
+        !UnitRules.TryGet(defeated.Type, out UnitRule copiedRule))
+    {
+      return;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == skinwalker.Id);
+    if (index < 0) return;
+
+    UnitAbilityState transformedState = (match.Pieces[index].AbilityState ?? new UnitAbilityState()) with
+    {
+      CannotMoveThisTurn = true,
+      CannotActThisTurn = true
+    };
+    NetworkPiece transformed = match.Pieces[index] with
+    {
+      Type = defeated.Type,
+      Health = copiedRule.Health,
+      HasMovedThisTurn = true,
+      HasAttackedThisTurn = true,
+      AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(defeated.Type),
+      AbilityState = transformedState
+    };
+    match.Pieces[index] = transformed;
+
+    if (CanDisplaceServerPieceTo(match, transformed, copiedRule, (transformed.X, transformed.Y)))
+    {
+      return;
+    }
+
+    var board = BoardRules.GetBoard(match.Configuration);
+    foreach ((int x, int y) candidate in board.Cells
+      .OrderBy(position => Math.Max(
+        Math.Abs(position.x - transformed.X),
+        Math.Abs(position.y - transformed.Y)))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x))
+    {
+      if (!CanDisplaceServerPieceTo(match, transformed, copiedRule, candidate)) continue;
+      match.Pieces[index] = transformed with { X = candidate.x, Y = candidate.y };
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == transformed.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with { X = candidate.x, Y = candidate.y };
+        }
+      }
+      break;
+    }
+  }
+
+
 }

@@ -4182,6 +4182,12 @@ internal sealed partial class Game1 : Game
     HandlePieceDestroyed(damagedPiece, attacker.Team);
 
     if (!pieceSetup.Pieces.Contains(damagedPiece) &&
+        attacker.Definition.Type == PieceType.Skinwalker)
+    {
+      TransformLocalSkinwalkerAfterKill(attacker, damagedPiece);
+    }
+
+    if (!pieceSetup.Pieces.Contains(damagedPiece) &&
         attacker.Definition.Type == PieceType.Raider &&
         damagedPiece.Team != attacker.Team && damagedPiece.Team != TeamName.Neutral)
     {

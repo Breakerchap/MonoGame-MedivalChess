@@ -65,7 +65,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.will_o_wisp` | Verified | Settle and adjacent Wisp spawning are wired across local/server/CPU and online play; green CPU runtime coverage verifies settled movement lock and spawned-Wisp attack consumption. |
 | `undead.wisp` | Verified | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks, with green CPU runtime regression coverage. |
 | `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.skinwalker` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.skinwalker` | Verified | Local and authoritative server damage resolution now transforms a Skinwalker only when its own attack genuinely kills/removes a non-Farm unit. It copies the defeated unit type at full base Health, cannot move or attack again that turn, and relocates to the nearest legal square only when a larger copied footprint cannot fit at its current position. Revived targets do not trigger the transformation. |
 | `undead.lich` | Verified | A linked Lich is spawned adjacent to its Phylactery when missing at the start of the owner's turn. Its movement destinations are constrained to remain within 4 Diamond of that linked Phylactery. On death, it clears the link and deals 5 Health to the Phylactery; the fourth linked Lich death defeats the Phylactery regardless of healing or Odin protection. Local and authoritative server paths are wired. |
 | `undead.phylactery` | Verified | Direct damage immunity is enforced by the shared targeting rule. At owner-turn start, if its linked Lich is absent, it spawns one on the first legal adjacent tile and links both units. Each linked Lich death deals 5 Health and increments the death count; the fourth death forcibly defeats the Royal. Local and authoritative server behaviour are wired. |
 | `undead.phantom` | Verified | Possess/unpossess is wired in local/server/CPU, royal identity moves to the possessed friendly non-Royal, possessed-unit death also kills the Phantom, and unpossessing locks the Phantom from moving/acting for the rest of that owner turn. Runtime regression coverage verifies the flow. |
@@ -349,3 +349,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Followers are marked as moved, their movement state is recorded, and any attachments on those followers move with them on the authoritative server.
 - Herald's pending companion selection is cleared after it moves.
 - Added focused shared regression coverage for toggle semantics and the three-companion cap.
+
+
+### 2026-09-22 — Skinwalker kill transformation
+
+- Added Skinwalker's kill-triggered transformation to local and authoritative server damage pipelines.
+- Transformation occurs only after the defeated unit is actually removed, so lethal-prevention/revival abilities do not incorrectly count as kills.
+- The Skinwalker copies the defeated unit's type and full base Health, then has both movement and action locked for the rest of that turn as required by the codex.
+- Larger copied forms first try to remain on the Skinwalker's current square; if their footprint cannot legally fit there, the transformed unit is moved to the nearest legal board position while keeping any attachments aligned.
+- Farm structures are excluded because the codex specifies killing a unit, not transforming into a Structure.

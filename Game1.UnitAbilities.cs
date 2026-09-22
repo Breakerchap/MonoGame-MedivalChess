@@ -1484,4 +1484,41 @@ internal sealed partial class Game1
   }
 
 
+
+  private void TransformLocalSkinwalkerAfterKill(Piece skinwalker, Piece defeated)
+  {
+    if (skinwalker.Definition.Type != PieceType.Skinwalker ||
+        defeated.Definition.Type == PieceType.Farm ||
+        !pieceSetup.Pieces.Contains(skinwalker))
+    {
+      return;
+    }
+
+    PieceDefinition copiedDefinition = defeated.Definition;
+    skinwalker.TransformTo(copiedDefinition);
+    skinwalker.AbilityState = skinwalker.AbilityState with
+    {
+      CannotMoveThisTurn = true,
+      CannotActThisTurn = true
+    };
+    skinwalker.HasMovedThisTurn = true;
+    skinwalker.HasAttackedThisTurn = true;
+    skinwalker.AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(copiedDefinition.Type.ToString());
+
+    if (!CanDisplaceLocalPieceTo(skinwalker, skinwalker.Position))
+    {
+      (int x, int y)? relocation = FindNearestLocalLegalDisplacement(skinwalker);
+      if (relocation is not null)
+      {
+        skinwalker.Position = relocation.Value;
+        foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == skinwalker))
+        {
+          attachment.Position = relocation.Value;
+        }
+        pieceSetup.RefreshOccupancy();
+      }
+    }
+  }
+
+
 }

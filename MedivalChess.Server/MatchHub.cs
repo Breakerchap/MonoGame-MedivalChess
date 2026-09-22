@@ -1975,6 +1975,11 @@ public sealed partial class MatchStore
     }
 
     bool destroyed = match.Pieces.All(piece => piece.Id != damagedPiece.Id);
+    if (destroyed && attacker.Type == nameof(PieceType.Skinwalker))
+    {
+      TransformServerSkinwalkerAfterKill(match, attacker, damagedPiece);
+    }
+
     if (destroyed && attacker.Type == nameof(PieceType.Raider) &&
         damagedPiece.Team != attacker.Team && damagedPiece.Team != NetworkTeam.Neutral &&
         UnitRules.TryGet(damagedPiece.Type, out UnitRule defeatedRule))
