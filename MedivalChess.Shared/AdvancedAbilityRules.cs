@@ -167,6 +167,9 @@ public static class AdvancedAbilityRules
     return state with
     {
       TargetIdsThisTurn = targets,
+      SelectedTargetId = unitType == nameof(PieceType.Duelist) && targetId is not null
+        ? targetId
+        : state.SelectedTargetId,
       ReloadRequired = unitType == nameof(PieceType.Hwacha) || state.ReloadRequired,
       CooldownOwnerTurns = unitType == nameof(PieceType.Sniper)
         ? SniperCooldownTurns
@@ -216,6 +219,16 @@ public static class AdvancedAbilityRules
   public static bool CanTakeDirectDamage(string unitType, UnitAbilityState? state) =>
     unitType is not (nameof(PieceType.Phylactery) or nameof(PieceType.Helicopter) or nameof(PieceType.Shadow)) &&
     state?.PetrifiedById is null;
+
+  public static bool CanMedusaPetrify(string targetType) =>
+    UnitRules.TryGet(targetType, out UnitRule rule) && rule.Category != RuleCategory.Royal;
+
+  public static bool IsPetrificationMaintained(
+    UnitRule medusa,
+    (int x, int y) medusaPosition,
+    UnitRule target,
+    (int x, int y) targetPosition) =>
+    AbilityRules.IsWithinSquareRadius(medusa, medusaPosition, target, targetPosition, 5);
 
   public static bool MayAlsoPlaceInNoMansLand(string unitType) =>
     unitType is nameof(PieceType.ContractDemon) or nameof(PieceType.Helicopter);

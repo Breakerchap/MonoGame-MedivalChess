@@ -468,6 +468,7 @@ public sealed partial class MatchStore
       foundMatch.Pieces[pieceIndex] = piece;
       MoveAttachedPieces(foundMatch, piece, oldX, oldY);
       MoveHeraldCompanions(foundMatch, piece, oldX, oldY);
+      ReleaseServerPetrificationIfBroken(foundMatch, piece);
       TriggerMinesAlongMovement(foundMatch, piece, actualMovementPath);
       TriggerServerAbilityEntitiesAlongMovement(foundMatch, piece.Id, actualMovementPath);
       if (foundMatch.Pieces.Any(candidate => candidate.Id == piece.Id))
@@ -551,7 +552,9 @@ public sealed partial class MatchStore
       }
       bool attackingBarricade = target is null && request.TargetX is int barricadeX && request.TargetY is int barricadeY &&
         foundMatch.Barricades.ContainsKey((barricadeX, barricadeY));
-      if (target is null && !attackingBarricade)
+      bool missileSquareTarget = target is null && attacker.Type == nameof(PieceType.MissileSilo) &&
+        request.TargetX is not null && request.TargetY is not null;
+      if (target is null && !attackingBarricade && !missileSquareTarget)
       {
         return new(false, "That target is no longer on the board.", foundMatch.State());
       }
@@ -562,6 +565,11 @@ public sealed partial class MatchStore
       if (!AdvancedAbilityRules.CanAttack(attacker.Type, attacker.AbilityState, attacker.HasAttackedThisTurn, target?.Id))
       {
         return new(false, "That unit cannot attack that target this turn.", foundMatch.State());
+      }
+      if (!IsServerDuelistAttackLegal(foundMatch, attacker, target) ||
+          (target is not null && !AdvancedAbilityRules.CanTakeDirectDamage(target.Type, target.AbilityState)))
+      {
+        return new(false, "That attack is not available.", foundMatch.State());
       }
       bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried &&
         target is not null && attacker.AttachedToId == target.Id && target.Team != attacker.Team;
@@ -579,7 +587,7 @@ public sealed partial class MatchStore
 
       if (target is null && !CanUseActionSquare(foundMatch, attacker, targetPosition.x, targetPosition.y))
       {
-        return new(false, "That barricade is outside the unit's attack pattern.", foundMatch.State());
+        return new(false, "That square is outside the unit's attack pattern.", foundMatch.State());
       }
 
       if (target is not null
@@ -604,7 +612,11 @@ public sealed partial class MatchStore
         foundMatch.Touch();
         return new(true, null, foundMatch.State());
       }
-      if (target is null)
+      if (attacker.Type == nameof(PieceType.MissileSilo))
+      {
+        PerformServerMissileSiloAttack(foundMatch, attacker, player, targetPosition);
+      }
+      else if (target is null)
       {
         DamageBarricade(foundMatch, attacker, targetPosition);
       }
@@ -1853,6 +1865,11 @@ public sealed partial class MatchStore
     if (TryApplySharedServerLethalAbility(match, defeatedPiece))
     {
       return;
+    }
+
+    if (defeatedPiece.Type == nameof(PieceType.Medusa))
+    {
+      ClearServerPetrificationBy(match, defeatedPiece.Id);
     }
 
     if (defeatedPiece.Type == nameof(PieceType.Phantom))

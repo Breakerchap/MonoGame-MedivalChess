@@ -192,6 +192,7 @@ internal sealed partial class Game1
   }
 
   private bool CanSharedAttackDamage(Piece attacker, Piece target) =>
+    AdvancedAbilityRules.CanTakeDirectDamage(target.Definition.Type.ToString(), target.AbilityState) &&
     AbilityRules.CanDamageTarget(
       ApplyLocalAttachmentBonuses(attacker, UnitRules.FromPieceDefinition(attacker.Definition)),
       UnitRules.FromPieceDefinition(target.Definition)
@@ -366,4 +367,94 @@ internal sealed partial class Game1
       sameTeamGoblinRemains
     );
   }
+
+  private bool IsLocalDuelistAttackLegal(Piece attacker, Piece? intendedTarget)
+  {
+    Piece[] forcingDuelists = pieceSetup.Pieces
+      .Where(piece =>
+        piece.Definition.Type == PieceType.Duelist &&
+        piece.Team != attacker.Team &&
+        string.Equals(piece.AbilityState.SelectedTargetId, attacker.NetworkId, StringComparison.Ordinal) &&
+        CanAttackSquareWithAttachments(piece, attacker.Position))
+      .ToArray();
+    return forcingDuelists.Length == 0 ||
+      (intendedTarget is not null && forcingDuelists.Contains(intendedTarget));
+  }
+
+  private void ClearLocalPetrificationBy(string medusaId)
+  {
+    foreach (Piece piece in pieceSetup.Pieces.Where(piece =>
+      string.Equals(piece.AbilityState.PetrifiedById, medusaId, StringComparison.Ordinal)))
+    {
+      piece.AbilityState = AdvancedAbilityRules.SetPetrified(piece.AbilityState, null);
+    }
+  }
+
+  private void ReleaseLocalPetrificationIfBroken(Piece medusa)
+  {
+    if (medusa.Definition.Type != PieceType.Medusa) return;
+    UnitRule medusaRule = UnitRules.FromPieceDefinition(medusa.Definition);
+    foreach (Piece target in pieceSetup.Pieces.Where(piece =>
+      string.Equals(piece.AbilityState.PetrifiedById, medusa.NetworkId, StringComparison.Ordinal)).ToArray())
+    {
+      UnitRule targetRule = UnitRules.FromPieceDefinition(target.Definition);
+      if (!AdvancedAbilityRules.IsPetrificationMaintained(
+            medusaRule, medusa.Position, targetRule, target.Position))
+      {
+        target.AbilityState = AdvancedAbilityRules.SetPetrified(target.AbilityState, null);
+      }
+    }
+  }
+
+  private bool TryPetrifyLocalTarget(Piece medusa, Piece? target)
+  {
+    if (target is null || target == medusa || target.IsRoyal || medusa.HasAttackedThisTurn ||
+        !AdvancedAbilityRules.CanMedusaPetrify(target.Definition.Type.ToString()) ||
+        !CanAttackSquareWithAttachments(medusa, target.Position))
+    {
+      return false;
+    }
+
+    ClearLocalPetrificationBy(medusa.NetworkId);
+    target.AbilityState = AdvancedAbilityRules.SetPetrified(target.AbilityState, medusa.NetworkId);
+    medusa.HasAttackedThisTurn = true;
+    CompleteAction();
+    return true;
+  }
+
+  private void PerformLocalMissileSiloAttack(Piece attacker, (int x, int y) centre)
+  {
+    int damage = UnitRules.FromPieceDefinition(attacker.Definition).Attack;
+    foreach (Piece victim in pieceSetup.Pieces.ToArray())
+    {
+      if (!victim.OccupiedSquares().Any(square =>
+            Math.Max(Math.Abs(square.x - centre.x), Math.Abs(square.y - centre.y)) <= 2))
+      {
+        continue;
+      }
+      if (!CanSharedAttackDamage(attacker, victim)) continue;
+      ApplyDamageToPiece(attacker, victim, damage);
+    }
+
+    HashSet<(int x, int y)> structurePositions = new();
+    foreach (AbilityEntity entity in _abilityEntities)
+    {
+      if (Math.Max(Math.Abs(entity.X - centre.x), Math.Abs(entity.Y - centre.y)) <= 2)
+      {
+        structurePositions.Add((entity.X, entity.Y));
+      }
+    }
+    foreach ((int x, int y) position in _barricades.Keys.Concat(_roads.Keys).Concat(_mines.Keys).Concat(_restoredLakeTiles))
+    {
+      if (Math.Max(Math.Abs(position.x - centre.x), Math.Abs(position.y - centre.y)) <= 2)
+      {
+        structurePositions.Add(position);
+      }
+    }
+    foreach ((int x, int y) position in structurePositions)
+    {
+      TryDestroyLocalStructure(position);
+    }
+  }
+
 }

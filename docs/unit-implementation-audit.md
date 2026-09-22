@@ -81,7 +81,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
 | `greek.daedalus` | Verified | Three-Gate construction, Snare construction/consumption, and free demolition are wired across local/server/CPU and online play; multi-Gate selection does not spend the action until all three placements are chosen. |
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
-| `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.medusa` | Verified | Petrify is wired in local and authoritative online play: it targets non-Royal units in range, replaces the Medusa's previous petrification, blocks the petrified unit from moving/attacking/using active abilities or being directly attacked, and ends when Medusa dies or moves more than 5 tiles away. Shared regression coverage checks the state and range break. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
 | `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.muse` | Verified | Muse attachment is wired across local/server/CPU and online play. Its target is any friendly unit as specified by the codex (Muse itself has no normal attack range), it consumes the Muse's attack, and the host dynamically advances both Move and Attack patterns one step. Shared and CPU runtime coverage is green. |
@@ -107,7 +107,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
 | `wild_west.demolitionist` | Verified | TNT placement/detonation is wired across local/server/CPU: one active TNT, placement consumes the attack, same-turn detonation is blocked, later active detonation deals fixed 30 damage in the surrounding 3x3 and destroys terrain. CPU runtime coverage verifies timing and damage. |
 | `wild_west.pickpocket` | Verified | Theft and its codex-required zero-damage normal attack are wired in local/server/CPU with green CPU runtime coverage. |
-| `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.duelist` | Verified | Normal attacks now replace the Duelist's single marked target; while a marked unit is inside an enemy Duelist's attack range, local and authoritative server attack validation force it to attack one of the Duelists marking it. Shared regression coverage verifies mark replacement. |
 | `wild_west.cactus_jack` | Verified | Half-damage reflection is wired in local/server/CPU without recursive reflection, with green CPU runtime coverage. |
 | `wild_west.stagecoach` | Verified | Enemy-only pass-through and fixed 25 damage to every crossed enemy are wired through shared/local/server/CPU movement without consuming the Stagecoach's normal attack; CPU runtime coverage verifies multi-unit crossing. |
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -125,7 +125,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.tank` | Verified | Off-axis attack attempts rotate without firing. |
 | `modern.engineer` | Verified | Road, barricade, mine, and demolition actions are implemented. |
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
-| `modern.missile_silo` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.missile_silo` | Verified | The first Missile Silo attack may target an empty square and deals its 65 Attack to every unit in the centred 5×5 area, including friendlies, while destroying Structures in that area; the shared consumed flag permanently prevents another attack. Local and authoritative server paths are wired with regression coverage for one-shot state. |
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -208,3 +208,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Daedalus now locally builds either three Gates or one Snare and can demolish an in-range structure for free. Multi-Gate placement keeps the unit selected and does not spend the action until the third legal square is chosen.
 - Runesmith can now locally choose and build any of the four 5-Health Rune types or demolish an in-range structure; the already-shared aura effects continue to drive local/server/CPU effective stats.
 - Multi-placement state is regression-tested for accumulation, mode switching, and clearing; the branch-wide test workflow validates the complete project after this commit.
+
+
+### 2026-09-22 — Medusa, Duelist, and Missile Silo combat batch
+
+- Implemented Medusa Petrify in offline local and authoritative online play. Petrification replaces the Medusa's prior target, rejects Royals/Royal proxies, blocks movement/attacks/active abilities and direct attacks, and is cleared immediately when the Medusa dies or moves beyond 5 tiles.
+- Implemented Duelist marks through the shared attack-state pipeline. Each Duelist keeps one current mark; local and server attack validation now force a marked unit to attack a marking Duelist whenever one is inside the Duelist's attack range.
+- Completed Missile Silo's one-shot attack in local and server play. It may target an empty in-range square, hits all units in the centred 5x5 including friendlies, destroys Structures in the area, and becomes permanently consumed after the first shot.
+- Direct-attack validation now also respects the existing Phylactery/Helicopter/Shadow/Petrified direct-damage immunity state instead of merely carrying that state unused.
+- Added focused shared regression coverage for Duelist mark replacement, petrification damage/range rules, and Missile Silo consumption. CPU-specific action generation was intentionally not expanded in this batch.

@@ -533,4 +533,43 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void DuelistAttackRecordsExactlyOneMarkedTarget()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.RecordAttack(
+      nameof(PieceType.Duelist), new UnitAbilityState(), "first");
+
+    Assert.Equal("first", state.SelectedTargetId);
+
+    state = AdvancedAbilityRules.RecordAttack(nameof(PieceType.Duelist), state, "second");
+    Assert.Equal("second", state.SelectedTargetId);
+  }
+
+  [Fact]
+  public void PetrifiedUnitsCannotTakeDirectAttackDamageAndRangeBreaksBeyondFiveTiles()
+  {
+    UnitAbilityState petrified = AdvancedAbilityRules.SetPetrified(new UnitAbilityState(), "medusa");
+
+    Assert.False(AdvancedAbilityRules.CanTakeDirectDamage(nameof(PieceType.Swordsman), petrified));
+    Assert.True(AdvancedAbilityRules.IsPetrificationMaintained(
+      UnitRules.GetRequired(nameof(PieceType.Medusa)), (0, 0),
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)), (5, 0)));
+    Assert.False(AdvancedAbilityRules.IsPetrificationMaintained(
+      UnitRules.GetRequired(nameof(PieceType.Medusa)), (0, 0),
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)), (6, 0)));
+  }
+
+  [Fact]
+  public void MissileSiloIsConsumedByItsFirstAttack()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.RecordAttack(
+      nameof(PieceType.MissileSilo), new UnitAbilityState(), null);
+
+    Assert.True(state.Consumed);
+    Assert.False(AdvancedAbilityRules.CanAttack(
+      nameof(PieceType.MissileSilo), state, legacyHasAttacked: false));
+  }
+
+
 }

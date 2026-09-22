@@ -660,7 +660,12 @@ internal sealed partial class Game1 : Game
           {
             bool canSendOnlineAttack =
               (normalAttackTarget is not null ||
-               _barricades.ContainsKey(targetPosition)) &&
+               _barricades.ContainsKey(targetPosition) ||
+               selectedPiece.Definition.Type == PieceType.MissileSilo) &&
+              IsLocalDuelistAttackLegal(selectedPiece, normalAttackTarget) &&
+              (normalAttackTarget is null ||
+               AdvancedAbilityRules.CanTakeDirectDamage(
+                 normalAttackTarget.Definition.Type.ToString(), normalAttackTarget.AbilityState)) &&
               AdvancedAbilityRules.CanAttack(
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
@@ -707,11 +712,20 @@ internal sealed partial class Game1 : Game
               ApplyLocalAttachmentBonuses(
                 selectedPiece, UnitRules.FromPieceDefinition(selectedPiece.Definition)).Attack > 0 &&
               (normalAttackTarget is not null ||
-               _barricades.ContainsKey(targetPosition));
+               _barricades.ContainsKey(targetPosition) ||
+               selectedPiece.Definition.Type == PieceType.MissileSilo) &&
+              IsLocalDuelistAttackLegal(selectedPiece, normalAttackTarget) &&
+              (normalAttackTarget is null ||
+               AdvancedAbilityRules.CanTakeDirectDamage(
+                 normalAttackTarget.Definition.Type.ToString(), normalAttackTarget.AbilityState));
 
             if (isValidAttack)
             {
-              if (selectedPiece.Definition.Type == PieceType.Ballista)
+              if (selectedPiece.Definition.Type == PieceType.MissileSilo)
+              {
+                PerformLocalMissileSiloAttack(selectedPiece, targetPosition);
+              }
+              else if (selectedPiece.Definition.Type == PieceType.Ballista)
               {
                 PerformPiercingAttack(selectedPiece, targetPosition);
               }
@@ -2479,6 +2493,9 @@ internal sealed partial class Game1 : Game
           UnitRules.FromPieceDefinition(target.Definition), target.Position, 3),
       PieceType.Hacker => target is not null && target.Team != actor.Team && target.Team != TeamName.Neutral &&
         actor.AbilityState.CooldownOwnerTurns <= 0 && IsWithinLocalCircleRange(actor, target, 5),
+      PieceType.Medusa => target is not null && target != actor && !target.IsRoyal &&
+        AdvancedAbilityRules.CanMedusaPetrify(target.Definition.Type.ToString()) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
@@ -2541,6 +2558,8 @@ internal sealed partial class Game1 : Game
       ? "Protect"
       : actor.Definition.Type == PieceType.Hacker
       ? "Hack"
+      : actor.Definition.Type == PieceType.Medusa
+      ? "Petrify"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -3975,6 +3994,11 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    if (damagedPiece.Definition.Type == PieceType.Medusa)
+    {
+      ClearLocalPetrificationBy(damagedPiece.NetworkId);
+    }
+
     RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
 
     if (damagedPiece.Definition.Type == PieceType.Phantom)
@@ -4151,6 +4175,11 @@ internal sealed partial class Game1 : Game
     if (AbilityRules.IsCarryThrowUnit(actor.Definition.Type.ToString()))
     {
       return TryUseGiantOrCyclopsAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Medusa)
+    {
+      return TryPetrifyLocalTarget(actor, targetPiece);
     }
 
     if (IsCodexBuilder(actor.Definition.Type))
@@ -4867,6 +4896,7 @@ internal sealed partial class Game1 : Game
 
     destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
     MovePieceWithCompanions(movedPiece, destination);
+    ReleaseLocalPetrificationIfBroken(movedPiece);
     if (usesCavalierFollowUpMove)
     {
       movedPiece.CavalierFollowUpMoveAvailable = false;

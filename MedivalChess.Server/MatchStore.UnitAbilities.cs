@@ -23,6 +23,7 @@ public sealed partial class MatchStore
   }
 
   private static bool CanSharedServerDamage(NetworkPiece attacker, NetworkPiece target) =>
+    AdvancedAbilityRules.CanTakeDirectDamage(target.Type, target.AbilityState) &&
     UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
     UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
     AbilityRules.CanDamageTarget(attackerRule, targetRule);
@@ -468,4 +469,111 @@ public sealed partial class MatchStore
     match.Pieces
       .Where(piece => piece.AttachedToId == host.Id)
       .Sum(piece => AbilityRules.GetAttachmentMovementBonus(piece.Type));
+
+  private static bool IsServerDuelistAttackLegal(
+    Match match,
+    NetworkPiece attacker,
+    NetworkPiece? intendedTarget)
+  {
+    NetworkPiece[] forcingDuelists = match.Pieces
+      .Where(piece =>
+        piece.Type == nameof(PieceType.Duelist) &&
+        piece.Team != attacker.Team &&
+        string.Equals(piece.AbilityState?.SelectedTargetId, attacker.Id, StringComparison.Ordinal) &&
+        CanUseActionTarget(match, piece, attacker))
+      .ToArray();
+    return forcingDuelists.Length == 0 ||
+      (intendedTarget is not null && forcingDuelists.Any(piece => piece.Id == intendedTarget.Id));
+  }
+
+  private static void ClearServerPetrificationBy(Match match, string medusaId)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (string.Equals(piece.AbilityState?.PetrifiedById, medusaId, StringComparison.Ordinal))
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.SetPetrified(piece.AbilityState, null)
+        };
+      }
+    }
+  }
+
+  private static void ReleaseServerPetrificationIfBroken(Match match, NetworkPiece medusa)
+  {
+    if (medusa.Type != nameof(PieceType.Medusa) || !UnitRules.TryGet(medusa.Type, out UnitRule medusaRule))
+    {
+      return;
+    }
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece target = match.Pieces[index];
+      if (!string.Equals(target.AbilityState?.PetrifiedById, medusa.Id, StringComparison.Ordinal) ||
+          !UnitRules.TryGet(target.Type, out UnitRule targetRule))
+      {
+        continue;
+      }
+
+      if (!AdvancedAbilityRules.IsPetrificationMaintained(
+            medusaRule, (medusa.X, medusa.Y), targetRule, (target.X, target.Y)))
+      {
+        match.Pieces[index] = target with
+        {
+          AbilityState = AdvancedAbilityRules.SetPetrified(target.AbilityState, null)
+        };
+      }
+    }
+  }
+
+  private static void PerformServerMissileSiloAttack(
+    Match match,
+    NetworkPiece attacker,
+    PlayerSlot attackingPlayer,
+    (int x, int y) centre)
+  {
+    int damage = UnitRules.GetRequired(attacker.Type).Attack;
+    foreach (NetworkPiece victim in match.Pieces.ToArray())
+    {
+      if (!UnitRules.TryGet(victim.Type, out UnitRule victimRule) ||
+          !OccupiedSquares(victimRule, (victim.X, victim.Y)).Any(square =>
+            Math.Max(Math.Abs(square.x - centre.x), Math.Abs(square.y - centre.y)) <= 2) ||
+          !CanSharedServerDamage(attacker, victim))
+      {
+        continue;
+      }
+
+      ResolvePieceDamage(match, attacker, attackingPlayer, victim.Id, damage);
+    }
+
+    HashSet<(int x, int y)> structurePositions = new();
+    foreach (AbilityEntity entity in match.AbilityEntities)
+    {
+      if (Math.Max(Math.Abs(entity.X - centre.x), Math.Abs(entity.Y - centre.y)) <= 2)
+      {
+        structurePositions.Add((entity.X, entity.Y));
+      }
+    }
+    foreach ((int x, int y) position in match.Barricades.Keys.Concat(match.Roads.Keys).Concat(match.Mines.Keys))
+    {
+      if (Math.Max(Math.Abs(position.x - centre.x), Math.Abs(position.y - centre.y)) <= 2)
+      {
+        structurePositions.Add(position);
+      }
+    }
+
+    foreach ((int x, int y) position in structurePositions)
+    {
+      if (!TryDestroyAbilityEntity(match, position.x, position.y))
+      {
+        match.Barricades.Remove(position);
+        match.Roads.Remove(position);
+        match.Mines.Remove(position);
+      }
+    }
+  }
+
+
 }
