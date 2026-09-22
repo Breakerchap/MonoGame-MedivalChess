@@ -23,7 +23,7 @@ public static partial class CpuGameRules
   private static bool CanCpuChessKingOccupy(CpuMutableGameState state, NetworkPiece king, UnitRule kingRule, (int x, int y) destination)
   {
     if (!BoardRules.FootprintFitsBoard(state.Source.Board, destination.x, destination.y, kingRule.Width, kingRule.Height) ||
-        OccupiedSquares(kingRule, destination).Any(square => state.Source.Terrain.IsLake(square) || state.Barricades.ContainsKey(square))) return false;
+        OccupiedSquares(kingRule, destination).Any(square => state.Terrain.IsLake(square) || state.Barricades.ContainsKey(square))) return false;
     NetworkPiece? occupant = state.Pieces.FirstOrDefault(other => other.Id != king.Id && other.AttachedToId is null &&
       other.Type != nameof(PieceType.Farm) && UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
       UnitRules.FootprintsOverlap(destination.x, destination.y, kingRule.Width, kingRule.Height,
@@ -49,7 +49,7 @@ public static partial class CpuGameRules
         continue;
       }
       if (LineOfSightRules.HasClearAttackPath(attackerRule, OccupiedSquares(attackerRule, (attacker.X, attacker.Y)), square,
-        state.Source.Terrain.IsForest, state.Barricades.ContainsKey,
+        state.Terrain.IsForest, state.Barricades.ContainsKey,
         intermediate => state.Pieces.Any(other => other.Id != attacker.Id && other.Id != king.Id &&
           other.Id != capturedAtDestination?.Id && other.AttachedToId is null && other.Type != nameof(PieceType.Farm) &&
           UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, intermediate)))) return true;
@@ -59,7 +59,7 @@ public static partial class CpuGameRules
 
   private static bool CpuChessThreatBlocker(CpuMutableGameState state, (int x, int y) square,
     NetworkPiece attacker, NetworkPiece king, NetworkPiece? capturedAtDestination) =>
-    state.Source.Terrain.IsLake(square) || state.Barricades.ContainsKey(square) || state.Pieces.Any(other =>
+    state.Terrain.IsLake(square) || state.Barricades.ContainsKey(square) || state.Pieces.Any(other =>
       other.Id != attacker.Id && other.Id != king.Id && other.Id != capturedAtDestination?.Id && other.AttachedToId is null &&
       other.Type != nameof(PieceType.Farm) && UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
 }

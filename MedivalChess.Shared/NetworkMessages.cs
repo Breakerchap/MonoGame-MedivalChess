@@ -13,7 +13,14 @@ public enum NetworkAttachmentKind
 {
   None,
   Guard,
-  Carried
+  Carried,
+  Shieldsman,
+  Shadow,
+  Muse,
+  Succubus,
+  Imp,
+  Passenger,
+  Prisoner
 }
 
 public sealed record NetworkPendingDamage(NetworkTeam TriggerTeam, NetworkTeam SourceTeam, int Damage);
@@ -41,7 +48,8 @@ public sealed record NetworkPiece(
   string? PossessedUnitId = null,
   int FacingX = 0,
   int FacingY = 0,
-  IReadOnlyList<NetworkPendingDamage>? PendingDamage = null
+  IReadOnlyList<NetworkPendingDamage>? PendingDamage = null,
+  UnitAbilityState? AbilityState = null
 );
 
 public sealed record NetworkImprovement(
@@ -56,6 +64,7 @@ public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRe
 public sealed record NetworkConquestTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkModeTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkTreasureState(int? X, int? Y, string? CarrierId);
+public sealed record NetworkTerritoryClaim(int X, int Y, NetworkTeam Owner);
 
 /// <summary>Authoritative chess-clock snapshot. Values are milliseconds remaining for each team.</summary>
 public sealed record NetworkClockState(
@@ -153,7 +162,9 @@ public sealed record NetworkGameState(
   IReadOnlyList<NetworkModeTeamState>? ModeScores = null,
   NetworkTreasureState? Treasure = null,
   NetworkClockState? Clock = null,
-  NetworkPackDraftState? PackDraft = null
+  NetworkPackDraftState? PackDraft = null,
+  IReadOnlyList<AbilityEntity>? AbilityEntities = null,
+  IReadOnlyList<NetworkTerritoryClaim>? PlacementTerritoryClaims = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);
@@ -175,7 +186,7 @@ public sealed record SpecialActionRequest(string ActorId, string Ability, string
 
 public sealed record SkipTurnRequest();
 
-public sealed record PurchaseRequest(string PieceType, int X, int Y);
+public sealed record PurchaseRequest(string PieceType, int X, int Y, int? VariantCost = null);
 
 public sealed record RoyalSelectionRequest(string RoyalType, int? X = null, int? Y = null);
 

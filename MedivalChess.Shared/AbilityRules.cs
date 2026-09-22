@@ -20,15 +20,34 @@ public static class AbilityRules
   public const int SpartanReviveHealth = 20;
   public const int GhoulLifetimeTurns = 4;
   public const int NinjaAttacksPerTurn = 3;
-  public const int RaiderForwardMovementBonus = 2;
+  public const int BarbarianForwardMovementBonus = 2;
   public const int OxHostMovementBonus = 2;
   public const int BerserkerEnrageHealth = 20;
   public const int BerserkerEnragedDamage = 40;
   public const int CavalierFollowUpMovement = 2;
   public const int SamuraiLongRangeDamageReduction = 15;
+  public const int MonkMaximumIncomingDamage = 12;
+
+  /// <summary>Applies target-side limits that apply equally to attacks and effects.</summary>
+  public static int LimitIncomingDamage(UnitRule target, int damage) =>
+    target.Type == nameof(PieceType.Monk)
+      ? Math.Min(Math.Max(0, damage), MonkMaximumIncomingDamage)
+      : Math.Max(0, damage);
 
   public static bool IsTerrainImmune(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
+    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir) or
+      nameof(PieceType.Phoenix) or nameof(PieceType.Cherub) or nameof(PieceType.Banshee) or
+      nameof(PieceType.Poltergeist) or nameof(PieceType.FafnirDragon) or
+      nameof(PieceType.Fylgja) or nameof(PieceType.FlyingLongboat) or
+      nameof(PieceType.Beelzebub);
+
+  /// <summary>True when forest terrain has no extra movement cost for this unit.</summary>
+  public static bool IgnoresForests(UnitRule unit) =>
+    unit.Type == nameof(PieceType.Elf);
+
+  /// <summary>True when a unit's codex rule lets it cross blocking structures.</summary>
+  public static bool IgnoresStructures(UnitRule unit) =>
+    unit.Type == nameof(PieceType.Banshee);
 
   /// <summary>True when lakes and similar terrain restrictions do not block this unit.</summary>
   public static bool IgnoresImpassableTerrain(UnitRule unit) => IsTerrainImmune(unit);
@@ -43,11 +62,17 @@ public static class AbilityRules
     IsTerrainImmune(unit) ? Math.Min(1, ordinaryCost) : ordinaryCost;
 
   public static bool CanTravelThroughUnits(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir);
+    unit.Type is nameof(PieceType.Elephant) or nameof(PieceType.Sleipnir) or
+      nameof(PieceType.Fylgja) or nameof(PieceType.Beelzebub) or nameof(PieceType.Stagecoach);
 
   public static bool CanTravelThroughUnit(UnitRule mover, NetworkTeam moverTeam, NetworkTeam blockerTeam) =>
-    mover.Type == nameof(PieceType.Sleipnir) ||
-    (mover.Type == nameof(PieceType.Elephant) && blockerTeam != moverTeam);
+    mover.Type is nameof(PieceType.Sleipnir) or nameof(PieceType.Fylgja) or nameof(PieceType.Beelzebub) ||
+    (mover.Type is nameof(PieceType.Elephant) or nameof(PieceType.Stagecoach) && blockerTeam != moverTeam);
+
+  /// <summary>Units whose codex rule allows initial placement in No-Man's-Land.</summary>
+  public static bool MayPlaceInNoMansLand(string unitType) => unitType is
+    nameof(PieceType.Mercenary) or nameof(PieceType.Gargoyle) or nameof(PieceType.Valkyrie) or
+    nameof(PieceType.Frontiersmen) or nameof(PieceType.Ophan);
 
   public static bool IsTrampleAttacker(UnitRule unit) => unit.Type == nameof(PieceType.Elephant);
 
@@ -56,12 +81,12 @@ public static class AbilityRules
     NetworkTeam team,
     (int x, int y) origin,
     (int x, int y) destination
-  ) => unit.Type == nameof(PieceType.Raider) && IsForwardDestination(team, origin, destination)
-    ? RaiderForwardMovementBonus
+  ) => unit.Type == nameof(PieceType.Barbarian) && IsForwardDestination(team, origin, destination)
+    ? BarbarianForwardMovementBonus
     : 0;
 
   public static int GetMaximumMovementRangeBonus(UnitRule unit) =>
-    unit.Type == nameof(PieceType.Raider) ? RaiderForwardMovementBonus : 0;
+    unit.Type == nameof(PieceType.Barbarian) ? BarbarianForwardMovementBonus : 0;
 
   /// <summary>Movement bonus granted to the host by one attached unit.</summary>
   public static int GetAttachmentMovementBonus(string attachmentType) =>
@@ -72,7 +97,8 @@ public static class AbilityRules
     attachmentType == nameof(PieceType.Ox);
 
   public static bool AttacksOverObstacles(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Sorceress);
+    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Sorceress) or
+      nameof(PieceType.Banshee) or nameof(PieceType.Shadow);
 
   public static bool AttacksThroughForests(UnitRule unit) =>
     unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Sorceress);
@@ -82,6 +108,9 @@ public static class AbilityRules
     nameof(PieceType.Cannon) or nameof(PieceType.Catapult) or nameof(PieceType.Bombard) or
     nameof(PieceType.Ballista) or nameof(PieceType.Artemis) or nameof(PieceType.Gunman) or
     nameof(PieceType.Sniper) or nameof(PieceType.Cowboy);
+
+  public static bool CanMakeNormalAttack(UnitRule unit) =>
+    unit.Attack > 0 || unit.Type == nameof(PieceType.Pickpocket);
 
   public static bool CanDamageTarget(UnitRule attacker, UnitRule target) =>
     true;
@@ -100,7 +129,7 @@ public static class AbilityRules
   }
 
   public static int MaximumAttacksPerTurn(string unitType) =>
-    unitType == nameof(PieceType.Ninja) ? NinjaAttacksPerTurn :
+    unitType is nameof(PieceType.Ninja) or nameof(PieceType.Seraph) ? NinjaAttacksPerTurn :
     unitType == nameof(PieceType.Sherrif) ? 2 : 1;
 
   public static int GetBaseAttack(UnitRule attacker, int currentHealth) =>
@@ -164,6 +193,15 @@ public static class AbilityRules
     return dx * forward.x + dy * forward.y > 0;
   }
 
+  public static bool MovesCloserToPalace(
+    UnitRule movingUnit,
+    (int x, int y) from,
+    (int x, int y) to,
+    UnitRule palace,
+    (int x, int y) palacePosition
+  ) => FootprintDistance(movingUnit, to, palace, palacePosition) <
+    FootprintDistance(movingUnit, from, palace, palacePosition);
+
   public static bool MovesTowardPalace(
     UnitRule movingUnit,
     (int x, int y) from,
@@ -173,8 +211,8 @@ public static class AbilityRules
   )
   {
     int movementSteps = Math.Max(Math.Abs(to.x - from.x), Math.Abs(to.y - from.y));
-    return movementSteps > 1 && FootprintDistance(movingUnit, to, palace, palacePosition) <
-      FootprintDistance(movingUnit, from, palace, palacePosition);
+    return movementSteps > 1 &&
+      MovesCloserToPalace(movingUnit, from, to, palace, palacePosition);
   }
 
   public static bool AreAdjacent(

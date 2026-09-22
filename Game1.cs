@@ -172,6 +172,7 @@ internal sealed partial class Game1 : Game
   private readonly Dictionary<(int x, int y), TeamName> _mines = [];
   private readonly HashSet<(int x, int y)> _restoredLakeTiles = [];
   private readonly HashSet<TileEdge> _riverBridges = [];
+  private readonly List<AbilityEntity> _abilityEntities = [];
   private const int noMansLandHalfHeight = MatchRules.DefaultNoMansLandHalfHeight;
   private const float territoryTintAmount = 0.2f;
   private const int purchasePanelWidth = 380;
@@ -195,11 +196,16 @@ internal sealed partial class Game1 : Game
   private bool _isPurchaseUnitListExpanded;
   private int _selectedPurchaseIndex;
   private int _selectedPurchasePackIndex;
+  private int _selectedQilinCost = 40;
   private EngineerAbility _selectedEngineerAbility;
+  private int _selectedCodexBuilderAbilityIndex;
+  private int _selectedCommandCentreUpgradeIndex;
+  private int _selectedThorStormIndex;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
   private PieceDefinition _royalAwaitingPlacement;
+  private Piece _sheriffPrisonAwaitingPlacement;
   private SetupStage _setupStage = SetupStage.Mode;
   private readonly HashSet<Pack> _allowedPacks = [Pack.Medival];
   private string _packSelectionMode = PackDraftRules.DraftMode;
@@ -261,6 +267,7 @@ internal sealed partial class Game1 : Game
   private int _cpuTurnNumber;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
   private readonly Dictionary<TeamName, int> _modeScores = [];
+  private readonly Dictionary<(int x, int y), TeamName> _developerPlacementClaims = [];
   private (int x, int y)? _treasurePosition;
   private string _treasureCarrierId;
   private BindingAction? _bindingToChange;
@@ -504,12 +511,20 @@ internal sealed partial class Game1 : Game
       keyboard.IsKeyDown(_endTurnKey) &&
       !_previousKeyboardState.IsKeyDown(_endTurnKey);
 
-    if (wasSkipTurnPressed)
+    if (wasSkipTurnPressed && _sheriffPrisonAwaitingPlacement is null)
     {
       TrySkipCurrentTurn();
     }
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null && _royalAwaitingPlacement is null)
+    bool satanChoicePending = HasPendingLocalSatanChoice(Team.CurrentTurn);
+    if (satanChoicePending)
+    {
+      _isPurchaseMode = false;
+    }
+
+    if (wasPurchaseModeToggle && !satanChoicePending &&
+        _initialBuyPhase == null && _royalAwaitingPlacement is null &&
+        _sheriffPrisonAwaitingPlacement is null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -526,7 +541,8 @@ internal sealed partial class Game1 : Game
     }
 
     bool clickedPurchasePanel =
-      _royalAwaitingPlacement is null && wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
+      _royalAwaitingPlacement is null && _sheriffPrisonAwaitingPlacement is null &&
+      wasLeftClick && HandlePurchasePanelClick(ToUiPoint(mouse.Position));
     bool clickedInitialBuyStop =
       wasLeftClick && HandleInitialBuyStopClick(ToUiPoint(mouse.Position));
     bool clickedSkipTurn =
@@ -535,6 +551,12 @@ internal sealed partial class Game1 : Game
       wasLeftClick && HandleDebugTeamSwitchClick(ToUiPoint(mouse.Position));
     bool clickedEngineerPanel =
       wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
+    bool clickedCodexBuilderPanel =
+      wasLeftClick && HandleCodexBuilderAbilityClick(ToUiPoint(mouse.Position));
+    bool clickedCommandCentrePanel =
+      wasLeftClick && HandleCommandCentreUpgradeClick(ToUiPoint(mouse.Position));
+    bool clickedThorPanel =
+      wasLeftClick && HandleThorAbilityClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
     bool clickedCarryThrowPanel =
@@ -542,7 +564,7 @@ internal sealed partial class Game1 : Game
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedCommandCentrePanel && !clickedThorPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -552,7 +574,14 @@ internal sealed partial class Game1 : Game
       Piece friendlyPieceAtTarget = GetUnattachedPieceAt(targetPosition, Team.CurrentTurn);
       Piece inspectablePieceAtTarget = GetUnattachedPieceAt(targetPosition);
 
-      if (_royalAwaitingPlacement is not null)
+      if (_sheriffPrisonAwaitingPlacement is not null)
+      {
+        if (wasLeftClick)
+        {
+          TryPlaceSheriffPrison(targetPosition);
+        }
+      }
+      else if (_royalAwaitingPlacement is not null)
       {
         if (wasLeftClick)
         {
@@ -568,7 +597,13 @@ internal sealed partial class Game1 : Game
       }
       else if (selectedPiece == null)
       {
-        if (inspectablePieceAtTarget is not null)
+        Piece ownedAttachedActionUnit =
+          GetOwnedAttachedActionUnitAt(targetPosition, Team.CurrentTurn);
+        if (ownedAttachedActionUnit is not null)
+        {
+          SelectPiece(ownedAttachedActionUnit, allowAttachedPiece: true);
+        }
+        else if (inspectablePieceAtTarget is not null)
         {
           SelectPiece(inspectablePieceAtTarget);
         }
@@ -586,7 +621,44 @@ internal sealed partial class Game1 : Game
       }
       else if (selectedPiece.Occupies(targetPosition) && !wasRightClick)
       {
-        selectedPiece = null;
+        if (selectedPiece.AttachmentKind == AttachmentKind.Passenger &&
+            selectedPiece.AttachedTo?.Definition.Type == PieceType.FlyingLongboat)
+        {
+          Piece nextPassenger = GetNextLocalLongboatPassenger(
+            selectedPiece.AttachedTo, selectedPiece.NetworkId);
+          if (nextPassenger is not null)
+          {
+            SelectPiece(nextPassenger, allowAttachedPiece: true);
+          }
+          else
+          {
+            SelectPiece(selectedPiece.AttachedTo);
+          }
+        }
+        else
+        {
+          Piece attachedShadow = selectedPiece.AttachmentKind == AttachmentKind.Shadow
+            ? null
+            : pieceSetup.Pieces.FirstOrDefault(piece =>
+                piece.AttachedTo == selectedPiece &&
+                piece.AttachmentKind == AttachmentKind.Shadow &&
+                piece.Team == Team.CurrentTurn);
+          Piece firstPassenger = selectedPiece.Definition.Type == PieceType.FlyingLongboat
+            ? GetNextLocalLongboatPassenger(selectedPiece)
+            : null;
+          if (attachedShadow is not null)
+          {
+            SelectPiece(attachedShadow, allowAttachedPiece: true);
+          }
+          else if (firstPassenger is not null)
+          {
+            SelectPiece(firstPassenger, allowAttachedPiece: true);
+          }
+          else
+          {
+            selectedPiece = null;
+          }
+        }
       }
       else if (
         wasLeftClick &&
@@ -600,6 +672,17 @@ internal sealed partial class Game1 : Game
       else
       {
         Piece hostilePieceAtTarget = GetUnattachedHostilePieceAt(targetPosition, selectedPiece.Team);
+        Piece attachedSuccubusTarget = GetAttackableAttachedSuccubusAt(targetPosition, selectedPiece);
+        Piece normalAttackTarget = hostilePieceAtTarget ?? attachedSuccubusTarget ??
+          (AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(selectedPiece.Definition.Type.ToString()) &&
+           friendlyPieceAtTarget is not null && friendlyPieceAtTarget != selectedPiece
+            ? friendlyPieceAtTarget
+            : null);
+        bool sheriffArrestModifier =
+          wasRightClick &&
+          selectedPiece.Definition.Type == PieceType.Sheriff &&
+          (keyboard.IsKeyDown(Keys.LeftShift) ||
+           keyboard.IsKeyDown(Keys.RightShift));
         bool usedSpecialAbility = wasRightClick &&
           (_onlineClient is null
             ? TryUseSpecialAbility(selectedPiece, targetPosition, hostilePieceAtTarget ?? pieceAtTarget, keyboard)
@@ -608,6 +691,10 @@ internal sealed partial class Game1 : Game
         if (usedSpecialAbility)
         {
           selectedPiece = null;
+        }
+        else if (sheriffArrestModifier)
+        {
+          // Shift+right-click explicitly chooses Arrest instead of the Sheriff's normal attack.
         }
         else if (wasLeftClick)
         {
@@ -650,17 +737,28 @@ internal sealed partial class Game1 : Game
           if (_onlineClient != null)
           {
             bool canSendOnlineAttack =
-              (hostilePieceAtTarget is not null ||
-               _barricades.ContainsKey(targetPosition)) &&
-              !selectedPiece.HasAttackedThisTurn &&
-              selectedPiece.Definition.Attack > 0 &&
-              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
+              (normalAttackTarget is not null ||
+               _barricades.ContainsKey(targetPosition) ||
+               selectedPiece.Definition.Type == PieceType.MissileSilo) &&
+              IsLocalDuelistAttackLegal(selectedPiece, normalAttackTarget) &&
+              (normalAttackTarget is null ||
+               AdvancedAbilityRules.CanTakeDirectDamage(
+                 normalAttackTarget.Definition.Type.ToString(), normalAttackTarget.AbilityState)) &&
+              AdvancedAbilityRules.CanAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                selectedPiece.HasAttackedThisTurn,
+                normalAttackTarget?.NetworkId) &&
+              AbilityRules.CanMakeNormalAttack(ApplyLocalAttachmentBonuses(
+                selectedPiece, UnitRules.FromPieceDefinition(selectedPiece.Definition))) &&
+              CanAttackSquareWithAttachments(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition);
             if (canSendOnlineAttack)
             {
-              if (hostilePieceAtTarget is not null)
+              if (normalAttackTarget is not null)
               {
-                _ = SendOnlineAttackAsync(selectedPiece, hostilePieceAtTarget);
+                _ = SendOnlineAttackAsync(selectedPiece, normalAttackTarget);
               }
               else
               {
@@ -683,16 +781,31 @@ internal sealed partial class Game1 : Game
 
             bool isValidAttack =
               isBoardCell &&
-              !selectedPiece.HasAttackedThisTurn &&
-              Actions.CanAttackSquare(selectedPiece, targetPosition) &&
+              selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
+              AdvancedAbilityRules.CanAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                selectedPiece.HasAttackedThisTurn,
+                normalAttackTarget?.NetworkId) &&
+              CanAttackSquareWithAttachments(selectedPiece, targetPosition) &&
               HasClearAttackPath(selectedPiece, targetPosition) &&
-              selectedPiece.Definition.Attack > 0 &&
-              (hostilePieceAtTarget is not null ||
-               _barricades.ContainsKey(targetPosition));
+              ApplyLocalAttachmentBonuses(
+                selectedPiece, UnitRules.FromPieceDefinition(selectedPiece.Definition)).Attack > 0 &&
+              (normalAttackTarget is not null ||
+               _barricades.ContainsKey(targetPosition) ||
+               selectedPiece.Definition.Type == PieceType.MissileSilo) &&
+              IsLocalDuelistAttackLegal(selectedPiece, normalAttackTarget) &&
+              (normalAttackTarget is null ||
+               AdvancedAbilityRules.CanTakeDirectDamage(
+                 normalAttackTarget.Definition.Type.ToString(), normalAttackTarget.AbilityState));
 
             if (isValidAttack)
             {
-              if (selectedPiece.Definition.Type == PieceType.Ballista)
+              if (selectedPiece.Definition.Type == PieceType.MissileSilo)
+              {
+                PerformLocalMissileSiloAttack(selectedPiece, targetPosition);
+              }
+              else if (selectedPiece.Definition.Type == PieceType.Ballista)
               {
                 PerformPiercingAttack(selectedPiece, targetPosition);
               }
@@ -702,10 +815,18 @@ internal sealed partial class Game1 : Game
               }
               else
               {
-                PerformSharedUnitAttack(selectedPiece, hostilePieceAtTarget);
+                PerformSharedUnitAttack(selectedPiece, normalAttackTarget);
               }
 
-              selectedPiece.HasAttackedThisTurn = true;
+              AttackTurnState localAttackState = AbilityStateRules.RecordAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AttacksThisTurn);
+              selectedPiece.AttacksThisTurn = localAttackState.AttacksThisTurn;
+              selectedPiece.HasAttackedThisTurn = localAttackState.HasAttackedThisTurn;
+              selectedPiece.AbilityState = AdvancedAbilityRules.RecordAttack(
+                selectedPiece.Definition.Type.ToString(),
+                selectedPiece.AbilityState,
+                normalAttackTarget?.NetworkId);
               selectedPiece.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
                 selectedPiece.Definition.Type.ToString(), selectedPiece.HasMovedThisTurn);
 
@@ -1025,33 +1146,109 @@ internal sealed partial class Game1 : Game
     }
 
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
-    bool canPlace =
-      (definition.Type == PieceType.Mercenary
-        ? CanPlaceMercenary(targetPosition)
-        : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
-      (isOpeningFarmPlacement || buyingTeam.Money >= GetUnitPrice(definition));
+    int selectedPurchasePrice = GetSelectedPurchasePrice(definition);
+    bool specialPurchasePlacement = CanPlaceSpecialPurchase(definition, targetPosition);
+    bool canPayContractRoyalHealth =
+      definition.Type != PieceType.ContractDemon ||
+      CanPayLocalRoyalHealth(
+        Team.CurrentTurn, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep);
+    bool serpentFormationPlacement =
+      definition.Type == PieceType.Serpent &&
+      CanPlaceLocalSerpentFormation(definition, targetPosition, Team.CurrentTurn);
+    bool canPlace = canPayContractRoyalHealth &&
+      (definition.Type == PieceType.Serpent
+        ? serpentFormationPlacement
+        : specialPurchasePlacement ||
+          CanPlaceLocalHelicopter(definition, targetPosition) ||
+          (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+            ? CanPlaceNoMansLand(definition, targetPosition)
+            : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+              ? CanPlaceNoMansLand(definition, targetPosition) ||
+                CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+              : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
+      (isOpeningFarmPlacement || buyingTeam.Money >=
+        (long)selectedPurchasePrice + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
     if (!canPlace)
     {
-      Console.WriteLine(definition.Type == PieceType.Mercenary
-        ? "Mercenaries must be placed on an empty square in No-Man's-Land."
+      Console.WriteLine(AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+        ? "This unit must be placed on an empty square in No-Man's-Land."
         : "Pieces must be placed on an empty square on your side of the board.");
       return;
     }
 
-    int price = isOpeningFarmPlacement ? 0 : GetUnitPrice(definition);
-    buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price);
-    Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
+    int price = isOpeningFarmPlacement ? 0 : selectedPurchasePrice;
+    int immediateUpkeep = isOpeningFarmPlacement ? 0 :
+      AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
+    if (definition.Type == PieceType.ContractDemon &&
+        !TryPayLocalRoyalHealth(
+          Team.CurrentTurn, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+    {
+      return;
+    }
+    buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price - immediateUpkeep);
+    int qilinCost = definition.Type == PieceType.Qilin ? price : 0;
+    (int x, int y) purchasePlacement = targetPosition;
+    Piece purchaseHost = null;
+    if (definition.Type == PieceType.Shadow)
+    {
+      if (!TryGetLocalShadowHost(targetPosition, out purchaseHost))
+      {
+        return;
+      }
+      purchasePlacement = purchaseHost.Position;
+    }
+    else if (definition.Type == PieceType.Archdemon)
+    {
+      if (!TryGetLocalArchdemonSacrifice(
+            definition, targetPosition, out Piece sacrifice, out purchasePlacement))
+      {
+        return;
+      }
+      RemoveLocalShadowsAttachedTo(sacrifice);
+      pieceSetup.RemovePiece(sacrifice);
+    }
+    else if (TryGetLocalHelicopterDeployment(
+      definition, targetPosition, out Piece helicopter, out purchasePlacement))
+    {
+      pieceSetup.RemovePiece(helicopter);
+    }
+
+    Piece boughtPiece = new(definition, purchasePlacement, buyingTeam.TeamName)
     {
       LastBid = price,
+      CurrentHealth = definition.Type == PieceType.Qilin
+        ? AdvancedAbilityRules.GetQilinHealth(qilinCost)
+        : definition.Health,
       HasMovedThisTurn = _initialBuyPhase is null,
       HasAttackedThisTurn = _initialBuyPhase is null,
-      CannotContributeToConquestThisTurn = _initialBuyPhase is null
+      CannotContributeToConquestThisTurn = _initialBuyPhase is null,
+      AbilityState = definition.Type == PieceType.Qilin
+        ? new UnitAbilityState { VariableCostValue = qilinCost }
+        : definition.Type == PieceType.BountyHunter
+          ? AdvancedAbilityRules.EnableBountySelection(new UnitAbilityState())
+          : new UnitAbilityState()
     };
     pieceSetup.AddPiece(boughtPiece);
+    if (definition.Type == PieceType.Serpent)
+    {
+      CreateLocalSerpentFollowers(boughtPiece);
+    }
+    if (definition.Type == PieceType.Shadow && purchaseHost is not null)
+    {
+      pieceSetup.Attach(boughtPiece, purchaseHost, AttachmentKind.Shadow);
+    }
+    if (definition.Type == PieceType.Necromancer)
+    {
+      SpawnLocalSkeletonForNecromancer(boughtPiece, initialPlacement: true);
+    }
+    if (definition.Type == PieceType.Prison)
+    {
+      TryLinkLocalPurchasedSheriffPrison(boughtPiece);
+    }
 
     Console.WriteLine(
-      $"Bought and placed {definition.Type} at ({targetPosition.x}, {targetPosition.y})."
+      $"Bought and placed {definition.Type} at ({purchasePlacement.x}, {purchasePlacement.y})."
     );
 
     CompletePurchase();
@@ -1242,7 +1439,9 @@ internal sealed partial class Game1 : Game
 
   private void TrySkipCurrentTurn()
   {
-    if (_screen != Screen.Playing || _initialBuyPhase != null || _royalAwaitingPlacement is not null || !IsOnlineLocalTurn())
+    if (_screen != Screen.Playing || _initialBuyPhase != null ||
+        _royalAwaitingPlacement is not null || !IsOnlineLocalTurn() ||
+        HasPendingLocalSatanChoice(Team.CurrentTurn))
     {
       return;
     }
@@ -1297,10 +1496,24 @@ internal sealed partial class Game1 : Game
         return;
       }
 
+      foreach (Piece wendigo in pieceSetup.Pieces
+        .Where(piece => piece.Team == Team.CurrentTurn &&
+          AdvancedAbilityRules.ShouldDieAtEndOwnerTurn(
+            piece.Definition.Type.ToString(), piece.AttacksThisTurn))
+        .ToArray())
+      {
+        wendigo.CurrentHealth = 0;
+        HandlePieceDestroyed(wendigo, null);
+      }
+
       bool completedRound = Team.CurrentTurn == Team.ActiveTeams[^1];
       if (_onlineClient is null && _chessTimerEnabled)
       {
         _localClockSeconds[Team.CurrentTurn] = _localClockSeconds.GetValueOrDefault(Team.CurrentTurn) + _chessTimerIncrementSeconds;
+      }
+      foreach (Piece piece in pieceSetup.Pieces.Where(piece => piece.Team == Team.CurrentTurn))
+      {
+        piece.AbilityState = AdvancedAbilityRules.EndOwnerTurn(piece.AbilityState);
       }
       Team.AdvanceTurn();
       if (completedRound) _campaignCompletedRounds++;
@@ -1677,7 +1890,8 @@ internal sealed partial class Game1 : Game
         piece.PossessedUnitId,
         piece.Facing.x,
         piece.Facing.y,
-        piece.PendingDamage
+        piece.PendingDamage,
+        piece.AbilityState
       )),
       _teams.Select(team => new CpuTeamState(
         team.TeamName.ToNetworkTeam(), team.Money, team.ActionPoints, team.ChosenRoyal?.ToString(), team.ActionLimit
@@ -1698,7 +1912,8 @@ internal sealed partial class Game1 : Game
       riverBridges: _riverBridges,
       scenario: CreateCampaignCpuScenario(configuration),
       recentMoves: _cpuRecentMoves,
-      board: _campaignTestPlay ? _board : null
+      board: _campaignTestPlay ? _board : null,
+      abilityEntities: _abilityEntities
     );
   }
 
@@ -1864,9 +2079,19 @@ internal sealed partial class Game1 : Game
       ? null
       : pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == action.TargetPieceId);
     var targetPosition = (action.TargetX, action.TargetY);
-    bool isValidAttack = attacker is not null && !attacker.HasAttackedThisTurn && attacker.Definition.Attack > 0 &&
-      Actions.CanAttackSquare(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
-      ((target is not null && target.Team != attacker.Team) || (target is null && _barricades.ContainsKey(targetPosition)));
+    bool isValidAttack = attacker is not null &&
+      AdvancedAbilityRules.CanAttack(
+        attacker.Definition.Type.ToString(),
+        attacker.AbilityState,
+        attacker.HasAttackedThisTurn,
+        target?.NetworkId) &&
+      AbilityRules.CanMakeNormalAttack(ApplyLocalAttachmentBonuses(
+        attacker, UnitRules.FromPieceDefinition(attacker.Definition))) &&
+      CanAttackSquareWithAttachments(attacker, targetPosition) && HasClearAttackPath(attacker, targetPosition) &&
+      ((target is not null && target != attacker &&
+        (target.Team != attacker.Team ||
+         AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Definition.Type.ToString()))) ||
+       (target is null && _barricades.ContainsKey(targetPosition)));
     if (!isValidAttack)
     {
       return false;
@@ -1885,7 +2110,15 @@ internal sealed partial class Game1 : Game
       PerformSharedUnitAttack(attacker, target);
     }
 
-    attacker.HasAttackedThisTurn = true;
+    AttackTurnState cpuAttackState = AbilityStateRules.RecordAttack(
+      attacker.Definition.Type.ToString(),
+      attacker.AttacksThisTurn);
+    attacker.AttacksThisTurn = cpuAttackState.AttacksThisTurn;
+    attacker.HasAttackedThisTurn = cpuAttackState.HasAttackedThisTurn;
+    attacker.AbilityState = AdvancedAbilityRules.RecordAttack(
+      attacker.Definition.Type.ToString(),
+      attacker.AbilityState,
+      target?.NetworkId);
     attacker.CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
       attacker.Definition.Type.ToString(), attacker.HasMovedThisTurn);
     if (_screen == Screen.Playing)
@@ -1897,6 +2130,21 @@ internal sealed partial class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
+    _abilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, teamName.ToNetworkTeam()));
+
+    foreach (Piece piece in pieceSetup.Pieces.Where(piece => piece.Team == teamName))
+    {
+      if (piece.AbilityState.OdinProtectionAvailable)
+      {
+        piece.AbilityState = piece.AbilityState with
+        {
+          OdinProtectedById = null,
+          OdinProtectionAvailable = false
+        };
+      }
+    }
+    TriggerLocalPoisonCloudsAtOwnerTurnStart(teamName);
     ApplySharedStartOfTurnEffects(teamName);
     foreach (Piece piece in pieceSetup.Pieces.OrderBy(piece => piece.Definition.Type == PieceType.Farm ? 0 : 1).ToArray())
     {
@@ -1904,11 +2152,16 @@ internal sealed partial class Game1 : Game
       {
         piece.HasMovedThisTurn = false;
         piece.HasAttackedThisTurn = false;
+        piece.AttacksThisTurn = 0;
         piece.CavalierFollowUpMoveAvailable = false;
         piece.EngineerBuildsThisTurn = 0;
         piece.CannotContributeToConquestThisTurn = false;
+        piece.AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.Position.x, piece.Position.y, piece.CurrentHealth);
       }
     }
+    RefreshLocalBountySelectionAtOwnerTurnStart(teamName);
+    SpawnLocalLinkedLichesAtOwnerTurnStart(teamName);
+    RespawnLocalSkeletonsAtOwnerTurnStart(teamName);
   }
 
   private void ApplyTurnEconomy(TeamName teamName)
@@ -1923,13 +2176,16 @@ internal sealed partial class Game1 : Game
 
     int farmCount = pieceSetup.Pieces.Count(piece =>
       piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Farm);
-    long income = farmCount * (long)_farmIncomePerTurn;
+    int palaceCount = pieceSetup.Pieces.Count(piece =>
+      piece.Team == teamName && piece.AttachedTo is null && piece.Definition.Type == PieceType.Palace && piece.AbilityState.DisabledOwnerTurnsRemaining <= 0);
+    long income = farmCount * (long)_farmIncomePerTurn + palaceCount * (long)AdvancedAbilityRules.PalaceIncome;
     if (income != 0)
     {
       team.Money = ClampCurrency((long)team.Money + income);
       Console.WriteLine($"{UiText.GetTeamDisplayName(teamName)} collected {income} gold from farms.");
     }
 
+    ApplyLocalContractDemonUpkeep(teamName);
     ApplySharedAbilityUpkeep(teamName, team);
     if (_screen == Screen.GameOver)
     {
@@ -1960,7 +2216,7 @@ internal sealed partial class Game1 : Game
 
     long upkeep = pieceSetup.Pieces
       .Where(piece => piece.Team == teamName && piece.AttachedTo is null)
-      .Sum(piece => (long)GetUnitMaintenance(piece.Definition));
+      .Sum(piece => (long)GetUnitMaintenance(piece));
     return ClampCurrency(upkeep);
   }
 
@@ -1969,10 +2225,25 @@ internal sealed partial class Game1 : Game
       ? definition.Cost
       : EconomyRules.GetUnitPrice(definition.Cost, _unitPricePercent);
 
-  private int GetUnitMaintenance(PieceDefinition definition) =>
-    definition.Type == PieceType.Farm
+  private int GetSelectedPurchasePrice(PieceDefinition definition) =>
+    definition.Type == PieceType.Qilin ? _selectedQilinCost : GetUnitPrice(definition);
+
+  private int GetPieceBaseCost(Piece piece) =>
+    piece.Definition.Type == PieceType.Qilin &&
+    AdvancedAbilityRules.IsValidQilinCost(piece.AbilityState.VariableCostValue)
+      ? piece.AbilityState.VariableCostValue
+      : piece.Definition.Type == PieceType.Serpent
+        ? piece.Definition.Cost / 3
+        : piece.Definition.Cost;
+
+  private int GetUnitMaintenance(Piece piece) =>
+    piece.Definition.Type == PieceType.Farm || IsLocalSerpentFollower(piece)
       ? 0
-      : EconomyRules.GetUnitMaintenance(definition.Cost, _unitMaintenancePercent);
+      : EconomyRules.GetUnitMaintenance(
+        piece.Definition.Type == PieceType.Serpent
+          ? piece.Definition.Cost
+          : GetPieceBaseCost(piece),
+        _unitMaintenancePercent);
 
   private bool ApplyConquestPressure(TeamName teamThatFinishedTurn)
   {
@@ -2311,9 +2582,135 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
+    bool shiftHeld =
+      Keyboard.GetState().IsKeyDown(Keys.LeftShift) ||
+      Keyboard.GetState().IsKeyDown(Keys.RightShift);
+
+    if (IsPendingLocalSatanChoiceRoyal(actor))
+    {
+      string choice = target == actor
+        ? shiftHeld ? "SatanRoyal" : "SatanGold"
+        : target is not null && target.Team == actor.Team &&
+          !target.IsRoyal && target.AttachedTo is null &&
+          target.Definition.Category != PieceCategory.Structure
+          ? "SatanUnit"
+          : string.Empty;
+      if (string.IsNullOrEmpty(choice))
+      {
+        return false;
+      }
+      _ = SendOnlineSpecialAsync(
+        actor, choice, target?.NetworkId, targetPosition);
+      return true;
+    }
+
+    if (target is not null &&
+        target.Team == actor.Team &&
+        target.Definition.Type == PieceType.Hwacha &&
+        actor != target &&
+        !actor.HasAttackedThisTurn &&
+        !target.HasAttackedThisTurn &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AbilityRules.AreAdjacent(
+          UnitRules.FromPieceDefinition(actor.Definition),
+          actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition),
+          target.Position,
+          includeDiagonal: true) &&
+        AdvancedAbilityRules.CanReloadHwacha(target.AbilityState))
+    {
+      _ = SendOnlineSpecialAsync(actor, "ReloadHwacha", target.NetworkId, target.Position);
+      return true;
+    }
+
+    if (actor.AttachmentKind == AttachmentKind.Passenger &&
+        actor.AttachedTo?.Definition.Type == PieceType.FlyingLongboat &&
+        target is null &&
+        CanLocalLongboatPassengerDisembark(actor, targetPosition))
+    {
+      _ = SendOnlineSpecialAsync(actor, "Disembark", null, targetPosition);
+      return true;
+    }
+
+    if (target?.Definition.Type == PieceType.Helicopter)
+    {
+      return false;
+    }
+
+    if (actor.Definition.Type == PieceType.Sheriff &&
+        shiftHeld &&
+        target is not null &&
+        CanLocalSheriffArrest(actor, target, targetPosition))
+    {
+      _ = SendOnlineSpecialAsync(
+        actor, "Arrest", target.NetworkId, targetPosition);
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Mimic &&
+        target is not null &&
+        CanUseLocalMimicSwap(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "Swap", target.NetworkId, target.Position);
+      return true;
+    }
+
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+    {
+      return false;
+    }
+
+    if (actor.Definition.Type == PieceType.BountyHunter &&
+        actor.AbilityState.BountySelectionAvailable &&
+        target is not null &&
+        IsValidLocalBountyTarget(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "SetBounty", target.NetworkId, target.Position);
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Herald &&
+        target is not null &&
+        CanToggleLocalHeraldCompanion(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "ToggleCompanion", target.NetworkId, target.Position);
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Succubus)
+    {
+      if (actor.AttachedTo is null &&
+          target is not null &&
+          target.Team != actor.Team &&
+          target.AttachedTo is null &&
+          AdvancedAbilityRules.CanSuccubusAttach(actor.AbilityState, target.NetworkId))
+      {
+        _ = SendOnlineSpecialAsync(actor, "Attach", target.NetworkId, target.Position);
+        return true;
+      }
+
+      if (actor.AttachedTo is not null &&
+          actor.AttachmentKind == AttachmentKind.Succubus &&
+          target is null &&
+          AbilityRules.AreAdjacent(
+            UnitRules.FromPieceDefinition(actor.Definition), targetPosition,
+            UnitRules.FromPieceDefinition(actor.AttachedTo.Definition), actor.AttachedTo.Position,
+            includeDiagonal: true) &&
+          CanDisplaceLocalPieceTo(actor, targetPosition))
+      {
+        _ = SendOnlineSpecialAsync(actor, "Detach", null, targetPosition);
+        return true;
+      }
+    }
+
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
-    if (actor.HasAttackedThisTurn && !engineerDemolition)
+    bool independentActiveAbility = actor.Definition.Type is
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.Satan or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
+    if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
       return false;
     }
@@ -2340,7 +2737,128 @@ internal sealed partial class Game1 : Game
     bool isSpecialTarget = plunderTreasureTarget || actor.Definition.Type switch
     {
       PieceType.Spy => target is not null && target.Team != actor.Team,
+      PieceType.Harvester => target is null && CanAttackSquareWithAttachments(actor, targetPosition) &&
+        (_terrain.IsForest(targetPosition) || _terrain.IsLake(targetPosition)),
+      PieceType.Witch => CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Druid => target is null &&
+        Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+        CanPlaceLocalAbilityEntity(targetPosition),
+      PieceType.Phoenix => target is null && CanAttackSquareWithAttachments(actor, targetPosition) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
+        CanPlaceLocalAbilityEntity(targetPosition),
+      PieceType.Baron => target is not null && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.WarDrum => target is not null && target != actor && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(target.AbilityState, target.HasMovedThisTurn) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.WillOWisp => !actor.AbilityState.Settled
+        ? targetPosition == actor.Position && AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+        : target is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlacePiece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, null),
+      PieceType.Odin => target is not null && target != actor && target.Team == actor.Team &&
+        target.Definition.Category != PieceCategory.Royal && actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition), target.Position, 3),
+      PieceType.Hacker => target is not null && target.Team != actor.Team && target.Team != TeamName.Neutral &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 && IsWithinLocalCircleRange(actor, target, 5),
+      PieceType.Medusa => target is not null && target != actor && !target.IsRoyal &&
+        AdvancedAbilityRules.CanMedusaPetrify(target.Definition.Type.ToString()) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.CommandCentre => target is not null && target != actor &&
+        target.Team == actor.Team && !target.IsRoyal && !target.AbilityState.Upgraded &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition), target.Position, 2),
+      PieceType.Fafnir => targetPosition == actor.Position &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        IsFootprintOnBoard(
+          PieceDefinitions.All.First(definition => definition.Type == PieceType.FafnirDragon),
+          actor.Position),
+      PieceType.Mimic => target is not null && CanUseLocalMimicSwap(actor, target),
+      PieceType.Thor => AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Chronos => target is not null && target != actor &&
+        target.Team == actor.Team &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        actor.AbilityState.PreviousOwnerTurnStart is not null &&
+        target.AbilityState.PreviousOwnerTurnStart is not null &&
+        IsWithinLocalCircleRange(actor, target, 3),
+      PieceType.GangLeader => target is not null && target != actor &&
+        target.Team != actor.Team && target.Team != TeamName.Neutral &&
+        target.AttachedTo is null && !target.IsRoyal &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        target.OccupiedSquares().Any(square =>
+          CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Atlas =>
+        string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId)
+          ? (target == actor &&
+              string.Equals(actor.AbilityState.PendingAbility, "AtlasMove", StringComparison.Ordinal) &&
+              actor.AbilityState.PendingSelections.Count > 0) ||
+            (target is not null && IsValidLocalAtlasTarget(actor, target))
+          : actor.AbilityState.SelectedTargetId is string atlasTargetId &&
+            pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == atlasTargetId) is Piece atlasTarget &&
+            target is null &&
+            Math.Abs(targetPosition.x - atlasTarget.Position.x) <= 1 &&
+            Math.Abs(targetPosition.y - atlasTarget.Position.y) <= 1 &&
+            targetPosition != atlasTarget.Position &&
+            CanLandPieceAt(atlasTarget, targetPosition, mayUsePalaceSupport: false),
+      PieceType.Poltergeist =>
+        GetLocalPoltergeistStructure(actor) is Piece heldStructure
+          ? target is null &&
+            CanAttackSquareWithAttachments(actor, targetPosition) &&
+            CanPlacePiece(heldStructure.Definition, targetPosition, null, heldStructure)
+          : target is not null &&
+            target.AttachedTo is null &&
+            target.Definition.Category == PieceCategory.Structure &&
+            target.OccupiedSquares().Any(square =>
+              CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Developer => target is null &&
+        IsLocalDeveloperClaimTarget(actor, targetPosition),
+      PieceType.Satan => target is not null && target != actor &&
+        target.Team != actor.Team && target.IsRoyal &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        actor.CurrentHealth > AdvancedAbilityRules.SatanHealthCost,
+      PieceType.Fylgja =>
+        string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        actor.AbilityState.PendingSelections.Count > 0
+          ? actor.AbilityState.PendingSelections[0].TargetId is string forcedId &&
+            pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == forcedId) is Piece forced &&
+            GetLocalFylgjaForcedMovementPaths(forced).ContainsKey(targetPosition)
+          : target is not null && target != actor &&
+            target.AttachedTo is null &&
+            target.Definition.Category != PieceCategory.Structure &&
+            target.OccupiedSquares().Any(square =>
+              CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
+        CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
+      PieceType.Demolitionist =>
+        (_abilityEntities.Any(entity =>
+            entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId)
+          ? targetPosition == actor.Position && AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+          : !actor.HasAttackedThisTurn && target is null &&
+            Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+            CanPlaceLocalAbilityEntity(targetPosition)),
+      PieceType.Mashhit => !actor.HasAttackedThisTurn && target is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        (IsLocalDestructibleTerrainAt(targetPosition) || IsLocalStructureAt(targetPosition)),
+      PieceType.Muse => target is not null && target.Team == actor.Team && target != actor &&
+        target.AttachedTo is null,
+      PieceType.Shieldsman => target is not null && target.Team == actor.Team && target != actor &&
+        target.AttachedTo is null && target.Definition.Category != PieceCategory.Royal &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == target && candidate.AttachmentKind == AttachmentKind.Shieldsman) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Imp => target is not null && target.Team == actor.Team && target != actor &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == target && candidate.AttachmentKind == AttachmentKind.Imp) &&
+        CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Guard or PieceType.Ox => target is not null && target.Team == actor.Team,
       PieceType.Phantom => !string.IsNullOrEmpty(actor.PossessedUnitId)
         ? target == actor || target?.NetworkId == actor.PossessedUnitId
@@ -2348,7 +2866,9 @@ internal sealed partial class Game1 : Game
       PieceType.Mercenary => targetPosition == actor.Position,
       _ => false
     };
-    isSpecialTarget |= carryThrowTarget;
+    isSpecialTarget |= carryThrowTarget ||
+      (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) &&
+       targetPosition == actor.Position);
     if (!isSpecialTarget)
     {
       return false;
@@ -2358,15 +2878,89 @@ internal sealed partial class Game1 : Game
       ? carriedUnit is null ? "Carry" : "Throw"
       : plunderTreasureTarget
       ? "PickUpTreasure"
+      : actor.Definition.Type == PieceType.Harvester
+      ? "Harvest"
+      : actor.Definition.Type == PieceType.Witch
+      ? "PoisonCloud"
+      : actor.Definition.Type == PieceType.Druid
+      ? "Bramble"
+      : actor.Definition.Type == PieceType.Phoenix
+      ? "Fire"
+      : actor.Definition.Type == PieceType.Baron
+      ? "Select"
+      : actor.Definition.Type == PieceType.WarDrum
+      ? "Refresh"
+      : actor.Definition.Type == PieceType.WillOWisp
+      ? actor.AbilityState.Settled ? "SpawnWisp" : "Settle"
+      : actor.Definition.Type == PieceType.Odin
+      ? "Protect"
+      : actor.Definition.Type == PieceType.Hacker
+      ? "Hack"
+      : actor.Definition.Type == PieceType.Medusa
+      ? "Petrify"
+      : actor.Definition.Type == PieceType.CommandCentre
+      ? $"Upgrade{GetSelectedCommandCentreUpgrade()}"
+      : actor.Definition.Type == PieceType.Fafnir
+      ? "Transform"
+      : actor.Definition.Type == PieceType.Mimic
+      ? "Swap"
+      : actor.Definition.Type == PieceType.Thor
+      ? "Thunderstorm"
+      : actor.Definition.Type == PieceType.Chronos
+      ? "Rewind"
+      : actor.Definition.Type == PieceType.GangLeader
+      ? "Recruit"
+      : actor.Definition.Type == PieceType.Atlas
+      ? "AtlasMove"
+      : actor.Definition.Type == PieceType.Poltergeist
+      ? GetLocalPoltergeistStructure(actor) is null ? "PickUpStructure" : "PlaceStructure"
+      : actor.Definition.Type == PieceType.Developer
+      ? "Claim"
+      : actor.Definition.Type == PieceType.Satan
+      ? "Tempt"
+      : actor.Definition.Type == PieceType.Fylgja
+      ? "ForceMove"
+      : IsCodexBuilder(actor.Definition.Type)
+      ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
-      : actor.Definition.Type == PieceType.Mercenary
+      : actor.Definition.Type == PieceType.Demolitionist
+      ? (_abilityEntities.Any(entity =>
+          entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId)
+          ? "Detonate" : "PlaceTnt")
+      : actor.Definition.Type == PieceType.Mashhit
+      ? "Destroy"
+      : actor.Definition.Type is PieceType.Muse or PieceType.Shieldsman or PieceType.Imp
+      ? "Attach"
+      : AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString())
         ? "Fire"
         : actor.Definition.Type == PieceType.Phantom
           ? string.IsNullOrEmpty(actor.PossessedUnitId) ? "Possess" : "Unpossess"
           : string.Empty;
-    _ = SendOnlineSpecialAsync(actor, ability, target?.NetworkId, actor.Definition.Type == PieceType.Mercenary ? actor.Position : targetPosition);
-    return true;
+    string? specialTargetId = actor.Definition.Type == PieceType.Thor
+      ? GetSelectedLocalThorStormId(actor)
+      : actor.Definition.Type == PieceType.Fylgja &&
+        string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        actor.AbilityState.PendingSelections.Count > 0
+        ? null
+        : target?.NetworkId;
+    _ = SendOnlineSpecialAsync(
+      actor,
+      ability,
+      specialTargetId,
+      AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) ? actor.Position : targetPosition);
+    if (actor.Definition.Type == PieceType.Atlas)
+    {
+      bool finishingEarly = target == actor &&
+        string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId) &&
+        actor.AbilityState.PendingSelections.Count > 0;
+      bool finishingThirdMove = !string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId) &&
+        actor.AbilityState.PendingSelections.Count >= 2 &&
+        target is null;
+      return finishingEarly || finishingThirdMove;
+    }
+    return !IsCodexBuilder(actor.Definition.Type) ||
+      CodexBuilderSelectionCompletesAction(actor, ability);
   }
 
   private async System.Threading.Tasks.Task SendOnlineSpecialAsync(
@@ -2416,6 +3010,33 @@ internal sealed partial class Game1 : Game
     }
   }
 
+  private async System.Threading.Tasks.Task SendOnlineSheriffPrisonPlacementAsync(
+    (int x, int y) position)
+  {
+    if (_onlineClient == null || _onlineRoyalChoicePending)
+    {
+      return;
+    }
+
+    _onlineRoyalChoicePending = true;
+    try
+    {
+      ActionResult result = await _onlineClient.ChooseRoyalAsync(
+        PieceType.Sheriff.ToString(), position.x, position.y);
+      if (!result.Accepted)
+      {
+        _onlineRoyalChoicePending = false;
+        _onlineError = result.Error ?? "Could not place the Sheriff's Prison.";
+      }
+    }
+    catch (Exception exception)
+    {
+      Console.WriteLine($"Sheriff Prison placement could not be sent: {exception.Message}");
+      _onlineRoyalChoicePending = false;
+      _onlineError = "Could not send Sheriff Prison placement.";
+    }
+  }
+
   private async System.Threading.Tasks.Task SendOnlineInitialPurchaseAsync(
     PieceDefinition definition,
     (int x, int y) position
@@ -2423,7 +3044,9 @@ internal sealed partial class Game1 : Game
   {
     try
     {
-      ActionResult result = await _onlineClient.PurchaseInitialUnitAsync(definition.Type.ToString(), position.x, position.y);
+      ActionResult result = await _onlineClient.PurchaseInitialUnitAsync(
+        definition.Type.ToString(), position.x, position.y,
+        definition.Type == PieceType.Qilin ? _selectedQilinCost : null);
       if (!result.Accepted)
       {
         _onlineError = result.Error ?? "That purchase was rejected.";
@@ -2443,7 +3066,9 @@ internal sealed partial class Game1 : Game
   {
     try
     {
-      ActionResult result = await _onlineClient.PurchaseUnitAsync(definition.Type.ToString(), position.x, position.y);
+      ActionResult result = await _onlineClient.PurchaseUnitAsync(
+        definition.Type.ToString(), position.x, position.y,
+        definition.Type == PieceType.Qilin ? _selectedQilinCost : null);
       if (!result.Accepted)
       {
         _onlineError = result.Error ?? "That purchase was rejected.";
@@ -2525,6 +3150,13 @@ internal sealed partial class Game1 : Game
     ApplyOnlineClockState(state.Clock);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlineImprovements(state.Improvements);
+    _developerPlacementClaims.Clear();
+    foreach (NetworkTerritoryClaim claim in state.PlacementTerritoryClaims ?? [])
+    {
+      _developerPlacementClaims[(claim.X, claim.Y)] = claim.Owner.ToTeamName();
+    }
+    _abilityEntities.Clear();
+    _abilityEntities.AddRange(state.AbilityEntities ?? []);
     ApplyOnlinePieces(state.Pieces);
     _conquestScore = state.ConquestScore;
     _conquestScores.Clear();
@@ -2578,10 +3210,27 @@ internal sealed partial class Game1 : Game
       }
 
       NetworkTeam? localTeam = _onlineClient?.Team;
+      _setupTeam = localTeam?.ToTeamName() ?? TeamName.Red;
+      Piece pendingSheriff = localTeam is NetworkTeam localNetworkTeam
+        ? pieceSetup.Pieces.FirstOrDefault(piece =>
+            piece.Team == localNetworkTeam.ToTeamName() &&
+            piece.Definition.Type == PieceType.Sheriff &&
+            AdvancedAbilityRules.IsAwaitingSheriffPrison(piece.AbilityState))
+        : null;
+      if (pendingSheriff is not null)
+      {
+        _sheriffPrisonAwaitingPlacement = pendingSheriff;
+        _royalAwaitingPlacement = null;
+        _onlineRoyalChoicePending = false;
+        _onlineStatus = $"PLACE SHERIFF PRISON  ROOM: {state.JoinCode}";
+        _screen = Screen.Playing;
+        return;
+      }
+
+      _sheriffPrisonAwaitingPlacement = null;
       bool hasChosenRoyal = localTeam is NetworkTeam team && state.Teams.Any(teamState =>
         teamState.Team == team && !string.IsNullOrWhiteSpace(teamState.ChosenRoyal));
       _onlineRoyalChoicePending = hasChosenRoyal;
-      _setupTeam = localTeam?.ToTeamName() ?? TeamName.Red;
       _onlineStatus = hasChosenRoyal
         ? $"WAITING FOR OPPONENT'S ROYAL  ROOM: {state.JoinCode}"
         : $"ONLINE ROYAL SETUP  ROOM: {state.JoinCode}";
@@ -2591,6 +3240,7 @@ internal sealed partial class Game1 : Game
 
     if (state.InitialBuy is { IsComplete: false } initialBuy)
     {
+      _sheriffPrisonAwaitingPlacement = null;
       _initialBuyPhase = new InitialBuyPhase(
         initialBuy.PurchasesPerTurn,
         initialBuy.BuyTurnsPerTeam,
@@ -2613,6 +3263,7 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    _sheriffPrisonAwaitingPlacement = null;
     Team.SetCurrentTurn(state.CurrentTurn.ToTeamName());
     selectedPiece = null;
     _initialBuyPhase = null;
@@ -2745,7 +3396,8 @@ internal sealed partial class Game1 : Game
           networkPiece.FacingX,
           networkPiece.FacingY
         ),
-        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>()
+        PendingDamage = networkPiece.PendingDamage ?? Array.Empty<NetworkPendingDamage>(),
+        AbilityState = networkPiece.AbilityState ?? new UnitAbilityState()
       };
       pieceSetup.AddPiece(piece);
       piecesByNetworkId[networkPiece.Id] = piece;
@@ -2761,6 +3413,13 @@ internal sealed partial class Game1 : Game
         {
           NetworkAttachmentKind.Guard => AttachmentKind.Guard,
           NetworkAttachmentKind.Carried => AttachmentKind.Carried,
+          NetworkAttachmentKind.Shieldsman => AttachmentKind.Shieldsman,
+          NetworkAttachmentKind.Shadow => AttachmentKind.Shadow,
+          NetworkAttachmentKind.Muse => AttachmentKind.Muse,
+          NetworkAttachmentKind.Succubus => AttachmentKind.Succubus,
+          NetworkAttachmentKind.Imp => AttachmentKind.Imp,
+          NetworkAttachmentKind.Passenger => AttachmentKind.Passenger,
+          NetworkAttachmentKind.Prisoner => AttachmentKind.Prisoner,
           _ => AttachmentKind.None
         };
       }
@@ -2844,10 +3503,30 @@ internal sealed partial class Game1 : Game
           return false;
         }
 
-        if (requiredOwner.HasValue && GetSquareOwner((position.x + x, position.y + y)) != requiredOwner.Value)
+        if (requiredOwner.HasValue && GetPlacementSquareOwner((position.x + x, position.y + y)) != requiredOwner.Value)
         {
           return false;
         }
+      }
+    }
+
+    if (requiredOwner.HasValue &&
+        RoyalAbilityRules.RequiresAdjacentRoyalPlacement(definition.Type.ToString()))
+    {
+      UnitRule placingRule = UnitRules.FromPieceDefinition(definition);
+      bool hasAdjacentRoyal = pieceSetup.Pieces.Any(piece =>
+        piece.Team == requiredOwner.Value &&
+        piece.IsRoyal &&
+        AbilityRules.AreAdjacent(
+          placingRule,
+          position,
+          UnitRules.FromPieceDefinition(piece.Definition),
+          piece.Position,
+          includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+        definition.Type.ToString(), hasAdjacentRoyal))
+      {
+        return false;
       }
     }
 
@@ -2855,13 +3534,19 @@ internal sealed partial class Game1 : Game
   }
 
   private bool CanPlaceMercenary((int x, int y) position)
+    => CanPlaceNoMansLand(PieceDefinitions.Mercenary, position);
+
+  private bool CanPlaceNoMansLand(PieceDefinition definition, (int x, int y) position)
   {
-    if (!IsTraversableTerrainSquare(position) || GetSquareOwner(position).HasValue)
+    if (!IsFootprintOnBoard(definition, position) ||
+        OccupiedSquares(definition, position).Any(square =>
+          GetPlacementSquareOwner(square).HasValue ||
+          !IsTraversableTerrainSquare(square)))
     {
       return false;
     }
 
-    return pieceSetup.IsFootprintClear(PieceDefinitions.Mercenary, position);
+    return pieceSetup.IsFootprintClear(definition, position);
   }
 
   private bool IsInTeamTerritory((int x, int y) position, TeamName team)
@@ -2917,13 +3602,21 @@ internal sealed partial class Game1 : Game
       ? true
       : isNeutralMercenaryHire
       ? buyingTeam.Money >= PieceDefinitions.NeutralMercenaryHireCost
-      : buyingTeam.Money >= GetUnitPrice(definition);
+      : buyingTeam.Money >=
+        (long)GetSelectedPurchasePrice(definition) + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
-       (definition.Type == PieceType.Mercenary
-         ? CanPlaceMercenary(targetPosition)
-         : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
+       (definition.Type == PieceType.Serpent
+         ? CanPlaceLocalSerpentFormation(definition, targetPosition, Team.CurrentTurn)
+         : CanPlaceSpecialPurchase(definition, targetPosition) ||
+           CanPlaceLocalHelicopter(definition, targetPosition) ||
+           (definition.Type == PieceType.Mercenary
+             ? CanPlaceMercenary(targetPosition)
+             : AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(definition.Type.ToString())
+               ? CanPlaceNoMansLand(definition, targetPosition) ||
+                 CanPlacePiece(definition, targetPosition, Team.CurrentTurn)
+               : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))));
 
     canPurchaseAtTarget = isEligibleForPurchase && hasEnoughGold;
     return true;
@@ -2995,6 +3688,52 @@ internal sealed partial class Game1 : Game
     DrawWorldOutline(footprint, border, 0.135f);
   }
 
+  private void DrawSheriffPrisonPlacementPreview(int cellSize)
+  {
+    Piece sheriff = _sheriffPrisonAwaitingPlacement;
+    if (sheriff is null)
+    {
+      return;
+    }
+
+    MouseState mouse = Mouse.GetState();
+    if (GetStatusPanelBounds().Contains(ToUiPoint(mouse.Position)))
+    {
+      return;
+    }
+
+    Vector2 mouseWorld = Vector2.Transform(
+      mouse.Position.ToVector2(),
+      Matrix.Invert(CreateCameraTransform())
+    );
+    (int x, int y) targetPosition = (
+      (int)MathF.Floor(mouseWorld.X / cellSize) + _board.MinX,
+      (int)MathF.Floor(mouseWorld.Y / cellSize) + _board.MinY
+    );
+    if (!IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
+    {
+      return;
+    }
+
+    PieceDefinition prison = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.Prison);
+    bool canPlace = CanPlaceLocalSheriffPrison(sheriff, targetPosition);
+    Rectangle footprint = new(
+      (targetPosition.x - _board.MinX) * cellSize,
+      (targetPosition.y - _board.MinY) * cellSize,
+      prison.Size.x * cellSize,
+      prison.Size.y * cellSize
+    );
+    Color outline = canPlace
+      ? Color.Lerp(UiTheme.GetTeamColour(sheriff.Team), UiTheme.GoldBright, 0.4f)
+      : UiTheme.Attack;
+    Color fill = new(outline.R, outline.G, outline.B, canPlace ? (byte)46 : (byte)30);
+    Color border = new(outline.R, outline.G, outline.B, canPlace ? (byte)190 : (byte)145);
+
+    DrawWorldRectangle(footprint, fill, 0.134f);
+    DrawWorldOutline(footprint, border, 0.135f);
+  }
+
   private bool IsTraversableTerrainSquare((int x, int y) position)
   {
     return
@@ -3017,7 +3756,8 @@ internal sealed partial class Game1 : Game
       (from, destination) => GetMovementCost(piece, from, destination),
       destination => GetMovementRangeAt(piece, movementRule, destination),
       movementRule.MoveRange + (hasPalaceSupport ? 1 : 0),
-      position => CanContinueLocalChessPath(piece, movementRule, position)
+      position => CanContinueLocalChessPath(piece, movementRule, position) &&
+        CanContinueLocalSpecialLandingPath(piece, position)
     );
     AddLocalPawnCapturePaths(piece, movementRule, paths);
     return paths;
@@ -3042,7 +3782,8 @@ internal sealed partial class Game1 : Game
 
   private UnitRule GetEffectiveMovementRule(Piece piece)
   {
-    UnitRule rule = UnitRules.FromPieceDefinition(piece.Definition);
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      piece, UnitRules.FromPieceDefinition(piece.Definition));
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
       candidate.AttachedTo == piece && candidate.Definition.Type == PieceType.Ox);
     if (oxAttachment is not null)
@@ -3063,9 +3804,51 @@ internal sealed partial class Game1 : Game
       : rule;
   }
 
-  private static bool CanMoveThisTurn(Piece piece) =>
-    (piece.AttachedTo is null || piece.AttachmentKind != AttachmentKind.Carried || piece.Definition.Type == PieceType.Ox) &&
-    (!piece.HasMovedThisTurn ||
+  private bool CanAttackSquareWithAttachments(Piece piece, (int x, int y) targetPosition)
+  {
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      piece, UnitRules.FromPieceDefinition(piece.Definition));
+    if (rule.AttackPattern == RuleShape.None)
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) origin in OccupiedSquares(piece.Definition, piece.Position))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern,
+        rule.MinimumAttackRange,
+        rule.AttackRange,
+        piece.Team.ToNetworkTeam(),
+        targetPosition.x - origin.x,
+        targetPosition.y - origin.y))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static bool IsWithinLocalCircleRange(Piece centre, Piece candidate, int radius)
+  {
+    int radiusSquared = radius * radius;
+    foreach ((int x, int y) first in centre.OccupiedSquares())
+    {
+      foreach ((int x, int y) second in candidate.OccupiedSquares())
+      {
+        int dx = second.x - first.x;
+        int dy = second.y - first.y;
+        if (dx * dx + dy * dy <= radiusSquared) return true;
+      }
+    }
+    return false;
+  }
+
+  private bool CanMoveThisTurn(Piece piece) =>
+    !IsLocalSerpentFollower(piece) &&
+    (piece.AttachedTo is null ||
+     (piece.AttachmentKind == AttachmentKind.Carried && piece.Definition.Type == PieceType.Ox)) &&
+    (AdvancedAbilityRules.CanMove(piece.Definition.Type.ToString(), piece.AbilityState, piece.HasMovedThisTurn) ||
       AbilityRules.CanUseCavalierFollowUpMove(piece.Definition.Type.ToString(), piece.CavalierFollowUpMoveAvailable));
 
   private bool TryGetMovementPathAt(
@@ -3103,25 +3886,38 @@ internal sealed partial class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination, bool mayUsePalaceSupport)
   {
+    if (!IsLocalLichDestinationWithinLink(piece, destination) ||
+        !IsLocalSkeletonDestinationWithinLink(piece, destination))
+    {
+      return false;
+    }
+
     UnitRule rule = GetEffectiveMovementRule(piece);
     if (CanLocalChessCaptureLand(piece, rule, destination))
     {
       return true;
     }
 
-    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-      (mayUsePalaceSupport && IsPalaceAssistedMovement(piece, piece.Position, destination));
+    bool longboatBoarding = GetLocalLongboatBoardTarget(piece, destination) is not null;
+    bool landingAttack = CanLocalLandingAttackLand(piece, destination);
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
-        OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey) ||
-        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(_terrain.IsLake)))
+        (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
+        (!ignoresTerrain && OccupiedSquares(piece.Definition, destination).Any(square =>
+          _terrain.IsLake(square) && !HasLocalBridgeAt(square))) ||
+        OccupiedSquares(piece.Definition, destination).Any(square =>
+          _abilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team.ToNetworkTeam()) &&
+            (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule)))))
     {
       return false;
     }
-    return pieceSetup.IsFootprintClear(
+    return longboatBoarding || pieceSetup.IsFootprintClear(
       piece.Definition,
       destination,
       piece,
-      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null);
+      landingAttack || AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null);
   }
 
   private bool CanTravelThroughPosition(
@@ -3135,9 +3931,13 @@ internal sealed partial class Game1 : Game
     {
       foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, position))
       {
-        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-          IsPalaceAssistedMovement(piece, from, destination);
-        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare)) || _barricades.ContainsKey(occupiedSquare) ||
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
+        if ((!ignoresTerrain && _terrain.IsLake(occupiedSquare) && !HasLocalBridgeAt(occupiedSquare)) ||
+            (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(occupiedSquare)) ||
+            _abilityEntities.Any(entity =>
+              entity.X == occupiedSquare.x && entity.Y == occupiedSquare.y &&
+              AbilityEntityRules.BlocksMovementFor(entity, piece.Team.ToNetworkTeam()) &&
+              !AbilityRules.IgnoresStructures(rule)) ||
             !IsBoardCell(occupiedSquare.x - _board.MinX, occupiedSquare.y - _board.MinY))
         {
           return false;
@@ -3153,6 +3953,11 @@ internal sealed partial class Game1 : Game
           continue;
         }
         if (GetLocalChessCaptureTarget(piece, rule, destination) == blockingPiece)
+        {
+          continue;
+        }
+        if (position == destination &&
+            GetLocalLongboatBoardTarget(piece, destination) == blockingPiece)
         {
           continue;
         }
@@ -3175,7 +3980,7 @@ internal sealed partial class Game1 : Game
     foreach ((int x, int y) occupiedSquare in OccupiedSquares(piece.Definition, destination))
     {
       bool usesOwnedRoad = UsesRoad(piece.Team, occupiedSquare);
-      int ordinaryCost = _terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = _terrain.IsForest(occupiedSquare) && !usesOwnedRoad && !ignoresTerrain && !AbilityRules.IgnoresForests(rule)
         ? 2
         : usesOwnedRoad && !_terrain.IsForest(occupiedSquare) ? 0 : 1;
       cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
@@ -3249,7 +4054,10 @@ internal sealed partial class Game1 : Game
   private bool HasUnbridgedRiverBetween((int x, int y) first, (int x, int y) second)
   {
     TileEdge edge = TileEdge.Between(first, second);
-    return _terrain.HasRiverBetween(first, second) && !_riverBridges.Contains(edge);
+    return _terrain.HasRiverBetween(first, second) &&
+      !_riverBridges.Contains(edge) &&
+      !HasLocalBridgeAt(first) &&
+      !HasLocalBridgeAt(second);
   }
 
   private bool HasRiverBridgeBetween((int x, int y) first, (int x, int y) second)
@@ -3364,7 +4172,7 @@ internal sealed partial class Game1 : Game
           continue;
         }
 
-        if (Actions.CanAttackSquare(piece, targetPosition) && HasClearAttackPath(piece, targetPosition))
+        if (CanAttackSquareWithAttachments(piece, targetPosition) && HasClearAttackPath(piece, targetPosition))
         {
           highlightedSquares.Add(targetPosition);
         }
@@ -3545,7 +4353,10 @@ internal sealed partial class Game1 : Game
   }
 
   private bool CanActWithPiece(Piece piece) =>
-    piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn();
+    piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn() &&
+    !IsLocalSerpentFollower(piece) &&
+    (!HasPendingLocalSatanChoice(piece.Team) ||
+      IsPendingLocalSatanChoiceRoyal(piece));
 
   private static bool AreAdjacent(Piece first, Piece second)
   {
@@ -3586,11 +4397,27 @@ internal sealed partial class Game1 : Game
       return;
     }
 
+    if (attacker.Definition.Type == PieceType.Pickpocket &&
+        target.Team != attacker.Team && target.Team != TeamName.Neutral)
+    {
+      Team stealingTeam = _teams.Find(team => team.TeamName == attacker.Team);
+      Team targetTeam = _teams.Find(team => team.TeamName == target.Team);
+      int stolen = Math.Min(AdvancedAbilityRules.PickpocketGold, Math.Max(0, targetTeam.Money));
+      targetTeam.Money -= stolen;
+      stealingTeam.Money = ClampCurrency((long)stealingTeam.Money + stolen);
+    }
+
+    int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
+    if (TryInterceptLocalWatchtowerDamage(target, unmitigatedDamage))
+    {
+      return;
+    }
+
+    Piece shield = pieceSetup.GetAttachedPiece(target, AttachmentKind.Shieldsman);
     Piece guard = pieceSetup.GetAttachedPiece(target, AttachmentKind.Guard);
-    Piece damagedPiece = guard ?? target;
+    Piece damagedPiece = shield ?? guard ?? target;
     Piece oxAttachment = pieceSetup.Pieces.FirstOrDefault(candidate =>
       candidate.AttachedTo == target && AbilityRules.SharesIncomingDamageWithHost(candidate.Definition.Type.ToString()));
-    int unmitigatedDamage = damageOverride ?? GetAttackDamage(attacker, target);
 
     ApplyDamageToPiece(attacker, damagedPiece, unmitigatedDamage);
     if (oxAttachment is not null && oxAttachment != damagedPiece && pieceSetup.Pieces.Contains(oxAttachment))
@@ -3612,24 +4439,60 @@ internal sealed partial class Game1 : Game
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentPieceOfType(damagedPiece, PieceType.Baron, damagedPiece.Team),
+      false,
       IsPieceInForest(damagedPiece),
       _terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      pieceSetup.Pieces.Select(piece => (piece.Definition.Type.ToString(), piece.Team.ToNetworkTeam(), piece.AbilityState.SelectedTargetId)),
+      damagedPiece.NetworkId,
+      damagedPiece.Team.ToNetworkTeam());
+    damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
+    damage = Math.Max(0, damage - AbilityEntityRules.GetDamageReduction(
+      _abilityEntities, SnapshotRuntimePiece(damagedPiece)));
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       targetRule,
       attacker.Position,
       damagedPiece.Position));
+    damage = AbilityRules.LimitIncomingDamage(targetRule, damage);
     damage = ApplyLocalChessKingDeathRule(damagedPiece, damage);
     damagedPiece.CurrentHealth -= damage;
     Console.WriteLine($"{attacker.Definition.Type} dealt {damage} damage to {damagedPiece.Definition.Type}.");
     HandlePieceDestroyed(damagedPiece, attacker.Team);
+
+    if (!pieceSetup.Pieces.Contains(damagedPiece) &&
+        attacker.Definition.Type == PieceType.Skinwalker)
+    {
+      TransformLocalSkinwalkerAfterKill(attacker, damagedPiece);
+    }
+
+    if (!pieceSetup.Pieces.Contains(damagedPiece) &&
+        attacker.Definition.Type == PieceType.Raider &&
+        damagedPiece.Team != attacker.Team && damagedPiece.Team != TeamName.Neutral)
+    {
+      Team raiderTeam = _teams.Find(team => team.TeamName == attacker.Team);
+      raiderTeam.Money = ClampCurrency((long)raiderTeam.Money +
+        AdvancedAbilityRules.GetRaiderKillReward(damagedPiece.Definition.Cost));
+    }
+
+    if (damagedPiece.Definition.Type == PieceType.CactusJack && damage > 0 &&
+        pieceSetup.Pieces.Contains(attacker))
+    {
+      int reflected = AdvancedAbilityRules.ReflectCactusDamage(damage);
+      if (reflected > 0)
+      {
+        attacker.CurrentHealth -= reflected;
+        HandlePieceDestroyed(attacker, damagedPiece.Team);
+      }
+    }
   }
 
   private void ResolveMineDamage(Piece target, TeamName mineOwner)
   {
-    int damage = ApplyLocalChessKingDeathRule(target, AbilityRules.EngineerMineDamage);
+    int damage = ApplyLocalChessKingDeathRule(
+      target,
+      AbilityRules.LimitIncomingDamage(UnitRules.FromPieceDefinition(target.Definition), AbilityRules.EngineerMineDamage));
     target.CurrentHealth -= damage;
     Console.WriteLine($"Mine dealt {damage} damage to {target.Definition.Type}.");
     HandlePieceDestroyed(target, mineOwner);
@@ -3645,6 +4508,35 @@ internal sealed partial class Game1 : Game
     {
       return;
     }
+    if (damagedPiece.AbilityState.OdinProtectionAvailable)
+    {
+      damagedPiece.CurrentHealth = 1;
+      damagedPiece.AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(damagedPiece.AbilityState);
+      return;
+    }
+
+    if (damagedPiece.Definition.Type == PieceType.Medusa)
+    {
+      ClearLocalPetrificationBy(damagedPiece.NetworkId);
+    }
+    ClearLocalBountyTargetsFor(damagedPiece.NetworkId);
+    if (damagedPiece.Definition.Type == PieceType.Lich)
+    {
+      ApplyLocalLichDeathLink(damagedPiece, attackingTeamName);
+    }
+    if (damagedPiece.Definition.Type == PieceType.SkeletonMinion)
+    {
+      ApplyLocalSkeletonDeathLink(damagedPiece);
+    }
+    if (damagedPiece.Definition.Type == PieceType.Necromancer)
+    {
+      RemoveLocalSkeletonForNecromancerDeath(damagedPiece);
+    }
+
+    RemoveLocalLongboatPassengerReference(damagedPiece);
+    ReleaseLocalLongboatPassengers(damagedPiece);
+    RemoveLocalShadowsAttachedTo(damagedPiece);
+    RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
 
     if (damagedPiece.Definition.Type == PieceType.Phantom)
     {
@@ -3674,6 +4566,11 @@ internal sealed partial class Game1 : Game
     if (damagedPiece.Team == TeamName.Neutral)
     {
       pieceSetup.RemovePiece(damagedPiece);
+      if (damagedPiece.Definition.Type == PieceType.Prison)
+      {
+        ResolveLocalPrisonDestruction(damagedPiece);
+      }
+      ReconnectLocalSerpentAfterDeath(damagedPiece);
       return;
     }
 
@@ -3687,12 +4584,17 @@ internal sealed partial class Game1 : Game
         defeatedTeam,
         _killerRefundMultiplier,
         _defeatedTeamRefundMultiplier,
-        GetUnitPrice(damagedPiece.Definition)
+        GetPieceBaseCost(damagedPiece)
       );
     }
 
     bool royalDeath = IsSharedRoyalDeath(damagedPiece);
     pieceSetup.RemovePiece(damagedPiece);
+    if (damagedPiece.Definition.Type == PieceType.Prison)
+    {
+      ResolveLocalPrisonDestruction(damagedPiece);
+    }
+    ReconnectLocalSerpentAfterDeath(damagedPiece);
     if (royalDeath && _gameMode == GameMode.Regicide)
     {
       if (attackingTeamName is TeamName winner && winner != damagedPiece.Team)
@@ -3759,21 +4661,105 @@ internal sealed partial class Game1 : Game
     KeyboardState keyboard
   )
   {
+    bool shiftHeld =
+      keyboard.IsKeyDown(Keys.LeftShift) ||
+      keyboard.IsKeyDown(Keys.RightShift);
+    if (IsPendingLocalSatanChoiceRoyal(actor))
+    {
+      return TryResolveLocalSatanChoice(
+        actor, targetPiece, shiftHeld);
+    }
+
     if (!IsCampaignAbilityAllowed(actor.Team, actor.Definition.Type))
     {
       Console.WriteLine($"{actor.Definition.Type}'s ability is disabled for this campaign level.");
       return false;
     }
-    bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
-      _selectedEngineerAbility == EngineerAbility.Demolish;
-    if (actor.HasAttackedThisTurn && !engineerDemolition)
+
+    if (targetPiece is not null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece.Definition.Type == PieceType.Hwacha &&
+        actor != targetPiece &&
+        !actor.HasAttackedThisTurn &&
+        !targetPiece.HasAttackedThisTurn &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AbilityRules.AreAdjacent(
+          UnitRules.FromPieceDefinition(actor.Definition),
+          actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition),
+          targetPiece.Position,
+          includeDiagonal: true) &&
+        AdvancedAbilityRules.CanReloadHwacha(targetPiece.AbilityState))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.ReloadHwacha(targetPiece.AbilityState);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.AttachmentKind == AttachmentKind.Passenger &&
+        actor.AttachedTo?.Definition.Type == PieceType.FlyingLongboat)
+    {
+      return TryDisembarkLocalLongboatPassenger(actor, targetPosition, targetPiece);
+    }
+
+    if (targetPiece?.Definition.Type == PieceType.Helicopter)
     {
       return false;
     }
 
-    if (actor.Definition.Type == PieceType.Mercenary && targetPosition == actor.Position)
+    if (actor.Definition.Type == PieceType.Mimic &&
+        targetPiece is not null)
     {
-      return TryFireMercenary(actor);
+      return TryUseLocalMimicSwap(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Sheriff &&
+        shiftHeld &&
+        targetPiece is not null)
+    {
+      return TryArrestLocalSheriff(actor, targetPiece, targetPosition);
+    }
+
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+    {
+      return false;
+    }
+
+    if (actor.Definition.Type == PieceType.BountyHunter &&
+        TrySelectLocalBountyTarget(actor, targetPiece))
+    {
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Herald &&
+        TryToggleLocalHeraldCompanion(actor, targetPiece))
+    {
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Succubus &&
+        TryUseLocalSuccubusSpecial(actor, targetPosition, targetPiece))
+    {
+      return true;
+    }
+
+    bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
+      _selectedEngineerAbility == EngineerAbility.Demolish;
+    bool independentActiveAbility = actor.Definition.Type is
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.Satan or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
+    if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
+    {
+      return false;
+    }
+
+    if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) &&
+        targetPosition == actor.Position)
+    {
+      return TryFireUpkeepUnit(actor);
     }
 
     if (TryPickUpTreasure(actor, targetPosition, targetPiece))
@@ -3791,12 +4777,281 @@ internal sealed partial class Game1 : Game
       return TryUseGiantOrCyclopsAbility(actor, targetPosition, targetPiece);
     }
 
+    if (actor.Definition.Type == PieceType.Medusa)
+    {
+      return TryPetrifyLocalTarget(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Atlas)
+    {
+      return TryUseLocalAtlasAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Poltergeist)
+    {
+      return TryUseLocalPoltergeistAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Developer)
+    {
+      return TryUseLocalDeveloperClaim(actor, targetPosition);
+    }
+
+    if (actor.Definition.Type == PieceType.Satan)
+    {
+      return TryUseLocalSatanAbility(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Fafnir &&
+        targetPosition == actor.Position)
+    {
+      return TryTransformLocalFafnir(actor);
+    }
+
+    if (actor.Definition.Type == PieceType.Mimic && targetPiece is not null)
+    {
+      return TryUseLocalMimicSwap(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Thor)
+    {
+      return TryUseLocalThorAbility(actor, targetPosition);
+    }
+
+    if (actor.Definition.Type == PieceType.Chronos && targetPiece is not null)
+    {
+      return TryUseLocalChronosRewind(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.GangLeader && targetPiece is not null)
+    {
+      return TryUseLocalGangLeaderRecruit(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Fylgja)
+    {
+      return TryUseLocalFylgjaAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.CommandCentre &&
+        targetPiece is not null && targetPiece != actor &&
+        targetPiece.Team == actor.Team && !targetPiece.IsRoyal &&
+        !targetPiece.AbilityState.Upgraded &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition), targetPiece.Position, 2))
+    {
+      Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
+      if (team is null || team.Money < AdvancedAbilityRules.CommandCentreUpgradeCost)
+      {
+        return false;
+      }
+
+      string upgrade = GetSelectedCommandCentreUpgrade();
+      UnitAbilityState upgraded = AdvancedAbilityRules.ApplyCommandCentreUpgrade(
+        targetPiece.AbilityState, upgrade);
+      team.Money = ClampCurrency((long)team.Money - AdvancedAbilityRules.CommandCentreUpgradeCost);
+      targetPiece.AbilityState = upgraded;
+      if (string.Equals(upgrade, "Health", StringComparison.OrdinalIgnoreCase))
+      {
+        targetPiece.CurrentHealth = Math.Min(
+          AdvancedAbilityRules.GetEffectiveMaximumHealth(
+            UnitRules.FromPieceDefinition(targetPiece.Definition), upgraded),
+          targetPiece.CurrentHealth + AdvancedAbilityRules.CommandCentreHealthBonus);
+      }
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      CompleteAction();
+      return true;
+    }
+
+    if (IsCodexBuilder(actor.Definition.Type))
+    {
+      return TryUseCodexBuilderAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Harvester &&
+        targetPiece is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        _terrain.DestroyTile(targetPosition))
+    {
+      Team harvestingTeam = _teams.Find(team => team.TeamName == actor.Team);
+      harvestingTeam.Money = ClampCurrency((long)harvestingTeam.Money + AdvancedAbilityRules.HarvesterGold);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Witch &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      _abilityEntities.RemoveAll(entity =>
+        entity.Kind == AbilityEntityKind.PoisonCloud && entity.SourcePieceId == actor.NetworkId);
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.PoisonCloud, actor, targetPosition));
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Druid &&
+        targetPiece is null &&
+        Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+        CanPlaceLocalAbilityEntity(targetPosition))
+    {
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.Bramble, actor, targetPosition));
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Demolitionist)
+    {
+      AbilityEntity tnt = _abilityEntities.FirstOrDefault(entity =>
+        entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId);
+
+      if (tnt is not null &&
+          targetPosition == actor.Position &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+      {
+        DetonateLocalTnt(actor, tnt);
+        if (pieceSetup.Pieces.Contains(actor))
+        {
+          actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+        }
+        CompleteAction();
+        return true;
+      }
+
+      if (tnt is null &&
+          !actor.HasAttackedThisTurn &&
+          targetPiece is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlaceLocalAbilityEntity(targetPosition))
+      {
+        _abilityEntities.Add(CreateLocalAbilityEntity(
+          AbilityEntityKind.Tnt, actor, targetPosition));
+        actor.HasAttackedThisTurn = true;
+        actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+        CompleteAction();
+        return true;
+      }
+    }
+
+    if (actor.Definition.Type == PieceType.Mashhit &&
+        !actor.HasAttackedThisTurn &&
+        targetPiece is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        (TryDestroyLocalTerrainTile(targetPosition) || TryDestroyLocalStructure(targetPosition)))
+    {
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Phoenix &&
+        targetPiece is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.CurrentHealth > AdvancedAbilityRules.PhoenixFireHealthCost &&
+        CanPlaceLocalAbilityEntity(targetPosition))
+    {
+      actor.CurrentHealth -= AdvancedAbilityRules.PhoenixFireHealthCost;
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        AbilityEntityKind.Fire, actor, targetPosition));
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Baron &&
+        targetPiece != null && targetPiece.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      actor.AbilityState = AdvancedAbilityRules.SelectTarget(actor.AbilityState, targetPiece.NetworkId);
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.WarDrum &&
+        targetPiece != null && targetPiece != actor && targetPiece.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(targetPiece.AbilityState, targetPiece.HasMovedThisTurn) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      targetPiece.HasMovedThisTurn = false;
+      targetPiece.AbilityState = AdvancedAbilityRules.RefreshByWarDrum(targetPiece.AbilityState);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.WillOWisp)
+    {
+      if (!actor.AbilityState.Settled &&
+          targetPosition == actor.Position &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+      {
+        actor.AbilityState = AdvancedAbilityRules.SetSettled(actor.AbilityState);
+        CompleteAction();
+        return true;
+      }
+
+      if (actor.AbilityState.Settled && targetPiece is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlacePiece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, null))
+      {
+        pieceSetup.AddPiece(new Piece(PieceDefinitions.All.First(definition => definition.Type == PieceType.Wisp), targetPosition, actor.Team));
+        actor.HasAttackedThisTurn = true;
+        CompleteAction();
+        return true;
+      }
+    }
+
+    if (actor.Definition.Type == PieceType.Odin &&
+        targetPiece != null && targetPiece != actor && targetPiece.Team == actor.Team &&
+        targetPiece.Definition.Category != PieceCategory.Royal &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        AbilityRules.IsWithinSquareRadius(
+          UnitRules.FromPieceDefinition(actor.Definition), actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition), targetPiece.Position, 3))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.ProtectWithOdin(
+        targetPiece.AbilityState, actor.NetworkId);
+      actor.AbilityState = AdvancedAbilityRules.StartCooldown(
+        actor.AbilityState, AdvancedAbilityRules.OdinCooldownTurns);
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Hacker &&
+        targetPiece != null && targetPiece.Team != actor.Team && targetPiece.Team != TeamName.Neutral &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        IsWithinLocalCircleRange(actor, targetPiece, 5))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.DisableAbilities(targetPiece.AbilityState, 1);
+      actor.AbilityState = AdvancedAbilityRules.StartCooldown(
+        actor.AbilityState, AdvancedAbilityRules.HackerCooldownTurns);
+      CompleteAction();
+      return true;
+    }
+
     if (actor.Definition.Type == PieceType.Spy &&
         targetPiece != null &&
         targetPiece.Team != actor.Team &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
+      AttackTurnState attackState = AbilityStateRules.RecordAttack(
+        actor.Definition.Type.ToString(), actor.AttacksThisTurn);
       actor.MarkedTarget = targetPiece;
+      actor.AttacksThisTurn = attackState.AttacksThisTurn;
+      actor.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+      actor.AbilityState = AdvancedAbilityRules.RecordAttack(
+        actor.Definition.Type.ToString(), actor.AbilityState, targetPiece.NetworkId);
       Console.WriteLine($"Spy marked {targetPiece.Definition.Type}.");
       CompleteAction();
       return true;
@@ -3805,6 +5060,58 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Engineer)
     {
       return TryUseEngineerAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Muse &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        targetPiece.AttachedTo is null)
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Muse))
+      {
+        return false;
+      }
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Shieldsman &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        targetPiece.AttachedTo is null &&
+        targetPiece.Definition.Category != PieceCategory.Royal &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == targetPiece && candidate.AttachmentKind == AttachmentKind.Shieldsman) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Shieldsman))
+      {
+        return false;
+      }
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Imp &&
+        targetPiece != null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece != actor &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !pieceSetup.Pieces.Any(candidate =>
+          candidate.AttachedTo == targetPiece && candidate.AttachmentKind == AttachmentKind.Imp) &&
+        CanAttackSquareWithAttachments(actor, targetPosition))
+    {
+      if (!pieceSetup.Attach(actor, targetPiece, AttachmentKind.Imp))
+      {
+        return false;
+      }
+      actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+      CompleteAction();
+      return true;
     }
 
     if (actor.Definition.Type == PieceType.Guard &&
@@ -3817,7 +5124,7 @@ internal sealed partial class Game1 : Game
           actor.AttachedTo != null,
           pieceSetup.GetAttachedPiece(targetPiece, AttachmentKind.Guard) != null
         ) &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       pieceSetup.Attach(actor, targetPiece, AttachmentKind.Guard);
       CompleteAction();
@@ -3836,7 +5143,7 @@ internal sealed partial class Game1 : Game
           pieceSetup.Pieces.Any(candidate =>
             candidate.AttachedTo == targetPiece && candidate.Definition.Type == PieceType.Ox)
         ) &&
-        Actions.CanAttackSquare(actor, targetPosition))
+        CanAttackSquareWithAttachments(actor, targetPosition))
     {
       pieceSetup.Attach(targetPiece, actor, AttachmentKind.Carried);
       CompleteAction();
@@ -3920,17 +5227,19 @@ internal sealed partial class Game1 : Game
       Math.Abs(actor.Position.x - position.x) + Math.Abs(actor.Position.y - position.y) == 1;
   }
 
-  private bool TryFireMercenary(Piece mercenary)
+  private bool TryFireUpkeepUnit(Piece unit)
   {
-    if (mercenary.Team != Team.CurrentTurn)
+    if (unit.Team != Team.CurrentTurn ||
+        !AdvancedAbilityRules.IsUpkeepFireUnit(unit.Definition.Type.ToString()))
     {
       return false;
     }
 
-    mercenary.Team = TeamName.Neutral;
-    mercenary.HasMovedThisTurn = true;
-    mercenary.HasAttackedThisTurn = true;
-    Console.WriteLine("Mercenary fired and left neutral in No-Man's-Land.");
+    unit.Team = TeamName.Neutral;
+    unit.HasMovedThisTurn = true;
+    unit.HasAttackedThisTurn = true;
+    unit.AbilityState = unit.AbilityState with { CannotActThisTurn = true, CannotMoveThisTurn = true };
+    Console.WriteLine($"{unit.Definition.Type} was fired and became neutral.");
     CompleteAction();
     return true;
   }
@@ -3943,7 +5252,7 @@ internal sealed partial class Game1 : Game
   {
     bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
     if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
-        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !CanAttackSquareWithAttachments(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
       return false;
@@ -3979,7 +5288,7 @@ internal sealed partial class Game1 : Game
   {
     bool demolition = _selectedEngineerAbility == EngineerAbility.Demolish;
     if ((!demolition && engineer.EngineerBuildsThisTurn >= 2) ||
-        !Actions.CanAttackSquare(engineer, targetPosition) ||
+        !CanAttackSquareWithAttachments(engineer, targetPosition) ||
         !IsBoardCell(targetPosition.x - _board.MinX, targetPosition.y - _board.MinY))
     {
       return false;
@@ -4135,11 +5444,19 @@ internal sealed partial class Game1 : Game
     );
     List<Piece> companions = [];
 
-    if (piece.Definition.Type == PieceType.Herald)
+    if (piece.Definition.Type == PieceType.Herald &&
+        string.Equals(piece.AbilityState.PendingAbility, "HeraldCompanions", StringComparison.Ordinal))
     {
+      HashSet<string> selectedIds = piece.AbilityState.PendingSelections
+        .Select(selection => selection.TargetId)
+        .Where(id => !string.IsNullOrWhiteSpace(id))
+        .Take(3)
+        .ToHashSet(StringComparer.Ordinal);
+
       foreach (Piece candidate in pieceSetup.Pieces)
       {
-        if (candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
+        if (selectedIds.Contains(candidate.NetworkId) &&
+            candidate.Team == piece.Team && candidate != piece && candidate.AttachedTo == null &&
             !IsTreasureCarrier(candidate) &&
             AbilityRules.IsHeraldCompanion(
               UnitRules.FromPieceDefinition(candidate.Definition), piece.Position, candidate.Position))
@@ -4149,7 +5466,19 @@ internal sealed partial class Game1 : Game
       }
     }
 
+    if (companions.Count > 1)
+    {
+      companions = companions
+        .OrderByDescending(companion =>
+          companion.Position.x * displacement.x + companion.Position.y * displacement.y)
+        .ToList();
+    }
+
     pieceSetup.MovePiece(piece, destination);
+    if (piece.Definition.Type == PieceType.Herald)
+    {
+      piece.AbilityState = AdvancedAbilityRules.ClearPendingSelections(piece.AbilityState);
+    }
 
     foreach (Piece companion in companions)
     {
@@ -4260,14 +5589,41 @@ internal sealed partial class Game1 : Game
     {
       movedPiece.HasAttackedThisTurn = true;
     }
+    else if (movedPiece.Definition.Type == PieceType.Stagecoach)
+    {
+      AttackUnitsMovedOver(
+        movedPiece,
+        completedAnimation.Path,
+        AdvancedAbilityRules.StagecoachTrampleDamage);
+    }
 
+    destination = ResolveLocalLandingAttack(movedPiece, completedAnimation.Path, destination);
+    if (!pieceSetup.Pieces.Contains(movedPiece))
+    {
+      selectedPiece = null;
+      return;
+    }
     destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
-    MovePieceWithCompanions(movedPiece, destination);
+    bool boardedLongboat = TryBoardLocalLongboat(movedPiece, destination);
+    if (!boardedLongboat)
+    {
+      if (movedPiece.Definition.Type == PieceType.Serpent &&
+          !IsLocalSerpentFollower(movedPiece))
+      {
+        MoveLocalSerpentFormation(movedPiece, completedAnimation.Path, destination);
+      }
+      else
+      {
+        MovePieceWithCompanions(movedPiece, destination);
+      }
+      ReleaseLocalPetrificationIfBroken(movedPiece);
+    }
     if (usesCavalierFollowUpMove)
     {
       movedPiece.CavalierFollowUpMoveAvailable = false;
     }
     TriggerMinesAlongMovement(movedPiece, completedAnimation.Path);
+    TriggerLocalAbilityEntitiesAlongMovement(movedPiece, completedAnimation.Path);
 
     if (_screen == Screen.GameOver || !pieceSetup.Pieces.Contains(movedPiece))
     {
@@ -4307,7 +5663,10 @@ internal sealed partial class Game1 : Game
       MatchRules.IsOnEnemyBackEdge(_board, piece.Team.ToNetworkTeam(), square));
   }
 
-  private bool AttackUnitsMovedOver(Piece attacker, IReadOnlyList<(int x, int y)> path)
+  private bool AttackUnitsMovedOver(
+    Piece attacker,
+    IReadOnlyList<(int x, int y)> path,
+    int? damageOverride = null)
   {
     HashSet<Piece> damagedPieces = [];
     foreach (Piece crossedPiece in new List<Piece>(pieceSetup.Pieces))
@@ -4328,7 +5687,7 @@ internal sealed partial class Game1 : Game
       );
       if (wasMovedOver && damagedPieces.Add(crossedPiece))
       {
-        ResolveDamage(attacker, crossedPiece);
+        ResolveDamage(attacker, crossedPiece, damageOverride);
       }
     }
 
@@ -4403,7 +5762,13 @@ internal sealed partial class Game1 : Game
         DamageBarricade(attacker, position);
         break;
       }
-      if (_terrain.IsForest(position)) break;
+      if (_terrain.IsForest(position) ||
+          _abilityEntities.Any(entity =>
+            entity.X == position.x && entity.Y == position.y &&
+            AbilityEntityRules.BlocksAttackFor(entity, attacker.Team.ToNetworkTeam())))
+      {
+        break;
+      }
       Piece target = pieceSetup.GetPieceAt(position);
       if (target?.Definition.Type == PieceType.Farm)
       {
@@ -4464,10 +5829,14 @@ internal sealed partial class Game1 : Game
       UnitRules.FromPieceDefinition(attacker.Definition),
       attacker.CurrentHealth
     );
-    if (HasAdjacentPieceOfType(attacker, PieceType.Baron, attacker.Team))
-    {
-      damage += CombatRules.BaronDamageBonus;
-    }
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      pieceSetup.Pieces.Select(piece => (
+        piece.Definition.Type.ToString(),
+        piece.Team.ToNetworkTeam(),
+        piece.AbilityState.SelectedTargetId)),
+      attacker.NetworkId,
+      attacker.Team.ToNetworkTeam());
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
 
     _barricades[position] -= damage;
     if (_barricades[position] <= 0)
@@ -4492,14 +5861,18 @@ internal sealed partial class Game1 : Game
 
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
-    UnitRule rule = UnitRules.FromPieceDefinition(attacker.Definition);
-    if (attacker.Definition.Type == PieceType.Catapult) return true;
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      attacker, UnitRules.FromPieceDefinition(attacker.Definition));
+    if (AbilityRules.AttacksOverObstacles(rule)) return true;
     return LineOfSightRules.HasClearAttackPath(
       rule,
       attacker.OccupiedSquares(),
       targetPosition,
       _terrain.IsForest,
-      _barricades.ContainsKey,
+      square => _barricades.ContainsKey(square) ||
+        _abilityEntities.Any(entity =>
+          entity.X == square.x && entity.Y == square.y &&
+          AbilityEntityRules.BlocksAttackFor(entity, attacker.Team.ToNetworkTeam())),
       square =>
       {
         Piece blockingPiece = pieceSetup.GetPieceAt(square);
@@ -4671,6 +6044,26 @@ internal sealed partial class Game1 : Game
   {
     Rectangle panel = GetPurchasePanelBounds();
     return new Rectangle(panel.X + 98, panel.Bottom - 68, panel.Width - 196, UiTheme.ButtonHeight);
+  }
+
+  private Rectangle GetQilinCostControlBounds()
+  {
+    Rectangle panel = GetPurchasePanelBounds();
+    Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
+    int previewSize = panel.Height < 500 ? 76 : 84;
+    const int statHeight = 44;
+    const int statRowGap = 4;
+    Rectangle statGrid = new(
+      content.X,
+      content.Y + 46 + previewSize + UiTheme.SpaceLg,
+      content.Width,
+      statHeight * 3 + statRowGap * 2);
+    Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
+    return new Rectangle(
+      rightColumn.X,
+      statGrid.Y + (statHeight + statRowGap) * 2,
+      rightColumn.Width,
+      statHeight);
   }
 
   private Rectangle GetPurchaseUnitListToggleBounds()
@@ -4883,6 +6276,13 @@ internal sealed partial class Game1 : Game
         }
       }
     }
+    else if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Qilin &&
+        GetQilinCostControlBounds().Contains(mousePosition))
+    {
+      Rectangle control = GetQilinCostControlBounds();
+      int direction = mousePosition.X < control.Center.X ? -1 : 1;
+      _selectedQilinCost = Math.Clamp(_selectedQilinCost + direction * 20, 40, 160);
+    }
     else if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
     {
       CyclePurchaseSelection(-1);
@@ -4951,6 +6351,74 @@ internal sealed partial class Game1 : Game
     else if (GetEngineerNextButtonBounds().Contains(mousePosition))
     {
       CycleEngineerAbility(1);
+    }
+
+    return true;
+  }
+
+  private bool HandleCodexBuilderAbilityClick(Point mousePosition)
+  {
+    if (selectedPiece is null || !IsCodexBuilder(selectedPiece.Definition.Type) ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      CycleCodexBuilderAbility(selectedPiece, -1);
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      CycleCodexBuilderAbility(selectedPiece, 1);
+    }
+
+    return true;
+  }
+
+  private bool HandleCommandCentreUpgradeClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.CommandCentre ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      _selectedCommandCentreUpgradeIndex = (_selectedCommandCentreUpgradeIndex + 2) % 3;
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      _selectedCommandCentreUpgradeIndex = (_selectedCommandCentreUpgradeIndex + 1) % 3;
+    }
+
+    return true;
+  }
+
+  private string GetSelectedCommandCentreUpgrade() =>
+    _selectedCommandCentreUpgradeIndex switch
+    {
+      1 => "Health",
+      2 => "Move",
+      _ => "Attack"
+    };
+
+  private bool HandleThorAbilityClick(Point mousePosition)
+  {
+    if (selectedPiece?.Definition.Type != PieceType.Thor ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      CycleThorStorm(selectedPiece, -1);
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      CycleThorStorm(selectedPiece, 1);
     }
 
     return true;
@@ -5172,7 +6640,10 @@ internal sealed partial class Game1 : Game
           new Rectangle(
             healthBounds.X,
             healthBounds.Y,
-            (int)(healthBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+            (int)(healthBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(
+              1,
+              AdvancedAbilityRules.GetEffectiveMaximumHealth(
+                UnitRules.FromPieceDefinition(piece.Definition), piece.AbilityState)), 0f, 1f)),
             healthBounds.Height
           ),
           UiTheme.Health,
@@ -5215,7 +6686,10 @@ internal sealed partial class Game1 : Game
         new Rectangle(
           healthBarBounds.X,
           healthBarBounds.Y,
-          (int)(healthBarBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(1, piece.Definition.Health), 0f, 1f)),
+          (int)(healthBarBounds.Width * MathHelper.Clamp(piece.CurrentHealth / (float)Math.Max(
+              1,
+              AdvancedAbilityRules.GetEffectiveMaximumHealth(
+                UnitRules.FromPieceDefinition(piece.Definition), piece.AbilityState)), 0f, 1f)),
           healthBarBounds.Height
         ),
         UiTheme.Health,
@@ -5357,7 +6831,7 @@ internal sealed partial class Game1 : Game
     _ui.Text(definition.Category.ToString(), new Vector2(detailX, previewBounds.Y + 31), UiTheme.TextMuted, 0.82f);
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     _ui.Text(
-      isOpeningFarmPlacement ? "FREE OPENING FARM" : $"{GetUnitPrice(definition)} GOLD",
+      isOpeningFarmPlacement ? "FREE OPENING FARM" : $"{GetSelectedPurchasePrice(definition)} GOLD",
       new Vector2(detailX, previewBounds.Y + 56),
       UiTheme.Gold,
       0.84f
@@ -5368,12 +6842,30 @@ internal sealed partial class Game1 : Game
     Rectangle leftColumn = UiLayout.HorizontalSlot(statGrid, 2, 0, UiTheme.SpaceSm);
     Rectangle rightColumn = UiLayout.HorizontalSlot(statGrid, 2, 1, UiTheme.SpaceSm);
     const float purchaseStatFontScale = 1.50f;
-    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", definition.Health.ToString(), UiTheme.Health, purchaseStatFontScale);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", definition.Attack.ToString(), UiTheme.Attack, purchaseStatFontScale);
+    int previewHealth = definition.Type == PieceType.Qilin
+      ? AdvancedAbilityRules.GetQilinHealth(_selectedQilinCost)
+      : definition.Health;
+    int previewAttack = definition.Type == PieceType.Qilin
+      ? AdvancedAbilityRules.GetQilinAttack(_selectedQilinCost)
+      : definition.Attack;
+    _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y, leftColumn.Width, statHeight), "HEALTH", previewHealth.ToString(), UiTheme.Health, purchaseStatFontScale);
+    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y, rightColumn.Width, statHeight), "ATTACK", previewAttack.ToString(), UiTheme.Attack, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + statHeight + statRowGap, leftColumn.Width, statHeight), "MOVE RANGE", UiText.FormatAction(definition.Movement), UiTheme.Move, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + statHeight + statRowGap, rightColumn.Width, statHeight), "ATTACK RANGE", UiText.FormatAction(definition.AttackRange, definition.AttackPattern), UiTheme.TextPrimary, purchaseStatFontScale);
     _ui.StatBlock(new Rectangle(leftColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, leftColumn.Width, statHeight), "SIZE", $"{definition.Size.x} x {definition.Size.y}", UiTheme.TextPrimary, purchaseStatFontScale);
-    _ui.StatBlock(new Rectangle(rightColumn.X, statGrid.Y + (statHeight + statRowGap) * 2, rightColumn.Width, statHeight), "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
+    Rectangle finalRightStat = new(
+      rightColumn.X,
+      statGrid.Y + (statHeight + statRowGap) * 2,
+      rightColumn.Width,
+      statHeight);
+    if (definition.Type == PieceType.Qilin)
+    {
+      _ui.StatBlock(finalRightStat, "QILIN COST", $"< {_selectedQilinCost} >", UiTheme.Gold, purchaseStatFontScale);
+    }
+    else
+    {
+      _ui.StatBlock(finalRightStat, "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
+    }
 
     string purchaseHint = definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
@@ -5534,7 +7026,7 @@ internal sealed partial class Game1 : Game
         var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
         Rectangle cellBounds = new(x * 64, y * 64, 64, 64);
         Color baseCellColour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
-        TeamName? squareOwner = GetSquareOwner(boardPosition);
+        TeamName? squareOwner = GetPlacementSquareOwner(boardPosition);
         Color territoryColour = squareOwner.HasValue ? UiTheme.GetTeamColour(squareOwner.Value) : UiTheme.NoMansLand;
         DrawWorldRectangle(cellBounds, Color.Lerp(baseCellColour, territoryColour, territoryTintAmount), 0f);
 
@@ -6484,6 +7976,7 @@ internal sealed partial class Game1 : Game
     _roads.Clear();
     _barricades.Clear();
     _mines.Clear();
+    _developerPlacementClaims.Clear();
     _restoredLakeTiles.Clear();
     _riverBridges.Clear();
   }
@@ -6535,6 +8028,18 @@ internal sealed partial class Game1 : Game
     PieceDefinition royal = ChooseCpuRoyal(eligibleRoyals, profile, random);
     (int x, int y) position = ChooseCpuRoyalPlacement(teamName, royal, profile, random);
     PlaceRoyal(teamName, royal, position);
+    if (royal.Type == PieceType.Sheriff)
+    {
+      Piece sheriff = pieceSetup.Pieces.First(piece =>
+        piece.Team == teamName &&
+        piece.Definition.Type == PieceType.Sheriff);
+      BeginLocalSheriffPrisonPlacement(sheriff);
+      if (!TryPlaceNearestLocalSheriffPrison(sheriff))
+      {
+        throw new InvalidOperationException(
+          "Could not find a legal square for the Sheriff's Prison.");
+      }
+    }
   }
 
   private void ContinueRoyalSelection()
@@ -6592,6 +8097,7 @@ internal sealed partial class Game1 : Game
     _onlineJoinAsSpectator = false;
     _onlineRoyalChoicePending = false;
     _royalAwaitingPlacement = null;
+    _sheriffPrisonAwaitingPlacement = null;
     _debugTeamSwitchPending = false;
     _onlineHostingSetup = false;
     _onlineMatchConfiguration = null;
@@ -7660,6 +9166,45 @@ internal sealed partial class Game1 : Game
 
     PlaceRoyal(_setupTeam, royal, position);
     _royalAwaitingPlacement = null;
+    if (royal.Type == PieceType.Sheriff)
+    {
+      Piece sheriff = pieceSetup.Pieces.First(piece =>
+        piece.Team == _setupTeam &&
+        piece.Definition.Type == PieceType.Sheriff);
+      BeginLocalSheriffPrisonPlacement(sheriff);
+      _sheriffPrisonAwaitingPlacement = sheriff;
+      Console.WriteLine("Place the Sheriff's free Prison on a legal 3x3 square in your territory.");
+      return;
+    }
+    ContinueRoyalSelection();
+  }
+
+  private void TryPlaceSheriffPrison((int x, int y) position)
+  {
+    Piece sheriff = _sheriffPrisonAwaitingPlacement;
+    if (sheriff is null)
+    {
+      return;
+    }
+
+    if (!CanPlaceLocalSheriffPrison(sheriff, position))
+    {
+      Console.WriteLine("The Sheriff's Prison must fit on an empty, traversable 3x3 area in your territory.");
+      return;
+    }
+
+    if (_onlineClient is not null)
+    {
+      _ = SendOnlineSheriffPrisonPlacementAsync(position);
+      return;
+    }
+
+    if (!TryPlaceLocalSheriffPrison(sheriff, position, lastBid: 0))
+    {
+      return;
+    }
+
+    _sheriffPrisonAwaitingPlacement = null;
     ContinueRoyalSelection();
   }
 
@@ -9341,6 +10886,10 @@ internal sealed partial class Game1 : Game
     Rectangle panel = GetEncyclopediaPanelBounds();
     Rectangle content = UiLayout.Inset(panel, UiTheme.SpaceLg);
     PieceDefinition definition = PieceDefinitions.Encyclopedia[_encyclopediaIndex];
+    IReadOnlyList<PieceDefinition> packEntries = PieceDefinitions.Encyclopedia
+      .Where(entry => entry.Pack == definition.Pack)
+      .ToArray();
+    int packIndex = packEntries.ToList().FindIndex(entry => entry.Type == definition.Type);
     DrawPanel(panel, UiTheme.Panel, UiTheme.Gold);
     _ui.Text("FIELD ENCYCLOPEDIA", new Vector2(content.X, content.Y), UiTheme.Gold);
     _ui.Text("Unit stats and core battlefield rules", new Vector2(content.X, content.Y + 28), UiTheme.TextMuted, 0.74f);
@@ -9352,7 +10901,7 @@ internal sealed partial class Game1 : Game
     DrawMenuButton(previous, "<", UiButtonTone.Neutral);
     DrawPanel(selection, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
     _ui.CenterText(
-      $"{_encyclopediaIndex + 1}/{PieceDefinitions.Encyclopedia.Length}  {GetPieceDisplayName(definition.Type)}",
+      $"{GetPackDisplayName(definition.Pack).ToUpperInvariant()}  {packIndex + 1}/{packEntries.Count}  {GetPieceDisplayName(definition.Type)}",
       selection,
       UiTheme.TextPrimary,
       0.76f
@@ -9942,12 +11491,15 @@ internal sealed partial class Game1 : Game
     _ui.LabelValueRow(
       new Rectangle(details.X, details.Y + 47, details.Width, 22),
       "HEALTH",
-      $"{selectedPiece.CurrentHealth}/{selectedPiece.Definition.Health}",
+      $"{selectedPiece.CurrentHealth}/{AdvancedAbilityRules.GetEffectiveMaximumHealth(UnitRules.FromPieceDefinition(selectedPiece.Definition), selectedPiece.AbilityState)}",
       UiTheme.Health
     );
     DrawProgressBar(
       new Rectangle(details.X, details.Bottom - 10, details.Width, 10),
-      selectedPiece.CurrentHealth / (float)Math.Max(1, selectedPiece.Definition.Health),
+      selectedPiece.CurrentHealth / (float)Math.Max(
+        1,
+        AdvancedAbilityRules.GetEffectiveMaximumHealth(
+          UnitRules.FromPieceDefinition(selectedPiece.Definition), selectedPiece.AbilityState)),
       UiTheme.Health
     );
 
@@ -9961,18 +11513,32 @@ internal sealed partial class Game1 : Game
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
-      selectedPiece.Definition.Type == PieceType.Engineer ? "ABILITY" : "ATTACK",
-      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
-        ? "USED"
-        : selectedPiece.Definition.Type == PieceType.Engineer
-          ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
-          : selectedPiece.Definition.Attack.ToString(),
-      canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
+      selectedPiece.Definition.Type == PieceType.Engineer ||
+        IsCodexBuilder(selectedPiece.Definition.Type) ||
+        selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? "ABILITY" : "ATTACK",
+      selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? selectedPiece.AbilityState.UsedThisTurn
+          ? "USED"
+          : GetSelectedCommandCentreUpgrade().ToUpperInvariant()
+        : canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
+          ? "USED"
+          : selectedPiece.Definition.Type == PieceType.Engineer
+            ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
+            : IsCodexBuilder(selectedPiece.Definition.Type)
+              ? GetCodexBuilderStatusLabel(selectedPiece)
+              : selectedPiece.Definition.Attack.ToString(),
+      selectedPiece.Definition.Type == PieceType.CommandCentre && selectedPiece.AbilityState.UsedThisTurn ||
+        canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
     _ui.StatBlock(
       rangeRow,
-      selectedPiece.Definition.Type == PieceType.Engineer ? "BUILD RANGE" : "ATTACK RANGE",
+      selectedPiece.Definition.Type == PieceType.CommandCentre
+        ? "ABILITY RANGE"
+        : selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type)
+          ? "BUILD RANGE"
+          : "ATTACK RANGE",
       UiText.FormatAction(selectedPiece.Definition.AttackRange, selectedPiece.Definition.AttackPattern),
       UiTheme.TextPrimary
     );
@@ -9992,7 +11558,9 @@ internal sealed partial class Game1 : Game
     int abilityInfoY = rangeRow.Bottom + UiTheme.SpaceMd + 44;
     int abilityInfoBottom = selectedPiece.Definition.Type switch
     {
-      PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
+      PieceType.Engineer or PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or
+        PieceType.Runesmith or PieceType.Gatekeeper or PieceType.CommandCentre or PieceType.Thor =>
+        GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
       PieceType.Giant or PieceType.Cyclops => GetCarryThrowButtonBounds().Y - UiTheme.SpaceSm,
@@ -10010,6 +11578,24 @@ internal sealed partial class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.Engineer)
     {
       DrawEngineerAbilityControls();
+      return;
+    }
+
+    if (IsCodexBuilder(selectedPiece.Definition.Type))
+    {
+      DrawCodexBuilderAbilityControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.CommandCentre)
+    {
+      DrawCommandCentreUpgradeControls();
+      return;
+    }
+
+    if (selectedPiece.Definition.Type == PieceType.Thor)
+    {
+      DrawThorAbilityControls();
       return;
     }
 
@@ -10150,6 +11736,48 @@ internal sealed partial class Game1 : Game
     _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.58f);
   }
 
+  private void DrawCodexBuilderAbilityControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    string ability = GetSelectedCodexBuilderAbility(selectedPiece);
+    string title = GetCodexBuilderDisplayTitle(ability);
+    string detail = GetCodexBuilderDetail(selectedPiece.Definition.Type, ability);
+
+    _ui.Text("BUILDER ABILITY", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(title, valueBounds, UiTheme.TextPrimary, 0.68f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
+  private void DrawCommandCentreUpgradeControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    string upgrade = GetSelectedCommandCentreUpgrade().ToUpperInvariant();
+
+    _ui.Text("COMMAND UPGRADE", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(upgrade, valueBounds, UiTheme.TextPrimary, 0.72f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text("25 gold; each non-Royal unit can be upgraded once.", new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
+  private void DrawThorAbilityControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    _ui.Text("THUNDERSTORM", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(GetSelectedThorStormLabel(selectedPiece), valueBounds, UiTheme.TextPrimary, 0.72f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text("NEW creates a storm; select a storm to move it.", new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
   private Piece GetOxCargo(Piece ox)
   {
     return ox.AttachmentKind == AttachmentKind.Carried ? ox.AttachedTo : null;
@@ -10177,6 +11805,104 @@ internal sealed partial class Game1 : Game
       return piece.HasAttackedThisTurn && _selectedEngineerAbility != EngineerAbility.Demolish
         ? "ABILITY USED THIS TURN"
         : "RIGHT-CLICK to use the selected ability";
+    }
+
+    if (IsCodexBuilder(piece.Definition.Type))
+    {
+      return piece.HasAttackedThisTurn
+        ? "ABILITY USED THIS TURN"
+        : "RIGHT-CLICK to use the selected build/demolish ability";
+    }
+
+    if (piece.Definition.Type == PieceType.CommandCentre)
+    {
+      return piece.AbilityState.UsedThisTurn
+        ? "UPGRADE USED THIS TURN"
+        : "RIGHT-CLICK a friendly non-Royal within 2 squares to upgrade";
+    }
+
+    if (piece.Definition.Type == PieceType.Atlas)
+    {
+      if (piece.AbilityState.UsedThisTurn) return "ATLAS MOVE USED THIS TURN";
+      if (!string.IsNullOrWhiteSpace(piece.AbilityState.SelectedTargetId))
+        return "RIGHT-CLICK an adjacent legal square for the staged unit";
+      if (piece.AbilityState.PendingSelections.Count > 0)
+        return "RIGHT-CLICK another unit, or RIGHT-CLICK Atlas to finish";
+      return "RIGHT-CLICK up to 3 friendly movable units, then their adjacent destinations";
+    }
+
+    if (piece.Definition.Type == PieceType.Poltergeist)
+    {
+      if (piece.AbilityState.UsedThisTurn) return "POLTERGEIST ABILITY USED THIS TURN";
+      return GetLocalPoltergeistStructure(piece) is null
+        ? "RIGHT-CLICK an in-range Structure to pick it up"
+        : "RIGHT-CLICK an empty in-range square to place the held Structure";
+    }
+
+    if (piece.Definition.Type == PieceType.Developer)
+    {
+      return piece.HasAttackedThisTurn
+        ? "CLAIM USED THIS TURN"
+        : "RIGHT-CLICK an unclaimed No-Man's-Land tile adjacent to your placement territory";
+    }
+
+    if (piece.Definition.Type == PieceType.Fafnir)
+    {
+      return "RIGHT-CLICK this unit to transform for 125 gold";
+    }
+
+    if (piece.Definition.Type == PieceType.Mimic)
+    {
+      return piece.HasMovedThisTurn
+        ? "SWAP USED THIS TURN"
+        : "RIGHT-CLICK another 1 x 1 unit within 6 Circle to swap positions";
+    }
+
+    if (piece.Definition.Type == PieceType.Thor)
+    {
+      return piece.AbilityState.UsedThisTurn
+        ? "THUNDERSTORM USED THIS TURN"
+        : "RIGHT-CLICK an in-range tile to create/move the selected storm";
+    }
+
+    if (piece.Definition.Type == PieceType.Chronos)
+    {
+      return piece.AbilityState.CooldownOwnerTurns > 0
+        ? $"REWIND READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
+        : "RIGHT-CLICK a friendly unit within 3 Circle to rewind both";
+    }
+
+    if (piece.Definition.Type == PieceType.GangLeader)
+    {
+      return piece.AbilityState.CooldownOwnerTurns > 0
+        ? $"RECRUIT READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
+        : "RIGHT-CLICK an enemy non-Royal in range to buy it for 2x base cost";
+    }
+
+    if (piece.Definition.Type == PieceType.Fylgja)
+    {
+      return string.Equals(piece.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        piece.AbilityState.PendingSelections.Count > 0
+        ? "RIGHT-CLICK a legal destination within the selected unit's 3-Square forced move"
+        : "RIGHT-CLICK a unit in range, then choose its forced destination";
+    }
+
+    if (piece.Definition.Type == PieceType.BountyHunter)
+    {
+      return piece.AbilityState.BountySelectionAvailable
+        ? "RIGHT-CLICK any enemy non-Royal to assign the bounty"
+        : string.IsNullOrWhiteSpace(piece.AbilityState.BountyTargetId)
+          ? "NEW BOUNTY AVAILABLE NEXT OWNER TURN"
+          : "MAY ATTACK ONLY THE ASSIGNED BOUNTY";
+    }
+
+    if (piece.Definition.Type == PieceType.Herald)
+    {
+      int selectedCompanions = string.Equals(
+        piece.AbilityState.PendingAbility, "HeraldCompanions", StringComparison.Ordinal)
+          ? piece.AbilityState.PendingSelections.Count
+          : 0;
+      return $"RIGHT-CLICK adjacent friendly 1 x 1 units to toggle followers ({selectedCompanions}/3), then move";
     }
 
     if (piece.HasAttackedThisTurn)
@@ -10369,6 +12095,7 @@ internal sealed partial class Game1 : Game
 
     DrawPurchasePlacementPreview(cellSize);
     DrawRoyalPlacementPreview(cellSize);
+    DrawSheriffPrisonPlacementPreview(cellSize);
 
     if (selectedPiece != null && IsVisibleWorldBounds(GetPieceWorldBounds(selectedPiece, cellSize)))
     {

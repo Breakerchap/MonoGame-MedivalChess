@@ -72,8 +72,9 @@ public static partial class CpuGameRules
     NetworkPiece piece
   )
   {
-    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) || (piece.HasMovedThisTurn &&
-        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
+    if (!UnitRules.TryGet(piece.Type, out UnitRule rule) ||
+        (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
+         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind is NetworkAttachmentKind.Guard ||
         (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
@@ -87,10 +88,14 @@ public static partial class CpuGameRules
   public static bool CanDirectlyAttack(CpuGameState state, NetworkPiece attacker, NetworkPiece target)
   {
     bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target.Id;
-    return (attacker.AttachedToId is null || carriedCargoMayAttackHost) && attacker.Team != target.Team && target.AttachedToId is null &&
-      UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
-      UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
-      attackerRule.Attack > 0 && !attacker.HasAttackedThisTurn &&
+    if ((attacker.AttachedToId is not null && !carriedCargoMayAttackHost) || attacker.Team == target.Team ||
+        target.AttachedToId is not null || !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule))
+    {
+      return false;
+    }
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, attackerRule);
+    return AbilityRules.CanMakeNormalAttack(attackerRule) && !attacker.HasAttackedThisTurn &&
       UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
       HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
   }
@@ -100,9 +105,13 @@ public static partial class CpuGameRules
   {
     string? occupiedTargetId = state.Pieces.FirstOrDefault(piece => piece.Id != attacker.Id &&
       UnitRules.TryGet(piece.Type, out UnitRule targetRule) && Occupies(targetRule, piece, (targetX, targetY)))?.Id;
-    return attacker.AttachedToId is null && UnitRules.TryGet(attacker.Type, out UnitRule rule) &&
-      rule.Attack > 0 && !attacker.HasAttackedThisTurn &&
-      CanUseActionSquare(attacker, targetX, targetY) &&
+    if (attacker.AttachedToId is not null || !UnitRules.TryGet(attacker.Type, out UnitRule rule))
+    {
+      return false;
+    }
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, rule);
+    return AbilityRules.CanMakeNormalAttack(rule) && !attacker.HasAttackedThisTurn &&
+      CanUseActionSquare(state, attacker, targetX, targetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (targetX, targetY), occupiedTargetId, state.Barricades);
   }
 
@@ -111,22 +120,41 @@ public static partial class CpuGameRules
   {
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
-    int unmitigated = CombatRules.CalculateDamage(
-      UnitRules.GetRequired(attacker.Type).Attack,
-      HasAdjacentUnit(state, state.Pieces, attacker, attacker.Team, "Baron"),
+    UnitRule effectiveAttackerRule = ApplyCpuAttachmentBonuses(
+      state.Pieces, state.AbilityEntities, attacker, UnitRules.GetRequired(attacker.Type));
+    int unmitigated = effectiveAttackerRule.Attack;
+    bool selectedAttacker = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    unmitigated = AdvancedAbilityRules.ApplyBaronOutgoingBonus(unmitigated, selectedAttacker);
+    unmitigated = CombatRules.CalculateDamage(
+      unmitigated,
+      false,
       state.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
       false,
       false,
       0
     );
-    return CombatRules.CalculateDamage(
+    int damage = CombatRules.CalculateDamage(
       unmitigated,
       false,
       false,
-      HasAdjacentUnit(state, state.Pieces, damaged, damaged.Team, "Baron"),
+      false,
       IsInForest(state, damaged),
       state.Terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      damaged.Id,
+      damaged.Team);
+    return AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
   }
 
   internal static bool CanUseActionSquare(NetworkPiece actor, int targetX, int targetY)
@@ -153,6 +181,34 @@ public static partial class CpuGameRules
     return false;
   }
 
+  private static bool CanUseActionSquare(CpuGameState state, NetworkPiece actor, int targetX, int targetY)
+  {
+    if (!UnitRules.TryGet(actor.Type, out UnitRule rule))
+    {
+      return false;
+    }
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, actor, rule);
+    if (rule.AttackPattern == RuleShape.None)
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) origin in OccupiedSquares(rule, (actor.X, actor.Y)))
+    {
+      if (UnitRules.CanAttackOffset(
+        rule.AttackPattern,
+        rule.MinimumAttackRange,
+        rule.AttackRange,
+        actor.Team,
+        targetX - origin.x,
+        targetY - origin.y))
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
   private static NetworkPiece? FindUnitOnAttackedSquare(
     IReadOnlyList<NetworkPiece> pieces,
     NetworkPiece attacker,
@@ -169,8 +225,9 @@ public static partial class CpuGameRules
   private static bool IsLegalMove(CpuGameState state, MoveAction action)
   {
     NetworkPiece? piece = FindPiece(state.Pieces, action.PieceId);
-    if (piece is null || piece.Team != action.Team || (piece.HasMovedThisTurn &&
-        !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
+    if (piece is null || piece.Team != action.Team ||
+        (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
+         !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
         piece.AttachmentKind == NetworkAttachmentKind.Guard ||
         (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
     {
@@ -183,13 +240,22 @@ public static partial class CpuGameRules
   private static bool IsLegalAttack(CpuGameState state, AttackAction action)
   {
     NetworkPiece? attacker = FindPiece(state.Pieces, action.AttackerId);
-    if (attacker is null || attacker.Team != action.Team || attacker.HasAttackedThisTurn ||
-        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) || attackerRule.Attack <= 0)
+    if (attacker is null || attacker.Team != action.Team ||
+        !UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
+    {
+      return false;
+    }
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, attackerRule);
+    if (!AbilityRules.CanMakeNormalAttack(attackerRule))
     {
       return false;
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
+    if (!AdvancedAbilityRules.CanAttack(attacker.Type, attacker.AbilityState, attacker.HasAttackedThisTurn, target?.Id))
+    {
+      return false;
+    }
     bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried && attacker.AttachedToId == target?.Id;
     if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
     {
@@ -202,14 +268,17 @@ public static partial class CpuGameRules
     if (target is null)
     {
       return action.TargetPieceId is null && state.Barricades.ContainsKey((action.TargetX, action.TargetY)) &&
-        CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
+        CanUseActionSquare(state, attacker, action.TargetX, action.TargetY) &&
         HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), null, state.Barricades);
     }
 
-    return target.Team != attacker.Team && target.AttachedToId is null &&
+    bool mayAttackFriendly = AdvancedAbilityRules.CanTargetFriendlyWithNormalAttack(attacker.Type);
+    return target.Id != attacker.Id &&
+      (target.Team != attacker.Team || mayAttackFriendly) &&
+      target.AttachedToId is null &&
       UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
       Occupies(targetRule, target, (action.TargetX, action.TargetY)) &&
-      CanUseActionSquare(attacker, action.TargetX, action.TargetY) &&
+      CanUseActionSquare(state, attacker, action.TargetX, action.TargetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (action.TargetX, action.TargetY), target.Id, state.Barricades);
   }
 
@@ -253,22 +322,36 @@ public static partial class CpuGameRules
       return false;
     }
 
-    if (!openingFarmPlacement && buyer.Money < GetUnitPrice(state.Configuration, rule))
+    if (!openingFarmPlacement &&
+        buyer.Money < (long)GetUnitPrice(state.Configuration, rule) +
+          AdvancedAbilityRules.GetImmediateGoldUpkeep(rule.Type))
     {
       return false;
     }
 
-    bool inValidZone = rule.Type == "Mercenary" && !initialBuy
+    bool inValidZone = AbilityRules.MayPlaceInNoMansLand(rule.Type) && !initialBuy
       ? BoardRules.CanPlaceMercenary(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.X, action.Y)
       : BoardRules.CanPlaceForTeam(state.Board, state.Configuration.GameMode, state.Configuration.PlayerCount, action.Team, action.X, action.Y, rule.Width, rule.Height);
-    // Ordinary units may share a Farm footprint, but the live Mercenary rule is stricter: a
-    // newly hired Mercenary must occupy a completely empty No-Man's-Land square. Hiring a
-    // neutral Mercenary above is the only intentional occupied-square exception.
-    bool mercenarySquareIsEmpty = rule.Type != "Mercenary" || !state.Pieces.Any(piece =>
+
+    if (inValidZone && RoyalAbilityRules.RequiresAdjacentRoyalPlacement(rule.Type))
+    {
+      bool hasAdjacentRoyal = state.Pieces.Any(piece =>
+        piece.Team == action.Team &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+        UnitRules.TryGet(piece.Type, out UnitRule royalRule) &&
+        AbilityRules.AreAdjacent(
+          rule, (action.X, action.Y), royalRule, (piece.X, piece.Y), includeDiagonal: true));
+      inValidZone = RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(
+        rule.Type, hasAdjacentRoyal);
+    }
+
+    // No-Man's-Land units must occupy an empty square. Hiring a neutral Mercenary above is the
+    // only intentional occupied-square exception.
+    bool noMansLandSquareIsEmpty = !AbilityRules.MayPlaceInNoMansLand(rule.Type) || !state.Pieces.Any(piece =>
       UnitRules.TryGet(piece.Type, out UnitRule existingRule) &&
       UnitRules.FootprintsOverlap(action.X, action.Y, rule.Width, rule.Height,
         piece.X, piece.Y, existingRule.Width, existingRule.Height));
-    return inValidZone && mercenarySquareIsEmpty && CanPlace(state, state.Pieces, rule, action.X, action.Y);
+    return inValidZone && noMansLandSquareIsEmpty && CanPlace(state, state.Pieces, rule, action.X, action.Y);
   }
 
   private static bool IsLegalAbility(CpuGameState state, UseAbilityAction action)
@@ -280,13 +363,26 @@ public static partial class CpuGameRules
     }
 
     bool demolition = actor.Type == "Engineer" && AbilityRules.IsEngineerDemolition(action.Ability);
-    if (actor.HasAttackedThisTurn && !demolition)
+    bool advancedDemolition = IsCodexDemolitionAbility(actor.Type, action.Ability);
+    bool independentActiveAbility = actor.Type is
+      nameof(PieceType.Phoenix) or nameof(PieceType.Imp) or nameof(PieceType.Baron) or
+      nameof(PieceType.Odin) or nameof(PieceType.Hacker) or nameof(PieceType.Fafnir) or
+      nameof(PieceType.Thor) or nameof(PieceType.CommandCentre) or nameof(PieceType.Demolitionist) ||
+      (actor.Type == nameof(PieceType.WillOWisp) && !(actor.AbilityState?.Settled ?? false));
+    if (actor.HasAttackedThisTurn && !demolition && !advancedDemolition && !independentActiveAbility)
     {
       return false;
     }
 
     NetworkPiece? target = action.TargetPieceId is null ? null : FindPiece(state.Pieces, action.TargetPieceId);
-    if (action.TargetPieceId is not null && target is null)
+    if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+    {
+      return false;
+    }
+    bool targetsAbilityEntity = actor.Type == nameof(PieceType.Thor) &&
+      action.TargetPieceId is not null &&
+      state.AbilityEntities.Any(entity => entity.Id == action.TargetPieceId);
+    if (action.TargetPieceId is not null && target is null && !targetsAbilityEntity)
     {
       return false;
     }
@@ -300,8 +396,16 @@ public static partial class CpuGameRules
     bool plunderPickup = state.Configuration.GameMode == "Plunder" &&
       string.Equals(action.Ability, "PickUpTreasure", StringComparison.OrdinalIgnoreCase);
     bool isCarryThrowUnit = AbilityRules.IsCarryThrowUnit(actor.Type);
-    if (!plunderPickup && actor.Type is not ("Mercenary" or "Phantom") && !isCarryThrowUnit &&
-        !CanUseActionSquare(actor, action.TargetX, action.TargetY))
+    bool rangeIndependentCodexAbility =
+      string.Equals(action.Ability, "ReloadHwacha", StringComparison.OrdinalIgnoreCase) ||
+      (actor.Type == nameof(PieceType.Demolitionist) &&
+       string.Equals(action.Ability, "Detonate", StringComparison.OrdinalIgnoreCase)) ||
+      actor.Type is nameof(PieceType.Fafnir);
+    if (!plunderPickup && !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
+        actor.Type is not (nameof(PieceType.Phantom) or nameof(PieceType.Muse) or
+          nameof(PieceType.WillOWisp) or nameof(PieceType.Odin) or nameof(PieceType.Hacker)) &&
+        !rangeIndependentCodexAbility && !isCarryThrowUnit &&
+        !CanUseActionSquare(state, actor, action.TargetX, action.TargetY))
     {
       return false;
     }
@@ -318,7 +422,61 @@ public static partial class CpuGameRules
     {
       "Spy" => string.Equals(action.Ability, "Mark", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team != actor.Team && actor.AttachedToId is null,
+      nameof(PieceType.Harvester) => string.Equals(action.Ability, "Harvest", StringComparison.OrdinalIgnoreCase) &&
+        target is null && (state.Terrain.IsForest((action.TargetX, action.TargetY)) ||
+          state.Terrain.IsLake((action.TargetX, action.TargetY))),
+      nameof(PieceType.Witch) => string.Equals(action.Ability, "PoisonCloud", StringComparison.OrdinalIgnoreCase) &&
+        !actor.HasAttackedThisTurn,
+      nameof(PieceType.Druid) => string.Equals(action.Ability, "Bramble", StringComparison.OrdinalIgnoreCase) &&
+        !actor.HasAttackedThisTurn && target is null &&
+        Math.Max(Math.Abs(action.TargetX - actor.X), Math.Abs(action.TargetY - actor.Y)) == 1 &&
+        CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Bramble, actor.Team, action.TargetX, action.TargetY),
+      nameof(PieceType.Phoenix) => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        actor.Health > AdvancedAbilityRules.PhoenixFireHealthCost && target is null &&
+        CanPlaceCpuAbilityEntity(state, AbilityEntityKind.Fire, actor.Team, action.TargetX, action.TargetY),
       "Engineer" => IsLegalEngineerAbility(state, actor, action, target),
+      nameof(PieceType.Baron) => string.Equals(action.Ability, "Select", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState),
+      nameof(PieceType.WarDrum) => string.Equals(action.Ability, "Refresh", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        AdvancedAbilityRules.CanBeRefreshedByWarDrum(target.AbilityState, target.HasMovedThisTurn),
+      nameof(PieceType.WillOWisp) => string.Equals(action.Ability, "Settle", StringComparison.OrdinalIgnoreCase)
+        ? target is null && !(actor.AbilityState?.Settled ?? false) &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+        : string.Equals(action.Ability, "SpawnWisp", StringComparison.OrdinalIgnoreCase) &&
+          target is null && (actor.AbilityState?.Settled ?? false) && !actor.HasAttackedThisTurn &&
+          Math.Max(Math.Abs(action.TargetX - actor.X), Math.Abs(action.TargetY - actor.Y)) == 1 &&
+          UnitRules.TryGet(nameof(PieceType.Wisp), out UnitRule wispRule) &&
+          CanPlace(state, state.Pieces, wispRule, action.TargetX, action.TargetY),
+      nameof(PieceType.Odin) => string.Equals(action.Ability, "Protect", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        UnitRules.TryGet(target.Type, out UnitRule odinTargetRule) &&
+        odinTargetRule.Category != RuleCategory.Royal &&
+        (actor.AbilityState?.CooldownOwnerTurns ?? 0) <= 0 &&
+        UnitRules.TryGet(actor.Type, out UnitRule odinRule) &&
+        AbilityRules.IsWithinSquareRadius(
+          odinRule, (actor.X, actor.Y), odinTargetRule, (target.X, target.Y), 3),
+      nameof(PieceType.Hacker) => string.Equals(action.Ability, "Hack", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team != actor.Team && target.Team != NetworkTeam.Neutral &&
+        (actor.AbilityState?.CooldownOwnerTurns ?? 0) <= 0 &&
+        IsWithinCpuCircleRange(actor, target, 5),
+      nameof(PieceType.Muse) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        target.AttachedToId is null && !actor.HasAttackedThisTurn,
+      nameof(PieceType.Shieldsman) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        target.AttachedToId is null && !actor.HasAttackedThisTurn &&
+        UnitRules.TryGet(target.Type, out UnitRule shieldsTargetRule) &&
+        shieldsTargetRule.Category != RuleCategory.Royal &&
+        !state.Pieces.Any(piece => piece.AttachedToId == target.Id &&
+          piece.AttachmentKind == NetworkAttachmentKind.Shieldsman),
+      nameof(PieceType.Imp) => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
+        target is not null && target.Team == actor.Team && target.Id != actor.Id &&
+        AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
+        !state.Pieces.Any(piece => piece.AttachedToId == target.Id &&
+          piece.AttachmentKind == NetworkAttachmentKind.Imp),
       "Guard" => string.Equals(action.Ability, "Attach", StringComparison.OrdinalIgnoreCase) &&
         target is not null && target.Team == actor.Team && target.Id != state.TreasureCarrierId &&
         UnitRules.TryGet(target.Type, out UnitRule targetRule) && UnitRules.TryGet(actor.Type, out UnitRule guardRule) &&
@@ -334,7 +492,8 @@ public static partial class CpuGameRules
           ? target is not null && CanCarryUnit(state, actor, target)
           : string.Equals(action.Ability, "Throw", StringComparison.OrdinalIgnoreCase) &&
             target is null && CanThrowUnit(state, actor, action.TargetX, action.TargetY),
-      "Mercenary" => string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
+      nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun) =>
+        string.Equals(action.Ability, "Fire", StringComparison.OrdinalIgnoreCase) &&
         actor.Team != NetworkTeam.Neutral && action.TargetPieceId is null &&
         action.TargetX == actor.X && action.TargetY == actor.Y,
       "Phantom" => string.Equals(action.Ability, "Unpossess", StringComparison.OrdinalIgnoreCase)
@@ -343,8 +502,29 @@ public static partial class CpuGameRules
           RoyalAbilityRules.CanPhantomPossess(
             actor.Type, actor.Team, actor.PossessedUnitId,
             target.Id, target.Type, target.Team, target.IsRoyalProxy),
-      _ => false
+      _ => IsLegalCodexAdvancedAbility(state, actor, target, action)
     };
+  }
+
+  private static bool IsWithinCpuCircleRange(NetworkPiece centre, NetworkPiece candidate, int radius)
+  {
+    if (!UnitRules.TryGet(centre.Type, out UnitRule centreRule) ||
+        !UnitRules.TryGet(candidate.Type, out UnitRule candidateRule))
+    {
+      return false;
+    }
+
+    int radiusSquared = radius * radius;
+    foreach ((int x, int y) first in OccupiedSquares(centreRule, (centre.X, centre.Y)))
+    {
+      foreach ((int x, int y) second in OccupiedSquares(candidateRule, (candidate.X, candidate.Y)))
+      {
+        int dx = second.x - first.x;
+        int dy = second.y - first.y;
+        if (dx * dx + dy * dy <= radiusSquared) return true;
+      }
+    }
+    return false;
   }
 
   internal static NetworkPiece? GetCarriedUnit(CpuGameState state, NetworkPiece carrier) =>
@@ -395,6 +575,7 @@ public static partial class CpuGameRules
 
   private static void RemovePiece(CpuMutableGameState state, string pieceId)
   {
+    RemoveSourceBoundAbilityEntities(state, pieceId);
     foreach (int index in Enumerable.Range(0, state.Pieces.Count).Reverse())
     {
       NetworkPiece piece = state.Pieces[index];
@@ -528,6 +709,7 @@ public static partial class CpuGameRules
       return;
     }
 
+    EndSharedOwnerTurnStates(state, team);
     state.Teams[team] = state.Teams[team] with { ActionsRemaining = state.Teams[team].ActionLimit };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;
@@ -662,28 +844,49 @@ public static partial class CpuGameRules
       money = ClampCurrency((long)money + EconomyRules.GetInterest(money, state.Source.Configuration.InterestPercent));
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == "Farm");
-    money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn);
-    for (int index = 0; index < state.Pieces.Count; index++)
+    int palaces = state.Pieces.Count(piece =>
+      piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Palace) &&
+      (piece.AbilityState?.DisabledOwnerTurnsRemaining ?? 0) <= 0);
+    money = ClampCurrency((long)money +
+      farms * (long)state.Source.Configuration.FarmIncomePerTurn +
+      palaces * (long)AdvancedAbilityRules.PalaceIncome);
+    UnitUpkeepSequenceResult abilityUpkeep = EconomyRules.ResolveAbilityUpkeepSequence(
+      money,
+      state.Pieces
+        .Where(piece => piece.Team == team && piece.AttachedToId is null)
+        .Select(piece => new UnitUpkeepRequest(piece.Id, piece.Type))
+    );
+    money = abilityUpkeep.RemainingMoney;
+    foreach (UnitUpkeepDecision decision in abilityUpkeep.Decisions)
     {
-      NetworkPiece mercenary = state.Pieces[index];
-      if (mercenary.Team != team || mercenary.AttachedToId is not null || mercenary.Type != "Mercenary")
+      if (decision.Paid) continue;
+      if (decision.UnpaidEffect == UnpaidUnitUpkeepEffect.FireUnit)
       {
-        continue;
-      }
-
-      const int mercenaryPayroll = 10;
-      if (money < mercenaryPayroll)
-      {
-        state.Pieces[index] = mercenary with
+        int index = FindPieceIndex(state.Pieces, decision.UnitId);
+        if (index >= 0)
         {
-          Team = NetworkTeam.Neutral,
-          HasMovedThisTurn = true,
-          HasAttackedThisTurn = true
-        };
-        continue;
+          NetworkPiece unit = state.Pieces[index];
+          state.Pieces[index] = unit with
+          {
+            Team = NetworkTeam.Neutral,
+            HasMovedThisTurn = true,
+            HasAttackedThisTurn = true,
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(unit.Type),
+            AbilityState = (unit.AbilityState ?? new UnitAbilityState()) with
+            {
+              CannotActThisTurn = true,
+              CannotMoveThisTurn = true
+            }
+          };
+        }
       }
-
-      money = ClampCurrency((long)money - mercenaryPayroll);
+      else if (decision.UnpaidEffect == UnpaidUnitUpkeepEffect.LoseMatch)
+      {
+        state.Teams[team] = current with { Money = money };
+        state.Winner = TeamRules.GetActiveTeams(state.Source.Configuration.PlayerCount)
+          .First(candidate => candidate != team);
+        return;
+      }
     }
     if (state.Source.Configuration.UnitMaintenanceEnabled && state.Source.Configuration.UnitMaintenancePercent > 0)
     {
@@ -698,6 +901,9 @@ public static partial class CpuGameRules
 
   private static void ResetTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    state.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, team));
+
     for (int index = 0; index < state.Pieces.Count; index++)
     {
       NetworkPiece piece = state.Pieces[index];
@@ -707,23 +913,40 @@ public static partial class CpuGameRules
         {
           HasMovedThisTurn = false,
           HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
           CavalierFollowUpMoveAvailable = false,
           EngineerBuildsThisTurn = 0,
-          CannotContributeToConquestThisTurn = false
+          CannotContributeToConquestThisTurn = false,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, piece.Health)
         };
       }
     }
   }
 
-  private static int GetAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target) =>
-    CombatRules.CalculateDamage(
-      UnitRules.GetRequired(attacker.Type).Attack,
-      HasAdjacentUnit(state, attacker, attacker.Team, "Baron"),
+  private static int GetAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
+  {
+    int damage = ApplyCpuAttachmentBonuses(
+      state.Pieces,
+      state.AbilityEntities,
+      attacker,
+      UnitRules.GetRequired(attacker.Type)).Attack;
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
+    return CombatRules.CalculateDamage(
+      damage,
+      false,
       state.Pieces.Any(piece => piece.Type == "Spy" && piece.MarkedTargetId == target.Id),
       false,
       false,
       0
     );
+  }
 
   private static bool HasAdjacentUnit(CpuMutableGameState state, NetworkPiece piece, NetworkTeam team, string type) =>
     UnitRules.TryGet(piece.Type, out UnitRule pieceRule) && state.Pieces.Any(candidate => candidate.Id != piece.Id &&
@@ -743,7 +966,7 @@ public static partial class CpuGameRules
       .Any(second => Math.Abs(first.x - second.x) + Math.Abs(first.y - second.y) == 1)));
 
   private static bool IsInForest(CpuMutableGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
-    OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Source.Terrain.IsForest);
+    OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);
 
   private static bool IsInForest(CpuGameState state, NetworkPiece piece) => UnitRules.TryGet(piece.Type, out UnitRule rule) &&
     OccupiedSquares(rule, (piece.X, piece.Y)).Any(state.Terrain.IsForest);

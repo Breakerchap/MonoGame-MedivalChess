@@ -26,7 +26,8 @@ public static partial class CpuGameRules
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         pieces, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
       rule.MoveRange + (hasPalaceSupport ? 1 : 0),
-      position => CanContinueChessPath(pieces, piece, rule, position)
+      position => CanContinueChessPath(pieces, piece, rule, position) &&
+        GetCpuLandingAttackTarget(source, pieces, piece, rule, position) is null
     );
     AddPawnCapturePaths(source, pieces, piece, rule, paths);
     return paths;
@@ -34,6 +35,7 @@ public static partial class CpuGameRules
 
   private static UnitRule GetEffectiveMovementRule(CpuGameState state, IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece, UnitRule rule)
   {
+    rule = ApplyCpuAttachmentBonuses(pieces, state.AbilityEntities, piece, rule);
     NetworkPiece? oxAttachment = pieces.FirstOrDefault(other =>
       other.AttachedToId == piece.Id && other.Type == nameof(PieceType.Ox));
     if (oxAttachment is not null)
@@ -53,6 +55,33 @@ public static partial class CpuGameRules
       : rule;
   }
 
+  private static NetworkPiece? GetCpuLandingAttackTarget(
+    CpuGameState state,
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination)
+  {
+    if (!AdvancedAbilityRules.IsLandingAttackUnit(mover.Type))
+    {
+      return null;
+    }
+
+    NetworkPiece[] targets = pieces
+      .Where(piece =>
+        piece.Id != mover.Id &&
+        piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        piece.Team != mover.Team &&
+        AdvancedAbilityRules.CanTakeDirectDamage(piece.Type, piece.AbilityState) &&
+        UnitRules.TryGet(piece.Type, out UnitRule targetRule) &&
+        UnitRules.FootprintsOverlap(
+          destination.x, destination.y, moverRule.Width, moverRule.Height,
+          piece.X, piece.Y, targetRule.Width, targetRule.Height))
+      .ToArray();
+    return targets.Length == 1 ? targets[0] : null;
+  }
+
   private static bool CanLand(
     CpuGameState state,
     IReadOnlyList<NetworkPiece> pieces,
@@ -63,16 +92,27 @@ public static partial class CpuGameRules
   )
   {
     if (CanChessCaptureLand(state, pieces, piece, rule, destination)) return true;
-    return CanPlace(
+    bool landingAttack = GetCpuLandingAttackTarget(
+      state, pieces, piece, rule, destination) is not null;
+    if (!CanPlace(
       state,
       pieces,
       rule,
       destination.x,
       destination.y,
       piece.Id,
-      AbilityRules.IgnoresImpassableTerrain(rule) || mayUsePalaceSupport,
-      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
-    );
+      AbilityRules.IgnoresImpassableTerrain(rule),
+      landingAttack || AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null
+    ))
+    {
+      return false;
+    }
+
+    return !OccupiedSquares(rule, destination).Any(square =>
+      state.AbilityEntities.Any(entity =>
+        entity.X == square.x && entity.Y == square.y &&
+        AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
+        (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule))));
   }
 
   private static bool CanPlace(
@@ -92,7 +132,8 @@ public static partial class CpuGameRules
     }
     foreach ((int x, int y) square in OccupiedSquares(rule, (x, y)))
     {
-      if ((!canIgnoreLakes && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+      if ((!canIgnoreLakes && state.Terrain.IsLake(square)) ||
+          (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)))
       {
         return false;
       }
@@ -121,17 +162,23 @@ public static partial class CpuGameRules
     {
       foreach ((int x, int y) square in OccupiedSquares(rule, position))
       {
-        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule) ||
-          IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
+        bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
         if (!BoardRules.Contains(state.Board, square.x, square.y) ||
-            (!ignoresTerrain && state.Terrain.IsLake(square)) || state.Barricades.ContainsKey(square))
+            (!ignoresTerrain && state.Terrain.IsLake(square)) ||
+            (!AbilityRules.IgnoresStructures(rule) && state.Barricades.ContainsKey(square)) ||
+            state.AbilityEntities.Any(entity =>
+              entity.X == square.x && entity.Y == square.y &&
+              AbilityEntityRules.BlocksMovementFor(entity, piece.Team) &&
+              !AbilityRules.IgnoresStructures(rule)))
         {
           return false;
         }
         NetworkPiece? blocker = pieces.FirstOrDefault(other => other.Id != piece.Id && other.AttachedToId != piece.Id &&
           other.Type != "Farm" && UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square));
-        if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
-            GetChessCaptureTarget(pieces, piece, rule, position) != blocker)
+        if (blocker is not null &&
+            !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
+            GetChessCaptureTarget(pieces, piece, rule, position) != blocker &&
+            GetCpuLandingAttackTarget(state, pieces, piece, rule, position) != blocker)
         {
           return false;
         }
@@ -155,12 +202,12 @@ public static partial class CpuGameRules
   )
   {
     int cost = 0;
-    bool ignoresTerrain = IsPalaceAssistedMovement(pieces, piece, rule, from, destination);
+    bool ignoresTerrain = IsPalaceTerrainCostIgnored(pieces, piece, rule, from, destination);
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
       bool usesOwnedRoad = state.Roads.TryGetValue(square, out NetworkTeam roadOwner) &&
         (roadOwner == piece.Team || roadOwner == NetworkTeam.Neutral);
-      int ordinaryCost = state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain
+      int ordinaryCost = state.Terrain.IsForest(square) && !usesOwnedRoad && !ignoresTerrain && !AbilityRules.IgnoresForests(rule)
         ? 2
         : usesOwnedRoad && !state.Terrain.IsForest(square) ? 0 : 1;
       cost = Math.Max(cost, AbilityRules.ApplyTerrainMovementCost(rule, ordinaryCost));
@@ -177,7 +224,7 @@ public static partial class CpuGameRules
     (int x, int y) to
   )
   {
-    if (AbilityRules.IgnoresRivers(rule) || IsPalaceAssistedMovement(pieces, piece, rule, from, to))
+    if (AbilityRules.IgnoresRivers(rule))
     {
       return false;
     }
@@ -196,6 +243,20 @@ public static partial class CpuGameRules
   private static bool HasPalaceSupport(IReadOnlyList<NetworkPiece> pieces, NetworkPiece piece) =>
     piece.Type != "Palace" && pieces.Any(candidate => candidate.Team == piece.Team &&
       candidate.AttachedToId is null && candidate.Type == "Palace");
+
+  private static bool IsPalaceTerrainCostIgnored(
+    IReadOnlyList<NetworkPiece> pieces,
+    NetworkPiece piece,
+    UnitRule movingRule,
+    (int x, int y) from,
+    (int x, int y) to
+  )
+  {
+    NetworkPiece? palace = pieces.FirstOrDefault(candidate => candidate.Team == piece.Team &&
+      candidate.AttachedToId is null && candidate.Type == nameof(PieceType.Palace));
+    return palace is not null && UnitRules.TryGet(palace.Type, out UnitRule palaceRule) &&
+      AbilityRules.MovesCloserToPalace(movingRule, from, to, palaceRule, (palace.X, palace.Y));
+  }
 
   private static bool IsPalaceAssistedMovement(
     IReadOnlyList<NetworkPiece> pieces,
@@ -240,12 +301,16 @@ public static partial class CpuGameRules
     {
       return false;
     }
+    rule = ApplyCpuAttachmentBonuses(pieces, state.AbilityEntities, attacker, rule);
     return LineOfSightRules.HasClearAttackPath(
       rule,
       OccupiedSquares(rule, (attacker.X, attacker.Y)),
       target,
       state.Terrain.IsForest,
-      barricades.ContainsKey,
+      square => barricades.ContainsKey(square) ||
+        state.AbilityEntities.Any(entity =>
+          entity.X == square.x && entity.Y == square.y &&
+          AbilityEntityRules.BlocksAttackFor(entity, attacker.Team)),
       square => pieces.Any(other => other.Id != attacker.Id && other.Id != targetId && other.AttachedToId is null &&
         other.Type != "Farm" && !(attacker.Type == "Sorceress" && other.Team == attacker.Team) &&
         UnitRules.TryGet(other.Type, out UnitRule otherRule) && Occupies(otherRule, other, square))

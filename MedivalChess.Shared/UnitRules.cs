@@ -61,7 +61,7 @@ public static class UnitRules
     .Select(FromPieceDefinition)
     .ToArray();
 
-  private static readonly Dictionary<string, UnitRule> ByType = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
+  private static readonly Dictionary<string, UnitRule> ByType = BuildLookup();
 
   public static IReadOnlyList<UnitRule> All => Rules;
   public static IReadOnlyList<UnitRule> Purchasable { get; } = PieceDefinitions.Purchasable
@@ -84,7 +84,7 @@ public static class UnitRules
   {
     ArgumentNullException.ThrowIfNull(definition);
     return new UnitRule(
-      definition.Identifier,
+      definition.Type.ToString(),
       (RuleCategory)definition.Category,
       definition.Movement.range,
       ToRuleShape(definition.Movement.shape),
@@ -99,6 +99,16 @@ public static class UnitRules
       definition.AbilityDescription,
       definition.Movement.Minimum
     );
+  }
+
+  private static Dictionary<string, UnitRule> BuildLookup()
+  {
+    Dictionary<string, UnitRule> lookup = Rules.ToDictionary(rule => rule.Type, StringComparer.Ordinal);
+    foreach (PieceDefinition definition in PieceDefinitions.Encyclopedia)
+    {
+      lookup[definition.SourceUnitId] = lookup[definition.Type.ToString()];
+    }
+    return lookup;
   }
 
   public static RuleShape ToRuleShape(Shape shape) => shape switch

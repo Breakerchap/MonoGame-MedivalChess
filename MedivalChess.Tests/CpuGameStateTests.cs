@@ -530,6 +530,1609 @@ public sealed class CpuGameStateTests
       action is AttackAction { AttackerId: "red-guard" } or UseAbilityAction { ActorId: "red-guard" });
   }
 
+
+  [Fact]
+  public void HermesMayMoveTwiceButNotThreeTimesInOneOwnerTurn()
+  {
+    CpuGameState state = CreateState(new NetworkPiece("hermes", nameof(PieceType.Hermes), NetworkTeam.Red, 0, 0, 20));
+
+    MoveAction first = new(NetworkTeam.Red, "hermes", 0, -1);
+    Assert.True(first.IsLegal(state));
+    state = first.Apply(state);
+
+    MoveAction second = new(NetworkTeam.Red, "hermes", 0, -2);
+    Assert.True(second.IsLegal(state));
+    state = second.Apply(state);
+
+    Assert.False(new MoveAction(NetworkTeam.Red, "hermes", 0, -3).IsLegal(state));
+    Assert.Equal(2, state.Pieces.Single(piece => piece.Id == "hermes").AbilityState?.MovesThisTurn);
+  }
+
+  [Fact]
+  public void SniperCooldownAdvancesOnCpuOwnerTurns()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("sniper", nameof(PieceType.Sniper), NetworkTeam.Red, 0, 0, 15),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -3, 110)
+    );
+    AttackAction shot = new(NetworkTeam.Red, "sniper", "target", 0, -3);
+
+    Assert.True(shot.IsLegal(state));
+    state = shot.Apply(state);
+    Assert.False(shot.IsLegal(state));
+
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+    Assert.Equal(NetworkTeam.Red, state.CurrentTurn);
+    Assert.False(shot.IsLegal(state));
+
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+    Assert.Equal(NetworkTeam.Red, state.CurrentTurn);
+    Assert.True(shot.IsLegal(state));
+  }
+
+  [Fact]
+  public void SeraphCpuAttacksThreeDistinctTargetsAndCannotRepeatOne()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("seraph", nameof(PieceType.Seraph), NetworkTeam.Red, 0, 0, 75),
+      new NetworkPiece("a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100),
+      new NetworkPiece("b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 0, 100),
+      new NetworkPiece("c", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 2, 100),
+      new NetworkPiece("d", nameof(PieceType.Swordsman), NetworkTeam.Blue, -1, 0, 100)
+    );
+
+    foreach ((string id, int x, int y) in new[] { ("a", 0, -1), ("b", 2, 0), ("c", 1, 2) })
+    {
+      AttackAction attack = new(NetworkTeam.Red, "seraph", id, x, y);
+      Assert.True(attack.IsLegal(state));
+      state = attack.Apply(state);
+    }
+
+    Assert.False(new AttackAction(NetworkTeam.Red, "seraph", "a", 0, -1).IsLegal(state));
+    Assert.False(new AttackAction(NetworkTeam.Red, "seraph", "d", -1, 0).IsLegal(state));
+    NetworkPiece seraph = state.Pieces.Single(piece => piece.Id == "seraph");
+    Assert.Equal(3, seraph.AttacksThisTurn);
+    Assert.True(seraph.HasAttackedThisTurn);
+  }
+
+
+
+  [Fact]
+  public void HarvesterDestroysTerrainGainsGoldAndPreservesSourceSnapshot()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    BattlefieldTerrain terrain = new(forests: [(0, -1)]);
+    CpuGameState original = new(
+      configuration,
+      [new NetworkPiece("harvester", nameof(PieceType.Harvester), NetworkTeam.Red, 0, 0, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: terrain
+    );
+    UseAbilityAction harvest = new(NetworkTeam.Red, "harvester", "Harvest", null, 0, -1);
+
+    Assert.True(harvest.IsLegal(original));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(original, NetworkTeam.Red), action =>
+      action is UseAbilityAction { ActorId: "harvester", Ability: "Harvest", TargetX: 0, TargetY: -1 });
+
+    CpuGameState simulated = harvest.Apply(original);
+
+    Assert.True(original.Terrain.IsForest((0, -1)));
+    Assert.False(simulated.Terrain.IsForest((0, -1)));
+    Assert.Equal(200, original.Teams[NetworkTeam.Red].Money);
+    Assert.Equal(215, simulated.Teams[NetworkTeam.Red].Money);
+    Assert.True(simulated.Pieces.Single(piece => piece.Id == "harvester").HasAttackedThisTurn);
+    Assert.False(harvest.IsLegal(simulated));
+  }
+
+
+  [Fact]
+  public void SumoPushesTwoTilesAndShortensBeforeALake()
+  {
+    CpuGameState clear = CreateState(
+      new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "sumo", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(clear));
+    CpuGameState fullPush = attack.Apply(clear);
+    NetworkPiece fullyPushed = fullPush.Pieces.Single(piece => piece.Id == "target");
+    Assert.Equal((0, -3), (fullyPushed.X, fullyPushed.Y));
+    Assert.False(fullyPushed.HasMovedThisTurn);
+
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState blocked = new(
+      configuration,
+      [
+        new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+        new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(lakes: [(0, -3)])
+    );
+
+    Assert.True(attack.IsLegal(blocked));
+    CpuGameState shortPush = attack.Apply(blocked);
+    NetworkPiece partlyPushed = shortPush.Pieces.Single(piece => piece.Id == "target");
+    Assert.Equal((0, -2), (partlyPushed.X, partlyPushed.Y));
+    Assert.False(partlyPushed.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void MusketeerRetreatsWithoutSpendingItsMove()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("musketeer", nameof(PieceType.Musketeer), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "musketeer", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece musketeer = result.Pieces.Single(piece => piece.Id == "musketeer");
+    Assert.Equal((0, 2), (musketeer.X, musketeer.Y));
+    Assert.False(musketeer.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void MusketeerStaysPutWhenFullRetreatIsBlocked()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("musketeer", nameof(PieceType.Musketeer), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(lakes: [(0, 2)])
+    );
+    AttackAction attack = new(NetworkTeam.Red, "musketeer", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece musketeer = result.Pieces.Single(piece => piece.Id == "musketeer");
+    Assert.Equal((0, 0), (musketeer.X, musketeer.Y));
+    Assert.False(musketeer.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void BeelzebubCannotBePushedBySumo()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("sumo", nameof(PieceType.Sumo), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("beelzebub", nameof(PieceType.Beelzebub), NetworkTeam.Blue, 0, -3, 120)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "sumo", "beelzebub", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece beelzebub = result.Pieces.Single(piece => piece.Id == "beelzebub");
+    Assert.Equal((0, -3), (beelzebub.X, beelzebub.Y));
+  }
+
+  [Fact]
+  public void BeelzebubRetaliatesByPushingItsAttackerUsingFootprintCentre()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("beelzebub", nameof(PieceType.Beelzebub), NetworkTeam.Blue, 0, -3, 120)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "beelzebub", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    NetworkPiece attacker = result.Pieces.Single(piece => piece.Id == "attacker");
+    Assert.Equal((-2, 2), (attacker.X, attacker.Y));
+    Assert.False(attacker.HasMovedThisTurn);
+  }
+
+  [Fact]
+  public void ZeusChainsThroughDiagonalAndOrthogonalEnemiesButNotFriendlies()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("zeus", nameof(PieceType.Zeus), NetworkTeam.Red, 0, 0, 55),
+      new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190),
+      new NetworkPiece("diagonal", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -3, 30),
+      new NetworkPiece("next", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, -3, 30),
+      new NetworkPiece("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -2, 30)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "zeus", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(160, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Equal(10, result.Pieces.Single(piece => piece.Id == "diagonal").Health);
+    Assert.Equal(10, result.Pieces.Single(piece => piece.Id == "next").Health);
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "friendly").Health);
+  }
+
+  [Fact]
+  public void PhantomPossessionMovesRoyalIdentityAndUnpossessLocksThePhantom()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 30),
+      new NetworkPiece("enemy-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+    );
+    UseAbilityAction possess = new(NetworkTeam.Red, "phantom", "Possess", "host", 0, -1);
+
+    Assert.True(possess.IsLegal(state));
+    state = possess.Apply(state);
+
+    NetworkPiece possessedPhantom = state.Pieces.Single(piece => piece.Id == "phantom");
+    NetworkPiece host = state.Pieces.Single(piece => piece.Id == "host");
+    Assert.Equal("host", possessedPhantom.PossessedUnitId);
+    Assert.True(host.IsRoyalProxy);
+    Assert.False(RoyalAbilityRules.IsRoyal(
+      possessedPhantom.Type, possessedPhantom.IsRoyalProxy, possessedPhantom.PossessedUnitId));
+    Assert.True(RoyalAbilityRules.IsRoyal(host.Type, host.IsRoyalProxy, host.PossessedUnitId));
+
+    UseAbilityAction unpossess = new(NetworkTeam.Red, "phantom", "Unpossess", "host", 0, -1);
+    Assert.True(unpossess.IsLegal(state));
+    state = unpossess.Apply(state);
+
+    NetworkPiece releasedPhantom = state.Pieces.Single(piece => piece.Id == "phantom");
+    NetworkPiece releasedHost = state.Pieces.Single(piece => piece.Id == "host");
+    Assert.Null(releasedPhantom.PossessedUnitId);
+    Assert.False(releasedHost.IsRoyalProxy);
+    Assert.True(releasedPhantom.AbilityState?.CannotMoveThisTurn == true);
+    Assert.True(releasedPhantom.AbilityState?.CannotActThisTurn == true);
+    Assert.False(new MoveAction(NetworkTeam.Red, "phantom", 1, 0).IsLegal(state));
+  }
+
+  [Fact]
+  public void KillingPossessedRoyalProxyAlsoKillsItsPhantom()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "phantom", nameof(PieceType.Phantom), NetworkTeam.Red, 0, 0, 20,
+          PossessedUnitId: "host"),
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 5,
+          IsRoyalProxy: true),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -2, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Phantom)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Blue, "attacker", "host", 0, -1);
+    Assert.True(attack.IsLegal(state));
+
+    CpuGameState result = attack.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "host");
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "phantom");
+    Assert.Equal(NetworkTeam.Blue, result.Winner);
+  }
+
+  [Fact]
+  public void GoblinRoyaltyOnlyLosesWhenFinalGoblinDies()
+  {
+    CpuGameState twoGoblinState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("goblin-a", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("goblin-b", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 2, 0, 35),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.GoblinRoyalty)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction firstKill = new(NetworkTeam.Blue, "attacker", "goblin-a", 0, 0);
+    Assert.True(firstKill.IsLegal(twoGoblinState));
+    CpuGameState afterFirst = firstKill.Apply(twoGoblinState);
+    Assert.Null(afterFirst.Winner);
+    Assert.Contains(afterFirst.Pieces, piece => piece.Id == "goblin-b");
+
+    CpuGameState finalGoblinState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("goblin", nameof(PieceType.GoblinRoyalty), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.GoblinRoyalty)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction finalKill = new(NetworkTeam.Blue, "attacker", "goblin", 0, 0);
+    Assert.True(finalKill.IsLegal(finalGoblinState));
+    CpuGameState afterFinal = finalKill.Apply(finalGoblinState);
+    Assert.Equal(NetworkTeam.Blue, afterFinal.Winner);
+  }
+
+  [Fact]
+  public void PalaceGrantsIncomeAndOnlyAssistsMovementTowardIt()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    UnitRule swordsmanRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    int assistedY = swordsmanRule.MoveRange + 1;
+    int palaceY = assistedY + 2;
+    CpuGameState movementState = new(
+      configuration,
+      [
+        new NetworkPiece("palace", nameof(PieceType.Palace), NetworkTeam.Red, 0, palaceY, 230),
+        new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(
+        forests: [(0, 1), (0, 2), (0, 3), (0, assistedY)],
+        lakes: [(0, -1)])
+    );
+
+    IReadOnlyDictionary<(int x, int y), List<(int x, int y)>> paths =
+      CpuGameRules.GetLegalMovementPaths(movementState, movementState.Pieces.Single(piece => piece.Id == "soldier"));
+    Assert.Contains((0, assistedY), paths.Keys);
+    Assert.DoesNotContain((0, -1), paths.Keys);
+
+    CpuGameState economyState = new(
+      configuration,
+      [
+        new NetworkPiece("palace", nameof(PieceType.Palace), NetworkTeam.Red, 0, 5, 230),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 0, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    CpuGameState redTurn = new EndTurnAction(NetworkTeam.Blue).Apply(economyState);
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    Assert.Equal(210, redTurn.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void EmperorTransformsIntoTerracottaThenTerracottaDeathLosesRegicide()
+  {
+    CpuGameState emperorState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("emperor", nameof(PieceType.Emperor), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Emperor)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction killEmperor = new(NetworkTeam.Blue, "attacker", "emperor", 0, 0);
+    Assert.True(killEmperor.IsLegal(emperorState));
+
+    CpuGameState transformed = killEmperor.Apply(emperorState);
+    NetworkPiece terracotta = transformed.Pieces.Single(piece => piece.Id == "emperor");
+    Assert.Equal(nameof(PieceType.TerracottaWarrior), terracotta.Type);
+    Assert.Equal(PieceDefinitions.TerracottaWarrior.Health, terracotta.Health);
+    Assert.Null(transformed.Winner);
+
+    CpuGameState terracottaState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("terracotta", nameof(PieceType.TerracottaWarrior), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Emperor)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuGameState defeated = new AttackAction(NetworkTeam.Blue, "attacker", "terracotta", 0, 0).Apply(terracottaState);
+    Assert.Equal(NetworkTeam.Blue, defeated.Winner);
+  }
+
+  [Fact]
+  public void GiantAndCyclopsCarryAndUseTheirDistinctThrowPatterns()
+  {
+    CpuGameState carryState = CreateState(
+      new NetworkPiece("giant", nameof(PieceType.Giant), NetworkTeam.Red, 0, 0, 70),
+      new NetworkPiece("cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+    );
+    UseAbilityAction carry = new(NetworkTeam.Red, "giant", "Carry", "cargo", 0, -1);
+    Assert.True(carry.IsLegal(carryState));
+    CpuGameState carried = carry.Apply(carryState);
+    NetworkPiece carriedCargo = carried.Pieces.Single(piece => piece.Id == "cargo");
+    Assert.Equal("giant", carriedCargo.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Carried, carriedCargo.AttachmentKind);
+
+    CpuGameState giantThrowState = CreateState(
+      new NetworkPiece("giant", nameof(PieceType.Giant), NetworkTeam.Red, 0, 0, 70),
+      new NetworkPiece(
+        "cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 0, 30,
+        AttachedToId: "giant", AttachmentKind: NetworkAttachmentKind.Carried)
+    );
+    UseAbilityAction giantThrow = new(NetworkTeam.Red, "giant", "Throw", null, 3, -2);
+    Assert.True(giantThrow.IsLegal(giantThrowState));
+    CpuGameState giantThrown = giantThrow.Apply(giantThrowState);
+    NetworkPiece giantCargo = giantThrown.Pieces.Single(piece => piece.Id == "cargo");
+    Assert.Equal((3, -2), (giantCargo.X, giantCargo.Y));
+    Assert.Null(giantCargo.AttachedToId);
+
+    CpuGameState cyclopsThrowState = CreateState(
+      new NetworkPiece("cyclops", nameof(PieceType.Cyclops), NetworkTeam.Red, 0, 0, 85),
+      new NetworkPiece(
+        "cargo", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 0, 30,
+        AttachedToId: "cyclops", AttachmentKind: NetworkAttachmentKind.Carried)
+    );
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "cyclops", "Throw", null, 3, -2).IsLegal(cyclopsThrowState));
+    UseAbilityAction cyclopsThrow = new(NetworkTeam.Red, "cyclops", "Throw", null, 3, -1);
+    Assert.True(cyclopsThrow.IsLegal(cyclopsThrowState));
+  }
+
+  [Theory]
+  [InlineData(PieceType.SummonedGolem, AdvancedAbilityRules.SummonedGolemUpkeep)]
+  [InlineData(PieceType.HiredGun, AdvancedAbilityRules.HiredGunUpkeep)]
+  public void UpkeepUnitsPayImmediatelyThenMayBeFired(PieceType type, int immediateUpkeep)
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    UnitRule rule = UnitRules.GetRequired(type.ToString());
+    Board board = BoardRules.GetBoard(configuration);
+    (int x, int y) position = board.Cells.First(square =>
+      BoardRules.CanPlaceForTeam(
+        board, configuration.GameMode, configuration.PlayerCount,
+        NetworkTeam.Red, square.x, square.y, rule.Width, rule.Height));
+    int purchasePrice = EconomyRules.GetUnitPrice(rule.Cost, configuration.UnitPricePercent);
+    CpuGameState state = new(
+      configuration,
+      [],
+      [
+        new CpuTeamState(NetworkTeam.Red, purchasePrice + immediateUpkeep, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    PurchaseAction purchase = new(NetworkTeam.Red, rule.Type, position.x, position.y);
+
+    Assert.True(purchase.IsLegal(state));
+    CpuGameState purchased = purchase.Apply(state);
+    Assert.Equal(0, purchased.Teams[NetworkTeam.Red].Money);
+    NetworkPiece unit = purchased.Pieces.Single(piece => piece.Type == rule.Type);
+
+    // Newly purchased normal-phase units cannot act until their next owner turn.
+    CpuGameState ready = new(
+      configuration,
+      [unit with { HasMovedThisTurn = false, HasAttackedThisTurn = false, AttacksThisTurn = 0 }],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    UseAbilityAction fire = new(NetworkTeam.Red, unit.Id, "Fire", null, unit.X, unit.Y);
+    Assert.True(fire.IsLegal(ready));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(ready, NetworkTeam.Red), action => action.Equals(fire));
+    CpuGameState fired = fire.Apply(ready);
+    Assert.Equal(NetworkTeam.Neutral, fired.Pieces.Single(piece => piece.Id == unit.Id).Team);
+  }
+
+  [Theory]
+  [InlineData(PieceType.SummonedGolem, AdvancedAbilityRules.SummonedGolemUpkeep)]
+  [InlineData(PieceType.HiredGun, AdvancedAbilityRules.HiredGunUpkeep)]
+  public void UpkeepUnitsBecomeNeutralWhenOwnerTurnPayrollCannotBePaid(PieceType type, int upkeep)
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    NetworkPiece unit = new("upkeep-unit", type.ToString(), NetworkTeam.Red, 0, 2, UnitRules.GetRequired(type.ToString()).Health);
+    CpuGameState state = new(
+      configuration,
+      [
+        unit,
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 0, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, upkeep - 1, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    CpuGameState redTurn = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    NetworkPiece neutral = redTurn.Pieces.Single(piece => piece.Id == unit.Id);
+    Assert.Equal(NetworkTeam.Neutral, neutral.Team);
+    Assert.Equal(upkeep - 1, redTurn.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void FireDamagesMoverOnceAndIsConsumed()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("fire", AbilityEntityKind.Fire, NetworkTeam.Blue, 0, 0, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 0, -1);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(15, result.Pieces.Single(piece => piece.Id == "soldier").Health);
+    Assert.DoesNotContain(result.AbilityEntities, entity => entity.Id == "fire");
+  }
+
+  [Fact]
+  public void BrambleDamagesMoverAndItselfWhenCrossed()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, 30)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("bramble", AbilityEntityKind.Bramble, NetworkTeam.Blue, 0, 0, 30)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 0, -1);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(20, result.Pieces.Single(piece => piece.Id == "soldier").Health);
+    Assert.Equal(20, result.AbilityEntities.Single(entity => entity.Id == "bramble").Health);
+    Assert.False(new MoveAction(NetworkTeam.Red, "soldier", 0, 0).IsLegal(state));
+  }
+
+  [Fact]
+  public void PhoenixMayCreateFireAfterAttackingAndPaysFiveHealth()
+  {
+    NetworkPiece phoenix = new(
+      "phoenix", nameof(PieceType.Phoenix), NetworkTeam.Red, 0, 0, 60,
+      HasAttackedThisTurn: true);
+    CpuGameState state = CreateState(phoenix);
+    UseAbilityAction fire = new(NetworkTeam.Red, "phoenix", "Fire", null, 0, -1);
+
+    Assert.True(fire.IsLegal(state));
+    CpuGameState result = fire.Apply(state);
+
+    Assert.Equal(55, result.Pieces.Single(piece => piece.Id == "phoenix").Health);
+    Assert.Contains(result.AbilityEntities, entity =>
+      entity.Kind == AbilityEntityKind.Fire && entity.X == 0 && entity.Y == -1);
+    Assert.False(fire.IsLegal(result));
+  }
+
+  [Fact]
+  public void DragonCrossesFireWithoutDamageOrConsumingIt()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [new NetworkPiece("dragon", nameof(PieceType.Dragon), NetworkTeam.Red, 0, 2, 120)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("fire", AbilityEntityKind.Fire, NetworkTeam.Blue, 0, 0, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "dragon", 0, -2);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState result = move.Apply(state);
+
+    Assert.Equal(120, result.Pieces.Single(piece => piece.Id == "dragon").Health);
+    Assert.Contains(result.AbilityEntities, entity => entity.Id == "fire");
+  }
+
+  [Fact]
+  public void WitchPoisonCloudDamagesUnitsAtOwnerTurnStartAndDiesWithSource()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    CpuGameState state = new(
+      configuration,
+      [
+        new NetworkPiece("witch", nameof(PieceType.Witch), NetworkTeam.Red, 0, 0, 20),
+        new NetworkPiece("victim", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, -1, 30),
+        new NetworkPiece("blue-palace", nameof(PieceType.Palace), NetworkTeam.Blue, 5, -5, 230)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    UseAbilityAction cloud = new(NetworkTeam.Red, "witch", "PoisonCloud", null, 0, -1);
+
+    Assert.True(cloud.IsLegal(state));
+    state = cloud.Apply(state);
+    Assert.Single(state.AbilityEntities.Where(entity => entity.Kind == AbilityEntityKind.PoisonCloud));
+
+    Assert.True(new EndTurnAction(NetworkTeam.Red).IsLegal(state));
+    state = new EndTurnAction(NetworkTeam.Red).Apply(state);
+    Assert.True(new EndTurnAction(NetworkTeam.Blue).IsLegal(state));
+    state = new EndTurnAction(NetworkTeam.Blue).Apply(state);
+
+    Assert.Equal(15, state.Pieces.Single(piece => piece.Id == "victim").Health);
+
+    CpuGameState killSourceState = new(
+      configuration,
+      [
+        new NetworkPiece("witch", nameof(PieceType.Witch), NetworkTeam.Red, 0, 0, 5),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity(
+          "cloud", AbilityEntityKind.PoisonCloud, NetworkTeam.Red, 0, -1, 0,
+          SourcePieceId: "witch")
+      ]
+    );
+    AttackAction kill = new(NetworkTeam.Blue, "attacker", "witch", 0, 0);
+    Assert.True(kill.IsLegal(killSourceState));
+    CpuGameState afterKill = kill.Apply(killSourceState);
+
+    Assert.DoesNotContain(afterKill.Pieces, piece => piece.Id == "witch");
+    Assert.DoesNotContain(afterKill.AbilityEntities, entity => entity.SourcePieceId == "witch");
+  }
+
+  [Fact]
+  public void PickpocketZeroDamageAttackStealsUpToTwentyGold()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("pickpocket", nameof(PieceType.Pickpocket), NetworkTeam.Red, 0, 0, 20),
+        new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 12, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Red, "pickpocket", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(212, result.Teams[NetworkTeam.Red].Money);
+    Assert.Equal(0, result.Teams[NetworkTeam.Blue].Money);
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "pickpocket").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void RaiderKillAwardsHalfBaseCostRoundedToFive()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("raider", nameof(PieceType.Raider), NetworkTeam.Red, 0, 0, 40),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 1)
+    );
+    int expectedReward = AdvancedAbilityRules.GetRaiderKillReward(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Cost);
+
+    CpuGameState result = new AttackAction(
+      NetworkTeam.Red, "raider", "target", 0, -1).Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "target");
+    Assert.Equal(200 + expectedReward, result.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void CactusJackReflectsHalfOfFinalIncomingDamage()
+  {
+    UnitRule swordsmanRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState state = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, swordsmanRule.Health),
+      new NetworkPiece("cactus", nameof(PieceType.CactusJack), NetworkTeam.Blue, 0, -1, 45)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "cactus", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    int reflected = AdvancedAbilityRules.ReflectCactusDamage(swordsmanRule.Attack);
+    Assert.Equal(45 - swordsmanRule.Attack, result.Pieces.Single(piece => piece.Id == "cactus").Health);
+    Assert.Equal(swordsmanRule.Health - reflected, result.Pieces.Single(piece => piece.Id == "attacker").Health);
+  }
+
+  [Fact]
+  public void WendigoMayAttackFriendlyAndOnlyDiesAfterTurnWithNoAttack()
+  {
+    CpuGameState attackState = CreateState(
+      new NetworkPiece("wendigo", nameof(PieceType.Wendigo), NetworkTeam.Red, 0, 0, 65),
+      new NetworkPiece("friendly", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 100),
+      new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+    );
+    AttackAction friendlyAttack = new(NetworkTeam.Red, "wendigo", "friendly", 0, -1);
+
+    Assert.True(friendlyAttack.IsLegal(attackState));
+    CpuGameState afterAttack = friendlyAttack.Apply(attackState);
+    NetworkPiece attackedWendigo = afterAttack.Pieces.Single(piece => piece.Id == "wendigo");
+    Assert.Equal(1, attackedWendigo.AttacksThisTurn);
+    Assert.Equal(50, afterAttack.Pieces.Single(piece => piece.Id == "friendly").Health);
+
+    Assert.True(new EndTurnAction(NetworkTeam.Red).IsLegal(afterAttack));
+    CpuGameState survivedTurn = new EndTurnAction(NetworkTeam.Red).Apply(afterAttack);
+    Assert.Contains(survivedTurn.Pieces, piece => piece.Id == "wendigo");
+
+    CpuGameState idleState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("wendigo", nameof(PieceType.Wendigo), NetworkTeam.Red, 0, 0, 65),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 5, -5, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn, nameof(PieceType.Palace)),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn, nameof(PieceType.King))
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain()
+    );
+
+    EndTurnAction idleEnd = new(NetworkTeam.Red);
+    Assert.True(idleEnd.IsLegal(idleState));
+    CpuGameState died = idleEnd.Apply(idleState);
+    Assert.DoesNotContain(died.Pieces, piece => piece.Id == "wendigo");
+  }
+
+  [Fact]
+  public void SpyMarkConsumesAttackDoublesNextDamageAndThenClears()
+  {
+    UnitRule swordsman = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState state = CreateState(
+      new NetworkPiece("spy", nameof(PieceType.Spy), NetworkTeam.Red, 0, 0, 30),
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, -1, swordsman.Health),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100)
+    );
+    UseAbilityAction mark = new(NetworkTeam.Red, "spy", "Mark", "target", 0, -1);
+
+    Assert.True(mark.IsLegal(state));
+    CpuGameState marked = mark.Apply(state);
+    NetworkPiece spy = marked.Pieces.Single(piece => piece.Id == "spy");
+    Assert.True(spy.HasAttackedThisTurn);
+    Assert.Equal(1, spy.AttacksThisTurn);
+    Assert.Equal("target", spy.MarkedTargetId);
+
+    AttackAction attack = new(NetworkTeam.Red, "attacker", "target", 0, -1);
+    Assert.True(attack.IsLegal(marked));
+    CpuGameState damaged = attack.Apply(marked);
+
+    Assert.Equal(100 - swordsman.Attack * 2, damaged.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Null(damaged.Pieces.Single(piece => piece.Id == "spy").MarkedTargetId);
+  }
+
+  [Fact]
+  public void WispDiesImmediatelyAfterAttacking()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("wisp", nameof(PieceType.Wisp), NetworkTeam.Red, 0, 0, 5),
+      new NetworkPiece("target", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -1, 100)
+    );
+    AttackAction attack = new(NetworkTeam.Red, "wisp", "target", 0, -1);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.DoesNotContain(result.Pieces, piece => piece.Id == "wisp");
+    Assert.Equal(80, result.Pieces.Single(piece => piece.Id == "target").Health);
+  }
+
+  [Fact]
+  public void ChimeraTakesFifteenExtraDamageFromBehind()
+  {
+    UnitRule swordsman = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    CpuGameState behindState = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 1, swordsman.Health),
+      new NetworkPiece(
+        "chimera", nameof(PieceType.Chimera), NetworkTeam.Blue, 0, 0, 75,
+        FacingX: 0, FacingY: -1)
+    );
+    CpuGameState frontState = CreateState(
+      new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, swordsman.Health),
+      new NetworkPiece(
+        "chimera", nameof(PieceType.Chimera), NetworkTeam.Blue, 0, 0, 75,
+        FacingX: 0, FacingY: -1)
+    );
+
+    CpuGameState behind = new AttackAction(
+      NetworkTeam.Red, "attacker", "chimera", 0, 0).Apply(behindState);
+    CpuGameState front = new AttackAction(
+      NetworkTeam.Red, "attacker", "chimera", 0, 0).Apply(frontState);
+
+    int behindDamage = 75 - behind.Pieces.Single(piece => piece.Id == "chimera").Health;
+    int frontDamage = 75 - front.Pieces.Single(piece => piece.Id == "chimera").Health;
+    Assert.Equal(15, behindDamage - frontDamage);
+  }
+
+  [Fact]
+  public void BallistaPiercingStopsAtAttackBlockingAbilityEntity()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("ballista", nameof(PieceType.Ballista), NetworkTeam.Red, 0, 0, 25),
+        new NetworkPiece("target", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190),
+        new NetworkPiece("behind", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, -4, 100)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("wall", AbilityEntityKind.StoneWall, NetworkTeam.Blue, 0, -3, 50)
+      ]
+    );
+    AttackAction attack = new(NetworkTeam.Red, "ballista", "target", 0, -2);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(150, result.Pieces.Single(piece => piece.Id == "target").Health);
+    Assert.Equal(100, result.Pieces.Single(piece => piece.Id == "behind").Health);
+  }
+
+  [Fact]
+  public void MuseCanAttachWithoutNormalAttackRange()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("muse", nameof(PieceType.Muse), NetworkTeam.Red, 0, 0, 20),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -3, 30)
+    );
+    UseAbilityAction attach = new(NetworkTeam.Red, "muse", "Attach", "host", 0, -3);
+
+    Assert.True(attach.IsLegal(state));
+    Assert.Contains(new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red), action =>
+      action is UseAbilityAction { ActorId: "muse", Ability: "Attach", TargetPieceId: "host" });
+
+    CpuGameState result = attach.Apply(state);
+    NetworkPiece muse = result.Pieces.Single(piece => piece.Id == "muse");
+    Assert.Equal("host", muse.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Muse, muse.AttachmentKind);
+    Assert.True(muse.HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void ShieldsmanTakesIncomingDamageForItsHost()
+  {
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece(
+          "shield", nameof(PieceType.Shieldsman), NetworkTeam.Red, 0, 0, 55,
+          AttachedToId: "host", AttachmentKind: NetworkAttachmentKind.Shieldsman),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    AttackAction attack = new(NetworkTeam.Blue, "attacker", "host", 0, 0);
+
+    Assert.True(attack.IsLegal(state));
+    CpuGameState result = attack.Apply(state);
+
+    Assert.Equal(30, result.Pieces.Single(piece => piece.Id == "host").Health);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "shield").Health < 55);
+  }
+
+  [Fact]
+  public void ImpBoostsHostAttackAndDrainsHealthAtOwnerTurnStart()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("imp", nameof(PieceType.Imp), NetworkTeam.Red, 0, 0, 5),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -1, 30),
+      new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 0, -2, 190)
+    );
+    NetworkPiece hostBefore = state.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyBefore = state.Pieces.Single(piece => piece.Id == "enemy");
+    int damageBefore = CpuGameRules.EstimateAttackDamage(state, hostBefore, enemyBefore);
+
+    UseAbilityAction attach = new(NetworkTeam.Red, "imp", "Attach", "host", 0, -1);
+    Assert.True(attach.IsLegal(state));
+    CpuGameState attached = attach.Apply(state);
+
+    NetworkPiece hostAfter = attached.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyAfter = attached.Pieces.Single(piece => piece.Id == "enemy");
+    Assert.Equal(damageBefore + AdvancedAbilityRules.ImpAttackBonus,
+      CpuGameRules.EstimateAttackDamage(attached, hostAfter, enemyAfter));
+    NetworkPiece impAfter = attached.Pieces.Single(piece => piece.Id == "imp");
+    Assert.Equal("host", impAfter.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.Imp, impAfter.AttachmentKind);
+
+    CpuGameState beforeRedTurn = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece(
+          "imp", nameof(PieceType.Imp), NetworkTeam.Red, 0, 0, 5,
+          AttachedToId: "host", AttachmentKind: NetworkAttachmentKind.Imp),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    EndTurnAction endBlueTurn = new(NetworkTeam.Blue);
+    Assert.True(endBlueTurn.IsLegal(beforeRedTurn));
+    CpuGameState redTurn = endBlueTurn.Apply(beforeRedTurn);
+    Assert.Equal(NetworkTeam.Red, redTurn.CurrentTurn);
+    Assert.Equal(25, redTurn.Pieces.Single(piece => piece.Id == "host").Health);
+  }
+
+  [Fact]
+  public void BaronSelectsOneFriendlyUnitAndAppliesCombatBonus()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("baron", nameof(PieceType.Baron), NetworkTeam.Red, 0, 0, 120),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30),
+      new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 1, -1, 190),
+      new NetworkPiece("other", nameof(PieceType.Swordsman), NetworkTeam.Red, -1, 0, 30)
+    );
+    NetworkPiece hostBefore = state.Pieces.Single(piece => piece.Id == "host");
+    NetworkPiece enemyBefore = state.Pieces.Single(piece => piece.Id == "enemy");
+    int baseDamage = CpuGameRules.EstimateAttackDamage(state, hostBefore, enemyBefore);
+
+    UseAbilityAction select = new(NetworkTeam.Red, "baron", "Select", "host", 1, 0);
+    Assert.True(select.IsLegal(state));
+    CpuGameState selected = select.Apply(state);
+
+    NetworkPiece baron = selected.Pieces.Single(piece => piece.Id == "baron");
+    Assert.Equal("host", baron.AbilityState?.SelectedTargetId);
+    Assert.False(baron.HasAttackedThisTurn);
+    Assert.Equal(baseDamage + AdvancedAbilityRules.BaronAttackBonus,
+      CpuGameRules.EstimateAttackDamage(
+        selected,
+        selected.Pieces.Single(piece => piece.Id == "host"),
+        selected.Pieces.Single(piece => piece.Id == "enemy")));
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "baron", "Select", "other", -1, 0).IsLegal(selected));
+  }
+
+  [Fact]
+  public void WarDrumRefreshesMovedUnitOnlyOncePerOwnerTurn()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("drum-a", nameof(PieceType.WarDrum), NetworkTeam.Red, 0, 0, 35),
+      new NetworkPiece("drum-b", nameof(PieceType.WarDrum), NetworkTeam.Red, 1, 0, 35),
+      new NetworkPiece(
+        "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -2, 30,
+        HasMovedThisTurn: true)
+    );
+    UseAbilityAction refresh = new(NetworkTeam.Red, "drum-a", "Refresh", "host", 0, -2);
+
+    Assert.True(refresh.IsLegal(state));
+    CpuGameState result = refresh.Apply(state);
+
+    NetworkPiece host = result.Pieces.Single(piece => piece.Id == "host");
+    Assert.False(host.HasMovedThisTurn);
+    Assert.True(host.AbilityState?.RefreshedByWarDrumThisTurn == true);
+    Assert.True(result.Pieces.Single(piece => piece.Id == "drum-a").HasAttackedThisTurn);
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Red, "drum-b", "Refresh", "host", 0, -2).IsLegal(result));
+  }
+
+  [Fact]
+  public void WillOWispSettlesThenSpawnsAdjacentWisp()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("will", nameof(PieceType.WillOWisp), NetworkTeam.Red, 0, 0, 30)
+    );
+    UseAbilityAction settle = new(NetworkTeam.Red, "will", "Settle", null, 0, 0);
+
+    Assert.True(settle.IsLegal(state));
+    CpuGameState settled = settle.Apply(state);
+    NetworkPiece settledWill = settled.Pieces.Single(piece => piece.Id == "will");
+    Assert.True(settledWill.AbilityState?.Settled == true);
+    Assert.False(new MoveAction(NetworkTeam.Red, "will", 0, 1).IsLegal(settled));
+
+    UseAbilityAction spawn = new(NetworkTeam.Red, "will", "SpawnWisp", null, 1, 1);
+    Assert.True(spawn.IsLegal(settled));
+    CpuGameState spawned = spawn.Apply(settled);
+
+    Assert.Contains(spawned.Pieces, piece =>
+      piece.Type == nameof(PieceType.Wisp) && piece.Team == NetworkTeam.Red &&
+      piece.X == 1 && piece.Y == 1);
+    Assert.True(spawned.Pieces.Single(piece => piece.Id == "will").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void OdinProtectionSavesFirstLethalHitAndExpiresBeforeNextOwnerTurnEffects()
+  {
+    CpuGameState selectionState = CreateState(
+      new NetworkPiece("odin", nameof(PieceType.Odin), NetworkTeam.Red, 0, 0, 170),
+      new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, -2, 30)
+    );
+    UseAbilityAction protect = new(NetworkTeam.Red, "odin", "Protect", "host", 0, -2);
+    Assert.True(protect.IsLegal(selectionState));
+    CpuGameState protectedState = protect.Apply(selectionState);
+    Assert.True(protectedState.Pieces.Single(piece => piece.Id == "host")
+      .AbilityState?.OdinProtectionAvailable == true);
+    Assert.Equal(AdvancedAbilityRules.OdinCooldownTurns,
+      protectedState.Pieces.Single(piece => piece.Id == "odin").AbilityState?.CooldownOwnerTurns);
+
+    CpuGameState lethalState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 5,
+          AbilityState: new UnitAbilityState { OdinProtectedById = "odin", OdinProtectionAvailable = true }),
+        new NetworkPiece("attacker", nameof(PieceType.Swordsman), NetworkTeam.Blue, 0, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    CpuGameState survived = new AttackAction(
+      NetworkTeam.Blue, "attacker", "host", 0, 0).Apply(lethalState);
+    NetworkPiece survivor = survived.Pieces.Single(piece => piece.Id == "host");
+    Assert.Equal(1, survivor.Health);
+    Assert.False(survivor.AbilityState?.OdinProtectionAvailable == true);
+
+    CpuGameState expiryState = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 5,
+          PendingDamage: [new NetworkPendingDamage(NetworkTeam.Red, NetworkTeam.Blue, 10)],
+          AbilityState: new UnitAbilityState { OdinProtectedById = "odin", OdinProtectionAvailable = true }),
+        new NetworkPiece("blue-king", nameof(PieceType.King), NetworkTeam.Blue, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn - 1)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+    EndTurnAction endBlue = new(NetworkTeam.Blue);
+    Assert.True(endBlue.IsLegal(expiryState));
+    CpuGameState afterExpiry = endBlue.Apply(expiryState);
+    Assert.DoesNotContain(afterExpiry.Pieces, piece => piece.Id == "host");
+  }
+
+  [Fact]
+  public void HackerDisablesSpecialsButNotNormalMovementForOneOwnerTurn()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("hacker", nameof(PieceType.Hacker), NetworkTeam.Red, 0, 0, 25),
+      new NetworkPiece("target", nameof(PieceType.Phoenix), NetworkTeam.Blue, 3, 4, 70)
+    );
+    UseAbilityAction hack = new(NetworkTeam.Red, "hacker", "Hack", "target", 3, 4);
+    Assert.True(hack.IsLegal(state));
+    CpuGameState hacked = hack.Apply(state);
+    Assert.Equal(1, hacked.Pieces.Single(piece => piece.Id == "target")
+      .AbilityState?.DisabledOwnerTurnsRemaining);
+    Assert.Equal(AdvancedAbilityRules.HackerCooldownTurns,
+      hacked.Pieces.Single(piece => piece.Id == "hacker").AbilityState?.CooldownOwnerTurns);
+
+    CpuGameState blueTurn = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece(
+          "target", nameof(PieceType.Phoenix), NetworkTeam.Blue, 0, 0, 70,
+          AbilityState: new UnitAbilityState { DisabledOwnerTurnsRemaining = 1 }),
+        new NetworkPiece("red-king", nameof(PieceType.King), NetworkTeam.Red, 4, 4, 190)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Blue,
+      terrain: new BattlefieldTerrain()
+    );
+
+    Assert.False(new UseAbilityAction(
+      NetworkTeam.Blue, "target", "Fire", null, 1, 0).IsLegal(blueTurn));
+    MoveAction move = new(NetworkTeam.Blue, "target", 0, 1);
+    Assert.True(move.IsLegal(blueTurn));
+    CpuGameState afterMove = move.Apply(blueTurn);
+    EndTurnAction endBlue = new(NetworkTeam.Blue);
+    Assert.True(endBlue.IsLegal(afterMove));
+    CpuGameState redTurn = endBlue.Apply(afterMove);
+    Assert.Equal(0, redTurn.Pieces.Single(piece => piece.Id == "target")
+      .AbilityState?.DisabledOwnerTurnsRemaining);
+  }
+
+  [Fact]
+  public void AbilityEntitiesBlockCpuMovementWithTeamAwareGates()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    NetworkPiece swordsman = new("red-swordsman", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    CpuTeamState[] teams =
+    [
+      new(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+      new(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+    ];
+
+    CpuGameState wallState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("wall", AbilityEntityKind.StoneWall, NetworkTeam.Red, 0, -1, 50)
+      ]
+    );
+    Assert.False(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(wallState));
+
+    CpuGameState friendlyGateState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("gate", AbilityEntityKind.Gatehouse, NetworkTeam.Red, 0, -1, 15)
+      ]
+    );
+    Assert.True(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(friendlyGateState));
+
+    CpuGameState enemyGateState = new(
+      configuration,
+      [swordsman],
+      teams,
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("gate", AbilityEntityKind.Gatehouse, NetworkTeam.Blue, 0, -1, 15)
+      ]
+    );
+    Assert.False(new MoveAction(NetworkTeam.Red, swordsman.Id, 0, -2).IsLegal(enemyGateState));
+  }
+
+
+  [Fact]
+  public void StagecoachMovesThroughEnemiesDealsFixedDamageAndKeepsItsAttack()
+  {
+    Board board = new(
+      Enumerable.Range(0, 5)
+        .SelectMany(x => new[] { (x, 0), (x, 1) })
+        .ToArray());
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("coach", nameof(PieceType.Stagecoach), NetworkTeam.Red, 0, 0, 85),
+        new NetworkPiece("enemy-a", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 0, 30),
+        new NetworkPiece("enemy-b", nameof(PieceType.Swordsman), NetworkTeam.Blue, 2, 1, 30)
+      ],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: board
+    );
+
+    MoveAction move = new(NetworkTeam.Red, "coach", 3, 0);
+    Assert.True(move.IsLegal(state));
+
+    CpuGameState moved = move.Apply(state);
+    NetworkPiece coach = moved.Pieces.Single(piece => piece.Id == "coach");
+
+    Assert.Equal((3, 0), (coach.X, coach.Y));
+    Assert.Equal(5, moved.Pieces.Single(piece => piece.Id == "enemy-a").Health);
+    Assert.Equal(5, moved.Pieces.Single(piece => piece.Id == "enemy-b").Health);
+    Assert.False(coach.HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void HwachaReloadUsesSeparateOwnerTurnFromFiring()
+  {
+    NetworkPiece helper = new(
+      "helper", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    NetworkPiece hwacha = new(
+      "hwacha", nameof(PieceType.Hwacha), NetworkTeam.Red, 1, 0, 25,
+      AbilityState: new UnitAbilityState { ReloadRequired = true });
+    NetworkPiece enemy = new(
+      "enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, -4, 0, 30);
+    UseAbilityAction reload = new(
+      NetworkTeam.Red, "helper", "ReloadHwacha", "hwacha", 1, 0);
+
+    CpuGameState justFired = CreateState(
+      helper,
+      hwacha with { HasAttackedThisTurn = true },
+      enemy);
+    Assert.False(reload.IsLegal(justFired));
+
+    CpuGameState state = CreateState(helper, hwacha, enemy);
+    Assert.True(reload.IsLegal(state));
+    CpuGameState after = reload.Apply(state);
+
+    NetworkPiece reloaded = after.Pieces.Single(piece => piece.Id == "hwacha");
+    Assert.True(after.Pieces.Single(piece => piece.Id == "helper").HasAttackedThisTurn);
+    Assert.False(reloaded.AbilityState!.ReloadRequired);
+    Assert.True(reloaded.AbilityState.ReloadedThisTurn);
+
+    AttackAction attackSameTurn = new(
+      NetworkTeam.Red, "hwacha", "enemy", -4, 0);
+    Assert.False(attackSameTurn.IsLegal(after));
+
+    CpuGameState nextOwnerTurn = new(
+      CreateConfiguration(),
+      after.Pieces.Select(piece => piece.Id == "hwacha"
+        ? piece with
+        {
+          HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(
+            piece.AbilityState, piece.X, piece.Y, piece.Health)
+        }
+        : piece),
+      after.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+        ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+        : team),
+      NetworkTeam.Red,
+      terrain: after.Terrain,
+      board: after.Board,
+      abilityEntities: after.AbilityEntities
+    );
+    Assert.True(attackSameTurn.IsLegal(nextOwnerTurn));
+  }
+
+  [Fact]
+  public void CommandCentreUpgradeIsPermanentAndChargesGold()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("command", nameof(PieceType.CommandCentre), NetworkTeam.Red, 0, 0, 160),
+      new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30),
+      new NetworkPiece("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 0, 30)
+    );
+    UseAbilityAction upgrade = new(NetworkTeam.Red, "command", "UpgradeAttack", "soldier", 1, 0);
+
+    Assert.True(upgrade.IsLegal(state));
+    CpuGameState after = upgrade.Apply(state);
+
+    NetworkPiece soldier = after.Pieces.Single(piece => piece.Id == "soldier");
+    Assert.True(soldier.AbilityState!.Upgraded);
+    Assert.Equal(AdvancedAbilityRules.CommandCentreAttackBonus, soldier.AbilityState.AttackBonus);
+    Assert.Equal(200 - AdvancedAbilityRules.CommandCentreUpgradeCost, after.Teams[NetworkTeam.Red].Money);
+    NetworkPiece enemy = after.Pieces.Single(piece => piece.Id == "enemy");
+    Assert.Equal(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Attack + AdvancedAbilityRules.CommandCentreAttackBonus,
+      CpuGameRules.EstimateAttackDamage(after, soldier, enemy));
+  }
+
+  [Fact]
+  public void DemolitionistTntRequiresLaterUseAndDamagesThreeByThreeArea()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("demo", nameof(PieceType.Demolitionist), NetworkTeam.Red, 0, 0, 45),
+      new NetworkPiece("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 1, 1, 50)
+    );
+    UseAbilityAction place = new(NetworkTeam.Red, "demo", "PlaceTnt", null, 1, 0);
+    Assert.True(place.IsLegal(state));
+    CpuGameState placed = place.Apply(state);
+    Assert.Contains(placed.AbilityEntities, entity =>
+      entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == "demo");
+
+    UseAbilityAction detonate = new(NetworkTeam.Red, "demo", "Detonate", null, 0, 0);
+    Assert.False(detonate.IsLegal(placed));
+
+    NetworkPiece demo = placed.Pieces.Single(piece => piece.Id == "demo");
+    CpuGameState nextOwnerTurn = new(
+      CreateConfiguration(),
+      placed.Pieces.Select(piece => piece.Id == demo.Id
+        ? piece with
+        {
+          HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(
+            piece.AbilityState, piece.X, piece.Y, piece.Health)
+        }
+        : piece),
+      placed.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+        ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+        : team),
+      NetworkTeam.Red,
+      terrain: placed.Terrain,
+      board: placed.Board,
+      abilityEntities: placed.AbilityEntities
+    );
+    Assert.True(detonate.IsLegal(nextOwnerTurn));
+    CpuGameState after = detonate.Apply(nextOwnerTurn);
+
+    Assert.DoesNotContain(after.AbilityEntities, entity => entity.Kind == AbilityEntityKind.Tnt);
+    Assert.Equal(20, after.Pieces.Single(piece => piece.Id == "enemy").Health);
+  }
+
+  [Fact]
+  public void ThorCanCreateThreeStormsThenMoveAnExistingStorm()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("thor", nameof(PieceType.Thor), NetworkTeam.Red, 0, 0, 160)
+    );
+
+    (int x, int y)[] stormPositions = [(1, 0), (2, 0), (0, 1)];
+    foreach ((int x, int y) in stormPositions)
+    {
+      UseAbilityAction create = new(NetworkTeam.Red, "thor", "Thunderstorm", null, x, y);
+      Assert.True(create.IsLegal(state));
+      state = create.Apply(state);
+      NetworkPiece thor = state.Pieces.Single(piece => piece.Id == "thor");
+      state = new CpuGameState(
+        CreateConfiguration(),
+        state.Pieces.Select(piece => piece.Id == thor.Id
+          ? piece with
+          {
+            HasAttackedThisTurn = false,
+            AbilityState = (piece.AbilityState ?? new UnitAbilityState()) with { UsedThisTurn = false }
+          }
+          : piece),
+        state.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+          ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+          : team),
+        NetworkTeam.Red,
+        terrain: state.Terrain,
+        board: state.Board,
+        abilityEntities: state.AbilityEntities);
+    }
+
+    Assert.Equal(3, state.AbilityEntities.Count(entity => entity.Kind == AbilityEntityKind.Thunderstorm));
+    AbilityEntity first = state.AbilityEntities.First(entity => entity.Kind == AbilityEntityKind.Thunderstorm);
+    UseAbilityAction move = new(NetworkTeam.Red, "thor", "Thunderstorm", first.Id, 1, 1);
+    Assert.True(move.IsLegal(state));
+    CpuGameState moved = move.Apply(state);
+    Assert.Contains(moved.AbilityEntities, entity => entity.Id == first.Id && entity.X == 1 && entity.Y == 1);
+  }
+
+  [Fact]
+  public void FafnirTransformationChargesGoldAndBecomesDragon()
+  {
+    CpuGameState state = CreateState(
+      new NetworkPiece("fafnir", nameof(PieceType.Fafnir), NetworkTeam.Red, 0, 0, 60)
+    );
+    UseAbilityAction transform = new(NetworkTeam.Red, "fafnir", "Transform", null, 0, 0);
+
+    Assert.True(transform.IsLegal(state));
+    CpuGameState after = transform.Apply(state);
+
+    NetworkPiece dragon = after.Pieces.Single(piece => piece.Id == "fafnir");
+    Assert.Equal(nameof(PieceType.FafnirDragon), dragon.Type);
+    Assert.Equal(UnitRules.GetRequired(nameof(PieceType.FafnirDragon)).Health, dragon.Health);
+    Assert.Equal(200 - AdvancedAbilityRules.FafnirTransformCost, after.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void RuneAndWatchtowerBonusesAffectCpuCombatAndMovement()
+  {
+    NetworkPiece soldier = new("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    NetworkPiece enemy = new("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 0, 30);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [soldier, enemy],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("attack-rune", AbilityEntityKind.RuneAttack, NetworkTeam.Red, 0, 1, 5),
+        new AbilityEntity("move-rune", AbilityEntityKind.RuneMovement, NetworkTeam.Red, 1, 1, 5),
+        new AbilityEntity("range-rune", AbilityEntityKind.RuneRange, NetworkTeam.Red, -1, 0, 5),
+        new AbilityEntity("tower", AbilityEntityKind.Watchtower, NetworkTeam.Red, 0, 0, 15)
+      ]
+    );
+
+    Assert.True(CpuGameRules.CanDirectlyAttack(state, soldier, enemy));
+    Assert.Equal(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Attack + AdvancedAbilityRules.RuneAttackBonus,
+      CpuGameRules.EstimateAttackDamage(state, soldier, enemy));
+    Assert.Contains((0, 4), CpuGameRules.GetLegalMovementPaths(state, soldier).Keys);
+  }
+
+  [Fact]
+  public void EndingMovementOnSnareConsumesItAndLocksNextOwnerMovement()
+  {
+    NetworkPiece soldier = new("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [soldier],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("snare", AbilityEntityKind.Snare, NetworkTeam.Blue, 1, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 1, 0);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState after = move.Apply(state);
+
+    NetworkPiece moved = after.Pieces.Single(piece => piece.Id == "soldier");
+    Assert.Equal(2, moved.AbilityState!.SkipMovementOwnerTurns);
+    Assert.DoesNotContain(after.AbilityEntities, entity => entity.Id == "snare");
+  }
+
+  [Fact]
+  public void MashhitDestroysBarricadeInAttackRange()
+  {
+    NetworkPiece mashhit = new(
+      "mashhit", nameof(PieceType.Mashhit), NetworkTeam.Red, 0, 0, 45);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [mashhit],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      barricades:
+      [
+        KeyValuePair.Create((x: 1, y: 0), 30)
+      ]
+    );
+    UseAbilityAction destroy = new(
+      NetworkTeam.Red, "mashhit", "Destroy", null, 1, 0);
+
+    Assert.True(destroy.IsLegal(state));
+    CpuGameState after = destroy.Apply(state);
+
+    Assert.False(after.Barricades.ContainsKey((1, 0)));
+    Assert.True(after.Pieces.Single(piece => piece.Id == "mashhit").HasAttackedThisTurn);
+  }
+
+  [Fact]
+  public void ArchangelPurchaseRequiresAdjacentFriendlyRoyal()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration();
+    Board board = BoardRules.GetBoard(configuration);
+    UnitRule archangelRule = UnitRules.GetRequired(nameof(PieceType.Archangel));
+    UnitRule kingRule = UnitRules.GetRequired(nameof(PieceType.King));
+
+    (int x, int y)[] archangelSquares = board.Cells
+      .Where(square => BoardRules.CanPlaceForTeam(
+        board,
+        configuration.GameMode,
+        configuration.PlayerCount,
+        NetworkTeam.Red,
+        square.x,
+        square.y,
+        archangelRule.Width,
+        archangelRule.Height))
+      .ToArray();
+
+    (int x, int y) royalPosition = board.Cells.First(square =>
+      BoardRules.CanPlaceForTeam(
+        board,
+        configuration.GameMode,
+        configuration.PlayerCount,
+        NetworkTeam.Red,
+        square.x,
+        square.y,
+        kingRule.Width,
+        kingRule.Height) &&
+      archangelSquares.Any(candidate =>
+        AbilityRules.AreAdjacent(
+          archangelRule, candidate, kingRule, square, includeDiagonal: true)));
+
+    (int x, int y) adjacent = archangelSquares.First(candidate =>
+      AbilityRules.AreAdjacent(
+        archangelRule, candidate, kingRule, royalPosition, includeDiagonal: true));
+
+    (int x, int y) far = archangelSquares.First(candidate =>
+      !AbilityRules.AreAdjacent(
+        archangelRule, candidate, kingRule, royalPosition, includeDiagonal: true) &&
+      !UnitRules.FootprintsOverlap(
+        candidate.x, candidate.y, archangelRule.Width, archangelRule.Height,
+        royalPosition.x, royalPosition.y, kingRule.Width, kingRule.Height));
+
+    CpuGameState state = new(
+      configuration,
+      [new NetworkPiece(
+        "royal", nameof(PieceType.King), NetworkTeam.Red,
+        royalPosition.x, royalPosition.y, kingRule.Health)],
+      [
+        new CpuTeamState(NetworkTeam.Red, 1000, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 1000, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      board: board
+    );
+
+    PurchaseAction adjacentPurchase = new(
+      NetworkTeam.Red, nameof(PieceType.Archangel), adjacent.x, adjacent.y);
+    PurchaseAction farPurchase = new(
+      NetworkTeam.Red, nameof(PieceType.Archangel), far.x, far.y);
+
+    Assert.True(adjacentPurchase.IsLegal(state));
+    Assert.False(farPurchase.IsLegal(state));
+
+    CpuGameState purchased = adjacentPurchase.Apply(state);
+    Assert.Contains(purchased.Pieces, piece =>
+      piece.Type == nameof(PieceType.Archangel) &&
+      piece.Team == NetworkTeam.Red &&
+      piece.X == adjacent.x &&
+      piece.Y == adjacent.y);
+  }
+
   private static CpuGameState CreateState(params NetworkPiece[] pieces)
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();

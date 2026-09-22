@@ -11,7 +11,19 @@ public sealed partial class MatchStore
   private static AbilityUnitSnapshot SnapshotAbilityUnit(NetworkPiece piece) =>
     AbilityAttackRules.Snapshot(piece);
 
+  private static UnitRule ApplySharedServerAttachmentBonuses(Match match, NetworkPiece host, UnitRule rule)
+  {
+    bool hasImp = match.Pieces.Any(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
+    int museCount = match.Pieces.Count(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
+    rule = AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyPersistentBonuses(rule, host.AbilityState);
+    return AbilityEntityRules.ApplyAuraBonuses(rule, match.AbilityEntities, host);
+  }
+
   private static bool CanSharedServerDamage(NetworkPiece attacker, NetworkPiece target) =>
+    AdvancedAbilityRules.CanTakeDirectDamage(target.Type, target.AbilityState) &&
     UnitRules.TryGet(attacker.Type, out UnitRule attackerRule) &&
     UnitRules.TryGet(target.Type, out UnitRule targetRule) &&
     AbilityRules.CanDamageTarget(attackerRule, targetRule);
@@ -24,6 +36,7 @@ public sealed partial class MatchStore
       return 0;
     }
 
+    attackerRule = ApplySharedServerAttachmentBonuses(match, attacker, attackerRule);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
     (int x, int y) targetFacing = AbilityStateRules.GetFacing(
       target.Team,
@@ -39,9 +52,14 @@ public sealed partial class MatchStore
       (target.X, target.Y)
     );
 
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      match.Pieces.Select(piece => (piece.Type, piece.Team, piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    baseDamage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(baseDamage, selectedByBaron);
     return CombatRules.CalculateDamage(
       baseDamage,
-      HasAdjacentUnit(match, attacker, attacker.Team, nameof(PieceType.Baron)),
+      false,
       match.Pieces.Any(piece => piece.Type == nameof(PieceType.Spy) && piece.MarkedTargetId == target.Id),
       false,
       false,
@@ -53,6 +71,7 @@ public sealed partial class MatchStore
     Match match,
     int attackerIndex,
     (int x, int y) targetPosition,
+    string? targetId,
     out NetworkPiece attacker,
     out bool mayFire
   )
@@ -68,7 +87,8 @@ public sealed partial class MatchStore
       HasAttackedThisTurn = attackState.HasAttackedThisTurn,
       CavalierFollowUpMoveAvailable = AbilityRules.GrantsCavalierFollowUpMove(
         attacker.Type,
-        attacker.HasMovedThisTurn)
+        attacker.HasMovedThisTurn),
+      AbilityState = AdvancedAbilityRules.RecordAttack(attacker.Type, attacker.AbilityState, targetId)
     };
 
     mayFire = true;
@@ -114,6 +134,8 @@ public sealed partial class MatchStore
       ResolvePieceDamage(match, attacker, attackingPlayer, instruction.TargetId, damageOverride);
     }
 
+    ApplySharedServerDisplacements(match, plan);
+
     if (plan.HealAttacker > 0 && UnitRules.TryGet(attacker.Type, out UnitRule attackerRule))
     {
       int liveAttackerIndex = match.Pieces.FindIndex(piece => piece.Id == attacker.Id);
@@ -122,7 +144,9 @@ public sealed partial class MatchStore
         NetworkPiece liveAttacker = match.Pieces[liveAttackerIndex];
         match.Pieces[liveAttackerIndex] = liveAttacker with
         {
-          Health = Math.Min(attackerRule.Health, liveAttacker.Health + plan.HealAttacker)
+          Health = Math.Min(
+            AdvancedAbilityRules.GetEffectiveMaximumHealth(attackerRule, liveAttacker.AbilityState),
+            liveAttacker.Health + plan.HealAttacker)
         };
       }
     }
@@ -139,9 +163,94 @@ public sealed partial class MatchStore
     }
   }
 
+  private static void ApplySharedServerDisplacements(Match match, AbilityAttackPlan plan)
+  {
+    foreach (AbilityDisplacementInstruction instruction in plan.Displacements ?? Array.Empty<AbilityDisplacementInstruction>())
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == instruction.UnitId);
+      if (index < 0) continue;
+      NetworkPiece moving = match.Pieces[index];
+      if (moving.AttachedToId is not null || !DisplacementRules.CanBePushed(moving.Type) ||
+          !UnitRules.TryGet(moving.Type, out UnitRule rule))
+      {
+        continue;
+      }
+
+      (int x, int y) start = (moving.X, moving.Y);
+      (int x, int y) destination = DisplacementRules.GetFurthestLegalPosition(
+        start,
+        instruction.DirectionX,
+        instruction.DirectionY,
+        instruction.MaximumDistance,
+        candidate => CanDisplaceServerPieceTo(match, moving, rule, candidate),
+        instruction.RequireFullDistance);
+      if (destination == start) continue;
+
+      NetworkPiece displaced = moving with { X = destination.x, Y = destination.y };
+      match.Pieces[index] = displaced;
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == moving.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with { X = destination.x, Y = destination.y };
+        }
+      }
+    }
+  }
+
+  private static bool CanDisplaceServerPieceTo(
+    Match match,
+    NetworkPiece moving,
+    UnitRule rule,
+    (int x, int y) destination)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+      match.Configuration, destination.x, destination.y, rule.Width, rule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team)))
+      {
+        return false;
+      }
+    }
+
+    HashSet<string> ignored = match.Pieces
+      .Where(piece => piece.Id == moving.Id || piece.AttachedToId == moving.Id)
+      .Select(piece => piece.Id)
+      .ToHashSet(StringComparer.Ordinal);
+    return !match.Pieces.Any(piece =>
+      !ignored.Contains(piece.Id) && piece.AttachedToId is null && piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
+  }
+
   /// <summary>Returns true when a lethal hit was consumed by a revive/transform ability.</summary>
   private static bool TryApplySharedServerLethalAbility(Match match, NetworkPiece defeatedPiece)
   {
+    if (defeatedPiece.AbilityState?.OdinProtectionAvailable == true)
+    {
+      int protectedIndex = match.Pieces.FindIndex(piece => piece.Id == defeatedPiece.Id);
+      if (protectedIndex >= 0)
+      {
+        match.Pieces[protectedIndex] = defeatedPiece with
+        {
+          Health = 1,
+          AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(defeatedPiece.AbilityState)
+        };
+      }
+      return true;
+    }
+
     LethalAbilityOutcome outcome = AbilityStateRules.ResolveLethalDamage(
       defeatedPiece.Type,
       defeatedPiece.HasRevived
@@ -199,6 +308,25 @@ public sealed partial class MatchStore
 
   private static void ApplySharedServerStartOfTurnEffects(Match match, NetworkTeam activeTeam)
   {
+    match.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, activeTeam));
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Team == activeTeam && piece.AbilityState?.OdinProtectionAvailable == true)
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = piece.AbilityState with
+          {
+            OdinProtectedById = null,
+            OdinProtectionAvailable = false
+          }
+        };
+      }
+    }
+    TriggerServerPoisonCloudsAtOwnerTurnStart(match, activeTeam);
     foreach (string pieceId in match.Pieces.Select(piece => piece.Id).ToArray())
     {
       int index = match.Pieces.FindIndex(piece => piece.Id == pieceId);
@@ -218,10 +346,18 @@ public sealed partial class MatchStore
           effect.Damage,
           false,
           false,
-          HasAdjacentUnit(match, live, live.Team, nameof(PieceType.Baron)),
+          false,
           IsInForest(match, live),
           match.Terrain.ForestDamageReduction
         );
+        bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+          match.Pieces.Select(candidate => (
+            candidate.Type,
+            candidate.Team,
+            candidate.AbilityState?.SelectedTargetId)),
+          live.Id,
+          live.Team);
+        damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
         if (live.Health > damage)
         {
           match.Pieces[index] = live with { Health = live.Health - damage };
@@ -230,6 +366,31 @@ public sealed partial class MatchStore
         {
           match.Pieces[index] = live with { Health = 0 };
           HandlePieceDestroyed(match, match.Pieces[index], source);
+        }
+      }
+    }
+
+    foreach (NetworkPiece imp in match.Pieces
+      .Where(piece => piece.Team == activeTeam && piece.AttachmentKind == NetworkAttachmentKind.Imp &&
+        piece.AttachedToId is not null)
+      .ToArray())
+    {
+      int hostIndex = match.Pieces.FindIndex(piece => piece.Id == imp.AttachedToId);
+      if (hostIndex < 0) continue;
+      NetworkPiece host = match.Pieces[hostIndex];
+      int remaining = host.Health - AdvancedAbilityRules.ImpHealthDrain;
+      if (remaining > 0)
+      {
+        match.Pieces[hostIndex] = host with { Health = remaining };
+      }
+      else
+      {
+        PlayerSlot? source = match.Players.FirstOrDefault(player => player.Team != host.Team) ??
+          match.Players.FirstOrDefault(player => player.Team == host.Team);
+        match.Pieces[hostIndex] = host with { Health = 0 };
+        if (source is not null)
+        {
+          HandlePieceDestroyed(match, match.Pieces[hostIndex], source);
         }
       }
     }
@@ -288,7 +449,8 @@ public sealed partial class MatchStore
             Team = NetworkTeam.Neutral,
             HasMovedThisTurn = true,
             HasAttackedThisTurn = true,
-            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type)
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type),
+            AbilityState = (mercenary.AbilityState ?? new UnitAbilityState()) with { CannotActThisTurn = true, CannotMoveThisTurn = true }
           };
         }
       }
@@ -303,8 +465,2132 @@ public sealed partial class MatchStore
     return true;
   }
 
+  private static NetworkPiece? GetServerRoyalHealthPayer(Match match, NetworkTeam team) =>
+    match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedToId is null &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .FirstOrDefault();
+
+  private static bool CanPayServerRoyalHealth(Match match, NetworkTeam team, int amount)
+  {
+    NetworkPiece? royal = GetServerRoyalHealthPayer(match, team);
+    return royal is not null && royal.Health > Math.Max(0, amount);
+  }
+
+  private static bool TryPayServerRoyalHealth(Match match, NetworkTeam team, int amount)
+  {
+    NetworkPiece? royal = GetServerRoyalHealthPayer(match, team);
+    int cost = Math.Max(0, amount);
+    if (royal is null || royal.Health <= cost)
+    {
+      return false;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == royal.Id);
+    if (index < 0)
+    {
+      return false;
+    }
+
+    match.Pieces[index] = royal with { Health = royal.Health - cost };
+    return true;
+  }
+
+  private static void ApplyServerContractDemonUpkeep(Match match, NetworkTeam team)
+  {
+    foreach (string demonId in match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.AttachedToId is null &&
+        piece.Type == nameof(PieceType.ContractDemon))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      if (TryPayServerRoyalHealth(
+            match, team, AdvancedAbilityRules.ContractDemonRoyalHealthUpkeep))
+      {
+        continue;
+      }
+
+      int index = match.Pieces.FindIndex(piece => piece.Id == demonId);
+      if (index < 0) continue;
+      NetworkPiece demon = match.Pieces[index];
+      match.Pieces[index] = demon with
+      {
+        Team = NetworkTeam.Neutral,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(demon.Type),
+        AbilityState = (demon.AbilityState ?? new UnitAbilityState()) with
+        {
+          CannotActThisTurn = true,
+          CannotMoveThisTurn = true
+        }
+      };
+    }
+  }
+
   private static int GetSharedServerAttachmentMovementBonus(Match match, NetworkPiece host) =>
     match.Pieces
       .Where(piece => piece.AttachedToId == host.Id)
       .Sum(piece => AbilityRules.GetAttachmentMovementBonus(piece.Type));
+
+  private static bool IsServerDuelistAttackLegal(
+    Match match,
+    NetworkPiece attacker,
+    NetworkPiece? intendedTarget)
+  {
+    NetworkPiece[] forcingDuelists = match.Pieces
+      .Where(piece =>
+        piece.Type == nameof(PieceType.Duelist) &&
+        piece.Team != attacker.Team &&
+        string.Equals(piece.AbilityState?.SelectedTargetId, attacker.Id, StringComparison.Ordinal) &&
+        CanUseActionTarget(match, piece, attacker))
+      .ToArray();
+    return forcingDuelists.Length == 0 ||
+      (intendedTarget is not null && forcingDuelists.Any(piece => piece.Id == intendedTarget.Id));
+  }
+
+  private static void ClearServerPetrificationBy(Match match, string medusaId)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (string.Equals(piece.AbilityState?.PetrifiedById, medusaId, StringComparison.Ordinal))
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.SetPetrified(piece.AbilityState, null)
+        };
+      }
+    }
+  }
+
+  private static void ReleaseServerPetrificationIfBroken(Match match, NetworkPiece medusa)
+  {
+    if (medusa.Type != nameof(PieceType.Medusa) || !UnitRules.TryGet(medusa.Type, out UnitRule medusaRule))
+    {
+      return;
+    }
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece target = match.Pieces[index];
+      if (!string.Equals(target.AbilityState?.PetrifiedById, medusa.Id, StringComparison.Ordinal) ||
+          !UnitRules.TryGet(target.Type, out UnitRule targetRule))
+      {
+        continue;
+      }
+
+      if (!AdvancedAbilityRules.IsPetrificationMaintained(
+            medusaRule, (medusa.X, medusa.Y), targetRule, (target.X, target.Y)))
+      {
+        match.Pieces[index] = target with
+        {
+          AbilityState = AdvancedAbilityRules.SetPetrified(target.AbilityState, null)
+        };
+      }
+    }
+  }
+
+  private static void PerformServerMissileSiloAttack(
+    Match match,
+    NetworkPiece attacker,
+    PlayerSlot attackingPlayer,
+    (int x, int y) centre)
+  {
+    int damage = UnitRules.GetRequired(attacker.Type).Attack;
+    foreach (NetworkPiece victim in match.Pieces.ToArray())
+    {
+      if (!UnitRules.TryGet(victim.Type, out UnitRule victimRule) ||
+          !OccupiedSquares(victimRule, (victim.X, victim.Y)).Any(square =>
+            Math.Max(Math.Abs(square.x - centre.x), Math.Abs(square.y - centre.y)) <= 2) ||
+          !CanSharedServerDamage(attacker, victim))
+      {
+        continue;
+      }
+
+      ResolvePieceDamage(match, attacker, attackingPlayer, victim.Id, damage);
+    }
+
+    HashSet<(int x, int y)> structurePositions = new();
+    foreach (AbilityEntity entity in match.AbilityEntities)
+    {
+      if (Math.Max(Math.Abs(entity.X - centre.x), Math.Abs(entity.Y - centre.y)) <= 2)
+      {
+        structurePositions.Add((entity.X, entity.Y));
+      }
+    }
+    foreach ((int x, int y) position in match.Barricades.Keys.Concat(match.Roads.Keys).Concat(match.Mines.Keys))
+    {
+      if (Math.Max(Math.Abs(position.x - centre.x), Math.Abs(position.y - centre.y)) <= 2)
+      {
+        structurePositions.Add(position);
+      }
+    }
+
+    foreach ((int x, int y) position in structurePositions)
+    {
+      if (!TryDestroyAbilityEntity(match, position.x, position.y))
+      {
+        match.Barricades.Remove(position);
+        match.Roads.Remove(position);
+        match.Mines.Remove(position);
+      }
+    }
+  }
+
+
+
+  private static void PushServerUnitsOutOfFafnirFootprint(
+    Match match,
+    NetworkPiece dragon,
+    UnitRule dragonRule,
+    PlayerSlot source)
+  {
+    string[] farmIds = match.Pieces
+      .Where(piece => piece.Id != dragon.Id && piece.AttachedToId is null &&
+        piece.Type == nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule farmRule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, farmRule.Width, farmRule.Height,
+          dragon.X, dragon.Y, dragonRule.Width, dragonRule.Height))
+      .Select(piece => piece.Id)
+      .ToArray();
+    foreach (string farmId in farmIds)
+    {
+      NetworkPiece farm = match.Pieces.FirstOrDefault(piece => piece.Id == farmId);
+      if (farm is not null)
+      {
+        HandlePieceDestroyed(match, farm with { Health = 0 }, source);
+      }
+    }
+
+    string[] overlappingIds = match.Pieces
+      .Where(piece => piece.Id != dragon.Id && piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, rule.Width, rule.Height,
+          dragon.X, dragon.Y, dragonRule.Width, dragonRule.Height))
+      .Select(piece => piece.Id)
+      .ToArray();
+
+    var board = BoardRules.GetBoard(match.Configuration);
+    foreach (string pieceId in overlappingIds)
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == pieceId);
+      if (index < 0) continue;
+      NetworkPiece moving = match.Pieces[index];
+      if (!UnitRules.TryGet(moving.Type, out UnitRule movingRule)) continue;
+
+      (int x, int y)? destination = null;
+      foreach ((int x, int y) candidate in board.Cells
+        .OrderBy(position => Math.Max(
+          Math.Abs(position.x - moving.X),
+          Math.Abs(position.y - moving.Y)))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x))
+      {
+        if (CanDisplaceServerPieceTo(match, moving, movingRule, candidate))
+        {
+          destination = candidate;
+          break;
+        }
+      }
+      if (destination is null) continue;
+
+      match.Pieces[index] = moving with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y
+      };
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == moving.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with
+          {
+            X = destination.Value.x,
+            Y = destination.Value.y
+          };
+        }
+      }
+    }
+  }
+
+
+
+
+  private static NetworkPiece? GetServerSheriffPrison(
+    Match match,
+    NetworkPiece sheriff)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        string.IsNullOrWhiteSpace(sheriff.AbilityState?.LinkedPieceId))
+    {
+      return null;
+    }
+
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Id == sheriff.AbilityState.LinkedPieceId &&
+      piece.Type == nameof(PieceType.Prison) &&
+      AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+  }
+
+  private static NetworkPiece? GetServerSheriffNeedingPrison(
+    Match match,
+    NetworkTeam team) =>
+    match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.Sheriff) &&
+      GetServerSheriffPrison(match, piece) is null);
+
+  private static bool CanPlaceServerSheriffPrison(
+    Match match,
+    NetworkPiece sheriff,
+    int x,
+    int y)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        GetServerSheriffPrison(match, sheriff) is not null ||
+        !UnitRules.TryGet(nameof(PieceType.Prison), out UnitRule prisonRule))
+    {
+      return false;
+    }
+
+    return CanPlaceForTeamWithDeveloperClaims(
+        match, sheriff.Team, x, y, prisonRule.Width, prisonRule.Height) &&
+      CanPlaceNetworkPiece(
+        match, nameof(PieceType.Prison), sheriff.Team, x, y);
+  }
+
+  private static bool TryPlaceServerSheriffPrison(
+    Match match,
+    int sheriffIndex,
+    int x,
+    int y,
+    int lastBid)
+  {
+    if (sheriffIndex < 0 || sheriffIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece sheriff = match.Pieces[sheriffIndex];
+    if (!CanPlaceServerSheriffPrison(match, sheriff, x, y))
+    {
+      return false;
+    }
+
+    NetworkPiece prison = SpawnNetworkPiece(
+      match, nameof(PieceType.Prison), sheriff.Team, x, y);
+    int prisonIndex = match.Pieces.FindIndex(piece => piece.Id == prison.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      LastBid = Math.Max(0, lastBid),
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        prison.AbilityState, sheriff.Id)
+    };
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+        sheriff.AbilityState, prison.Id)
+    };
+    return true;
+  }
+
+  private static bool TryLinkServerPurchasedSheriffPrison(
+    Match match,
+    int prisonIndex)
+  {
+    if (prisonIndex < 0 || prisonIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece prison = match.Pieces[prisonIndex];
+    if (prison.Type != nameof(PieceType.Prison) ||
+        AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return false;
+    }
+
+    NetworkPiece? sheriff = GetServerSheriffNeedingPrison(match, prison.Team);
+    if (sheriff is null)
+    {
+      return false;
+    }
+
+    int sheriffIndex = match.Pieces.FindIndex(piece => piece.Id == sheriff.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      AbilityState = AdvancedAbilityRules.MarkSheriffPrison(
+        prison.AbilityState, sheriff.Id)
+    };
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AbilityState = AdvancedAbilityRules.LinkSheriffPrison(
+        sheriff.AbilityState, prison.Id)
+    };
+    return true;
+  }
+
+  private static bool CanServerSheriffArrest(
+    Match match,
+    NetworkPiece sheriff,
+    NetworkPiece target)
+  {
+    if (sheriff.Type != nameof(PieceType.Sheriff) ||
+        target.Id == sheriff.Id ||
+        target.Team == sheriff.Team ||
+        target.Team == NetworkTeam.Neutral ||
+        target.AttachedToId is not null ||
+        RoyalAbilityRules.IsRoyal(
+          target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+        targetRule.Category == RuleCategory.Structure ||
+        !AdvancedAbilityRules.CanUseSpecialAbility(sheriff.AbilityState) ||
+        !AdvancedAbilityRules.CanTakeDirectDamage(
+          target.Type, target.AbilityState) ||
+        !AdvancedAbilityRules.CanAttack(
+          sheriff.Type,
+          sheriff.AbilityState,
+          sheriff.HasAttackedThisTurn,
+          target.Id) ||
+        !CanUseActionTarget(match, sheriff, target) ||
+        !IsServerDuelistAttackLegal(match, sheriff, target))
+    {
+      return false;
+    }
+
+    NetworkPiece? prison = GetServerSheriffPrison(match, sheriff);
+    return prison is not null &&
+      AdvancedAbilityRules.CanSheriffArrest(
+        target.Health,
+        RoyalAbilityRules.IsRoyal(
+          target.Type, target.IsRoyalProxy, target.PossessedUnitId),
+        targetRule.Category == RuleCategory.Structure,
+        prison.AbilityState);
+  }
+
+  private static bool TryArrestServerSheriff(
+    Match match,
+    int sheriffIndex,
+    int targetIndex)
+  {
+    if (sheriffIndex < 0 || targetIndex < 0 ||
+        sheriffIndex >= match.Pieces.Count ||
+        targetIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece sheriff = match.Pieces[sheriffIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    if (!CanServerSheriffArrest(match, sheriff, target))
+    {
+      return false;
+    }
+
+    NetworkPiece prison = GetServerSheriffPrison(match, sheriff)!;
+    int prisonIndex = match.Pieces.FindIndex(piece => piece.Id == prison.Id);
+    match.Pieces[prisonIndex] = prison with
+    {
+      AbilityState = AdvancedAbilityRules.RecordPrisoner(
+        prison.AbilityState, target.Id)
+    };
+    match.Pieces[targetIndex] = target with
+    {
+      AttachedToId = prison.Id,
+      AttachmentKind = NetworkAttachmentKind.Prisoner,
+      X = prison.X,
+      Y = prison.Y
+    };
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece attachment = match.Pieces[index];
+      if (attachment.AttachedToId == target.Id)
+      {
+        match.Pieces[index] = attachment with
+        {
+          X = prison.X,
+          Y = prison.Y
+        };
+      }
+    }
+
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      sheriff.Type, sheriff.AttacksThisTurn);
+    match.Pieces[sheriffIndex] = sheriff with
+    {
+      AttacksThisTurn = attackState.AttacksThisTurn,
+      HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+      AbilityState = AdvancedAbilityRules.RecordAttack(
+        sheriff.Type, sheriff.AbilityState, target.Id)
+    };
+    return true;
+  }
+
+  private static bool CanPlaceServerPrisonRelease(
+    Match match,
+    NetworkPiece piece,
+    UnitRule rule,
+    (int x, int y) destination,
+    HashSet<string> ignoredPieceIds)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration,
+          destination.x,
+          destination.y,
+          rule.Width,
+          rule.Height))
+    {
+      return false;
+    }
+
+    bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
+    foreach ((int x, int y) square in OccupiedSquares(rule, destination))
+    {
+      if ((!ignoresTerrain && match.Terrain.IsLake(square) &&
+           !HasServerBridgeAt(match, square)) ||
+          (!AbilityRules.IgnoresStructures(rule) &&
+           match.Barricades.ContainsKey(square)) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, piece.Team) &&
+            (entity.Kind == AbilityEntityKind.Bramble ||
+             !AbilityRules.IgnoresStructures(rule))))
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(other =>
+      other.Id != piece.Id &&
+      !ignoredPieceIds.Contains(other.Id) &&
+      other.AttachedToId is null &&
+      other.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        other.X, other.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, rule.Width, rule.Height));
+  }
+
+  private static (int x, int y)? FindNearestServerPrisonPlacement(
+    Match match,
+    NetworkPiece piece,
+    UnitRule pieceRule,
+    NetworkPiece destroyedPrison,
+    UnitRule prisonRule,
+    HashSet<string> ignoredPieceIds)
+  {
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    foreach ((int x, int y) position in board.Cells
+      .OrderBy(position => AdvancedAbilityRules.GetFootprintChebyshevDistance(
+        destroyedPrison.X, destroyedPrison.Y,
+        prisonRule.Width, prisonRule.Height,
+        position.x, position.y,
+        pieceRule.Width, pieceRule.Height))
+      .ThenByDescending(position => position.y)
+      .ThenByDescending(position => position.x))
+    {
+      if (CanPlaceServerPrisonRelease(
+        match, piece, pieceRule, position, ignoredPieceIds))
+      {
+        return position;
+      }
+    }
+    return null;
+  }
+
+  private static void ResolveServerPrisonDestruction(
+    Match match,
+    NetworkPiece prison)
+  {
+    if (prison.Type != nameof(PieceType.Prison) ||
+        !UnitRules.TryGet(prison.Type, out UnitRule prisonRule))
+    {
+      return;
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState) &&
+        !string.IsNullOrWhiteSpace(prison.AbilityState?.LinkedPieceId))
+    {
+      int sheriffIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == prison.AbilityState!.LinkedPieceId &&
+        piece.Type == nameof(PieceType.Sheriff));
+      if (sheriffIndex >= 0)
+      {
+        NetworkPiece sheriff = match.Pieces[sheriffIndex];
+        if (string.Equals(
+          sheriff.AbilityState?.LinkedPieceId,
+          prison.Id,
+          StringComparison.Ordinal))
+        {
+          match.Pieces[sheriffIndex] = sheriff with
+          {
+            AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+              sheriff.AbilityState, null)
+          };
+        }
+      }
+    }
+
+    string[] prisonerIds = prison.AbilityState?.PrisonerIds?.ToArray() ??
+      Array.Empty<string>();
+    HashSet<string> pendingIds = prisonerIds
+      .Where(id => match.Pieces.Any(piece => piece.Id == id))
+      .ToHashSet(StringComparer.Ordinal);
+
+    foreach (string prisonerId in prisonerIds)
+    {
+      int prisonerIndex = match.Pieces.FindIndex(piece => piece.Id == prisonerId);
+      if (prisonerIndex < 0)
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      NetworkPiece prisoner = match.Pieces[prisonerIndex];
+      if (!UnitRules.TryGet(prisoner.Type, out UnitRule prisonerRule))
+      {
+        pendingIds.Remove(prisonerId);
+        continue;
+      }
+
+      (int x, int y)? destination = FindNearestServerPrisonPlacement(
+        match, prisoner, prisonerRule, prison, prisonRule, pendingIds);
+      pendingIds.Remove(prisonerId);
+      if (destination is null)
+      {
+        continue;
+      }
+
+      UnitAbilityState releasedState =
+        (prisoner.AbilityState ?? new UnitAbilityState()) with
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        };
+      match.Pieces[prisonerIndex] = prisoner with
+      {
+        X = destination.Value.x,
+        Y = destination.Value.y,
+        AttachedToId = null,
+        AttachmentKind = NetworkAttachmentKind.None,
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(prisoner.Type),
+        AbilityState = releasedState
+      };
+      for (int attachmentIndex = 0;
+           attachmentIndex < match.Pieces.Count;
+           attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == prisoner.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with
+          {
+            X = destination.Value.x,
+            Y = destination.Value.y
+          };
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.IsSheriffPrison(prison.AbilityState))
+    {
+      return;
+    }
+
+    string[] reinforcementTypes =
+    [
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Cowboy),
+      nameof(PieceType.Brawler),
+      nameof(PieceType.Brawler)
+    ];
+    foreach (string type in reinforcementTypes)
+    {
+      UnitRule rule = UnitRules.GetRequired(type);
+      NetworkPiece probe = new(
+        Guid.NewGuid().ToString("N"),
+        type,
+        prison.Team,
+        prison.X,
+        prison.Y,
+        rule.Health);
+      (int x, int y)? destination = FindNearestServerPrisonPlacement(
+        match, probe, rule, prison, prisonRule,
+        new HashSet<string>(StringComparer.Ordinal));
+      if (destination is null)
+      {
+        continue;
+      }
+
+      NetworkPiece spawned = SpawnNetworkPiece(
+        match, type, prison.Team,
+        destination.Value.x, destination.Value.y);
+      int spawnedIndex = match.Pieces.FindIndex(piece => piece.Id == spawned.Id);
+      match.Pieces[spawnedIndex] = spawned with
+      {
+        HasMovedThisTurn = true,
+        HasAttackedThisTurn = true,
+        AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(type),
+        AbilityState = new UnitAbilityState
+        {
+          CannotMoveThisTurn = true,
+          CannotActThisTurn = true
+        }
+      };
+    }
+  }
+
+
+  private static NetworkPiece? GetServerLandingAttackTarget(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination)
+  {
+    if (!AdvancedAbilityRules.IsLandingAttackUnit(mover.Type))
+    {
+      return null;
+    }
+
+    NetworkPiece[] targets = match.Pieces
+      .Where(piece =>
+        piece.Id != mover.Id &&
+        piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        piece.Team != mover.Team &&
+        AdvancedAbilityRules.CanTakeDirectDamage(piece.Type, piece.AbilityState) &&
+        UnitRules.TryGet(piece.Type, out UnitRule targetRule) &&
+        UnitRules.FootprintsOverlap(
+          destination.x, destination.y, moverRule.Width, moverRule.Height,
+          piece.X, piece.Y, targetRule.Width, targetRule.Height))
+      .ToArray();
+    return targets.Length == 1 ? targets[0] : null;
+  }
+
+  private static bool CanServerLandingAttackLand(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination) =>
+    GetServerLandingAttackTarget(match, mover, moverRule, destination) is not null;
+
+  private static bool CanContinueServerSpecialLandingPath(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) position) =>
+    GetServerLandingAttackTarget(match, mover, moverRule, position) is null;
+
+  private static (int x, int y) ResolveServerLandingAttack(
+    Match match,
+    NetworkPiece mover,
+    PlayerSlot player,
+    UnitRule moverRule,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) requestedDestination)
+  {
+    NetworkPiece? target = GetServerLandingAttackTarget(
+      match, mover, moverRule, requestedDestination);
+    if (target is null)
+    {
+      return requestedDestination;
+    }
+
+    (int x, int y) origin = (mover.X, mover.Y);
+    ResolvePieceDamage(match, mover, player, target.Id, null);
+    int targetIndex = match.Pieces.FindIndex(piece => piece.Id == target.Id);
+    bool targetSurvived = targetIndex >= 0;
+
+    if (targetSurvived)
+    {
+      target = match.Pieces[targetIndex];
+      UnitRule targetRule = UnitRules.GetRequired(target.Type);
+      int sourceCentreX2 = origin.x * 2 + moverRule.Width - 1;
+      int sourceCentreY2 = origin.y * 2 + moverRule.Height - 1;
+      int targetCentreX2 = target.X * 2 + targetRule.Width - 1;
+      int targetCentreY2 = target.Y * 2 + targetRule.Height - 1;
+      int directionX = Math.Sign(targetCentreX2 - sourceCentreX2);
+      int directionY = Math.Sign(targetCentreY2 - sourceCentreY2);
+      int pushDistance = AdvancedAbilityRules.GetLandingAttackPushDistance(mover.Type);
+
+      if ((directionX != 0 || directionY != 0) && pushDistance > 0)
+      {
+        (int x, int y) pushed = DisplacementRules.GetFurthestLegalPosition(
+          (target.X, target.Y),
+          directionX,
+          directionY,
+          pushDistance,
+          candidate => CanDisplaceServerPieceTo(match, target, targetRule, candidate));
+        if (pushed != (target.X, target.Y))
+        {
+          match.Pieces[targetIndex] = target with { X = pushed.x, Y = pushed.y };
+          for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+          {
+            NetworkPiece attachment = match.Pieces[attachmentIndex];
+            if (attachment.AttachedToId == target.Id)
+            {
+              match.Pieces[attachmentIndex] = attachment with
+              {
+                X = pushed.x,
+                Y = pushed.y
+              };
+            }
+          }
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.LandingAttackConsumesNormalAttack(mover.Type))
+    {
+      int moverIndex = match.Pieces.FindIndex(piece => piece.Id == mover.Id);
+      if (moverIndex >= 0)
+      {
+        NetworkPiece liveMover = match.Pieces[moverIndex];
+        AttackTurnState attackState = AbilityStateRules.RecordAttack(
+          liveMover.Type, liveMover.AttacksThisTurn);
+        match.Pieces[moverIndex] = liveMover with
+        {
+          AttacksThisTurn = attackState.AttacksThisTurn,
+          HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+          AbilityState = AdvancedAbilityRules.RecordAttack(
+            liveMover.Type, liveMover.AbilityState, target.Id)
+        };
+      }
+    }
+
+    return targetSurvived
+      ? ChessAbilityRules.GetFailedCaptureFallback(origin, path)
+      : requestedDestination;
+  }
+
+  private static bool CanServerMimicSwap(
+    Match match,
+    NetworkPiece mimic,
+    NetworkPiece target)
+  {
+    if (mimic.Type != nameof(PieceType.Mimic) ||
+        target.Id == mimic.Id || target.AttachedToId is not null ||
+        !UnitRules.TryGet(mimic.Type, out UnitRule mimicRule) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+        mimicRule.Width != 1 || mimicRule.Height != 1 ||
+        targetRule.Width != 1 || targetRule.Height != 1 ||
+        !AdvancedAbilityRules.CanUseMovementAbility(
+          mimic.AbilityState, mimic.HasMovedThisTurn) ||
+        !UnitRules.CanMove(mimicRule, mimic.X, mimic.Y, target.X, target.Y))
+    {
+      return false;
+    }
+
+    return CanSwapServerPieceTo(match, mimic, mimicRule, target, (target.X, target.Y)) &&
+      CanSwapServerPieceTo(match, target, targetRule, mimic, (mimic.X, mimic.Y));
+  }
+
+  private static bool CanSwapServerPieceTo(
+    Match match,
+    NetworkPiece moving,
+    UnitRule movingRule,
+    NetworkPiece ignoredOther,
+    (int x, int y) destination)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration,
+          destination.x,
+          destination.y,
+          movingRule.Width,
+          movingRule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(movingRule, destination))
+    {
+      if ((!AbilityRules.IgnoresImpassableTerrain(movingRule) &&
+           match.Terrain.IsLake(square) && !HasServerBridgeAt(match, square)) ||
+          (!AbilityRules.IgnoresStructures(movingRule) &&
+           match.Barricades.ContainsKey(square)) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team) &&
+            (entity.Kind == AbilityEntityKind.Bramble ||
+             !AbilityRules.IgnoresStructures(movingRule))))
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(piece =>
+      piece.Id != moving.Id &&
+      piece.Id != ignoredOther.Id &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, movingRule.Width, movingRule.Height));
+  }
+
+  private static bool TryServerMimicSwap(
+    Match match,
+    int mimicIndex,
+    int targetIndex)
+  {
+    if (mimicIndex < 0 || targetIndex < 0) return false;
+    NetworkPiece mimic = match.Pieces[mimicIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    if (!CanServerMimicSwap(match, mimic, target))
+    {
+      return false;
+    }
+
+    int mimicX = mimic.X;
+    int mimicY = mimic.Y;
+    match.Pieces[mimicIndex] = mimic with
+    {
+      X = target.X,
+      Y = target.Y,
+      HasMovedThisTurn = true,
+      AbilityState = AdvancedAbilityRules.RecordMove(mimic.AbilityState)
+    };
+    match.Pieces[targetIndex] = target with { X = mimicX, Y = mimicY };
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece attachment = match.Pieces[index];
+      if (attachment.AttachedToId == mimic.Id)
+      {
+        match.Pieces[index] = attachment with { X = target.X, Y = target.Y };
+      }
+      else if (attachment.AttachedToId == target.Id)
+      {
+        match.Pieces[index] = attachment with { X = mimicX, Y = mimicY };
+      }
+    }
+
+    ReleaseServerPetrificationIfBroken(match, match.Pieces[mimicIndex]);
+    return true;
+  }
+
+
+
+  private static NetworkPiece? GetServerSpecialPurchaseHost(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    bool requireNonRoyal)
+  {
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      (!requireNonRoyal || !RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId)) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        x, y, 1, 1));
+  }
+
+  private static bool TryGetServerArchdemonPlacement(
+    Match match,
+    NetworkTeam team,
+    int clickedX,
+    int clickedY,
+    int width,
+    int height,
+    out NetworkPiece? sacrifice,
+    out (int x, int y) placement)
+  {
+    sacrifice = GetServerSpecialPurchaseHost(
+      match, team, clickedX, clickedY, requireNonRoyal: false);
+    placement = sacrifice is null ? (clickedX, clickedY) : (sacrifice.X, sacrifice.Y);
+    if (sacrifice is null ||
+        !NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration, placement.x, placement.y, width, height))
+    {
+      return false;
+    }
+
+    for (int y = 0; y < height; y++)
+    for (int x = 0; x < width; x++)
+    {
+      (int x, int y) square = (placement.x + x, placement.y + y);
+      if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square))
+      {
+        return false;
+      }
+    }
+
+    string sacrificeId = sacrifice.Id;
+    (int x, int y) resolvedPlacement = placement;
+    return !match.Pieces.Any(piece =>
+      piece.Id != sacrificeId &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        resolvedPlacement.x, resolvedPlacement.y, width, height));
+  }
+
+  private static void RemoveServerShadowsAttachedTo(Match match, string hostId)
+  {
+    foreach (string shadowId in match.Pieces
+      .Where(piece =>
+        piece.AttachedToId == hostId &&
+        piece.AttachmentKind == NetworkAttachmentKind.Shadow)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      RemovePiece(match, shadowId);
+    }
+  }
+
+
+
+  private static NetworkPiece? GetServerHelicopterAt(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y)
+  {
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.Helicopter) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        x, y, 1, 1));
+  }
+
+  private static bool CanPlaceServerHelicopter(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+    Board board = NetworkBoardRules.GetBoard(match.Configuration);
+    for (int oy = 0; oy < height; oy++)
+    for (int ox = 0; ox < width; ox++)
+    {
+      NetworkTeam? owner = GetServerPlacementTerritoryOwner(
+        match, (x + ox, y + oy));
+      if (owner is not null && owner != team)
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(piece =>
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        x, y, width, height));
+  }
+
+  private static bool TryGetServerHelicopterDeployment(
+    Match match,
+    UnitPurchaseInfo unit,
+    NetworkTeam team,
+    int clickedX,
+    int clickedY,
+    out NetworkPiece? helicopter,
+    out (int x, int y) placement)
+  {
+    helicopter = GetServerHelicopterAt(match, team, clickedX, clickedY);
+    placement = helicopter is null ? (clickedX, clickedY) : (helicopter.X, helicopter.Y);
+    if (helicopter is null ||
+        unit.Type is nameof(PieceType.Farm) or nameof(PieceType.Helicopter) or
+          nameof(PieceType.Shadow) or nameof(PieceType.Archdemon) ||
+        !NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration, placement.x, placement.y, unit.Width, unit.Height))
+    {
+      return false;
+    }
+
+    for (int y = 0; y < unit.Height; y++)
+    for (int x = 0; x < unit.Width; x++)
+    {
+      if (match.Terrain.IsLake((placement.x + x, placement.y + y)))
+      {
+        return false;
+      }
+    }
+
+    if (RoyalAbilityRules.RequiresAdjacentRoyalPlacement(unit.Type))
+    {
+      UnitRule placingRule = UnitRules.GetRequired(unit.Type);
+      string helicopterId = helicopter.Id;
+      (int x, int y) resolvedPlacement = placement;
+      bool hasAdjacentRoyal = match.Pieces.Any(piece =>
+        piece.Id != helicopterId &&
+        piece.Team == team &&
+        RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+        UnitRules.TryGet(piece.Type, out UnitRule royalRule) &&
+        AbilityRules.AreAdjacent(
+          placingRule, resolvedPlacement, royalRule, (piece.X, piece.Y), includeDiagonal: true));
+      if (!RoyalAbilityRules.MeetsAdjacentRoyalPlacementRequirement(unit.Type, hasAdjacentRoyal))
+      {
+        return false;
+      }
+    }
+
+    string ignoredHelicopterId = helicopter.Id;
+    (int x, int y) resolvedDeployment = placement;
+    return !match.Pieces.Any(piece =>
+      piece.Id != ignoredHelicopterId &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        resolvedDeployment.x, resolvedDeployment.y, unit.Width, unit.Height));
+  }
+
+
+
+  private static NetworkPiece? GetServerLinkedPhylactery(
+    Match match,
+    NetworkPiece lich)
+  {
+    string? phylacteryId = lich.AbilityState?.LinkedPieceId;
+    return string.IsNullOrWhiteSpace(phylacteryId)
+      ? null
+      : match.Pieces.FirstOrDefault(piece =>
+          piece.Id == phylacteryId &&
+          piece.Type == nameof(PieceType.Phylactery) &&
+          piece.Team == lich.Team);
+  }
+
+  private static bool IsServerLichDestinationWithinLink(
+    Match match,
+    NetworkPiece piece,
+    (int x, int y) destination)
+  {
+    if (piece.Type != nameof(PieceType.Lich))
+    {
+      return true;
+    }
+
+    NetworkPiece? phylactery = GetServerLinkedPhylactery(match, piece);
+    return phylactery is not null &&
+      Math.Abs(destination.x - phylactery.X) +
+      Math.Abs(destination.y - phylactery.Y) <= 4;
+  }
+
+  private static void SpawnServerLinkedLichesAtOwnerTurnStart(
+    Match match,
+    NetworkTeam team)
+  {
+    (int x, int y)[] offsets =
+    [
+      (0, -1), (1, 0), (0, 1), (-1, 0),
+      (1, -1), (1, 1), (-1, 1), (-1, -1)
+    ];
+
+    foreach (string phylacteryId in match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.Type == nameof(PieceType.Phylactery))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      int phylacteryIndex = match.Pieces.FindIndex(piece => piece.Id == phylacteryId);
+      if (phylacteryIndex < 0) continue;
+      NetworkPiece phylactery = match.Pieces[phylacteryIndex];
+
+      NetworkPiece? linked = string.IsNullOrWhiteSpace(phylactery.AbilityState?.LinkedPieceId)
+        ? null
+        : match.Pieces.FirstOrDefault(piece =>
+            piece.Id == phylactery.AbilityState!.LinkedPieceId &&
+            piece.Type == nameof(PieceType.Lich) &&
+            piece.Team == team);
+      if (linked is not null)
+      {
+        continue;
+      }
+
+      foreach ((int x, int y) offset in offsets)
+      {
+        int x = phylactery.X + offset.x;
+        int y = phylactery.Y + offset.y;
+        if (!CanPlaceNetworkPiece(match, nameof(PieceType.Lich), team, x, y))
+        {
+          continue;
+        }
+
+        NetworkPiece lich = SpawnNetworkPiece(
+          match, nameof(PieceType.Lich), team, x, y);
+        int lichIndex = match.Pieces.FindIndex(piece => piece.Id == lich.Id);
+        match.Pieces[lichIndex] = lich with
+        {
+          AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+            lich.AbilityState, phylactery.Id)
+        };
+        match.Pieces[phylacteryIndex] = phylactery with
+        {
+          AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+            phylactery.AbilityState, lich.Id)
+        };
+        break;
+      }
+    }
+  }
+
+  private static void ApplyServerLichDeathLink(
+    Match match,
+    NetworkPiece lich,
+    PlayerSlot attackingPlayer)
+  {
+    if (lich.Type != nameof(PieceType.Lich))
+    {
+      return;
+    }
+
+    NetworkPiece? phylactery = GetServerLinkedPhylactery(match, lich);
+    if (phylactery is null)
+    {
+      return;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == phylactery.Id);
+    if (index < 0) return;
+
+    int linkedDeaths = (phylactery.AbilityState?.LinkedDeaths ?? 0) + 1;
+    UnitAbilityState state = AdvancedAbilityRules.SetLinkedPiece(
+      phylactery.AbilityState, null) with
+    {
+      LinkedDeaths = linkedDeaths,
+      OdinProtectionAvailable = linkedDeaths >= 4
+        ? false
+        : phylactery.AbilityState?.OdinProtectionAvailable ?? false
+    };
+    int remaining = linkedDeaths >= 4
+      ? 0
+      : phylactery.Health - AdvancedAbilityRules.LichDeathDamage;
+    match.Pieces[index] = phylactery with
+    {
+      Health = Math.Max(0, remaining),
+      AbilityState = state
+    };
+    if (remaining <= 0)
+    {
+      HandlePieceDestroyed(match, match.Pieces[index], attackingPlayer);
+    }
+  }
+
+
+
+  private static bool IsValidServerBountyTarget(
+    NetworkPiece hunter,
+    NetworkPiece target) =>
+    target.Id != hunter.Id &&
+    target.Team != hunter.Team &&
+    target.Team != NetworkTeam.Neutral &&
+    target.AttachedToId is null &&
+    !RoyalAbilityRules.IsRoyal(
+      target.Type, target.IsRoyalProxy, target.PossessedUnitId);
+
+  private static void ClearServerBountyTargetsFor(
+    Match match,
+    string defeatedId)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece piece = match.Pieces[index];
+      if (piece.Type == nameof(PieceType.BountyHunter) &&
+          string.Equals(
+            piece.AbilityState?.BountyTargetId, defeatedId, StringComparison.Ordinal))
+      {
+        match.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.ClearBountyTarget(
+            piece.AbilityState)
+        };
+      }
+    }
+  }
+
+  private static void RefreshServerBountySelectionAtOwnerTurnStart(
+    Match match,
+    NetworkTeam team)
+  {
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece hunter = match.Pieces[index];
+      if (hunter.Team != team ||
+          hunter.Type != nameof(PieceType.BountyHunter))
+      {
+        continue;
+      }
+
+      NetworkPiece? currentTarget =
+        string.IsNullOrWhiteSpace(hunter.AbilityState?.BountyTargetId)
+          ? null
+          : match.Pieces.FirstOrDefault(piece =>
+              piece.Id == hunter.AbilityState!.BountyTargetId);
+
+      if (currentTarget is not null &&
+          IsValidServerBountyTarget(hunter, currentTarget))
+      {
+        continue;
+      }
+
+      match.Pieces[index] = hunter with
+      {
+        AbilityState = AdvancedAbilityRules.EnableBountySelection(
+          AdvancedAbilityRules.ClearBountyTarget(hunter.AbilityState))
+      };
+    }
+  }
+
+
+
+  private static void TransformServerSkinwalkerAfterKill(
+    Match match,
+    NetworkPiece skinwalker,
+    NetworkPiece defeated)
+  {
+    if (skinwalker.Type != nameof(PieceType.Skinwalker) ||
+        defeated.Type == nameof(PieceType.Farm) ||
+        !UnitRules.TryGet(defeated.Type, out UnitRule copiedRule))
+    {
+      return;
+    }
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == skinwalker.Id);
+    if (index < 0) return;
+
+    UnitAbilityState transformedState = (match.Pieces[index].AbilityState ?? new UnitAbilityState()) with
+    {
+      CannotMoveThisTurn = true,
+      CannotActThisTurn = true
+    };
+    NetworkPiece transformed = match.Pieces[index] with
+    {
+      Type = defeated.Type,
+      Health = copiedRule.Health,
+      HasMovedThisTurn = true,
+      HasAttackedThisTurn = true,
+      AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(defeated.Type),
+      AbilityState = transformedState
+    };
+    match.Pieces[index] = transformed;
+
+    if (CanDisplaceServerPieceTo(match, transformed, copiedRule, (transformed.X, transformed.Y)))
+    {
+      return;
+    }
+
+    var board = BoardRules.GetBoard(match.Configuration);
+    foreach ((int x, int y) candidate in board.Cells
+      .OrderBy(position => Math.Max(
+        Math.Abs(position.x - transformed.X),
+        Math.Abs(position.y - transformed.Y)))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x))
+    {
+      if (!CanDisplaceServerPieceTo(match, transformed, copiedRule, candidate)) continue;
+      match.Pieces[index] = transformed with { X = candidate.x, Y = candidate.y };
+      for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+      {
+        NetworkPiece attachment = match.Pieces[attachmentIndex];
+        if (attachment.AttachedToId == transformed.Id)
+        {
+          match.Pieces[attachmentIndex] = attachment with { X = candidate.x, Y = candidate.y };
+        }
+      }
+      break;
+    }
+  }
+
+
+
+  private static NetworkPiece? GetServerLongboatBoardTarget(
+    Match match,
+    NetworkPiece rider,
+    (int x, int y) destination)
+  {
+    if (rider.AttachedToId is not null ||
+        !UnitRules.TryGet(rider.Type, out UnitRule riderRule) ||
+        riderRule.Width != 1 || riderRule.Height != 1 ||
+        rider.Type == nameof(PieceType.FlyingLongboat))
+    {
+      return null;
+    }
+
+    NetworkPiece? longboat = match.Pieces.FirstOrDefault(piece =>
+      piece.Team == rider.Team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.FlyingLongboat) &&
+      UnitRules.TryGet(piece.Type, out UnitRule longboatRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, longboatRule.Width, longboatRule.Height,
+        destination.x, destination.y, 1, 1));
+    if (longboat is null)
+    {
+      return null;
+    }
+
+    int passengerCount = match.Pieces.Count(piece =>
+      piece.AttachedToId == longboat.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Passenger);
+    return passengerCount < 3 ? longboat : null;
+  }
+
+  private static bool TryBoardServerLongboat(
+    Match match,
+    int riderIndex,
+    (int x, int y) destination)
+  {
+    if (riderIndex < 0 || riderIndex >= match.Pieces.Count) return false;
+    NetworkPiece rider = match.Pieces[riderIndex];
+    NetworkPiece? longboat = GetServerLongboatBoardTarget(match, rider, destination);
+    if (longboat is null) return false;
+
+    int longboatIndex = match.Pieces.FindIndex(piece => piece.Id == longboat.Id);
+    if (longboatIndex < 0) return false;
+
+    match.Pieces[riderIndex] = rider with
+    {
+      X = longboat.X,
+      Y = longboat.Y,
+      HasMovedThisTurn = true,
+      AttachedToId = longboat.Id,
+      AttachmentKind = NetworkAttachmentKind.Passenger,
+      AbilityState = AdvancedAbilityRules.RecordMove(rider.AbilityState) with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      }
+    };
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatBoarding(
+        longboat.AbilityState, rider.Id)
+    };
+    return true;
+  }
+
+  private static bool TryDisembarkServerLongboatPassenger(
+    Match match,
+    int passengerIndex,
+    int targetX,
+    int targetY)
+  {
+    if (passengerIndex < 0 || passengerIndex >= match.Pieces.Count) return false;
+    NetworkPiece passenger = match.Pieces[passengerIndex];
+    if (passenger.AttachmentKind != NetworkAttachmentKind.Passenger ||
+        string.IsNullOrWhiteSpace(passenger.AttachedToId) ||
+        !UnitRules.TryGet(passenger.Type, out UnitRule passengerRule))
+    {
+      return false;
+    }
+
+    int longboatIndex = match.Pieces.FindIndex(piece =>
+      piece.Id == passenger.AttachedToId &&
+      piece.Type == nameof(PieceType.FlyingLongboat));
+    if (longboatIndex < 0) return false;
+    NetworkPiece longboat = match.Pieces[longboatIndex];
+    UnitRule longboatRule = UnitRules.GetRequired(longboat.Type);
+    (int x, int y) destination = (targetX, targetY);
+    if (!AbilityRules.AreAdjacent(
+          longboatRule, (longboat.X, longboat.Y),
+          passengerRule, destination, includeDiagonal: true) ||
+        !CanDisplaceServerPieceTo(match, passenger, passengerRule, destination))
+    {
+      return false;
+    }
+
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+        longboat.AbilityState, passenger.Id)
+    };
+    match.Pieces[passengerIndex] = passenger with
+    {
+      X = targetX,
+      Y = targetY,
+      AttachedToId = null,
+      AttachmentKind = NetworkAttachmentKind.None,
+      HasMovedThisTurn = true,
+      HasAttackedThisTurn = true,
+      AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(passenger.Type),
+      AbilityState = (passenger.AbilityState ?? new UnitAbilityState()) with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      }
+    };
+    return true;
+  }
+
+  private static void RemoveServerLongboatPassengerReference(
+    Match match,
+    NetworkPiece passenger)
+  {
+    if (passenger.AttachmentKind != NetworkAttachmentKind.Passenger ||
+        string.IsNullOrWhiteSpace(passenger.AttachedToId))
+    {
+      return;
+    }
+
+    int longboatIndex = match.Pieces.FindIndex(piece =>
+      piece.Id == passenger.AttachedToId &&
+      piece.Type == nameof(PieceType.FlyingLongboat));
+    if (longboatIndex < 0) return;
+    NetworkPiece longboat = match.Pieces[longboatIndex];
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+        longboat.AbilityState, passenger.Id)
+    };
+  }
+
+  private static void ReleaseServerLongboatPassengers(
+    Match match,
+    NetworkPiece longboat)
+  {
+    if (longboat.Type != nameof(PieceType.FlyingLongboat)) return;
+
+    string[] boardingOrder = (longboat.AbilityState?.PassengerIds ?? Array.Empty<string>())
+      .ToArray();
+    foreach (string passengerId in boardingOrder)
+    {
+      int passengerIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == passengerId &&
+        piece.AttachedToId == longboat.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Passenger);
+      if (passengerIndex < 0) continue;
+
+      NetworkPiece passenger = match.Pieces[passengerIndex];
+      if (!UnitRules.TryGet(passenger.Type, out UnitRule passengerRule)) continue;
+      NetworkPiece detached = passenger with
+      {
+        AttachedToId = null,
+        AttachmentKind = NetworkAttachmentKind.None
+      };
+      match.Pieces[passengerIndex] = detached;
+
+      var board = BoardRules.GetBoard(match.Configuration);
+      foreach ((int x, int y) candidate in board.Cells
+        .OrderBy(position => Math.Max(
+          Math.Abs(position.x - longboat.X),
+          Math.Abs(position.y - longboat.Y)))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x))
+      {
+        if (!CanDisplaceServerPieceTo(match, detached, passengerRule, candidate)) continue;
+        match.Pieces[passengerIndex] = detached with
+        {
+          X = candidate.x,
+          Y = candidate.y,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true,
+          AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(detached.Type),
+          AbilityState = (detached.AbilityState ?? new UnitAbilityState()) with
+          {
+            CannotActThisTurn = true,
+            CannotMoveThisTurn = true
+          }
+        };
+        break;
+      }
+    }
+  }
+
+
+
+  private static NetworkPiece? GetServerLinkedNecromancer(
+    Match match,
+    NetworkPiece skeleton)
+  {
+    string? necromancerId = skeleton.AbilityState?.LinkedPieceId;
+    return string.IsNullOrWhiteSpace(necromancerId)
+      ? null
+      : match.Pieces.FirstOrDefault(piece =>
+          piece.Id == necromancerId &&
+          piece.Type == nameof(PieceType.Necromancer) &&
+          piece.Team == skeleton.Team);
+  }
+
+  private static bool IsServerSkeletonDestinationWithinLink(
+    Match match,
+    NetworkPiece piece,
+    (int x, int y) destination)
+  {
+    if (piece.Type != nameof(PieceType.SkeletonMinion))
+    {
+      return true;
+    }
+
+    NetworkPiece? necromancer = GetServerLinkedNecromancer(match, piece);
+    return necromancer is not null &&
+      Math.Max(
+        Math.Abs(destination.x - necromancer.X),
+        Math.Abs(destination.y - necromancer.Y)) <= 4;
+  }
+
+  private static bool SpawnServerSkeletonForNecromancer(
+    Match match,
+    int necromancerIndex,
+    bool initialPlacement)
+  {
+    if (necromancerIndex < 0 || necromancerIndex >= match.Pieces.Count)
+    {
+      return false;
+    }
+
+    NetworkPiece necromancer = match.Pieces[necromancerIndex];
+    if (necromancer.Type != nameof(PieceType.Necromancer))
+    {
+      return false;
+    }
+
+    var board = BoardRules.GetBoard(match.Configuration);
+    IEnumerable<(int x, int y)> candidates = board.Cells
+      .Where(position =>
+      {
+        int dx = Math.Abs(position.x - necromancer.X);
+        int dy = Math.Abs(position.y - necromancer.Y);
+        int distance = Math.Max(dx, dy);
+        return distance >= 1 && (initialPlacement ? distance <= 4 : distance == 1);
+      })
+      .OrderBy(position => Math.Max(
+        Math.Abs(position.x - necromancer.X),
+        Math.Abs(position.y - necromancer.Y)))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x);
+
+    foreach ((int x, int y) destination in candidates)
+    {
+      if (!CanPlaceNetworkPiece(
+            match, nameof(PieceType.SkeletonMinion), necromancer.Team,
+            destination.x, destination.y))
+      {
+        continue;
+      }
+
+      NetworkPiece skeleton = SpawnNetworkPiece(
+        match, nameof(PieceType.SkeletonMinion), necromancer.Team,
+        destination.x, destination.y);
+      int skeletonIndex = match.Pieces.FindIndex(piece => piece.Id == skeleton.Id);
+      match.Pieces[skeletonIndex] = skeleton with
+      {
+        AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+          skeleton.AbilityState, necromancer.Id)
+      };
+      match.Pieces[necromancerIndex] = necromancer with
+      {
+        AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+          necromancer.AbilityState, skeleton.Id) with
+        {
+          PendingRespawn = false
+        }
+      };
+      return true;
+    }
+
+    match.Pieces[necromancerIndex] = necromancer with
+    {
+      AbilityState = (necromancer.AbilityState ?? new UnitAbilityState()) with
+      {
+        LinkedPieceId = null,
+        PendingRespawn = true
+      }
+    };
+    return false;
+  }
+
+  private static void RespawnServerSkeletonsAtOwnerTurnStart(
+    Match match,
+    NetworkTeam team)
+  {
+    foreach (string necromancerId in match.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.Type == nameof(PieceType.Necromancer))
+      .OrderBy(piece => piece.Y)
+      .ThenBy(piece => piece.X)
+      .ThenBy(piece => piece.Id, StringComparer.Ordinal)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == necromancerId);
+      if (index < 0) continue;
+      NetworkPiece necromancer = match.Pieces[index];
+
+      NetworkPiece? linked = string.IsNullOrWhiteSpace(necromancer.AbilityState?.LinkedPieceId)
+        ? null
+        : match.Pieces.FirstOrDefault(piece =>
+            piece.Id == necromancer.AbilityState!.LinkedPieceId &&
+            piece.Type == nameof(PieceType.SkeletonMinion) &&
+            piece.Team == team);
+      if (linked is not null)
+      {
+        continue;
+      }
+
+      if (necromancer.AbilityState?.PendingRespawn == true)
+      {
+        SpawnServerSkeletonForNecromancer(match, index, initialPlacement: false);
+      }
+    }
+  }
+
+  private static void ApplyServerSkeletonDeathLink(
+    Match match,
+    NetworkPiece skeleton)
+  {
+    if (skeleton.Type != nameof(PieceType.SkeletonMinion))
+    {
+      return;
+    }
+
+    NetworkPiece? necromancer = GetServerLinkedNecromancer(match, skeleton);
+    if (necromancer is null) return;
+
+    int index = match.Pieces.FindIndex(piece => piece.Id == necromancer.Id);
+    if (index < 0) return;
+    match.Pieces[index] = necromancer with
+    {
+      AbilityState = (necromancer.AbilityState ?? new UnitAbilityState()) with
+      {
+        LinkedPieceId = null,
+        PendingRespawn = true
+      }
+    };
+  }
+
+  private static void RemoveServerSkeletonForNecromancerDeath(
+    Match match,
+    NetworkPiece necromancer)
+  {
+    if (necromancer.Type != nameof(PieceType.Necromancer))
+    {
+      return;
+    }
+
+    string? skeletonId = necromancer.AbilityState?.LinkedPieceId;
+    if (string.IsNullOrWhiteSpace(skeletonId))
+    {
+      return;
+    }
+
+    NetworkPiece? skeleton = match.Pieces.FirstOrDefault(piece =>
+      piece.Id == skeletonId &&
+      piece.Type == nameof(PieceType.SkeletonMinion) &&
+      piece.Team == necromancer.Team);
+    if (skeleton is not null)
+    {
+      RemovePiece(match, skeleton.Id);
+    }
+  }
+
+
+
+  private static bool IsServerSerpentFollower(NetworkPiece piece) =>
+    piece.Type == nameof(PieceType.Serpent) &&
+    !string.IsNullOrWhiteSpace(piece.AbilityState?.LinkedPieceId);
+
+  private static bool CanPlaceServerSerpentFormation(
+    Match match,
+    NetworkTeam team,
+    int frontX,
+    int frontY)
+  {
+    UnitRule rule = UnitRules.GetRequired(nameof(PieceType.Serpent));
+    (int x, int y) forward = TeamRules.GetForwardDirection(team);
+    (int x, int y)[] positions =
+    [
+      (frontX, frontY),
+      (frontX - forward.x, frontY - forward.y),
+      (frontX - forward.x * 2, frontY - forward.y * 2)
+    ];
+
+    foreach ((int x, int y) position in positions)
+    {
+      if (!CanPlaceForTeamWithDeveloperClaims(
+            match, team, position.x, position.y,
+            rule.Width, rule.Height))
+      {
+        return false;
+      }
+
+      foreach ((int x, int y) square in OccupiedSquares(rule, position))
+      {
+        if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square))
+        {
+          return false;
+        }
+      }
+
+      if (match.Pieces.Any(piece =>
+        piece.Type != nameof(PieceType.Farm) &&
+        UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+        UnitRules.FootprintsOverlap(
+          piece.X, piece.Y, otherRule.Width, otherRule.Height,
+          position.x, position.y, rule.Width, rule.Height)))
+      {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private static void CreateServerSerpentFollowers(Match match, int frontIndex)
+  {
+    if (frontIndex < 0 || frontIndex >= match.Pieces.Count) return;
+    NetworkPiece front = match.Pieces[frontIndex];
+    if (front.Type != nameof(PieceType.Serpent) || IsServerSerpentFollower(front)) return;
+
+    UnitRule rule = UnitRules.GetRequired(nameof(PieceType.Serpent));
+    (int x, int y) forward = TeamRules.GetForwardDirection(front.Team);
+    (int x, int y) middlePosition = (front.X - forward.x, front.Y - forward.y);
+    (int x, int y) backPosition = (front.X - forward.x * 2, front.Y - forward.y * 2);
+    string middleId = Guid.NewGuid().ToString("N");
+    string backId = Guid.NewGuid().ToString("N");
+
+    NetworkPiece middle = new(
+      middleId, front.Type, front.Team, middlePosition.x, middlePosition.y, rule.Health,
+      HasMovedThisTurn: front.HasMovedThisTurn,
+      HasAttackedThisTurn: true,
+      LastBid: 0,
+      CannotContributeToConquestThisTurn: front.CannotContributeToConquestThisTurn,
+      AbilityState: new UnitAbilityState { LinkedPieceId = front.Id });
+    NetworkPiece back = new(
+      backId, front.Type, front.Team, backPosition.x, backPosition.y, rule.Health,
+      HasMovedThisTurn: front.HasMovedThisTurn,
+      HasAttackedThisTurn: true,
+      LastBid: 0,
+      CannotContributeToConquestThisTurn: front.CannotContributeToConquestThisTurn,
+      AbilityState: new UnitAbilityState { LinkedPieceId = front.Id });
+
+    match.Pieces[frontIndex] = front with
+    {
+      AbilityState = (front.AbilityState ?? new UnitAbilityState()) with
+      {
+        PendingAbility = "SerpentSegments",
+        PendingSelections =
+        [
+          new AbilitySelection(middleId, middlePosition.x, middlePosition.y),
+          new AbilitySelection(backId, backPosition.x, backPosition.y)
+        ]
+      }
+    };
+    match.Pieces.Add(middle);
+    match.Pieces.Add(back);
+  }
+
+  private static IReadOnlyList<NetworkPiece> GetServerSerpentFormation(
+    Match match,
+    NetworkPiece front)
+  {
+    if (front.Type != nameof(PieceType.Serpent) || IsServerSerpentFollower(front))
+    {
+      return [front];
+    }
+
+    List<NetworkPiece> formation = [front];
+    if (string.Equals(front.AbilityState?.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      foreach (AbilitySelection selection in front.AbilityState!.PendingSelections)
+      {
+        if (string.IsNullOrWhiteSpace(selection.TargetId)) continue;
+        NetworkPiece? segment = match.Pieces.FirstOrDefault(piece =>
+          piece.Id == selection.TargetId &&
+          piece.Type == nameof(PieceType.Serpent));
+        if (segment is not null) formation.Add(segment);
+      }
+    }
+    return formation;
+  }
+
+  private static NetworkPiece MoveServerSerpentFormation(
+    Match match,
+    int frontIndex,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) destination)
+  {
+    NetworkPiece front = match.Pieces[frontIndex];
+    IReadOnlyList<NetworkPiece> formation = GetServerSerpentFormation(match, front);
+    if (formation.Count <= 1)
+    {
+      NetworkPiece movedSingle = front with
+      {
+        X = destination.x,
+        Y = destination.y,
+        HasMovedThisTurn = true,
+        AbilityState = AdvancedAbilityRules.RecordMove(front.AbilityState)
+      };
+      match.Pieces[frontIndex] = movedSingle;
+      return movedSingle;
+    }
+
+    List<(int x, int y)> trail = formation
+      .Reverse()
+      .Select(segment => (segment.X, segment.Y))
+      .ToList();
+    trail.AddRange(path);
+    List<(int x, int y)> finalPositions = trail
+      .Skip(Math.Max(0, trail.Count - formation.Count))
+      .Take(formation.Count)
+      .ToList();
+    finalPositions.Reverse();
+
+    for (int formationIndex = 0; formationIndex < formation.Count; formationIndex++)
+    {
+      NetworkPiece segment = formation[formationIndex];
+      int index = match.Pieces.FindIndex(piece => piece.Id == segment.Id);
+      if (index < 0) continue;
+      match.Pieces[index] = segment with
+      {
+        X = finalPositions[formationIndex].x,
+        Y = finalPositions[formationIndex].y,
+        HasMovedThisTurn = true,
+        AbilityState = formationIndex == 0
+          ? AdvancedAbilityRules.RecordMove(segment.AbilityState)
+          : segment.AbilityState
+      };
+    }
+
+    return match.Pieces.First(piece => piece.Id == front.Id);
+  }
+
+  private static void ReconnectServerSerpentAfterDeath(
+    Match match,
+    NetworkPiece defeated)
+  {
+    if (defeated.Type != nameof(PieceType.Serpent)) return;
+
+    NetworkPiece? front = string.IsNullOrWhiteSpace(defeated.AbilityState?.LinkedPieceId)
+      ? defeated
+      : match.Pieces.FirstOrDefault(piece =>
+          piece.Id == defeated.AbilityState!.LinkedPieceId &&
+          piece.Type == nameof(PieceType.Serpent));
+    if (front is null) return;
+
+    List<string> orderedIds = [front.Id];
+    if (string.Equals(front.AbilityState?.PendingAbility, "SerpentSegments", StringComparison.Ordinal))
+    {
+      orderedIds.AddRange(front.AbilityState!.PendingSelections
+        .Select(selection => selection.TargetId)
+        .Where(id => !string.IsNullOrWhiteSpace(id))!);
+    }
+
+    int defeatedIndex = orderedIds.FindIndex(id => id == defeated.Id);
+    if (defeatedIndex < 0) return;
+
+    if (defeatedIndex > 0 && defeatedIndex < orderedIds.Count - 1)
+    {
+      int trailingIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == orderedIds[defeatedIndex + 1]);
+      if (trailingIndex >= 0)
+      {
+        NetworkPiece trailing = match.Pieces[trailingIndex];
+        match.Pieces[trailingIndex] = trailing with
+        {
+          X = defeated.X,
+          Y = defeated.Y
+        };
+      }
+    }
+
+    orderedIds.RemoveAt(defeatedIndex);
+    List<NetworkPiece> remaining = orderedIds
+      .Select(id => match.Pieces.FirstOrDefault(piece => piece.Id == id))
+      .Where(piece => piece is not null)
+      .ToList()!;
+    if (remaining.Count == 0) return;
+
+    NetworkPiece newFront = remaining[0];
+    int newFrontIndex = match.Pieces.FindIndex(piece => piece.Id == newFront.Id);
+    match.Pieces[newFrontIndex] = newFront with
+    {
+      HasAttackedThisTurn = false,
+      AbilityState = (newFront.AbilityState ?? new UnitAbilityState()) with
+      {
+        LinkedPieceId = null,
+        PendingAbility = "SerpentSegments",
+        PendingSelections = remaining.Skip(1)
+          .Select(piece => new AbilitySelection(piece.Id, piece.X, piece.Y))
+          .ToArray()
+      }
+    };
+
+    foreach (NetworkPiece follower in remaining.Skip(1))
+    {
+      int index = match.Pieces.FindIndex(piece => piece.Id == follower.Id);
+      if (index < 0) continue;
+      match.Pieces[index] = follower with
+      {
+        HasAttackedThisTurn = true,
+        AbilityState = (follower.AbilityState ?? new UnitAbilityState()) with
+        {
+          LinkedPieceId = newFront.Id,
+          PendingAbility = null,
+          PendingSelections = Array.Empty<AbilitySelection>()
+        }
+      };
+    }
+  }
+
+
+
+  private static NetworkTeam? GetServerPlacementTerritoryOwner(
+    Match match,
+    (int x, int y) position)
+  {
+    if (match.PlacementTerritoryClaims.TryGetValue(position, out NetworkTeam claimedOwner))
+    {
+      return claimedOwner;
+    }
+
+    return MatchRules.GetSquareOwner(
+      NetworkBoardRules.GetBoard(match.Configuration),
+      match.Configuration.GameMode,
+      position,
+      match.Configuration.PlayerCount);
+  }
+
+  private static bool CanPlaceForTeamWithDeveloperClaims(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    for (int offsetX = 0; offsetX < width; offsetX++)
+    {
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + offsetX, y + offsetY)) != team)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static bool IsNoMansLandForPlacement(
+    Match match,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    for (int offsetX = 0; offsetX < width; offsetX++)
+    {
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + offsetX, y + offsetY)) is not null)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static bool IsServerDeveloperClaimTarget(
+    Match match,
+    NetworkPiece developer,
+    int x,
+    int y)
+  {
+    (int x, int y) position = (x, y);
+    if (developer.Type != nameof(PieceType.Developer) ||
+        developer.HasAttackedThisTurn ||
+        !NetworkBoardRules.Contains(match.Configuration, x, y) ||
+        MatchRules.GetSquareOwner(
+          NetworkBoardRules.GetBoard(match.Configuration),
+          match.Configuration.GameMode,
+          position,
+          match.Configuration.PlayerCount) is not null ||
+        match.PlacementTerritoryClaims.ContainsKey(position))
+    {
+      return false;
+    }
+
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dx = -1; dx <= 1; dx++)
+    {
+      if (dx == 0 && dy == 0) continue;
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + dx, y + dy)) == developer.Team)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+
+
+  private static bool HasPendingServerSatanChoice(Match match, NetworkTeam team) =>
+    match.Pieces.Any(piece =>
+      piece.Team == team &&
+      RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+      piece.AbilityState?.PendingAbility?.StartsWith(
+        "SatanChoice:", StringComparison.Ordinal) == true);
+
+  private static bool IsPendingServerSatanChoiceRoyal(NetworkPiece piece) =>
+    piece is not null &&
+    RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+    piece.AbilityState?.PendingAbility?.StartsWith(
+      "SatanChoice:", StringComparison.Ordinal) == true;
+
+  private static bool TryGetServerSatanSourceTeam(
+    NetworkPiece royal,
+    out NetworkTeam sourceTeam)
+  {
+    sourceTeam = default;
+    const string prefix = "SatanChoice:";
+    string? pending = royal.AbilityState?.PendingAbility;
+    return pending is not null &&
+      pending.StartsWith(prefix, StringComparison.Ordinal) &&
+      Enum.TryParse(pending[prefix.Length..], out sourceTeam);
+  }
+
+
 }

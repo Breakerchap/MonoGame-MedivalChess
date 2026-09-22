@@ -1042,7 +1042,7 @@
       },
       "ability": {
         "id": "dynasty.sumo.ability",
-        "text": "After attacking a unit, push it 2 tiles directly away.",
+        "text": "After attacking a unit, push it 2 tiles directly away. If the full push would be illegal, stop it at the furthest legal square before that.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -4358,7 +4358,7 @@
       },
       "ability": {
         "id": "greek.atlas.ability",
-        "text": "Once per owner turn, choose up to three friendly units with non-zero Move and move each 1 tile to a legal square. Units moved this way cannot make a normal movement later that turn. After Atlas attacks an enemy, push it 2 tiles directly away.",
+        "text": "Once per owner turn, choose up to three friendly units with non-zero Move and move each 1 tile to a legal square. Units moved this way cannot make a normal movement later that turn. After Atlas attacks an enemy, push it 2 tiles directly away. If the full push would be illegal, stop it at the furthest legal square before that.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -4468,7 +4468,7 @@
       },
       "ability": {
         "id": "greek.muse.ability",
-        "text": "As an attack, attach to one friendly unit. While attached, improve that unit's Move and Attack patterns by one step: Line or Diagonal → Diagonal, Diagonal → Circle, Circle → Square.",
+        "text": "As an attack, attach to one friendly unit. While attached, improve that unit's Move and Attack patterns by one step: Line or Diagonal → Diamond, Diamond → Circle, Circle → Square.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -5909,7 +5909,7 @@
       },
       "ability": {
         "id": "wild_west.prison.ability",
-        "text": "When destroyed, releases all imprisoned units and spawns two Cowboys and two Brawlers.",
+        "text": "When an ordinary Prison is destroyed, release all imprisoned units onto the closest legal squares, preferring down-right when equally close, then spawn two Cowboys and two Brawlers by the same rule. A Sheriff-linked Prison releases its prisoners but does not spawn Cowboys or Brawlers.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -6021,7 +6021,7 @@
       },
       "ability": {
         "id": "wild_west.buffalo.ability",
-        "text": "Attacks by landing on an enemy. If the target dies, move onto its square; otherwise return to the previous square of the movement. A successful landing attack also pushes the target 1 tile directly away.",
+        "text": "Attacks by landing on an enemy. If the target dies, move onto its square; otherwise return to the previous square of the movement. A successful landing attack also pushes the target 1 tile directly away. If the push would be illegal, leave the target on its current square.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -6133,7 +6133,7 @@
       },
       "ability": {
         "id": "wild_west.sheriff.ability",
-        "text": "When placing the Sheriff, also place one empty Prison. When the Sheriff would attack a non-Royal enemy with 30 Health or less, it may arrest that unit instead of dealing damage. A Prison holds at most three units; imprisoned units cannot act. If the Prison is destroyed, all prisoners are released. A replacement empty Prison costs 120 gold.",
+        "text": "When placing the Sheriff, separately place one empty 3×3 Sheriff Prison for free on a legal square in friendly territory. When the Sheriff would attack a non-Royal enemy with 30 Health or less, it may arrest that unit instead of dealing damage. The linked Prison holds at most three units; imprisoned units cannot act. If it is destroyed, release prisoners in arrest order onto the closest legal squares, preferring down-right when equally close. A replacement empty Sheriff Prison costs 120 gold and does not spawn Cowboys or Brawlers when destroyed.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -6850,7 +6850,7 @@
       },
       "ability": {
         "id": "modern.armoured_truck.ability",
-        "text": "May also attack by landing on an enemy without spending its normal attack action. If the target dies, move onto its square; otherwise return to the previous square. A landing attack pushes the target 2 tiles directly away.",
+        "text": "May also attack by landing on an enemy without spending its normal attack action. If the target dies, move onto its square; otherwise return to the previous square. A landing attack pushes the target 2 tiles directly away. If the full push would be illegal, stop it at the furthest legal square before that.",
         "has_special_ability": true
       },
       "data_ready": true,
@@ -7400,7 +7400,7 @@
       },
       "ability": {
         "id": "angels_demons.beelzebub.ability",
-        "text": "Ignores terrain and other units while moving, cannot be pushed or pulled, and after being attacked pushes the attacker 2 tiles directly away.",
+        "text": "Ignores terrain and other units while moving, cannot be pushed or pulled, and after being attacked pushes the attacker 2 tiles directly away. If the full push would be illegal, stop it at the furthest legal square before that.",
         "has_special_ability": true
       },
       "data_ready": true,

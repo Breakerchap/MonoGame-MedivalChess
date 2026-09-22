@@ -8,6 +8,21 @@ namespace MedivalChess.CPU;
 /// </summary>
 public static partial class CpuGameRules
 {
+  private static UnitRule ApplyCpuAttachmentBonuses(
+    IReadOnlyList<NetworkPiece> pieces,
+    IEnumerable<AbilityEntity> abilityEntities,
+    NetworkPiece host,
+    UnitRule rule)
+  {
+    bool hasImp = pieces.Any(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
+    int museCount = pieces.Count(piece =>
+      piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
+    rule = AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyPersistentBonuses(rule, host.AbilityState);
+    return AbilityEntityRules.ApplyAuraBonuses(rule, abilityEntities, host);
+  }
+
   private static void ResolveSharedPieceDamage(
     CpuMutableGameState state,
     NetworkPiece attacker,
@@ -25,16 +40,20 @@ public static partial class CpuGameRules
     }
 
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
-      piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
+      piece.AttachmentKind == NetworkAttachmentKind.Shieldsman) ??
+      state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
     NetworkPiece? oxAttachment = target.Type == nameof(PieceType.Ox)
       ? state.Pieces.FirstOrDefault(piece =>
         piece.AttachedToId == target.Id && piece.AttachmentKind == NetworkAttachmentKind.Carried)
       : null;
     int unmitigated = damageOverride ?? GetSharedAttackDamage(state, attacker, target);
     ApplySharedDamageToPiece(state, attacker, attackerTeam, damaged, unmitigated);
+    RewardCpuRaiderKill(state, attacker, damaged);
     if (oxAttachment is not null && oxAttachment.Id != damaged.Id && FindPiece(state.Pieces, oxAttachment.Id) is not null)
     {
       ApplySharedDamageToPiece(state, attacker, attackerTeam, oxAttachment, unmitigated);
+      RewardCpuRaiderKill(state, attacker, oxAttachment);
     }
 
     for (int index = 0; index < state.Pieces.Count; index++)
@@ -48,7 +67,8 @@ public static partial class CpuGameRules
 
   private static int GetSharedAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
   {
-    UnitRule attackerRule = UnitRules.GetRequired(attacker.Type);
+    UnitRule attackerRule = ApplyCpuAttachmentBonuses(
+      state.Pieces, state.AbilityEntities, attacker, UnitRules.GetRequired(attacker.Type));
     UnitRule targetRule = UnitRules.GetRequired(target.Type);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
     (int x, int y) targetFacing = AbilityStateRules.GetFacing(target.Team, target.FacingX, target.FacingY);
@@ -61,9 +81,14 @@ public static partial class CpuGameRules
       (target.X, target.Y)
     );
 
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (piece.Type, piece.Team, piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    baseDamage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(baseDamage, selectedByBaron);
     return CombatRules.CalculateDamage(
       baseDamage,
-      HasAdjacentUnit(state, attacker, attacker.Team, nameof(PieceType.Baron)),
+      false,
       state.Pieces.Any(piece => piece.Type == nameof(PieceType.Spy) && piece.MarkedTargetId == target.Id),
       false,
       false,
@@ -90,15 +115,26 @@ public static partial class CpuGameRules
       unmitigatedDamage,
       false,
       false,
-      HasAdjacentUnit(state, damaged, damaged.Team, nameof(PieceType.Baron)),
+      false,
       IsInForest(state, damaged),
-      state.Source.Terrain.ForestDamageReduction
+      state.Terrain.ForestDamageReduction
     );
+    bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      damaged.Id,
+      damaged.Team);
+    damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
+    damage = Math.Max(0, damage - AbilityEntityRules.GetDamageReduction(
+      state.AbilityEntities, damaged));
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       damagedRule,
       (attacker.X, attacker.Y),
       (damaged.X, damaged.Y)));
+    damage = AbilityRules.LimitIncomingDamage(damagedRule, damage);
     damage = ApplyCpuChessKingDeathRule(state, damaged, damage);
     int damagedIndex = FindPieceIndex(state.Pieces, damaged.Id);
     if (damagedIndex < 0)
@@ -110,10 +146,41 @@ public static partial class CpuGameRules
     if (live.Health > damage)
     {
       state.Pieces[damagedIndex] = live with { Health = live.Health - damage };
+    }
+    else
+    {
+      HandleSharedPieceDestroyed(state, live, attackerTeam);
+    }
+
+    if (damaged.Type == nameof(PieceType.CactusJack) && damage > 0)
+    {
+      int reflected = AdvancedAbilityRules.ReflectCactusDamage(damage);
+      if (reflected > 0)
+      {
+        ApplySharedFixedDamage(
+          state,
+          attacker.Id,
+          damaged.Team,
+          reflected,
+          applyCombatMitigation: false);
+      }
+    }
+  }
+
+  private static void RewardCpuRaiderKill(
+    CpuMutableGameState state,
+    NetworkPiece attacker,
+    NetworkPiece defeated)
+  {
+    if (attacker.Type != nameof(PieceType.Raider) ||
+        defeated.Team == attacker.Team || defeated.Team == NetworkTeam.Neutral ||
+        state.Pieces.Any(piece => piece.Id == defeated.Id) ||
+        !UnitRules.TryGet(defeated.Type, out UnitRule defeatedRule))
+    {
       return;
     }
 
-    HandleSharedPieceDestroyed(state, live, attackerTeam);
+    AddMoney(state, attacker.Team, AdvancedAbilityRules.GetRaiderKillReward(defeatedRule.Cost));
   }
 
   private static void ApplySharedFixedDamage(
@@ -135,10 +202,26 @@ public static partial class CpuGameRules
         damage,
         false,
         false,
-        HasAdjacentUnit(state, target, target.Team, nameof(PieceType.Baron)),
+        false,
         IsInForest(state, target),
-        state.Source.Terrain.ForestDamageReduction)
+        state.Terrain.ForestDamageReduction)
       : damage;
+    if (applyCombatMitigation)
+    {
+      bool protectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+        state.Pieces.Select(piece => (
+          piece.Type,
+          piece.Team,
+          piece.AbilityState?.SelectedTargetId)),
+        target.Id,
+        target.Team);
+      appliedDamage = AdvancedAbilityRules.ApplyBaronIncomingReduction(appliedDamage, protectedByBaron);
+    }
+
+    if (UnitRules.TryGet(target.Type, out UnitRule targetRule))
+    {
+      appliedDamage = AbilityRules.LimitIncomingDamage(targetRule, appliedDamage);
+    }
 
     int index = FindPieceIndex(state.Pieces, target.Id);
     if (index < 0) return;
@@ -167,6 +250,16 @@ public static partial class CpuGameRules
       return;
     }
     piece = state.Pieces[liveIndex];
+
+    if (piece.AbilityState?.OdinProtectionAvailable == true)
+    {
+      state.Pieces[liveIndex] = piece with
+      {
+        Health = 1,
+        AbilityState = AdvancedAbilityRules.ConsumeOdinProtection(piece.AbilityState)
+      };
+      return;
+    }
 
     LethalAbilityOutcome lethal = AbilityStateRules.ResolveLethalDamage(piece.Type, piece.HasRevived);
     if (lethal.Kind != LethalAbilityOutcomeKind.Die)
@@ -235,6 +328,10 @@ public static partial class CpuGameRules
     bool royalDeath = IsSharedCpuRoyalDeath(state, piece);
     UnitRules.TryGet(piece.Type, out UnitRule destroyedRule);
     RemovePiece(state, piece.Id);
+    if (piece.Type == nameof(PieceType.Prison))
+    {
+      ResolveCpuPrisonDestruction(state, piece);
+    }
 
     foreach (AbilityDamageInstruction instruction in deathExplosion)
     {
@@ -318,10 +415,15 @@ public static partial class CpuGameRules
       return;
     }
 
-    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health) +
-      (HasAdjacentUnit(state, attacker, attacker.Team, nameof(PieceType.Baron))
-        ? CombatRules.BaronDamageBonus
-        : 0);
+    int damage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
+    bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
+      state.Pieces.Select(piece => (
+        piece.Type,
+        piece.Team,
+        piece.AbilityState?.SelectedTargetId)),
+      attacker.Id,
+      attacker.Team);
+    damage = AdvancedAbilityRules.ApplyBaronOutgoingBonus(damage, selectedByBaron);
     if (health <= damage)
     {
       state.Barricades.Remove(position);
@@ -346,6 +448,8 @@ public static partial class CpuGameRules
     }
     int farms = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Farm));
     money = ClampCurrency((long)money + farms * (long)state.Source.Configuration.FarmIncomePerTurn);
+    int palaces = state.Pieces.Count(piece => piece.Team == team && piece.AttachedToId is null && piece.Type == nameof(PieceType.Palace) && (piece.AbilityState?.DisabledOwnerTurnsRemaining ?? 0) <= 0);
+    money = ClampCurrency((long)money + palaces * (long)AdvancedAbilityRules.PalaceIncome);
 
     UnitUpkeepSequenceResult abilityUpkeep = EconomyRules.ResolveAbilityUpkeepSequence(
       money,
@@ -375,7 +479,8 @@ public static partial class CpuGameRules
             Team = NetworkTeam.Neutral,
             HasMovedThisTurn = true,
             HasAttackedThisTurn = true,
-            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type)
+            AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(mercenary.Type),
+            AbilityState = (mercenary.AbilityState ?? new UnitAbilityState()) with { CannotActThisTurn = true, CannotMoveThisTurn = true }
           };
         }
       }
@@ -394,6 +499,26 @@ public static partial class CpuGameRules
 
   private static void ResetSharedTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    state.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, team));
+
+    for (int index = 0; index < state.Pieces.Count; index++)
+    {
+      NetworkPiece piece = state.Pieces[index];
+      if (piece.Team == team && piece.AbilityState?.OdinProtectionAvailable == true)
+      {
+        state.Pieces[index] = piece with
+        {
+          AbilityState = piece.AbilityState with
+          {
+            OdinProtectedById = null,
+            OdinProtectionAvailable = false
+          }
+        };
+      }
+    }
+    TriggerPoisonCloudsAtOwnerTurnStart(state, team);
+
     // Delayed effects trigger at the start of the source team's next turn, even if the target is
     // an enemy piece. Split them before refreshing the active team's own pieces.
     foreach (string pieceId in state.Pieces.Select(piece => piece.Id).ToArray())
@@ -407,6 +532,24 @@ public static partial class CpuGameRules
       {
         ApplySharedFixedDamage(state, pieceId, effect.SourceTeam, effect.Damage, applyCombatMitigation: true);
         if (FindPieceIndex(state.Pieces, pieceId) < 0) break;
+      }
+    }
+
+    foreach (NetworkPiece imp in state.Pieces
+      .Where(piece => piece.Team == team && piece.AttachmentKind == NetworkAttachmentKind.Imp &&
+        piece.AttachedToId is not null)
+      .ToArray())
+    {
+      int hostIndex = FindPieceIndex(state.Pieces, imp.AttachedToId!);
+      if (hostIndex < 0) continue;
+      NetworkPiece host = state.Pieces[hostIndex];
+      if (host.Health > AdvancedAbilityRules.ImpHealthDrain)
+      {
+        state.Pieces[hostIndex] = host with { Health = host.Health - AdvancedAbilityRules.ImpHealthDrain };
+      }
+      else
+      {
+        HandleSharedPieceDestroyed(state, host, null);
       }
     }
 
@@ -436,7 +579,8 @@ public static partial class CpuGameRules
         AttacksThisTurn = 0,
         CavalierFollowUpMoveAvailable = false,
         EngineerBuildsThisTurn = 0,
-        CannotContributeToConquestThisTurn = false
+        CannotContributeToConquestThisTurn = false,
+        AbilityState = AdvancedAbilityRules.StartOwnerTurn(piece.AbilityState, piece.X, piece.Y, ownerTurn.ResultingHealth)
       };
     }
   }
@@ -456,14 +600,45 @@ public static partial class CpuGameRules
     }
   }
 
+  private static void EndSharedOwnerTurnStates(CpuMutableGameState state, NetworkTeam team)
+  {
+    for (int index = 0; index < state.Pieces.Count; index++)
+    {
+      NetworkPiece piece = state.Pieces[index];
+      if (piece.Team == team)
+      {
+        state.Pieces[index] = piece with
+        {
+          AbilityState = AdvancedAbilityRules.EndOwnerTurn(piece.AbilityState)
+        };
+      }
+    }
+  }
+
   private static void CompleteSharedTurn(CpuMutableGameState state, NetworkTeam team)
   {
     ApplyEndOfTurnObjectives(state, team);
+    if (state.Winner is null)
+    {
+      foreach (string wendigoId in state.Pieces
+        .Where(piece => piece.Team == team &&
+          AdvancedAbilityRules.ShouldDieAtEndOwnerTurn(piece.Type, piece.AttacksThisTurn))
+        .Select(piece => piece.Id)
+        .ToArray())
+      {
+        int index = FindPieceIndex(state.Pieces, wendigoId);
+        if (index >= 0)
+        {
+          HandleSharedPieceDestroyed(state, state.Pieces[index], null);
+        }
+      }
+    }
     if (state.Winner is not null)
     {
       return;
     }
 
+    EndSharedOwnerTurnStates(state, team);
     state.Teams[team] = state.Teams[team] with { ActionsRemaining = state.Teams[team].ActionLimit };
     state.CurrentTurn = TeamRules.GetNextTeam(team, state.Source.Configuration.PlayerCount);
     state.TurnNumber++;

@@ -14,6 +14,7 @@ public sealed class CpuGameState
   private readonly Dictionary<(int x, int y), NetworkTeam> _mines;
   private readonly HashSet<TileEdge> _riverBridges;
   private readonly CpuMoveRecord[] _recentMoves;
+  private readonly AbilityEntity[] _abilityEntities;
 
   public NetworkMatchConfiguration Configuration { get; }
   public Board Board { get; }
@@ -33,6 +34,7 @@ public sealed class CpuGameState
   public IReadOnlyDictionary<(int x, int y), int> Barricades => _barricades;
   public IReadOnlyDictionary<(int x, int y), NetworkTeam> Mines => _mines;
   public IReadOnlySet<TileEdge> RiverBridges => _riverBridges;
+  public IReadOnlyList<AbilityEntity> AbilityEntities => _abilityEntities;
   /// <summary>Recent completed moves used only to discourage immediately undoing a position.</summary>
   public IReadOnlyList<CpuMoveRecord> RecentMoves => _recentMoves;
   public CpuScenarioDefinition? Scenario { get; }
@@ -63,7 +65,8 @@ public sealed class CpuGameState
     IEnumerable<TileEdge>? riverBridges = null,
     CpuScenarioDefinition? scenario = null,
     IEnumerable<CpuMoveRecord>? recentMoves = null,
-    Board? board = null
+    Board? board = null,
+    IEnumerable<AbilityEntity>? abilityEntities = null
   )
   {
     Configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
@@ -87,6 +90,7 @@ public sealed class CpuGameState
     _mines = mines?.ToDictionary(pair => pair.Key, pair => pair.Value) ?? [];
     _riverBridges = riverBridges is null ? [] : [.. riverBridges];
     _recentMoves = NormaliseRecentMoves(recentMoves ?? []);
+    _abilityEntities = abilityEntities?.ToArray() ?? [];
     CurrentTurn = currentTurn;
     TurnNumber = Math.Max(0, turnNumber);
     Winner = winner;
@@ -140,7 +144,8 @@ public sealed class CpuGameState
       mines: mines,
       riverBridges: bridges,
       scenario: scenario,
-      recentMoves: recentMoves
+      recentMoves: recentMoves,
+      abilityEntities: state.AbilityEntities
     );
   }
 
@@ -165,7 +170,8 @@ public sealed class CpuGameState
     _riverBridges,
     Scenario,
     _recentMoves,
-    Board
+    Board,
+    _abilityEntities
   );
 
   internal CpuMutableGameState ToMutable() => new(this);
@@ -227,6 +233,12 @@ internal sealed class CpuMutableGameState
     Barricades = source.Barricades.ToDictionary(pair => pair.Key, pair => pair.Value);
     Mines = source.Mines.ToDictionary(pair => pair.Key, pair => pair.Value);
     RiverBridges = [.. source.RiverBridges];
+    AbilityEntities = [.. source.AbilityEntities];
+    Terrain = new BattlefieldTerrain(
+      source.Terrain.Forests,
+      source.Terrain.Lakes,
+      source.Terrain.Rivers,
+      source.Terrain.ForestDamageReduction);
     CurrentTurn = source.CurrentTurn;
     TurnNumber = source.TurnNumber;
     Winner = source.Winner;
@@ -246,6 +258,8 @@ internal sealed class CpuMutableGameState
   internal Dictionary<(int x, int y), int> Barricades { get; }
   internal Dictionary<(int x, int y), NetworkTeam> Mines { get; }
   internal HashSet<TileEdge> RiverBridges { get; }
+  internal List<AbilityEntity> AbilityEntities { get; }
+  internal BattlefieldTerrain Terrain { get; }
   internal NetworkTeam CurrentTurn { get; set; }
   internal int TurnNumber { get; set; }
   internal NetworkTeam? Winner { get; set; }
@@ -267,7 +281,7 @@ internal sealed class CpuMutableGameState
     Teams.Values,
     CurrentTurn,
     TurnNumber,
-    Source.Terrain,
+    Terrain,
     Winner,
     InitialBuy,
     ConquestScore,
@@ -281,6 +295,7 @@ internal sealed class CpuMutableGameState
     RiverBridges,
     Source.Scenario,
     RecentMoves,
-    Source.Board
+    Source.Board,
+    AbilityEntities
   );
 }

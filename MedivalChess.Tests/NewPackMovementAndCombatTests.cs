@@ -24,7 +24,8 @@ public sealed class NewPackMovementAndCombatTests
     var fourForward = (forward.x * 4, forward.y * 4);
     var threeBackward = (-forward.x * 3, -forward.y * 3);
     Assert.True(paths.ContainsKey(fourForward));
-    Assert.False(paths.ContainsKey(threeBackward));
+    // The current roster gives Raider a Circle move; only the forward bonus is directional.
+    Assert.True(paths.ContainsKey(threeBackward));
   }
 
   [Fact]

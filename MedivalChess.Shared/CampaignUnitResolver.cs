@@ -13,12 +13,11 @@ public static class CampaignUnitResolver
   )
   {
     ArgumentNullException.ThrowIfNull(level);
-    PieceDefinition? native = PieceDefinitions.All.FirstOrDefault(candidate =>
-      string.Equals(candidate.Identifier, identifier, StringComparison.Ordinal));
+    PieceDefinition? native = FindNative(identifier);
     if (native is not null)
     {
       CampaignUnitTemplateOverrideDefinition? template = (level.UnitOverrides ?? []).FirstOrDefault(candidate =>
-        string.Equals(candidate.UnitType, native.Identifier, StringComparison.Ordinal));
+        MatchesNativeIdentifier(candidate.UnitType, native));
       if (template is null)
       {
         return TryApplyOverrides(native, placementOverrides, native.Identifier, native.DisplayName, native.AbilityDescription, native.Abbreviation, out definition);
@@ -91,18 +90,27 @@ public static class CampaignUnitResolver
 
   public static IReadOnlyList<string> GetPurchasableIdentifiers(CampaignLevelDefinition level) =>
     PieceDefinitions.Purchasable.Where(definition => !((level.UnitOverrides ?? [])
-        .FirstOrDefault(template => string.Equals(template.UnitType, definition.Identifier, StringComparison.Ordinal))?.Purchasable == false))
-      .Select(definition => definition.Identifier)
+        .FirstOrDefault(template => MatchesNativeIdentifier(template.UnitType, definition))?.Purchasable == false))
+      .Select(definition => definition.SourceUnitId)
       .Concat((level.CustomUnits ?? []).Where(unit => unit.Purchasable).Select(unit => unit.Id))
       .Distinct(StringComparer.Ordinal)
       .ToArray();
 
   private static bool TryGetNative(string? identifier, out PieceDefinition definition)
   {
-    definition = PieceDefinitions.All.FirstOrDefault(candidate =>
-      string.Equals(candidate.Identifier, identifier, StringComparison.Ordinal))!;
+    definition = FindNative(identifier)!;
     return definition is not null;
   }
+
+  // Campaign files written before stable source IDs used PieceType names. Keep those levels
+  // playable while emitting the authoritative unit_id from current catalogue APIs.
+  private static PieceDefinition? FindNative(string? identifier) => PieceDefinitions.All.FirstOrDefault(candidate =>
+    MatchesNativeIdentifier(identifier, candidate));
+
+  private static bool MatchesNativeIdentifier(string? identifier, PieceDefinition definition) =>
+    string.Equals(definition.SourceUnitId, identifier, StringComparison.Ordinal) ||
+    string.Equals(definition.Identifier, identifier, StringComparison.Ordinal) ||
+    string.Equals(definition.Type.ToString(), identifier, StringComparison.Ordinal);
 
   private static bool TryGetAbilitySource(string? identifier, PieceDefinition fallback, out PieceDefinition definition)
   {

@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="..\docs\game-data\units_codex.json" Link="docs\game-data\units_codex.json" />
     <Compile Include="..\Globals.cs" Link="Globals.cs" />
     <Compile Include="..\GameBoard\Board.cs" Link="Board.cs" />
     <Compile Include="..\GameBoard\BattlefieldTerrain.cs" Link="BattlefieldTerrain.cs" />

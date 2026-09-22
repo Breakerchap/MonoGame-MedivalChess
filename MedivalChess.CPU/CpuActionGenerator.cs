@@ -12,7 +12,7 @@ public interface ICpuActionGenerator
 /// Complete legal-action generator. Candidate ranking is deliberately separate so low difficulty
 /// can prune aggressively without weakening the rules or high-difficulty search.
 /// </summary>
-public sealed class CpuActionGenerator : ICpuActionGenerator
+public sealed partial class CpuActionGenerator : ICpuActionGenerator
 {
   private readonly record struct PurchasePlacementCluster(
     int TerritoryBand,
@@ -237,7 +237,12 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
 
   private static void GenerateAbilities(CpuGameState state, NetworkPiece actor, List<ICpuGameAction> actions)
   {
-    if (actor.Type == "Mercenary")
+    GenerateHwachaReloadAbilities(state, actor, actions);
+    if (GenerateCodexAdvancedAbilities(state, actor, actions))
+    {
+      // Advanced codex abilities are generated in the shared CPU partial.
+    }
+    else if (AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type))
     {
       AddIfLegal(state, new UseAbilityAction(actor.Team, actor.Id, "Fire", null, actor.X, actor.Y), actions);
     }
@@ -262,6 +267,68 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
         }
       }
     }
+    else if (actor.Type == nameof(PieceType.Harvester))
+    {
+      foreach ((int x, int y) position in GetPotentialActionSquares(state, actor))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, "Harvest", null, position.x, position.y), actions);
+      }
+    }
+    else if (actor.Type is nameof(PieceType.Witch) or nameof(PieceType.Druid) or nameof(PieceType.Phoenix))
+    {
+      string ability = actor.Type switch
+      {
+        nameof(PieceType.Witch) => "PoisonCloud",
+        nameof(PieceType.Druid) => "Bramble",
+        _ => "Fire"
+      };
+      foreach ((int x, int y) position in GetPotentialActionSquares(state, actor))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, ability, null, position.x, position.y), actions);
+      }
+    }
+    else if (actor.Type is nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or
+      nameof(PieceType.Odin) or nameof(PieceType.Hacker))
+    {
+      string ability = actor.Type switch
+      {
+        nameof(PieceType.Baron) => "Select",
+        nameof(PieceType.WarDrum) => "Refresh",
+        nameof(PieceType.Odin) => "Protect",
+        _ => "Hack"
+      };
+      foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Id != actor.Id)
+        .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+      {
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(
+            actor.Team, actor.Id, ability, target.Id, targetSquare.x, targetSquare.y), actions);
+        }
+      }
+    }
+    else if (actor.Type == nameof(PieceType.WillOWisp))
+    {
+      if (!(actor.AbilityState?.Settled ?? false))
+      {
+        AddIfLegal(state, new UseAbilityAction(
+          actor.Team, actor.Id, "Settle", null, actor.X, actor.Y), actions);
+      }
+      else
+      {
+        for (int dy = -1; dy <= 1; dy++)
+        {
+          for (int dx = -1; dx <= 1; dx++)
+          {
+            if (dx == 0 && dy == 0) continue;
+            AddIfLegal(state, new UseAbilityAction(
+              actor.Team, actor.Id, "SpawnWisp", null, actor.X + dx, actor.Y + dy), actions);
+          }
+        }
+      }
+    }
     else if (actor.Type == nameof(PieceType.Phantom))
     {
       if (!string.IsNullOrEmpty(actor.PossessedUnitId))
@@ -299,6 +366,18 @@ public sealed class CpuActionGenerator : ICpuActionGenerator
             AddIfLegal(state, new UseAbilityAction(
               actor.Team, actor.Id, "Possess", target.Id, targetSquare.x, targetSquare.y), actions);
           }
+        }
+      }
+    }
+    else if (actor.Type is nameof(PieceType.Muse) or nameof(PieceType.Shieldsman) or nameof(PieceType.Imp))
+    {
+      foreach (NetworkPiece target in state.Pieces.Where(piece => piece.Team == actor.Team && piece.Id != actor.Id)
+        .OrderBy(piece => piece.Id, StringComparer.Ordinal))
+      {
+        foreach ((int x, int y) targetSquare in GetTargetSquares(target))
+        {
+          AddIfLegal(state, new UseAbilityAction(
+            actor.Team, actor.Id, "Attach", target.Id, targetSquare.x, targetSquare.y), actions);
         }
       }
     }

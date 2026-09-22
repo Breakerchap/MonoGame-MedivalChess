@@ -22,10 +22,19 @@ public readonly record struct AbilityDamageInstruction(
   int FixedDamage = 0
 );
 
+public readonly record struct AbilityDisplacementInstruction(
+  string UnitId,
+  int DirectionX,
+  int DirectionY,
+  int MaximumDistance,
+  bool RequireFullDistance = false
+);
+
 public sealed record AbilityAttackPlan(
   IReadOnlyList<AbilityDamageInstruction> Damage,
   bool SelfDestructAfterAttack = false,
-  int HealAttacker = 0
+  int HealAttacker = 0,
+  IReadOnlyList<AbilityDisplacementInstruction>? Displacements = null
 );
 
 /// <summary>
@@ -74,8 +83,13 @@ public static class AbilityAttackRules
         );
         break;
 
+      case nameof(PieceType.Hwacha):
+        AddDirectlyAdjacentNormalDamage(damage, selectedTarget, units, attacker.Id);
+        break;
+
       case nameof(PieceType.Dragon):
       case nameof(PieceType.Orc):
+      case nameof(PieceType.Terrorist):
         AddAllUnitsInAttackRange(damage, attacker, units);
         break;
 
@@ -84,11 +98,43 @@ public static class AbilityAttackRules
         break;
     }
 
+    List<AbilityDisplacementInstruction> displacements = [];
+    if (attacker.Type is nameof(PieceType.Sumo) or nameof(PieceType.Atlas))
+    {
+      (int x, int y) direction = DirectionAwayFrom(attacker, selectedTarget);
+      displacements.Add(new(selectedTarget.Id, direction.x, direction.y, 2));
+    }
+    if (attacker.Type == nameof(PieceType.Musketeer))
+    {
+      (int x, int y) direction = DirectionAwayFrom(selectedTarget, attacker);
+      displacements.Add(new(attacker.Id, direction.x, direction.y, 2, RequireFullDistance: true));
+    }
+    if (selectedTarget.Type == nameof(PieceType.Beelzebub) &&
+        DisplacementRules.CanBePushed(attacker.Type))
+    {
+      (int x, int y) direction = DirectionAwayFrom(selectedTarget, attacker);
+      displacements.Add(new(attacker.Id, direction.x, direction.y, 2));
+    }
+
     return new AbilityAttackPlan(
       damage,
-      SelfDestructAfterAttack: attacker.Type == nameof(PieceType.Terrorist),
-      HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0
+      SelfDestructAfterAttack: attacker.Type is nameof(PieceType.Terrorist) or nameof(PieceType.Wisp),
+      HealAttacker: attacker.Type == nameof(PieceType.Vampire) ? AbilityRules.VampireHealing : 0,
+      Displacements: displacements
     );
+  }
+
+  private static (int x, int y) DirectionAwayFrom(
+    AbilityUnitSnapshot source,
+    AbilityUnitSnapshot moving)
+  {
+    int sourceCentreX2 = source.X * 2 + source.Width - 1;
+    int sourceCentreY2 = source.Y * 2 + source.Height - 1;
+    int movingCentreX2 = moving.X * 2 + moving.Width - 1;
+    int movingCentreY2 = moving.Y * 2 + moving.Height - 1;
+    return (
+      Math.Sign(movingCentreX2 - sourceCentreX2),
+      Math.Sign(movingCentreY2 - sourceCentreY2));
   }
 
   /// <summary>Returns the Terrorist's death explosion. It damages every unit in its attack range.</summary>
@@ -194,6 +240,33 @@ public static class AbilityAttackRules
     }
   }
 
+  private static void AddDirectlyAdjacentNormalDamage(
+    List<AbilityDamageInstruction> damage,
+    AbilityUnitSnapshot centre,
+    IReadOnlyList<AbilityUnitSnapshot> units,
+    string attackerId
+  )
+  {
+    UnitRule centreRule = UnitRules.GetRequired(centre.Type);
+    foreach (AbilityUnitSnapshot candidate in units)
+    {
+      if (candidate.Id == attackerId || candidate.Id == centre.Id ||
+          !UnitRules.TryGet(candidate.Type, out UnitRule candidateRule))
+      {
+        continue;
+      }
+
+      if (AbilityRules.AreAdjacent(
+        centreRule,
+        (centre.X, centre.Y),
+        candidateRule,
+        (candidate.X, candidate.Y)))
+      {
+        AddUnique(damage, new(candidate.Id, AbilityDamageMode.NormalAttack));
+      }
+    }
+  }
+
   private static void AddAllUnitsInAttackRange(
     List<AbilityDamageInstruction> damage,
     AbilityUnitSnapshot attacker,
@@ -247,7 +320,8 @@ public static class AbilityAttackRules
           currentRule,
           (current.X, current.Y),
           candidateRule,
-          (candidate.X, candidate.Y)))
+          (candidate.X, candidate.Y),
+          includeDiagonal: true))
         {
           continue;
         }

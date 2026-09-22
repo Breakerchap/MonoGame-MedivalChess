@@ -60,6 +60,7 @@ public static class PackRules
   public static bool IsAllowed(string identifier, IEnumerable<string>? names)
   {
     PieceDefinition? definition = PieceDefinitions.All.FirstOrDefault(candidate =>
+      string.Equals(candidate.SourceUnitId, identifier, StringComparison.Ordinal) ||
       string.Equals(candidate.Identifier, identifier, StringComparison.Ordinal));
     return definition is not null && IsAllowed(definition, names);
   }

@@ -105,17 +105,27 @@ internal sealed class OnlineMatchClient : IAsyncDisposable
     return result;
   }
 
-  internal async Task<ActionResult> PurchaseInitialUnitAsync(string pieceType, int x, int y)
+  internal async Task<ActionResult> PurchaseInitialUnitAsync(
+    string pieceType,
+    int x,
+    int y,
+    int? variantCost = null)
   {
     return await _connection.InvokeAsync<ActionResult>(
       "PurchaseInitialUnit",
-      new PurchaseRequest(pieceType, x, y)
+      new PurchaseRequest(pieceType, x, y, variantCost)
     );
   }
 
-  internal async Task<ActionResult> PurchaseUnitAsync(string pieceType, int x, int y)
+  internal async Task<ActionResult> PurchaseUnitAsync(
+    string pieceType,
+    int x,
+    int y,
+    int? variantCost = null)
   {
-    return await _connection.InvokeAsync<ActionResult>("PurchaseUnit", new PurchaseRequest(pieceType, x, y));
+    return await _connection.InvokeAsync<ActionResult>(
+      "PurchaseUnit",
+      new PurchaseRequest(pieceType, x, y, variantCost));
   }
 
   internal async Task<ActionResult> StopInitialBuyingAsync()

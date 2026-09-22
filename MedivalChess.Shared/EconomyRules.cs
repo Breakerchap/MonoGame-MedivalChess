@@ -68,6 +68,16 @@ public static class EconomyRules
       cost = AbilityRules.MercenaryPayroll;
       unpaidEffect = UnpaidUnitUpkeepEffect.FireUnit;
     }
+    else if (unitType == nameof(PieceType.SummonedGolem))
+    {
+      cost = AdvancedAbilityRules.SummonedGolemUpkeep;
+      unpaidEffect = UnpaidUnitUpkeepEffect.FireUnit;
+    }
+    else if (unitType == nameof(PieceType.HiredGun))
+    {
+      cost = AdvancedAbilityRules.HiredGunUpkeep;
+      unpaidEffect = UnpaidUnitUpkeepEffect.FireUnit;
+    }
     else if (unitType == nameof(PieceType.President))
     {
       cost = AbilityRules.PresidentPayroll;
@@ -98,7 +108,7 @@ public static class EconomyRules
   )
   {
     UnitUpkeepRequest[] ordered = units
-      .Where(unit => unit.UnitType is nameof(PieceType.President) or nameof(PieceType.Mercenary))
+      .Where(unit => unit.UnitType is nameof(PieceType.President) or nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or nameof(PieceType.HiredGun))
       .OrderBy(unit => unit.UnitType == nameof(PieceType.President) ? 0 : 1)
       .ThenBy(unit => unit.UnitId, StringComparer.Ordinal)
       .ToArray();
