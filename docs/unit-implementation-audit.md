@@ -468,3 +468,11 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Fixed a local Royal-setup rollback bug. Backing up now removes the complete previous Royal group rather than one Royal piece, so four-piece Goblin Royalty cannot leave orphaned members. A linked Sheriff Prison is also removed with its Sheriff, and backing out while waiting to place the free Sheriff Prison cleanly cancels that Sheriff's setup.
 - Fixed a prisoner-action loophole in the local client. A jailed Succubus could previously be discovered through the generic attached-unit action selector because Succubi normally remain actionable while attached. `Prisoner` attachments are now explicitly rejected by selection, action ownership, normal attacks, CPU-to-local attacks, and local/online special-action dispatch.
 - Added regression coverage asserting that a Succubus attached as a Prisoner cannot move, attack, detach, or produce CPU actions.
+
+
+### 2026-09-23 — CPU attachment movement parity
+
+- The second stress run exposed a broader CPU-only attachment bug: movement legality blocked Guards and most carried units but could still generate independent movement for other attached kinds such as Muse, Succubus, Imp, Shadow, Passenger, and Prisoner.
+- CPU movement now matches local and authoritative-server behaviour exactly: an attached unit cannot move independently, except an Ox attached as carried cargo; moving that Ox detaches it first.
+- Added attachment-kind regression coverage for Guard, Shieldsman, Shadow, Muse, Succubus, Imp, Passenger, Prisoner, and generic carried cargo, plus a positive regression proving a carried Ox can move and detaches.
+- Added a 54-configuration Sheriff setup matrix across Small/Medium/Large boards, all Light/Standard/Heavy forest-waterway density combinations, and two deterministic procedural terrain seeds. Each case must leave at least one legal free-Prison placement that the authoritative server accepts.

@@ -237,6 +237,59 @@ public sealed class UnitStressTests
   }
 
   [Fact]
+  public void SheriffSetupHasALegalPrisonPlacementAcrossGeneratedTerrainMatrix()
+  {
+    string[] boardSizes = ["Small", "Medium", "Large"];
+    string[] densities = ["Light", "Standard", "Heavy"];
+
+    foreach (string boardSize in boardSizes)
+    foreach (string forestDensity in densities)
+    foreach (string waterwayDensity in densities)
+    foreach (int seed in new[] { 101, 2027 })
+    {
+      NetworkMatchConfiguration configuration = CreateConfiguration() with
+      {
+        BoardSize = boardSize,
+        ForestDensity = forestDensity,
+        WaterwayDensity = waterwayDensity,
+        TerrainSeed = seed,
+        TerrainSource = "Procedural"
+      };
+      MatchStore matches = new();
+      string suffix = $"{boardSize}-{forestDensity}-{waterwayDensity}-{seed}";
+      string hostConnection = $"host-matrix-{suffix}";
+      string guestConnection = $"guest-matrix-{suffix}";
+      RoomJoinResult host = matches.Create(
+        hostConnection, new CreateGameRequest(configuration));
+      Assert.True(host.Accepted, suffix);
+      RoomJoinResult guest = matches.Join(
+        guestConnection, new JoinGameRequest(host.JoinCode!));
+      Assert.True(guest.Accepted, suffix);
+      Assert.True(matches.ChooseRoyal(
+        guestConnection,
+        new RoyalSelectionRequest(nameof(PieceType.King))).Accepted, suffix);
+
+      ActionResult sheriffPlaced = matches.ChooseRoyal(
+        hostConnection,
+        new RoyalSelectionRequest(nameof(PieceType.Sheriff)));
+      Assert.True(sheriffPlaced.Accepted, $"{suffix}: {sheriffPlaced.Error}");
+      Assert.False(sheriffPlaced.State!.MatchReady);
+
+      (int x, int y) prisonPosition = FindSheriffPrisonPlacement(
+        sheriffPlaced.State, host.Team!.Value);
+      ActionResult prisonPlaced = matches.ChooseRoyal(
+        hostConnection,
+        new RoyalSelectionRequest(
+          nameof(PieceType.Sheriff),
+          prisonPosition.x,
+          prisonPosition.y));
+      Assert.True(prisonPlaced.Accepted,
+        $"{suffix}: {prisonPlaced.Error} at {prisonPosition}");
+      Assert.True(prisonPlaced.State!.MatchReady, suffix);
+    }
+  }
+
+  [Fact]
   public void SheriffPrisonSetupRejectsIllegalPlacementWithoutLosingPendingState()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
@@ -275,6 +328,67 @@ public sealed class UnitStressTests
       new RoyalSelectionRequest(nameof(PieceType.Sheriff), legal.x, legal.y));
     Assert.True(completed.Accepted, completed.Error);
     Assert.True(completed.State!.MatchReady);
+  }
+
+  [Theory]
+  [InlineData(PieceType.Guard, NetworkAttachmentKind.Guard)]
+  [InlineData(PieceType.Shieldsman, NetworkAttachmentKind.Shieldsman)]
+  [InlineData(PieceType.Shadow, NetworkAttachmentKind.Shadow)]
+  [InlineData(PieceType.Muse, NetworkAttachmentKind.Muse)]
+  [InlineData(PieceType.Succubus, NetworkAttachmentKind.Succubus)]
+  [InlineData(PieceType.Imp, NetworkAttachmentKind.Imp)]
+  [InlineData(PieceType.Swordsman, NetworkAttachmentKind.Passenger)]
+  [InlineData(PieceType.Swordsman, NetworkAttachmentKind.Prisoner)]
+  [InlineData(PieceType.Swordsman, NetworkAttachmentKind.Carried)]
+  public void CpuAttachedUnitsCannotMoveIndependently(
+    PieceType type,
+    NetworkAttachmentKind attachmentKind)
+  {
+    UnitRule rule = UnitRules.GetRequired(type.ToString());
+    CpuGameState state = CreateCpuState(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.King), NetworkTeam.Red, 0, 0, 190),
+        new NetworkPiece(
+          "attached", type.ToString(), NetworkTeam.Red, 0, 0, rule.Health,
+          AttachedToId: "host",
+          AttachmentKind: attachmentKind),
+        new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 6, -6, 190)
+      ]);
+
+    Assert.Empty(CpuGameRules.GetLegalMovementPaths(
+      state, state.Pieces.Single(piece => piece.Id == "attached")));
+    Assert.DoesNotContain(
+      new CpuActionGenerator().GenerateLegalActions(state, NetworkTeam.Red),
+      action => action is MoveAction { PieceId: "attached" });
+  }
+
+  [Fact]
+  public void CarriedOxCanMoveAndDetachesInCpuSimulation()
+  {
+    UnitRule oxRule = UnitRules.GetRequired(nameof(PieceType.Ox));
+    CpuGameState state = CreateCpuState(
+      CreateConfiguration(),
+      [
+        new NetworkPiece("host", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
+        new NetworkPiece(
+          "ox", nameof(PieceType.Ox), NetworkTeam.Red, 0, 0, oxRule.Health,
+          AttachedToId: "host",
+          AttachmentKind: NetworkAttachmentKind.Carried),
+        new NetworkPiece("enemy", nameof(PieceType.King), NetworkTeam.Blue, 6, -6, 190)
+      ]);
+
+    KeyValuePair<(int x, int y), List<(int x, int y)>> destination =
+      Assert.Single(CpuGameRules.GetLegalMovementPaths(
+        state, state.Pieces.Single(piece => piece.Id == "ox")).Take(1));
+    MoveAction move = new(
+      NetworkTeam.Red, "ox", destination.Key.x, destination.Key.y);
+    Assert.True(move.IsLegal(state));
+
+    CpuGameState moved = move.Apply(state);
+    NetworkPiece ox = moved.Pieces.Single(piece => piece.Id == "ox");
+    Assert.Null(ox.AttachedToId);
+    Assert.Equal(NetworkAttachmentKind.None, ox.AttachmentKind);
   }
 
   [Fact]
@@ -411,6 +525,16 @@ public sealed class UnitStressTests
   {
     UnitRule prison = UnitRules.GetRequired(nameof(PieceType.Prison));
     Board board = BoardRules.GetBoard(state.Configuration);
+    BattlefieldTerrain terrain = TerrainRules.Create(
+      board,
+      state.Configuration.TerrainSeed,
+      state.Configuration.ForestDensity,
+      state.Configuration.WaterwayDensity,
+      state.Configuration.PlayerCount,
+      state.Configuration.TerrainSource,
+      state.Configuration.BoardSize,
+      state.Configuration.PresetId);
+
     foreach ((int x, int y) position in board.Cells.OrderBy(p => p.y).ThenBy(p => p.x))
     {
       if (!BoardRules.CanPlaceForTeam(
@@ -420,6 +544,21 @@ public sealed class UnitStressTests
             position.y,
             prison.Width,
             prison.Height))
+      {
+        continue;
+      }
+
+      bool blockedByLake = false;
+      for (int offsetY = 0; offsetY < prison.Height && !blockedByLake; offsetY++)
+      for (int offsetX = 0; offsetX < prison.Width; offsetX++)
+      {
+        if (terrain.IsLake((position.x + offsetX, position.y + offsetY)))
+        {
+          blockedByLake = true;
+          break;
+        }
+      }
+      if (blockedByLake)
       {
         continue;
       }
@@ -442,7 +581,10 @@ public sealed class UnitStressTests
       }
     }
 
-    throw new InvalidOperationException("No legal Sheriff Prison placement was found.");
+    throw new InvalidOperationException(
+      $"No legal Sheriff Prison placement was found for {state.Configuration.BoardSize}/" +
+      $"{state.Configuration.ForestDensity}/{state.Configuration.WaterwayDensity}/" +
+      $"{state.Configuration.TerrainSeed}.");
   }
 
   private static void AssertStateInvariants(CpuGameState state, string context)
@@ -456,7 +598,7 @@ public sealed class UnitStressTests
       Assert.True(UnitRules.TryGet(piece.Type, out UnitRule? rule),
         $"{context}: unknown unit type {piece.Type}.");
       Assert.True(
-        piece.Health > 0 || rule.Health == 0,
+        rule.Health == 0 ? piece.Health == 0 : piece.Health > 0,
         $"{context}: living {piece.Id} has invalid {piece.Health} health for base health {rule.Health}.");
       if (piece.AttachedToId is null)
       {

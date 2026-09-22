@@ -75,8 +75,9 @@ public static partial class CpuGameRules
     if (!UnitRules.TryGet(piece.Type, out UnitRule rule) ||
         (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
          !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
-        piece.AttachmentKind is NetworkAttachmentKind.Guard ||
-        (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
+        (piece.AttachedToId is not null &&
+         !(piece.AttachmentKind == NetworkAttachmentKind.Carried &&
+           piece.Type == nameof(PieceType.Ox))))
     {
       return new Dictionary<(int x, int y), List<(int x, int y)>>();
     }
@@ -228,8 +229,9 @@ public static partial class CpuGameRules
     if (piece is null || piece.Team != action.Team ||
         (!AdvancedAbilityRules.CanMove(piece.Type, piece.AbilityState, piece.HasMovedThisTurn) &&
          !AbilityRules.CanUseCavalierFollowUpMove(piece.Type, piece.CavalierFollowUpMoveAvailable)) ||
-        piece.AttachmentKind == NetworkAttachmentKind.Guard ||
-        (piece.AttachmentKind == NetworkAttachmentKind.Carried && piece.Type != nameof(PieceType.Ox)))
+        (piece.AttachedToId is not null &&
+         !(piece.AttachmentKind == NetworkAttachmentKind.Carried &&
+           piece.Type == nameof(PieceType.Ox))))
     {
       return false;
     }
