@@ -1068,8 +1068,8 @@ public sealed partial class MatchStore
     for (int oy = 0; oy < height; oy++)
     for (int ox = 0; ox < width; ox++)
     {
-      NetworkTeam? owner = MatchRules.GetSquareOwner(
-        board, match.Configuration.GameMode, (x + ox, y + oy), match.Configuration.PlayerCount);
+      NetworkTeam? owner = GetServerPlacementTerritoryOwner(
+        match, (x + ox, y + oy));
       if (owner is not null && owner != team)
       {
         return false;
@@ -1810,8 +1810,8 @@ public sealed partial class MatchStore
 
     foreach ((int x, int y) position in positions)
     {
-      if (!NetworkBoardRules.CanPlaceForTeam(
-            match.Configuration, team, position.x, position.y,
+      if (!CanPlaceForTeamWithDeveloperClaims(
+            match, team, position.x, position.y,
             rule.Width, rule.Height))
       {
         return false;
@@ -2034,6 +2034,106 @@ public sealed partial class MatchStore
         }
       };
     }
+  }
+
+
+
+  private static NetworkTeam? GetServerPlacementTerritoryOwner(
+    Match match,
+    (int x, int y) position)
+  {
+    if (match.PlacementTerritoryClaims.TryGetValue(position, out NetworkTeam claimedOwner))
+    {
+      return claimedOwner;
+    }
+
+    return MatchRules.GetSquareOwner(
+      NetworkBoardRules.GetBoard(match.Configuration),
+      match.Configuration.GameMode,
+      position,
+      match.Configuration.PlayerCount);
+  }
+
+  private static bool CanPlaceForTeamWithDeveloperClaims(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    for (int offsetX = 0; offsetX < width; offsetX++)
+    {
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + offsetX, y + offsetY)) != team)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static bool IsNoMansLandForPlacement(
+    Match match,
+    int x,
+    int y,
+    int width,
+    int height)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, x, y, width, height))
+    {
+      return false;
+    }
+
+    for (int offsetY = 0; offsetY < height; offsetY++)
+    for (int offsetX = 0; offsetX < width; offsetX++)
+    {
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + offsetX, y + offsetY)) is not null)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static bool IsServerDeveloperClaimTarget(
+    Match match,
+    NetworkPiece developer,
+    int x,
+    int y)
+  {
+    (int x, int y) position = (x, y);
+    if (developer.Type != nameof(PieceType.Developer) ||
+        developer.HasAttackedThisTurn ||
+        !NetworkBoardRules.Contains(match.Configuration, x, y) ||
+        MatchRules.GetSquareOwner(
+          NetworkBoardRules.GetBoard(match.Configuration),
+          match.Configuration.GameMode,
+          position,
+          match.Configuration.PlayerCount) is not null ||
+        match.PlacementTerritoryClaims.ContainsKey(position))
+    {
+      return false;
+    }
+
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dx = -1; dx <= 1; dx++)
+    {
+      if (dx == 0 && dy == 0) continue;
+      if (GetServerPlacementTerritoryOwner(
+            match, (x + dx, y + dy)) == developer.Team)
+      {
+        return true;
+      }
+    }
+    return false;
   }
 
 

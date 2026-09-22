@@ -63,6 +63,7 @@ public sealed record NetworkTeamState(NetworkTeam Team, int Money, int ActionsRe
 public sealed record NetworkConquestTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkModeTeamState(NetworkTeam Team, int Score);
 public sealed record NetworkTreasureState(int? X, int? Y, string? CarrierId);
+public sealed record NetworkTerritoryClaim(int X, int Y, NetworkTeam Owner);
 
 /// <summary>Authoritative chess-clock snapshot. Values are milliseconds remaining for each team.</summary>
 public sealed record NetworkClockState(
@@ -161,7 +162,8 @@ public sealed record NetworkGameState(
   NetworkTreasureState? Treasure = null,
   NetworkClockState? Clock = null,
   NetworkPackDraftState? PackDraft = null,
-  IReadOnlyList<AbilityEntity>? AbilityEntities = null
+  IReadOnlyList<AbilityEntity>? AbilityEntities = null,
+  IReadOnlyList<NetworkTerritoryClaim>? PlacementTerritoryClaims = null
 );
 
 public sealed record CreateGameRequest(NetworkMatchConfiguration Configuration);

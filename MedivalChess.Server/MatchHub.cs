@@ -1664,10 +1664,12 @@ public sealed partial class MatchStore
     bool mayUseNoMansLand =
       (AbilityRules.MayPlaceInNoMansLand(unit.Type) && !initialBuy) ||
       AdvancedAbilityRules.MayAlsoPlaceInNoMansLand(unit.Type);
+    bool inOwnPlacementTerritory = CanPlaceForTeamWithDeveloperClaims(
+      match, team, x, y, unit.Width, unit.Height);
     bool inValidTerritory = mayUseNoMansLand
-      ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y) ||
-        NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height)
-      : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
+      ? IsNoMansLandForPlacement(match, x, y, unit.Width, unit.Height) ||
+        inOwnPlacementTerritory
+      : inOwnPlacementTerritory;
     if (!inValidTerritory) return false;
 
     if (RoyalAbilityRules.RequiresAdjacentRoyalPlacement(unit.Type))
@@ -2940,6 +2942,7 @@ public sealed partial class MatchStore
     internal HashSet<TileEdge> RiverBridges { get; } = [];
     internal HashSet<(int x, int y)> DestroyedTerrainTiles { get; } = [];
     internal List<AbilityEntity> AbilityEntities { get; } = [];
+    internal Dictionary<(int x, int y), NetworkTeam> PlacementTerritoryClaims { get; } = [];
     internal NetworkTeam? Winner { get; set; }
     internal int ConquestScore { get; set; }
     internal Dictionary<NetworkTeam, int> ConquestScores { get; } = TeamRules.GetActiveTeams(configuration.PlayerCount)
@@ -3046,7 +3049,10 @@ public sealed partial class MatchStore
         : null,
       ClockState(),
       PackDraft?.ToNetworkState(Configuration.AllowedPacks),
-      AbilityEntities.ToArray()
+      AbilityEntities.ToArray(),
+      PlacementTerritoryClaims
+        .Select(pair => new NetworkTerritoryClaim(pair.Key.x, pair.Key.y, pair.Value))
+        .ToArray()
     );
     internal RoomJoinResult ResultFor(PlayerSlot player) => new(true, null, Code, player.Team, player.ReconnectToken, State());
     internal RoomJoinResult SpectatorResult() => new(true, null, Code, null, null, State());

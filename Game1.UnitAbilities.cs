@@ -967,7 +967,7 @@ internal sealed partial class Game1
     {
       return false;
     }
-    TeamName? owner = GetSquareOwner(position);
+    TeamName? owner = GetPlacementSquareOwner(position);
     if (owner.HasValue && owner.Value != Team.CurrentTurn)
     {
       return false;
@@ -2200,6 +2200,63 @@ internal sealed partial class Game1
       follower.HasAttackedThisTurn = true;
     }
     pieceSetup.RefreshOccupancy();
+  }
+
+
+
+  private TeamName? GetPlacementSquareOwner((int x, int y) position)
+  {
+    if (_developerPlacementClaims.TryGetValue(position, out TeamName owner))
+    {
+      return owner;
+    }
+    return GetSquareOwner(position);
+  }
+
+  private bool IsLocalDeveloperClaimTarget(
+    Piece developer,
+    (int x, int y) position)
+  {
+    if (developer.Definition.Type != PieceType.Developer ||
+        developer.HasAttackedThisTurn ||
+        !IsBoardCell(position.x - _board.MinX, position.y - _board.MinY) ||
+        GetSquareOwner(position).HasValue ||
+        _developerPlacementClaims.ContainsKey(position))
+    {
+      return false;
+    }
+
+    for (int dy = -1; dy <= 1; dy++)
+    for (int dx = -1; dx <= 1; dx++)
+    {
+      if (dx == 0 && dy == 0) continue;
+      (int x, int y) adjacent = (position.x + dx, position.y + dy);
+      if (GetPlacementSquareOwner(adjacent) == developer.Team)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private bool TryUseLocalDeveloperClaim(
+    Piece developer,
+    (int x, int y) position)
+  {
+    if (!IsLocalDeveloperClaimTarget(developer, position))
+    {
+      return false;
+    }
+
+    _developerPlacementClaims[position] = developer.Team;
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      developer.Definition.Type.ToString(), developer.AttacksThisTurn);
+    developer.AttacksThisTurn = attackState.AttacksThisTurn;
+    developer.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+    developer.AbilityState = AdvancedAbilityRules.RecordAttack(
+      developer.Definition.Type.ToString(), developer.AbilityState, null);
+    CompleteAction();
+    return true;
   }
 
 

@@ -266,6 +266,7 @@ internal sealed partial class Game1 : Game
   private int _cpuTurnNumber;
   private readonly Dictionary<TeamName, int> _conquestScores = [];
   private readonly Dictionary<TeamName, int> _modeScores = [];
+  private readonly Dictionary<(int x, int y), TeamName> _developerPlacementClaims = [];
   private (int x, int y)? _treasurePosition;
   private string _treasureCarrierId;
   private BindingAction? _bindingToChange;
@@ -2752,6 +2753,8 @@ internal sealed partial class Game1 : Game
             target.Definition.Category == PieceCategory.Structure &&
             target.OccupiedSquares().Any(square =>
               CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Developer => target is null &&
+        IsLocalDeveloperClaimTarget(actor, targetPosition),
       PieceType.Fylgja =>
         string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
         actor.AbilityState.PendingSelections.Count > 0
@@ -2843,6 +2846,8 @@ internal sealed partial class Game1 : Game
       ? "AtlasMove"
       : actor.Definition.Type == PieceType.Poltergeist
       ? GetLocalPoltergeistStructure(actor) is null ? "PickUpStructure" : "PlaceStructure"
+      : actor.Definition.Type == PieceType.Developer
+      ? "Claim"
       : actor.Definition.Type == PieceType.Fylgja
       ? "ForceMove"
       : IsCodexBuilder(actor.Definition.Type)
@@ -3048,6 +3053,11 @@ internal sealed partial class Game1 : Game
     ApplyOnlineClockState(state.Clock);
     ApplyOnlineTeamStates(state.Teams);
     ApplyOnlineImprovements(state.Improvements);
+    _developerPlacementClaims.Clear();
+    foreach (NetworkTerritoryClaim claim in state.PlacementTerritoryClaims ?? [])
+    {
+      _developerPlacementClaims[(claim.X, claim.Y)] = claim.Owner.ToTeamName();
+    }
     _abilityEntities.Clear();
     _abilityEntities.AddRange(state.AbilityEntities ?? []);
     ApplyOnlinePieces(state.Pieces);
@@ -3376,7 +3386,7 @@ internal sealed partial class Game1 : Game
           return false;
         }
 
-        if (requiredOwner.HasValue && GetSquareOwner((position.x + x, position.y + y)) != requiredOwner.Value)
+        if (requiredOwner.HasValue && GetPlacementSquareOwner((position.x + x, position.y + y)) != requiredOwner.Value)
         {
           return false;
         }
@@ -3411,8 +3421,10 @@ internal sealed partial class Game1 : Game
 
   private bool CanPlaceNoMansLand(PieceDefinition definition, (int x, int y) position)
   {
-    if (!IsFootprintOnBoard(definition, position) || GetSquareOwner(position).HasValue ||
-        OccupiedSquares(definition, position).Any(square => !IsTraversableTerrainSquare(square)))
+    if (!IsFootprintOnBoard(definition, position) ||
+        OccupiedSquares(definition, position).Any(square =>
+          GetPlacementSquareOwner(square).HasValue ||
+          !IsTraversableTerrainSquare(square)))
     {
       return false;
     }
@@ -4589,6 +4601,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Poltergeist)
     {
       return TryUseLocalPoltergeistAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Developer)
+    {
+      return TryUseLocalDeveloperClaim(actor, targetPosition);
     }
 
     if (actor.Definition.Type == PieceType.Fafnir &&
@@ -6815,7 +6832,7 @@ internal sealed partial class Game1 : Game
         var boardPosition = (x: x + _board.MinX, y: y + _board.MinY);
         Rectangle cellBounds = new(x * 64, y * 64, 64, 64);
         Color baseCellColour = (x + y) % 2 == 0 ? UiTheme.DarkBoardCell : UiTheme.LightBoardCell;
-        TeamName? squareOwner = GetSquareOwner(boardPosition);
+        TeamName? squareOwner = GetPlacementSquareOwner(boardPosition);
         Color territoryColour = squareOwner.HasValue ? UiTheme.GetTeamColour(squareOwner.Value) : UiTheme.NoMansLand;
         DrawWorldRectangle(cellBounds, Color.Lerp(baseCellColour, territoryColour, territoryTintAmount), 0f);
 
@@ -7765,6 +7782,7 @@ internal sealed partial class Game1 : Game
     _roads.Clear();
     _barricades.Clear();
     _mines.Clear();
+    _developerPlacementClaims.Clear();
     _restoredLakeTiles.Clear();
     _riverBridges.Clear();
   }
@@ -11573,6 +11591,13 @@ internal sealed partial class Game1 : Game
       return GetLocalPoltergeistStructure(piece) is null
         ? "RIGHT-CLICK an in-range Structure to pick it up"
         : "RIGHT-CLICK an empty in-range square to place the held Structure";
+    }
+
+    if (piece.Definition.Type == PieceType.Developer)
+    {
+      return piece.HasAttackedThisTurn
+        ? "CLAIM USED THIS TURN"
+        : "RIGHT-CLICK an unclaimed No-Man's-Land tile adjacent to your placement territory";
     }
 
     if (piece.Definition.Type == PieceType.Fafnir)

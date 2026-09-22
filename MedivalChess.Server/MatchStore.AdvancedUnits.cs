@@ -569,6 +569,28 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Developer):
+        if (!string.Equals(ability, "Claim", StringComparison.OrdinalIgnoreCase) ||
+            target is not null ||
+            !IsServerDeveloperClaimTarget(
+              match, actor, request.TargetX, request.TargetY))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+        {
+          match.PlacementTerritoryClaims[(request.TargetX, request.TargetY)] = actor.Team;
+          AttackTurnState attackState = AbilityStateRules.RecordAttack(
+            actor.Type, actor.AttacksThisTurn);
+          match.Pieces[actorIndex] = actor with
+          {
+            AttacksThisTurn = attackState.AttacksThisTurn,
+            HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+            AbilityState = AdvancedAbilityRules.RecordAttack(
+              actor.Type, actor.AbilityState, null)
+          };
+          return AdvancedSpecialResult.AppliedAction;
+        }
+
       case nameof(PieceType.Poltergeist):
         if (!AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
         {
@@ -1029,7 +1051,7 @@ public sealed partial class MatchStore
 
   private static bool IsAdvancedSpecialUnit(string type) => type is
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
-    nameof(PieceType.Mimic) or nameof(PieceType.Poltergeist) or
+    nameof(PieceType.Mimic) or nameof(PieceType.Poltergeist) or nameof(PieceType.Developer) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or

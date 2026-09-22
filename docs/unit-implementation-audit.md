@@ -126,7 +126,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.engineer` | Verified | Road, barricade, mine, and demolition actions are implemented. |
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
 | `modern.missile_silo` | Verified | The first Missile Silo attack may target an empty square and deals its 65 Attack to every unit in the centred 5×5 area, including friendlies, while destroying Structures in that area; the shared consumed flag permanently prevents another attack. Local and authoritative server paths are wired with regression coverage for one-shot state. |
-| `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.developer` | Verified | Developer's zero-damage attack is implemented as a Claim special in local and authoritative online/server play. It may claim one unclaimed base No-Man's-Land tile adjacent (including diagonally) to the team's base or previously claimed placement territory. Claims persist and sync per match, count as that team's territory for purchase footprint ownership and placement visuals, and are explicitly excluded from objective scoring and Plunder delivery ownership. |
 | `modern.armoured_truck` | Verified | Armoured Truck may make its codex landing attack through movement without spending its normal attack: normal Attack damage is applied, a killed target frees the landing square, a survivor causes fallback to the previous movement square, and the survivor is pushed up to 2 tiles with shortened legal fallback. Local and authoritative server movement are wired. |
 | `modern.helicopter` | Verified | Helicopter may be purchased in friendly territory or No-Man's-Land without terrain restrictions, cannot be directly attacked or targeted by active abilities, ignores ability-entity damage, and acts as a deployment point: purchasing a friendly non-Structure unit onto its tile destroys the Helicopter and bypasses ordinary territory/structure placement restrictions while still enforcing Lakes, unit collisions, board fit and unit-specific placement requirements. Local and authoritative server paths are wired. |
 | `modern.command_centre` | Verified | Local and online play can choose Attack, Health, or Move upgrades for an eligible friendly non-Royal within 2 Squares, pay 25 gold, enforce one upgrade per unit and once per owner turn, and apply the persistent stat/health effects already shared with server/CPU rules. |
@@ -408,3 +408,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - When a segment dies, the surviving chain is re-linked; if the middle is destroyed the trailing segment closes the gap, and if the front is destroyed the leading survivor becomes the new front.
 - The formation is charged once at 150 gold and only its front contributes unit maintenance. Kill/death refund value is split evenly across the three 40-Health segments so destroying one segment does not refund the full unit cost.
 - This commit also fixes the Poltergeist server compile error from the previous batch by avoiding a local-variable name collision.
+
+
+### 2026-09-22 — Developer placement-territory claims
+
+- Added a separate per-match placement-territory claim map rather than modifying the canonical board territory map.
+- Developer may spend its attack to claim one unclaimed base No-Man's-Land tile adjacent to its team's base territory or an earlier Developer claim, allowing claims to extend outward over multiple turns.
+- Claims are synchronised in `NetworkGameState` for authoritative online play and used by local/server purchase footprint ownership checks.
+- Claimed tiles stop behaving as neutral No-Man's-Land for placement: the owning team may place normal units there, while enemy claims block No-Man's-Land purchase routes such as Helicopter placement.
+- Objective scoring, Conquest/Dominion control, Escort logic and Plunder delivery continue to use the original `MatchRules` territory map, so Developer claims never score or deliver objectives.
+- Ordinary movement is not territory-restricted anywhere else in the engine, so no separate movement gate was required; claims are still visually tinted as placement territory for player feedback.
