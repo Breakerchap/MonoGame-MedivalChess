@@ -406,8 +406,29 @@ public sealed partial class MatchStore
         return new(false, "That move is blocked by the board, terrain, or unit movement rule.", foundMatch.State());
       }
 
+      UnitRule movementRule = UnitRules.GetRequired(piece.Type);
       NetworkPiece? chessCaptureTarget = GetServerChessCaptureTarget(
-        foundMatch, piece, UnitRules.GetRequired(piece.Type), (request.ToX, request.ToY));
+        foundMatch, piece, movementRule, (request.ToX, request.ToY));
+
+      (int x, int y) landingResolvedDestination = ResolveServerLandingAttack(
+        foundMatch,
+        piece,
+        player,
+        movementRule,
+        movementPath,
+        (request.ToX, request.ToY));
+      int landingMoverIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
+      if (landingMoverIndex < 0)
+      {
+        if (foundMatch.Winner is null)
+        {
+          SpendAction(foundMatch, player);
+        }
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+      piece = foundMatch.Pieces[landingMoverIndex];
 
       bool elephantDamagedAnEnemy = false;
       if (piece.Type == "Elephant" && UnitRules.TryGet(piece.Type, out UnitRule elephantRule))
@@ -452,7 +473,7 @@ public sealed partial class MatchStore
       int oldY = piece.Y;
       (int finalX, int finalY) = chessCaptureSurvived
         ? ChessAbilityRules.GetFailedCaptureFallback((oldX, oldY), movementPath)
-        : (request.ToX, request.ToY);
+        : landingResolvedDestination;
       List<(int x, int y)> actualMovementPath = chessCaptureSurvived && movementPath.Count > 0
         ? movementPath[..^1]
         : movementPath;
@@ -692,7 +713,8 @@ public sealed partial class MatchStore
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
-      if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
+      if (actor.Type != nameof(PieceType.Mimic) &&
+          !AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
       {
         return new(false, "That unit's special abilities are currently disabled.", foundMatch.State());
       }
@@ -1472,7 +1494,8 @@ public sealed partial class MatchStore
       destination => rule.MoveRange + (IsPalaceAssistedMovement(
         match, piece, rule, (piece.X, piece.Y), destination) ? 1 : 0),
       rule.MoveRange + (HasPalaceSupport(match, piece) ? 1 : 0),
-        position => CanContinueServerChessPath(match, piece, rule, position)
+        position => CanContinueServerChessPath(match, piece, rule, position) &&
+          CanContinueServerSpecialLandingPath(match, piece, rule, position)
       );
     AddServerPawnCapturePaths(match, piece, rule, paths);
     return paths.TryGetValue((destinationX, destinationY), out path!);
@@ -1487,6 +1510,7 @@ public sealed partial class MatchStore
   )
   {
     if (CanServerChessCaptureLand(match, piece, rule, destination)) return true;
+    bool landingAttack = CanServerLandingAttackLand(match, piece, rule, destination);
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
     {
@@ -1506,6 +1530,7 @@ public sealed partial class MatchStore
     if (match.Pieces.Any(other => !ignoredPieces.Contains(other.Id) &&
       (rule.Type == "Farm" || other.Type != "Farm") &&
       (!AbilityRules.IsTrampleAttacker(rule) || other.Team == piece.Team) &&
+      (!landingAttack || other.Team == piece.Team) &&
       NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
 
     return true;

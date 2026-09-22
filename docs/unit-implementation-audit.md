@@ -39,7 +39,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `fantasy.adventurer` | Implemented | Core definition is loaded from the authoritative specification. |
 | `fantasy.elf` | Verified | Forest movement costs are ignored in shared local, server, and CPU pathfinding. |
 | `fantasy.orc` | Verified | Orc attacks flow through the shared local/server/CPU attack plan and also hit every other unit in its attack range, including friendlies; regression coverage verifies range targeting. |
-| `fantasy.mimic` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `fantasy.mimic` | Verified | Mimic cannot move normally. Its movement is a local/online/server swap with another unattached 1×1 unit within its 1–6 Circle Move range; both final positions are validated, attachments follow their hosts, and only the Mimic's movement is consumed. |
 | `fantasy.wizard` | Verified | Wizard attacks flow through the shared local/server/CPU attack plan and damage every other unit in the 3×3 area centred on the selected target, including friendlies; regression coverage verifies area targeting. |
 | `fantasy.witch` | Verified | Poison Cloud creation, online mapping, owner-turn damage, and source-death cleanup are wired across local/server/CPU with green CPU runtime coverage for owner-turn damage and cleanup. |
 | `fantasy.druid` | Verified | Bramble creation, online mapping, entry damage, Bramble self-damage, and no-landing are wired across local/server/CPU with green CPU crossing/landing regression coverage. |
@@ -112,7 +112,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.stagecoach` | Verified | Enemy-only pass-through and fixed 25 damage to every crossed enemy are wired through shared/local/server/CPU movement without consuming the Stagecoach's normal attack; CPU runtime coverage verifies multi-unit crossing. |
 | `wild_west.prison` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.hired_gun` | Verified | Purchase now charges the immediate 20-gold upkeep, owner-turn payroll uses the shared deterministic upkeep sequence in local/server/CPU, non-payment makes the Hired Gun neutral, and voluntary firing is available in local/online/server/CPU. Regression coverage checks purchase, payroll failure, and firing. |
-| `wild_west.buffalo` | Partial | Shared push fallback is implemented and tested; landing-attack movement/damage/push runtime flow remains. |
+| `wild_west.buffalo` | Verified | Buffalo may attack by landing on one enemy through the movement path. It deals normal Attack damage, moves onto the destination only if the target dies, otherwise falls back to the previous movement square, pushes a surviving target 1 tile directly away when legal, and consumes its normal attack. Local and authoritative server movement are wired. |
 | `wild_west.bounty_hunter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.sheriff` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.gang_leader` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -127,7 +127,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.mercenary` | Verified | No-Man's-Land placement, payroll, firing, and neutral rehire are implemented. |
 | `modern.missile_silo` | Verified | The first Missile Silo attack may target an empty square and deals its 65 Attack to every unit in the centred 5×5 area, including friendlies, while destroying Structures in that area; the shared consumed flag permanently prevents another attack. Local and authoritative server paths are wired with regression coverage for one-shot state. |
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
+| `modern.armoured_truck` | Verified | Armoured Truck may make its codex landing attack through movement without spending its normal attack: normal Attack damage is applied, a killed target frees the landing square, a survivor causes fallback to the previous movement square, and the survivor is pushed up to 2 tiles with shortened legal fallback. Local and authoritative server movement are wired. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.command_centre` | Verified | Local and online play can choose Attack, Health, or Move upgrades for an eligible friendly non-Royal within 2 Squares, pay 25 gold, enforce one upgrade per unit and once per owner turn, and apply the persistent stat/health effects already shared with server/CPU rules. |
 | `modern.hacker` | Verified | Hack targeting/cooldown is wired across local/server/CPU and online play; all special-action entry points respect disabled state, normal movement/attacks remain available, and green CPU runtime coverage verifies expiry at the end of the target's owner turn. |
@@ -236,3 +236,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Completed Thor's local/online Thunderstorm selector. With fewer than three storms the player may create a new one or select an existing storm to move; at three storms only existing storms are available to move.
 - Fixed authoritative Thor handling so an explicitly selected Thunderstorm can be moved at any active-storm count rather than only after the three-storm cap is reached.
 - Existing shared Thunderstorm entry damage and Fafnir Dragon terrain immunity remain the common runtime rules; existing CPU regression coverage already exercises Fafnir transformation and Thor storm creation/movement, so no extra CPU work was added here.
+
+
+### 2026-09-22 — Mimic, Buffalo, and Armoured Truck movement batch
+
+- Disabled Mimic's ordinary movement path and implemented its codex swap as movement in local and authoritative online/server play. The target may be any other unattached 1×1 unit in the Mimic's 1–6 Circle Move range; both final positions must be legal, host attachments follow the swapped units, and only the Mimic's movement state is spent.
+- Treated Mimic swap as movement rather than an active-ability action, so ordinary movement locks such as Petrify/Snare still block it while special-ability disabling does not incorrectly remove its only movement mode.
+- Added shared landing-attack handling for Buffalo and Armoured Truck. Enemy-occupied destinations become legal terminal movement squares, cannot be traversed through, and resolve normal attack damage before final placement.
+- Buffalo consumes its normal attack, pushes a surviving target 1 tile directly away when possible, and falls back to the previous movement square if the target survives.
+- Armoured Truck keeps its normal attack available, pushes a surviving target up to 2 tiles with the shared shortened fallback, and likewise returns to the previous movement square when the landing target survives.
+- Added small shared regression checks for Mimic movement-state semantics and the two landing units' codex push/attack-consumption constants. CPU action generation was left untouched.

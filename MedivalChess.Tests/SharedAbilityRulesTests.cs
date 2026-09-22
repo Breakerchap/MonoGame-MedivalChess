@@ -599,4 +599,32 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void MimicUsesItsSwapAsMovementInsteadOfNormalMovement()
+  {
+    UnitAbilityState state = new();
+
+    Assert.False(AdvancedAbilityRules.CanMove(
+      nameof(PieceType.Mimic), state, legacyHasMoved: false));
+    Assert.True(AdvancedAbilityRules.CanUseMovementAbility(
+      state, legacyHasMoved: false));
+
+    state = AdvancedAbilityRules.RecordMove(state);
+    Assert.False(AdvancedAbilityRules.CanUseMovementAbility(
+      state, legacyHasMoved: false));
+  }
+
+  [Fact]
+  public void LandingAttackUnitsUseTheirCodexPushAndAttackConsumptionRules()
+  {
+    Assert.True(AdvancedAbilityRules.IsLandingAttackUnit(nameof(PieceType.Buffalo)));
+    Assert.True(AdvancedAbilityRules.IsLandingAttackUnit(nameof(PieceType.ArmouredTruck)));
+    Assert.Equal(1, AdvancedAbilityRules.GetLandingAttackPushDistance(nameof(PieceType.Buffalo)));
+    Assert.Equal(2, AdvancedAbilityRules.GetLandingAttackPushDistance(nameof(PieceType.ArmouredTruck)));
+    Assert.True(AdvancedAbilityRules.LandingAttackConsumesNormalAttack(nameof(PieceType.Buffalo)));
+    Assert.False(AdvancedAbilityRules.LandingAttackConsumesNormalAttack(nameof(PieceType.ArmouredTruck)));
+  }
+
+
 }

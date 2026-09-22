@@ -631,4 +631,175 @@ internal sealed partial class Game1
   }
 
 
+
+  private Piece GetLocalLandingAttackTarget(Piece mover, (int x, int y) destination)
+  {
+    if (!AdvancedAbilityRules.IsLandingAttackUnit(mover.Definition.Type.ToString()))
+    {
+      return null;
+    }
+
+    Piece[] targets = pieceSetup.Pieces
+      .Where(piece =>
+        piece != mover &&
+        piece.AttachedTo is null &&
+        piece.Definition.Type != PieceType.Farm &&
+        piece.Team != mover.Team &&
+        AdvancedAbilityRules.CanTakeDirectDamage(
+          piece.Definition.Type.ToString(), piece.AbilityState) &&
+        UnitRules.FootprintsOverlap(
+          destination.x, destination.y, mover.Definition.Size.x, mover.Definition.Size.y,
+          piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y))
+      .ToArray();
+    return targets.Length == 1 ? targets[0] : null;
+  }
+
+  private bool CanLocalLandingAttackLand(Piece mover, (int x, int y) destination) =>
+    GetLocalLandingAttackTarget(mover, destination) is not null;
+
+  private bool CanContinueLocalSpecialLandingPath(Piece mover, (int x, int y) position) =>
+    GetLocalLandingAttackTarget(mover, position) is null;
+
+  private (int x, int y) ResolveLocalLandingAttack(
+    Piece mover,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) requestedDestination)
+  {
+    Piece target = GetLocalLandingAttackTarget(mover, requestedDestination);
+    if (target is null)
+    {
+      return requestedDestination;
+    }
+
+    (int x, int y) origin = mover.Position;
+    ResolveDamage(mover, target);
+    bool targetSurvived = pieceSetup.Pieces.Contains(target);
+
+    if (targetSurvived)
+    {
+      int sourceCentreX2 = origin.x * 2 + mover.Definition.Size.x - 1;
+      int sourceCentreY2 = origin.y * 2 + mover.Definition.Size.y - 1;
+      int targetCentreX2 = target.Position.x * 2 + target.Definition.Size.x - 1;
+      int targetCentreY2 = target.Position.y * 2 + target.Definition.Size.y - 1;
+      int directionX = Math.Sign(targetCentreX2 - sourceCentreX2);
+      int directionY = Math.Sign(targetCentreY2 - sourceCentreY2);
+      int pushDistance = AdvancedAbilityRules.GetLandingAttackPushDistance(
+        mover.Definition.Type.ToString());
+
+      if ((directionX != 0 || directionY != 0) && pushDistance > 0)
+      {
+        (int x, int y) pushed = DisplacementRules.GetFurthestLegalPosition(
+          target.Position,
+          directionX,
+          directionY,
+          pushDistance,
+          candidate => CanDisplaceLocalPieceTo(target, candidate));
+        if (pushed != target.Position)
+        {
+          target.Position = pushed;
+          foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == target))
+          {
+            attachment.Position = pushed;
+          }
+          pieceSetup.RefreshOccupancy();
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.LandingAttackConsumesNormalAttack(mover.Definition.Type.ToString()))
+    {
+      AttackTurnState attackState = AbilityStateRules.RecordAttack(
+        mover.Definition.Type.ToString(), mover.AttacksThisTurn);
+      mover.AttacksThisTurn = attackState.AttacksThisTurn;
+      mover.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+      mover.AbilityState = AdvancedAbilityRules.RecordAttack(
+        mover.Definition.Type.ToString(), mover.AbilityState, target.NetworkId);
+    }
+
+    return targetSurvived
+      ? ChessAbilityRules.GetFailedCaptureFallback(origin, path)
+      : requestedDestination;
+  }
+
+  private bool CanUseLocalMimicSwap(Piece mimic, Piece target)
+  {
+    if (mimic.Definition.Type != PieceType.Mimic ||
+        target is null || target == mimic || target.AttachedTo is not null ||
+        mimic.Definition.Size != (1, 1) || target.Definition.Size != (1, 1) ||
+        !AdvancedAbilityRules.CanUseMovementAbility(mimic.AbilityState, mimic.HasMovedThisTurn))
+    {
+      return false;
+    }
+
+    UnitRule mimicRule = GetEffectiveMovementRule(mimic);
+    return UnitRules.CanMove(
+        mimicRule,
+        mimic.Position.x,
+        mimic.Position.y,
+        target.Position.x,
+        target.Position.y) &&
+      CanSwapLocalPieceTo(mimic, target, target.Position) &&
+      CanSwapLocalPieceTo(target, mimic, mimic.Position);
+  }
+
+  private bool CanSwapLocalPieceTo(Piece moving, Piece ignoredOther, (int x, int y) destination)
+  {
+    UnitRule rule = GetEffectiveMovementRule(moving);
+    if (!IsFootprintOnBoard(moving.Definition, destination))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(moving.Definition, destination))
+    {
+      if ((!AbilityRules.IgnoresImpassableTerrain(rule) &&
+           _terrain.IsLake(square) && !HasLocalBridgeAt(square)) ||
+          (!AbilityRules.IgnoresStructures(rule) && _barricades.ContainsKey(square)) ||
+          _abilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team.ToNetworkTeam()) &&
+            (entity.Kind == AbilityEntityKind.Bramble || !AbilityRules.IgnoresStructures(rule))))
+      {
+        return false;
+      }
+    }
+
+    return !pieceSetup.Pieces.Any(piece =>
+      piece != moving && piece != ignoredOther &&
+      piece.AttachedTo is null && piece.Definition.Type != PieceType.Farm &&
+      UnitRules.FootprintsOverlap(
+        piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+        destination.x, destination.y, moving.Definition.Size.x, moving.Definition.Size.y));
+  }
+
+  private bool TryUseLocalMimicSwap(Piece mimic, Piece target)
+  {
+    if (!CanUseLocalMimicSwap(mimic, target))
+    {
+      return false;
+    }
+
+    (int x, int y) mimicOrigin = mimic.Position;
+    (int x, int y) targetOrigin = target.Position;
+    mimic.Position = targetOrigin;
+    target.Position = mimicOrigin;
+
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == mimic))
+    {
+      attachment.Position = mimic.Position;
+    }
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == target))
+    {
+      attachment.Position = target.Position;
+    }
+
+    mimic.HasMovedThisTurn = true;
+    mimic.AbilityState = AdvancedAbilityRules.RecordMove(mimic.AbilityState);
+    pieceSetup.RefreshOccupancy();
+    ReleaseLocalPetrificationIfBroken(mimic);
+    CompleteAction();
+    return true;
+  }
+
+
 }

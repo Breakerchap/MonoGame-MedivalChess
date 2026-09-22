@@ -656,4 +656,235 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static NetworkPiece? GetServerLandingAttackTarget(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination)
+  {
+    if (!AdvancedAbilityRules.IsLandingAttackUnit(mover.Type))
+    {
+      return null;
+    }
+
+    NetworkPiece[] targets = match.Pieces
+      .Where(piece =>
+        piece.Id != mover.Id &&
+        piece.AttachedToId is null &&
+        piece.Type != nameof(PieceType.Farm) &&
+        piece.Team != mover.Team &&
+        AdvancedAbilityRules.CanTakeDirectDamage(piece.Type, piece.AbilityState) &&
+        UnitRules.TryGet(piece.Type, out UnitRule targetRule) &&
+        UnitRules.FootprintsOverlap(
+          destination.x, destination.y, moverRule.Width, moverRule.Height,
+          piece.X, piece.Y, targetRule.Width, targetRule.Height))
+      .ToArray();
+    return targets.Length == 1 ? targets[0] : null;
+  }
+
+  private static bool CanServerLandingAttackLand(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) destination) =>
+    GetServerLandingAttackTarget(match, mover, moverRule, destination) is not null;
+
+  private static bool CanContinueServerSpecialLandingPath(
+    Match match,
+    NetworkPiece mover,
+    UnitRule moverRule,
+    (int x, int y) position) =>
+    GetServerLandingAttackTarget(match, mover, moverRule, position) is null;
+
+  private static (int x, int y) ResolveServerLandingAttack(
+    Match match,
+    NetworkPiece mover,
+    PlayerSlot player,
+    UnitRule moverRule,
+    IReadOnlyList<(int x, int y)> path,
+    (int x, int y) requestedDestination)
+  {
+    NetworkPiece? target = GetServerLandingAttackTarget(
+      match, mover, moverRule, requestedDestination);
+    if (target is null)
+    {
+      return requestedDestination;
+    }
+
+    (int x, int y) origin = (mover.X, mover.Y);
+    ResolvePieceDamage(match, mover, player, target.Id, null);
+    int targetIndex = match.Pieces.FindIndex(piece => piece.Id == target.Id);
+    bool targetSurvived = targetIndex >= 0;
+
+    if (targetSurvived)
+    {
+      target = match.Pieces[targetIndex];
+      UnitRule targetRule = UnitRules.GetRequired(target.Type);
+      int sourceCentreX2 = origin.x * 2 + moverRule.Width - 1;
+      int sourceCentreY2 = origin.y * 2 + moverRule.Height - 1;
+      int targetCentreX2 = target.X * 2 + targetRule.Width - 1;
+      int targetCentreY2 = target.Y * 2 + targetRule.Height - 1;
+      int directionX = Math.Sign(targetCentreX2 - sourceCentreX2);
+      int directionY = Math.Sign(targetCentreY2 - sourceCentreY2);
+      int pushDistance = AdvancedAbilityRules.GetLandingAttackPushDistance(mover.Type);
+
+      if ((directionX != 0 || directionY != 0) && pushDistance > 0)
+      {
+        (int x, int y) pushed = DisplacementRules.GetFurthestLegalPosition(
+          (target.X, target.Y),
+          directionX,
+          directionY,
+          pushDistance,
+          candidate => CanDisplaceServerPieceTo(match, target, targetRule, candidate));
+        if (pushed != (target.X, target.Y))
+        {
+          match.Pieces[targetIndex] = target with { X = pushed.x, Y = pushed.y };
+          for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+          {
+            NetworkPiece attachment = match.Pieces[attachmentIndex];
+            if (attachment.AttachedToId == target.Id)
+            {
+              match.Pieces[attachmentIndex] = attachment with
+              {
+                X = pushed.x,
+                Y = pushed.y
+              };
+            }
+          }
+        }
+      }
+    }
+
+    if (AdvancedAbilityRules.LandingAttackConsumesNormalAttack(mover.Type))
+    {
+      int moverIndex = match.Pieces.FindIndex(piece => piece.Id == mover.Id);
+      if (moverIndex >= 0)
+      {
+        NetworkPiece liveMover = match.Pieces[moverIndex];
+        AttackTurnState attackState = AbilityStateRules.RecordAttack(
+          liveMover.Type, liveMover.AttacksThisTurn);
+        match.Pieces[moverIndex] = liveMover with
+        {
+          AttacksThisTurn = attackState.AttacksThisTurn,
+          HasAttackedThisTurn = attackState.HasAttackedThisTurn,
+          AbilityState = AdvancedAbilityRules.RecordAttack(
+            liveMover.Type, liveMover.AbilityState, target.Id)
+        };
+      }
+    }
+
+    return targetSurvived
+      ? ChessAbilityRules.GetFailedCaptureFallback(origin, path)
+      : requestedDestination;
+  }
+
+  private static bool CanServerMimicSwap(
+    Match match,
+    NetworkPiece mimic,
+    NetworkPiece target)
+  {
+    if (mimic.Type != nameof(PieceType.Mimic) ||
+        target.Id == mimic.Id || target.AttachedToId is not null ||
+        !UnitRules.TryGet(mimic.Type, out UnitRule mimicRule) ||
+        !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+        mimicRule.Width != 1 || mimicRule.Height != 1 ||
+        targetRule.Width != 1 || targetRule.Height != 1 ||
+        !AdvancedAbilityRules.CanUseMovementAbility(
+          mimic.AbilityState, mimic.HasMovedThisTurn) ||
+        !UnitRules.CanMove(mimicRule, mimic.X, mimic.Y, target.X, target.Y))
+    {
+      return false;
+    }
+
+    return CanSwapServerPieceTo(match, mimic, mimicRule, target, (target.X, target.Y)) &&
+      CanSwapServerPieceTo(match, target, targetRule, mimic, (mimic.X, mimic.Y));
+  }
+
+  private static bool CanSwapServerPieceTo(
+    Match match,
+    NetworkPiece moving,
+    UnitRule movingRule,
+    NetworkPiece ignoredOther,
+    (int x, int y) destination)
+  {
+    if (!NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration,
+          destination.x,
+          destination.y,
+          movingRule.Width,
+          movingRule.Height))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(movingRule, destination))
+    {
+      if ((!AbilityRules.IgnoresImpassableTerrain(movingRule) &&
+           match.Terrain.IsLake(square) && !HasServerBridgeAt(match, square)) ||
+          (!AbilityRules.IgnoresStructures(movingRule) &&
+           match.Barricades.ContainsKey(square)) ||
+          match.AbilityEntities.Any(entity =>
+            entity.X == square.x && entity.Y == square.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, moving.Team) &&
+            (entity.Kind == AbilityEntityKind.Bramble ||
+             !AbilityRules.IgnoresStructures(movingRule))))
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(piece =>
+      piece.Id != moving.Id &&
+      piece.Id != ignoredOther.Id &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule otherRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, otherRule.Width, otherRule.Height,
+        destination.x, destination.y, movingRule.Width, movingRule.Height));
+  }
+
+  private static bool TryServerMimicSwap(
+    Match match,
+    int mimicIndex,
+    int targetIndex)
+  {
+    if (mimicIndex < 0 || targetIndex < 0) return false;
+    NetworkPiece mimic = match.Pieces[mimicIndex];
+    NetworkPiece target = match.Pieces[targetIndex];
+    if (!CanServerMimicSwap(match, mimic, target))
+    {
+      return false;
+    }
+
+    int mimicX = mimic.X;
+    int mimicY = mimic.Y;
+    match.Pieces[mimicIndex] = mimic with
+    {
+      X = target.X,
+      Y = target.Y,
+      HasMovedThisTurn = true,
+      AbilityState = AdvancedAbilityRules.RecordMove(mimic.AbilityState)
+    };
+    match.Pieces[targetIndex] = target with { X = mimicX, Y = mimicY };
+
+    for (int index = 0; index < match.Pieces.Count; index++)
+    {
+      NetworkPiece attachment = match.Pieces[index];
+      if (attachment.AttachedToId == mimic.Id)
+      {
+        match.Pieces[index] = attachment with { X = target.X, Y = target.Y };
+      }
+      else if (attachment.AttachedToId == target.Id)
+      {
+        match.Pieces[index] = attachment with { X = mimicX, Y = mimicY };
+      }
+    }
+
+    ReleaseServerPetrificationIfBroken(match, match.Pieces[mimicIndex]);
+    return true;
+  }
+
+
 }

@@ -96,7 +96,8 @@ public static class AdvancedAbilityRules
     {
       return false;
     }
-    if (unitType == nameof(PieceType.WillOWisp) && state.Settled)
+    if ((unitType == nameof(PieceType.WillOWisp) && state.Settled) ||
+        unitType == nameof(PieceType.Mimic))
     {
       return false;
     }
@@ -104,6 +105,31 @@ public static class AdvancedAbilityRules
     int moves = Math.Max(state.MovesThisTurn, legacyHasMoved ? 1 : 0);
     return moves < MaximumMovesPerOwnerTurn(unitType);
   }
+
+  public static bool CanUseMovementAbility(UnitAbilityState? state, bool legacyHasMoved)
+  {
+    state ??= new();
+    if (state.PetrifiedById is not null || state.CannotMoveThisTurn ||
+        state.CannotActThisTurn || state.SkipMovementOwnerTurns > 0)
+    {
+      return false;
+    }
+
+    return Math.Max(state.MovesThisTurn, legacyHasMoved ? 1 : 0) < 1;
+  }
+
+  public static bool IsLandingAttackUnit(string unitType) =>
+    unitType is nameof(PieceType.Buffalo) or nameof(PieceType.ArmouredTruck);
+
+  public static int GetLandingAttackPushDistance(string unitType) => unitType switch
+  {
+    nameof(PieceType.Buffalo) => 1,
+    nameof(PieceType.ArmouredTruck) => 2,
+    _ => 0
+  };
+
+  public static bool LandingAttackConsumesNormalAttack(string unitType) =>
+    unitType == nameof(PieceType.Buffalo);
 
   public static bool CanUseSpecialAbility(UnitAbilityState? state)
   {

@@ -46,6 +46,16 @@ public sealed partial class MatchStore
       return AdvancedSpecialResult.AppliedAction;
     }
 
+    if (actor.Type == nameof(PieceType.Mimic))
+    {
+      if (!string.Equals(ability, "Swap", StringComparison.OrdinalIgnoreCase) ||
+          target is null || !TryServerMimicSwap(match, actorIndex, targetIndex))
+      {
+        return AdvancedSpecialResult.Rejected;
+      }
+      return AdvancedSpecialResult.AppliedAction;
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return IsAdvancedSpecialUnit(actor.Type) ? AdvancedSpecialResult.Rejected : AdvancedSpecialResult.NotHandled;
@@ -519,6 +529,7 @@ public sealed partial class MatchStore
 
   private static bool IsAdvancedSpecialUnit(string type) => type is
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
+    nameof(PieceType.Mimic) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or

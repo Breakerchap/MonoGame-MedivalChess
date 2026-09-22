@@ -2433,6 +2433,14 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (actor.Definition.Type == PieceType.Mimic &&
+        target is not null &&
+        CanUseLocalMimicSwap(actor, target))
+    {
+      _ = SendOnlineSpecialAsync(actor, "Swap", target.NetworkId, target.Position);
+      return true;
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
@@ -2442,7 +2450,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2513,6 +2521,7 @@ internal sealed partial class Game1 : Game
         IsFootprintOnBoard(
           PieceDefinitions.All.First(definition => definition.Type == PieceType.FafnirDragon),
           actor.Position),
+      PieceType.Mimic => target is not null && CanUseLocalMimicSwap(actor, target),
       PieceType.Thor => AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
         CanAttackSquareWithAttachments(actor, targetPosition),
       PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
@@ -2583,6 +2592,8 @@ internal sealed partial class Game1 : Game
       ? $"Upgrade{GetSelectedCommandCentreUpgrade()}"
       : actor.Definition.Type == PieceType.Fafnir
       ? "Transform"
+      : actor.Definition.Type == PieceType.Mimic
+      ? "Swap"
       : actor.Definition.Type == PieceType.Thor
       ? "Thunderstorm"
       : IsCodexBuilder(actor.Definition.Type)
@@ -3296,7 +3307,8 @@ internal sealed partial class Game1 : Game
       (from, destination) => GetMovementCost(piece, from, destination),
       destination => GetMovementRangeAt(piece, movementRule, destination),
       movementRule.MoveRange + (hasPalaceSupport ? 1 : 0),
-      position => CanContinueLocalChessPath(piece, movementRule, position)
+      position => CanContinueLocalChessPath(piece, movementRule, position) &&
+        CanContinueLocalSpecialLandingPath(piece, position)
     );
     AddLocalPawnCapturePaths(piece, movementRule, paths);
     return paths;
@@ -3430,6 +3442,7 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    bool landingAttack = CanLocalLandingAttackLand(piece, destination);
     bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
         (!AbilityRules.IgnoresStructures(rule) && OccupiedSquares(piece.Definition, destination).Any(_barricades.ContainsKey)) ||
@@ -3447,7 +3460,7 @@ internal sealed partial class Game1 : Game
       piece.Definition,
       destination,
       piece,
-      AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null);
+      landingAttack || AbilityRules.IsTrampleAttacker(rule) ? piece.Team : null);
   }
 
   private bool CanTravelThroughPosition(
@@ -4178,6 +4191,12 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (actor.Definition.Type == PieceType.Mimic &&
+        targetPiece is not null)
+    {
+      return TryUseLocalMimicSwap(actor, targetPiece);
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
@@ -4186,7 +4205,7 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4223,6 +4242,11 @@ internal sealed partial class Game1 : Game
         targetPosition == actor.Position)
     {
       return TryTransformLocalFafnir(actor);
+    }
+
+    if (actor.Definition.Type == PieceType.Mimic && targetPiece is not null)
+    {
+      return TryUseLocalMimicSwap(actor, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.Thor)
@@ -4974,6 +4998,12 @@ internal sealed partial class Game1 : Game
         AdvancedAbilityRules.StagecoachTrampleDamage);
     }
 
+    destination = ResolveLocalLandingAttack(movedPiece, completedAnimation.Path, destination);
+    if (!pieceSetup.Pieces.Contains(movedPiece))
+    {
+      selectedPiece = null;
+      return;
+    }
     destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
     MovePieceWithCompanions(movedPiece, destination);
     ReleaseLocalPetrificationIfBroken(movedPiece);
@@ -11076,6 +11106,13 @@ internal sealed partial class Game1 : Game
     if (piece.Definition.Type == PieceType.Fafnir)
     {
       return "RIGHT-CLICK this unit to transform for 125 gold";
+    }
+
+    if (piece.Definition.Type == PieceType.Mimic)
+    {
+      return piece.HasMovedThisTurn
+        ? "SWAP USED THIS TURN"
+        : "RIGHT-CLICK another 1 x 1 unit within 6 Circle to swap positions";
     }
 
     if (piece.Definition.Type == PieceType.Thor)
