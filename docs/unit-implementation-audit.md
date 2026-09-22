@@ -83,7 +83,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
 | `greek.medusa` | Verified | Petrify is wired in local and authoritative online play: it targets non-Royal units in range, replaces the Medusa's previous petrification, blocks the petrified unit from moving/attacking/using active abilities or being directly attacked, and ends when Medusa dies or moves more than 5 tiles away. Shared regression coverage checks the state and range break. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
-| `greek.chronos` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `greek.chronos` | Verified | Owner-turn start snapshots already track each living unit's previous position and Health. Chronos now has a local/online/server Rewind action on a friendly unit within 3 Circle: both Chronos and the target return to their previous-owner-turn-start positions and Health, attachments follow, illegal/overlapping rewind destinations are rejected, and the action starts the codex five-owner-turn cooldown. No money, objectives, structures or dead units are restored. |
 | `greek.muse` | Verified | Muse attachment is wired across local/server/CPU and online play. Its target is any friendly unit as specified by the codex (Muse itself has no normal attack range), it consumes the Muse's attack, and the host dynamically advances both Move and Attack patterns one step. Shared and CPU runtime coverage is green. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
 | `norse.hunter` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -286,3 +286,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Attached Succubi keep their independent attack capability. The host itself is blocked from targeting its attached Succubus, while another opposing unit can target the attached Succubus on the host's square.
 - Added free owner-turn detachment to a legal adjacent tile in local and authoritative server play.
 - Added focused shared regression coverage for Succubus attack-target state and Contract Demon placement/fire constants.
+
+
+### 2026-09-22 — Chronos rewind
+
+- Completed Chronos's player-facing and authoritative Rewind action using the existing per-unit owner-turn snapshots.
+- Right-clicking a living friendly unit within 3 Circle rewinds that unit and Chronos to the positions and Health they had at the start of the previous owner turn.
+- Rewind moves host attachments with their host but deliberately does not restore any other state: money, objectives, Structures, deaths, action history, attachment history and other game state remain current.
+- Historical destinations must still be legal in the current board state and may not overlap another unit after the two rewinds; otherwise the action is rejected rather than creating invalid occupancy.
+- Rewind starts the shared five-owner-turn cooldown, which is decremented by the existing owner-turn-start state transition.
+- Added focused regression coverage for snapshot shifting and cooldown ticking.

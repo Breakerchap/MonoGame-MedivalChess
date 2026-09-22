@@ -709,4 +709,22 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void ChronosSnapshotsShiftAtOwnerTurnStartAndCooldownTicksDown()
+  {
+    UnitAbilityState state = new()
+    {
+      CurrentOwnerTurnStart = new UnitTurnSnapshot(1, 2, 90),
+      CooldownOwnerTurns = AdvancedAbilityRules.ChronosCooldownTurns
+    };
+
+    state = AdvancedAbilityRules.StartOwnerTurn(state, 4, 5, 70);
+
+    Assert.Equal(new UnitTurnSnapshot(1, 2, 90), state.PreviousOwnerTurnStart);
+    Assert.Equal(new UnitTurnSnapshot(4, 5, 70), state.CurrentOwnerTurnStart);
+    Assert.Equal(AdvancedAbilityRules.ChronosCooldownTurns - 1, state.CooldownOwnerTurns);
+  }
+
+
 }

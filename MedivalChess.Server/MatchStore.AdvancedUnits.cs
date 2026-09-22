@@ -394,6 +394,66 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Chronos):
+        if (!string.Equals(ability, "Rewind", StringComparison.OrdinalIgnoreCase) ||
+            target is null || target.Id == actor.Id || target.Team != actor.Team ||
+            (actor.AbilityState?.CooldownOwnerTurns ?? 0) > 0 ||
+            actor.AbilityState?.PreviousOwnerTurnStart is not UnitTurnSnapshot chronosSnapshot ||
+            target.AbilityState?.PreviousOwnerTurnStart is not UnitTurnSnapshot targetSnapshot ||
+            !IsWithinCircle(actor, target, 3) ||
+            !UnitRules.TryGet(actor.Type, out UnitRule chronosRule) ||
+            !UnitRules.TryGet(target.Type, out UnitRule targetRule))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        (int x, int y) chronosDestination = (chronosSnapshot.X, chronosSnapshot.Y);
+        (int x, int y) targetDestination = (targetSnapshot.X, targetSnapshot.Y);
+        if (!CanSwapServerPieceTo(match, actor, chronosRule, target, chronosDestination) ||
+            !CanSwapServerPieceTo(match, target, targetRule, actor, targetDestination) ||
+            UnitRules.FootprintsOverlap(
+              chronosDestination.x, chronosDestination.y, chronosRule.Width, chronosRule.Height,
+              targetDestination.x, targetDestination.y, targetRule.Width, targetRule.Height))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          X = chronosDestination.x,
+          Y = chronosDestination.y,
+          Health = Math.Max(1, chronosSnapshot.Health),
+          AbilityState = AdvancedAbilityRules.StartCooldown(
+            actor.AbilityState, AdvancedAbilityRules.ChronosCooldownTurns)
+        };
+        match.Pieces[targetIndex] = target with
+        {
+          X = targetDestination.x,
+          Y = targetDestination.y,
+          Health = Math.Max(1, targetSnapshot.Health)
+        };
+        for (int index = 0; index < match.Pieces.Count; index++)
+        {
+          NetworkPiece attachment = match.Pieces[index];
+          if (attachment.AttachedToId == actor.Id)
+          {
+            match.Pieces[index] = attachment with
+            {
+              X = chronosDestination.x,
+              Y = chronosDestination.y
+            };
+          }
+          else if (attachment.AttachedToId == target.Id)
+          {
+            match.Pieces[index] = attachment with
+            {
+              X = targetDestination.x,
+              Y = targetDestination.y
+            };
+          }
+        }
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.Thor):
         if (!string.Equals(ability, "Thunderstorm", StringComparison.OrdinalIgnoreCase) ||
             !AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) ||

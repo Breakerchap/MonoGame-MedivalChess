@@ -2566,7 +2566,8 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
+      PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2640,6 +2641,12 @@ internal sealed partial class Game1 : Game
       PieceType.Mimic => target is not null && CanUseLocalMimicSwap(actor, target),
       PieceType.Thor => AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState) &&
         CanAttackSquareWithAttachments(actor, targetPosition),
+      PieceType.Chronos => target is not null && target != actor &&
+        target.Team == actor.Team &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        actor.AbilityState.PreviousOwnerTurnStart is not null &&
+        target.AbilityState.PreviousOwnerTurnStart is not null &&
+        IsWithinLocalCircleRange(actor, target, 3),
       PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
@@ -2712,6 +2719,8 @@ internal sealed partial class Game1 : Game
       ? "Swap"
       : actor.Definition.Type == PieceType.Thor
       ? "Thunderstorm"
+      : actor.Definition.Type == PieceType.Chronos
+      ? "Rewind"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -4343,7 +4352,8 @@ internal sealed partial class Game1 : Game
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
-      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
+      PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4390,6 +4400,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Thor)
     {
       return TryUseLocalThorAbility(actor, targetPosition);
+    }
+
+    if (actor.Definition.Type == PieceType.Chronos && targetPiece is not null)
+    {
+      return TryUseLocalChronosRewind(actor, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.CommandCentre &&
@@ -11312,6 +11327,13 @@ internal sealed partial class Game1 : Game
       return piece.AbilityState.UsedThisTurn
         ? "THUNDERSTORM USED THIS TURN"
         : "RIGHT-CLICK an in-range tile to create/move the selected storm";
+    }
+
+    if (piece.Definition.Type == PieceType.Chronos)
+    {
+      return piece.AbilityState.CooldownOwnerTurns > 0
+        ? $"REWIND READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
+        : "RIGHT-CLICK a friendly unit within 3 Circle to rewind both";
     }
 
     if (piece.HasAttackedThisTurn)

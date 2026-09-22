@@ -1071,4 +1071,60 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool TryUseLocalChronosRewind(Piece chronos, Piece target)
+  {
+    if (chronos.Definition.Type != PieceType.Chronos ||
+        target is null || target == chronos ||
+        target.Team != chronos.Team ||
+        chronos.AbilityState.CooldownOwnerTurns > 0 ||
+        chronos.AbilityState.PreviousOwnerTurnStart is not UnitTurnSnapshot chronosSnapshot ||
+        target.AbilityState.PreviousOwnerTurnStart is not UnitTurnSnapshot targetSnapshot ||
+        !IsWithinLocalCircleRange(chronos, target, 3))
+    {
+      return false;
+    }
+
+    (int x, int y) chronosDestination = (chronosSnapshot.X, chronosSnapshot.Y);
+    (int x, int y) targetDestination = (targetSnapshot.X, targetSnapshot.Y);
+    if (!CanSwapLocalPieceTo(chronos, target, chronosDestination) ||
+        !CanSwapLocalPieceTo(target, chronos, targetDestination) ||
+        UnitRules.FootprintsOverlap(
+          chronosDestination.x, chronosDestination.y,
+          chronos.Definition.Size.x, chronos.Definition.Size.y,
+          targetDestination.x, targetDestination.y,
+          target.Definition.Size.x, target.Definition.Size.y))
+    {
+      return false;
+    }
+
+    chronos.Position = chronosDestination;
+    target.Position = targetDestination;
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == chronos))
+    {
+      attachment.Position = chronosDestination;
+    }
+    foreach (Piece attachment in pieceSetup.Pieces.Where(piece => piece.AttachedTo == target))
+    {
+      attachment.Position = targetDestination;
+    }
+
+    chronos.CurrentHealth = Math.Min(
+      AdvancedAbilityRules.GetEffectiveMaximumHealth(
+        UnitRules.FromPieceDefinition(chronos.Definition), chronos.AbilityState),
+      chronosSnapshot.Health);
+    target.CurrentHealth = Math.Min(
+      AdvancedAbilityRules.GetEffectiveMaximumHealth(
+        UnitRules.FromPieceDefinition(target.Definition), target.AbilityState),
+      targetSnapshot.Health);
+    chronos.AbilityState = chronos.AbilityState with
+    {
+      CooldownOwnerTurns = AdvancedAbilityRules.ChronosCooldownTurns
+    };
+    pieceSetup.RefreshOccupancy();
+    CompleteAction();
+    return true;
+  }
+
+
 }
