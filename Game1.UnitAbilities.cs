@@ -2260,4 +2260,97 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool HasPendingLocalSatanChoice(TeamName team) =>
+    pieceSetup.Pieces.Any(piece =>
+      piece.Team == team &&
+      piece.IsRoyal &&
+      piece.AbilityState.PendingAbility?.StartsWith(
+        "SatanChoice:", StringComparison.Ordinal) == true);
+
+  private bool IsPendingLocalSatanChoiceRoyal(Piece piece) =>
+    piece is not null &&
+    piece.IsRoyal &&
+    piece.AbilityState.PendingAbility?.StartsWith(
+      "SatanChoice:", StringComparison.Ordinal) == true;
+
+  private bool TryGetLocalSatanSourceTeam(Piece royal, out TeamName sourceTeam)
+  {
+    sourceTeam = default;
+    const string prefix = "SatanChoice:";
+    string pending = royal?.AbilityState.PendingAbility;
+    return pending is not null &&
+      pending.StartsWith(prefix, StringComparison.Ordinal) &&
+      Enum.TryParse(pending[prefix.Length..], out sourceTeam);
+  }
+
+  private bool TryUseLocalSatanAbility(Piece satan, Piece targetRoyal)
+  {
+    if (satan.Definition.Type != PieceType.Satan ||
+        targetRoyal is null || targetRoyal == satan ||
+        targetRoyal.Team == satan.Team ||
+        !targetRoyal.IsRoyal ||
+        satan.AbilityState.CooldownOwnerTurns > 0 ||
+        satan.CurrentHealth <= AdvancedAbilityRules.SatanHealthCost)
+    {
+      return false;
+    }
+
+    satan.CurrentHealth -= AdvancedAbilityRules.SatanHealthCost;
+    satan.AbilityState = AdvancedAbilityRules.StartCooldown(
+      satan.AbilityState, AdvancedAbilityRules.SatanCooldownTurns);
+    targetRoyal.AbilityState = targetRoyal.AbilityState with
+    {
+      PendingAbility = $"SatanChoice:{satan.Team}",
+      PendingSelections = Array.Empty<AbilitySelection>()
+    };
+    CompleteAction();
+    return true;
+  }
+
+  private bool TryResolveLocalSatanChoice(
+    Piece royal,
+    Piece target,
+    bool shiftHeld)
+  {
+    if (!IsPendingLocalSatanChoiceRoyal(royal) ||
+        !TryGetLocalSatanSourceTeam(royal, out TeamName sourceTeam))
+    {
+      return false;
+    }
+
+    Team team = _teams.Find(candidate => candidate.TeamName == royal.Team);
+    if (target == royal)
+    {
+      royal.AbilityState = AdvancedAbilityRules.ClearPendingSelections(
+        royal.AbilityState);
+      if (!shiftHeld)
+      {
+        if (team is null) return false;
+        team.Money = ClampCurrency(
+          (long)team.Money - AdvancedAbilityRules.SatanGoldLoss);
+        return true;
+      }
+
+      royal.CurrentHealth -= AdvancedAbilityRules.SatanRoyalDamage;
+      HandlePieceDestroyed(royal, sourceTeam);
+      return true;
+    }
+
+    if (target is null || target.Team != royal.Team ||
+        target.IsRoyal || target.AttachedTo is not null ||
+        target.Definition.Type == PieceType.Helicopter ||
+        target.Definition.Category == PieceCategory.Structure)
+    {
+      return false;
+    }
+
+    royal.AbilityState = AdvancedAbilityRules.ClearPendingSelections(
+      royal.AbilityState);
+    target.CurrentHealth -= AdvancedAbilityRules.SatanUnitDamage;
+    HandlePieceDestroyed(target, sourceTeam);
+    return true;
+  }
+
+
 }

@@ -374,6 +374,10 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece piece = foundMatch.Pieces[index];
+      if (HasPendingServerSatanChoice(foundMatch, player.Team))
+      {
+        return new(false, "Resolve Satan's forced choice before moving.", foundMatch.State());
+      }
       if (IsServerSerpentFollower(piece))
       {
         return new(false, "Only the Serpent front may move.", foundMatch.State());
@@ -598,6 +602,10 @@ public sealed partial class MatchStore
       }
 
       NetworkPiece attacker = foundMatch.Pieces[attackerIndex];
+      if (HasPendingServerSatanChoice(foundMatch, player.Team))
+      {
+        return new(false, "Resolve Satan's forced choice before attacking.", foundMatch.State());
+      }
       if (attacker.Team != player.Team || IsServerSerpentFollower(attacker))
       {
         return new(false, "That attack is not available.", foundMatch.State());
@@ -758,11 +766,17 @@ public sealed partial class MatchStore
 
       NetworkPiece actor = foundMatch.Pieces[actorIndex];
       NetworkPiece? target = targetIndex >= 0 ? foundMatch.Pieces[targetIndex] : null;
+      if (HasPendingServerSatanChoice(foundMatch, player.Team) &&
+          !IsPendingServerSatanChoiceRoyal(actor))
+      {
+        return new(false, "Resolve Satan's forced choice with your affected Royal first.", foundMatch.State());
+      }
       if (target?.Type == nameof(PieceType.Helicopter))
       {
         return new(false, "Helicopter cannot be targeted by unit abilities.", foundMatch.State());
       }
       if (actor.Type != nameof(PieceType.Mimic) &&
+          !IsPendingServerSatanChoiceRoyal(actor) &&
           !AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
       {
         return new(false, "That unit's special abilities are currently disabled.", foundMatch.State());
@@ -849,6 +863,10 @@ public sealed partial class MatchStore
           player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "Use at least one action before ending the turn.", foundMatch.State());
+      }
+      if (HasPendingServerSatanChoice(foundMatch, player.Team))
+      {
+        return new(false, "Resolve Satan's forced choice before ending the turn.", foundMatch.State());
       }
       if (Globals.ActionLimitsEnabled && player.ActionsRemaining >= ActionsPerTurn && player.ChosenRoyal != "Palace")
       {
@@ -1189,6 +1207,10 @@ public sealed partial class MatchStore
       if (player is null || player.Team != foundMatch.CurrentTurn)
       {
         return new(false, "It is not your turn.", foundMatch.State());
+      }
+      if (HasPendingServerSatanChoice(foundMatch, player.Team))
+      {
+        return new(false, "Resolve Satan's forced choice before buying.", foundMatch.State());
       }
       if (!foundMatch.AdvanceClock())
       {

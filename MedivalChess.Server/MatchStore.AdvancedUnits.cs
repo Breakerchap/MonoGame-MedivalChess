@@ -46,6 +46,76 @@ public sealed partial class MatchStore
       return AdvancedSpecialResult.AppliedAction;
     }
 
+    if (IsPendingServerSatanChoiceRoyal(actor))
+    {
+      if (!TryGetServerSatanSourceTeam(actor, out NetworkTeam sourceTeam))
+      {
+        return AdvancedSpecialResult.Rejected;
+      }
+
+      PlayerSlot sourcePlayer = match.Players.FirstOrDefault(candidate =>
+        candidate.Team == sourceTeam) ?? player;
+      UnitAbilityState clearedRoyalState =
+        AdvancedAbilityRules.ClearPendingSelections(actor.AbilityState);
+
+      if (string.Equals(ability, "SatanGold", StringComparison.OrdinalIgnoreCase))
+      {
+        player.Money = ClampCurrency(
+          (long)player.Money - AdvancedAbilityRules.SatanGoldLoss);
+        match.Pieces[actorIndex] = actor with
+        {
+          AbilityState = clearedRoyalState
+        };
+        return AdvancedSpecialResult.AppliedWithoutAction;
+      }
+
+      if (string.Equals(ability, "SatanRoyal", StringComparison.OrdinalIgnoreCase))
+      {
+        NetworkPiece damagedRoyal = actor with
+        {
+          Health = actor.Health - AdvancedAbilityRules.SatanRoyalDamage,
+          AbilityState = clearedRoyalState
+        };
+        match.Pieces[actorIndex] = damagedRoyal;
+        if (damagedRoyal.Health <= 0)
+        {
+          HandlePieceDestroyed(match, damagedRoyal, sourcePlayer);
+        }
+        return AdvancedSpecialResult.AppliedWithoutAction;
+      }
+
+      if (string.Equals(ability, "SatanUnit", StringComparison.OrdinalIgnoreCase))
+      {
+        if (target is null ||
+            target.Team != actor.Team ||
+            target.AttachedToId is not null ||
+            RoyalAbilityRules.IsRoyal(
+              target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+            !UnitRules.TryGet(target.Type, out UnitRule satanVictimRule) ||
+            satanVictimRule.Category == RuleCategory.Structure)
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          AbilityState = clearedRoyalState
+        };
+        NetworkPiece damagedTarget = target with
+        {
+          Health = target.Health - AdvancedAbilityRules.SatanUnitDamage
+        };
+        match.Pieces[targetIndex] = damagedTarget;
+        if (damagedTarget.Health <= 0)
+        {
+          HandlePieceDestroyed(match, damagedTarget, sourcePlayer);
+        }
+        return AdvancedSpecialResult.AppliedWithoutAction;
+      }
+
+      return AdvancedSpecialResult.Rejected;
+    }
+
     if (actor.Type == nameof(PieceType.Mimic))
     {
       if (!string.Equals(ability, "Swap", StringComparison.OrdinalIgnoreCase) ||
@@ -569,6 +639,35 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Satan):
+        if (!string.Equals(ability, "Tempt", StringComparison.OrdinalIgnoreCase) ||
+            target is null || target.Id == actor.Id ||
+            target.Team == actor.Team || target.Team == NetworkTeam.Neutral ||
+            !RoyalAbilityRules.IsRoyal(
+              target.Type, target.IsRoyalProxy, target.PossessedUnitId) ||
+            actor.AbilityState?.CooldownOwnerTurns > 0 ||
+            actor.Health <= AdvancedAbilityRules.SatanHealthCost ||
+            HasPendingServerSatanChoice(match, target.Team))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        match.Pieces[actorIndex] = actor with
+        {
+          Health = actor.Health - AdvancedAbilityRules.SatanHealthCost,
+          AbilityState = AdvancedAbilityRules.StartCooldown(
+            actor.AbilityState, AdvancedAbilityRules.SatanCooldownTurns)
+        };
+        match.Pieces[targetIndex] = target with
+        {
+          AbilityState = (target.AbilityState ?? new UnitAbilityState()) with
+          {
+            PendingAbility = $"SatanChoice:{actor.Team}",
+            PendingSelections = Array.Empty<AbilitySelection>()
+          }
+        };
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.Developer):
         if (!string.Equals(ability, "Claim", StringComparison.OrdinalIgnoreCase) ||
             target is not null ||
@@ -1052,6 +1151,7 @@ public sealed partial class MatchStore
   private static bool IsAdvancedSpecialUnit(string type) => type is
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
     nameof(PieceType.Mimic) or nameof(PieceType.Poltergeist) or nameof(PieceType.Developer) or
+    nameof(PieceType.Satan) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or

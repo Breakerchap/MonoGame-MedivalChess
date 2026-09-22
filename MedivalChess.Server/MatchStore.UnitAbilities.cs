@@ -2137,4 +2137,31 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static bool HasPendingServerSatanChoice(Match match, NetworkTeam team) =>
+    match.Pieces.Any(piece =>
+      piece.Team == team &&
+      RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+      piece.AbilityState?.PendingAbility?.StartsWith(
+        "SatanChoice:", StringComparison.Ordinal) == true);
+
+  private static bool IsPendingServerSatanChoiceRoyal(NetworkPiece piece) =>
+    piece is not null &&
+    RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId) &&
+    piece.AbilityState?.PendingAbility?.StartsWith(
+      "SatanChoice:", StringComparison.Ordinal) == true;
+
+  private static bool TryGetServerSatanSourceTeam(
+    NetworkPiece royal,
+    out NetworkTeam sourceTeam)
+  {
+    sourceTeam = default;
+    const string prefix = "SatanChoice:";
+    string? pending = royal.AbilityState?.PendingAbility;
+    return pending is not null &&
+      pending.StartsWith(prefix, StringComparison.Ordinal) &&
+      Enum.TryParse(pending[prefix.Length..], out sourceTeam);
+  }
+
+
 }

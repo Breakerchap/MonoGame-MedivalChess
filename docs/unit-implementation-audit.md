@@ -145,7 +145,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.archdemon` | Verified | Purchase placement now requires one friendly non-Structure unit under the Archdemon footprint. The 2×2 footprint must fit legal terrain, may be centred from a sacrifice in No-Man's-Land or the normal placement area, the sacrificed unit is removed, and the Archdemon is placed at that unit's position in local and authoritative online/server play. |
 | `angels_demons.imp` | Verified | Imp active attachment is wired across local/server/CPU and online play with one Imp per host; the host dynamically gains +1 Move and +15 Attack and loses 5 Health at each owner-turn start. Shared and CPU runtime coverage is green. |
 | `angels_demons.herald` | Verified | Before moving, the Herald may freely toggle up to three adjacent friendly unattached 1×1 units as companions. Only those selected units attempt to preserve their relative positions when the Herald moves; each follower moves only if its translated square is legal, is marked as having moved, and carries its attachments with it. Companion selection clears after the Herald moves. Local and authoritative online/server paths are wired. |
-| `angels_demons.satan` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.satan` | Verified | Satan's once-every-2-owner-turn Tempt is wired in local and authoritative online/server play. It loses 10 Health, targets an opposing Royal globally, and forces that team to resolve exactly one choice before any other action: lose 30 gold; deal 20 damage to the affected Royal; or deal 40 damage to one friendly non-Royal non-Structure unit. Choice resolution is free, synced through Royal ability state, and cannot target Helicopter. |
 | `chess.pawn` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `chess.chess_knight` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `chess.bishop` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -418,3 +418,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Claimed tiles stop behaving as neutral No-Man's-Land for placement: the owning team may place normal units there, while enemy claims block No-Man's-Land purchase routes such as Helicopter placement.
 - Objective scoring, Conquest/Dominion control, Escort logic and Plunder delivery continue to use the original `MatchRules` territory map, so Developer claims never score or deliver objectives.
 - Ordinary movement is not territory-restricted anywhere else in the engine, so no separate movement gate was required; claims are still visually tinted as placement territory for player feedback.
+
+
+### 2026-09-22 — Satan forced opponent choice
+
+- Completed Satan's Tempt ability in local and authoritative online/server play.
+- Satan may target an opposing Royal while its 2-owner-turn cooldown is ready; activation costs Satan 10 Health and spends the action.
+- The targeted Royal stores the pending forced choice in shared ability state. Until it is resolved, that team cannot move, attack, buy, end the turn, or use another unit's special ability.
+- Choice controls are deliberately lightweight rather than modal: right-click the affected Royal to lose 30 gold; Shift+right-click it to take 20 Royal damage; or right-click a friendly non-Royal, non-Structure unit to make that unit take 40 damage.
+- Resolving the forced choice is free and clears the pending state. Authoritative server resolution applies the money/Health loss and normal death handling; Helicopter is excluded from the selectable-unit damage option because it cannot be interacted with by units.

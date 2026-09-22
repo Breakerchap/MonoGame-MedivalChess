@@ -515,7 +515,14 @@ internal sealed partial class Game1 : Game
       TrySkipCurrentTurn();
     }
 
-    if (wasPurchaseModeToggle && _initialBuyPhase == null && _royalAwaitingPlacement is null)
+    bool satanChoicePending = HasPendingLocalSatanChoice(Team.CurrentTurn);
+    if (satanChoicePending)
+    {
+      _isPurchaseMode = false;
+    }
+
+    if (wasPurchaseModeToggle && !satanChoicePending &&
+        _initialBuyPhase == null && _royalAwaitingPlacement is null)
     {
       _isPurchaseMode = !_isPurchaseMode;
       selectedPiece = null;
@@ -1409,7 +1416,9 @@ internal sealed partial class Game1 : Game
 
   private void TrySkipCurrentTurn()
   {
-    if (_screen != Screen.Playing || _initialBuyPhase != null || _royalAwaitingPlacement is not null || !IsOnlineLocalTurn())
+    if (_screen != Screen.Playing || _initialBuyPhase != null ||
+        _royalAwaitingPlacement is not null || !IsOnlineLocalTurn() ||
+        HasPendingLocalSatanChoice(Team.CurrentTurn))
     {
       return;
     }
@@ -2550,6 +2559,27 @@ internal sealed partial class Game1 : Game
       return false;
     }
 
+    if (IsPendingLocalSatanChoiceRoyal(actor))
+    {
+      bool shiftHeld =
+        Keyboard.GetState().IsKeyDown(Keys.LeftShift) ||
+        Keyboard.GetState().IsKeyDown(Keys.RightShift);
+      string choice = target == actor
+        ? shiftHeld ? "SatanRoyal" : "SatanGold"
+        : target is not null && target.Team == actor.Team &&
+          !target.IsRoyal && target.AttachedTo is null &&
+          target.Definition.Category != PieceCategory.Structure
+          ? "SatanUnit"
+          : string.Empty;
+      if (string.IsNullOrEmpty(choice))
+      {
+        return false;
+      }
+      _ = SendOnlineSpecialAsync(
+        actor, choice, target?.NetworkId, targetPosition);
+      return true;
+    }
+
     if (target is not null &&
         target.Team == actor.Team &&
         target.Definition.Type == PieceType.Hwacha &&
@@ -2644,7 +2674,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Atlas or PieceType.Poltergeist or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.Satan or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2755,6 +2785,10 @@ internal sealed partial class Game1 : Game
               CanAttackSquareWithAttachments(actor, square)),
       PieceType.Developer => target is null &&
         IsLocalDeveloperClaimTarget(actor, targetPosition),
+      PieceType.Satan => target is not null && target != actor &&
+        target.Team != actor.Team && target.IsRoyal &&
+        actor.AbilityState.CooldownOwnerTurns <= 0 &&
+        actor.CurrentHealth > AdvancedAbilityRules.SatanHealthCost,
       PieceType.Fylgja =>
         string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
         actor.AbilityState.PendingSelections.Count > 0
@@ -2848,6 +2882,8 @@ internal sealed partial class Game1 : Game
       ? GetLocalPoltergeistStructure(actor) is null ? "PickUpStructure" : "PlaceStructure"
       : actor.Definition.Type == PieceType.Developer
       ? "Claim"
+      : actor.Definition.Type == PieceType.Satan
+      ? "Tempt"
       : actor.Definition.Type == PieceType.Fylgja
       ? "ForceMove"
       : IsCodexBuilder(actor.Definition.Type)
@@ -4191,7 +4227,9 @@ internal sealed partial class Game1 : Game
 
   private bool CanActWithPiece(Piece piece) =>
     piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn() &&
-    !IsLocalSerpentFollower(piece);
+    !IsLocalSerpentFollower(piece) &&
+    (!HasPendingLocalSatanChoice(piece.Team) ||
+      IsPendingLocalSatanChoiceRoyal(piece));
 
   private static bool AreAdjacent(Piece first, Piece second)
   {
@@ -4488,6 +4526,15 @@ internal sealed partial class Game1 : Game
     KeyboardState keyboard
   )
   {
+    bool shiftHeldForSatan =
+      keyboard.IsKeyDown(Keys.LeftShift) ||
+      keyboard.IsKeyDown(Keys.RightShift);
+    if (IsPendingLocalSatanChoiceRoyal(actor))
+    {
+      return TryResolveLocalSatanChoice(
+        actor, targetPiece, shiftHeldForSatan);
+    }
+
     if (!IsCampaignAbilityAllowed(actor.Team, actor.Definition.Type))
     {
       Console.WriteLine($"{actor.Definition.Type}'s ability is disabled for this campaign level.");
@@ -4560,7 +4607,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Atlas or PieceType.Poltergeist or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.Satan or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4606,6 +4653,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Developer)
     {
       return TryUseLocalDeveloperClaim(actor, targetPosition);
+    }
+
+    if (actor.Definition.Type == PieceType.Satan)
+    {
+      return TryUseLocalSatanAbility(actor, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.Fafnir &&

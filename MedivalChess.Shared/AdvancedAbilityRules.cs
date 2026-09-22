@@ -78,6 +78,10 @@ public static class AdvancedAbilityRules
   public const int GangLeaderCooldownTurns = 3;
   public const int HackerCooldownTurns = 3;
   public const int SatanCooldownTurns = 2;
+  public const int SatanHealthCost = 10;
+  public const int SatanGoldLoss = 30;
+  public const int SatanRoyalDamage = 20;
+  public const int SatanUnitDamage = 40;
   public const int OdinCooldownTurns = 4;
   public const int ChronosCooldownTurns = 5;
   public const int SniperCooldownTurns = 2;
