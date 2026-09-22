@@ -17,7 +17,9 @@ public sealed partial class MatchStore
       piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
     int museCount = match.Pieces.Count(piece =>
       piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
-    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyPersistentBonuses(rule, host.AbilityState);
+    return AbilityEntityRules.ApplyAuraBonuses(rule, match.AbilityEntities, host);
   }
 
   private static bool CanSharedServerDamage(NetworkPiece attacker, NetworkPiece target) =>
@@ -141,7 +143,9 @@ public sealed partial class MatchStore
         NetworkPiece liveAttacker = match.Pieces[liveAttackerIndex];
         match.Pieces[liveAttackerIndex] = liveAttacker with
         {
-          Health = Math.Min(attackerRule.Health, liveAttacker.Health + plan.HealAttacker)
+          Health = Math.Min(
+            AdvancedAbilityRules.GetEffectiveMaximumHealth(attackerRule, liveAttacker.AbilityState),
+            liveAttacker.Health + plan.HealAttacker)
         };
       }
     }
@@ -303,6 +307,9 @@ public sealed partial class MatchStore
 
   private static void ApplySharedServerStartOfTurnEffects(Match match, NetworkTeam activeTeam)
   {
+    match.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, activeTeam));
+
     for (int index = 0; index < match.Pieces.Count; index++)
     {
       NetworkPiece piece = match.Pieces[index];

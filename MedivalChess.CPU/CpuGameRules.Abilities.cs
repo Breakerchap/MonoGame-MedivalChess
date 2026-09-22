@@ -10,6 +10,7 @@ public static partial class CpuGameRules
 {
   private static UnitRule ApplyCpuAttachmentBonuses(
     IReadOnlyList<NetworkPiece> pieces,
+    IEnumerable<AbilityEntity> abilityEntities,
     NetworkPiece host,
     UnitRule rule)
   {
@@ -17,7 +18,9 @@ public static partial class CpuGameRules
       piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Imp);
     int museCount = pieces.Count(piece =>
       piece.AttachedToId == host.Id && piece.AttachmentKind == NetworkAttachmentKind.Muse);
-    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyPersistentBonuses(rule, host.AbilityState);
+    return AbilityEntityRules.ApplyAuraBonuses(rule, abilityEntities, host);
   }
 
   private static void ResolveSharedPieceDamage(
@@ -65,7 +68,7 @@ public static partial class CpuGameRules
   private static int GetSharedAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
   {
     UnitRule attackerRule = ApplyCpuAttachmentBonuses(
-      state.Pieces, attacker, UnitRules.GetRequired(attacker.Type));
+      state.Pieces, state.AbilityEntities, attacker, UnitRules.GetRequired(attacker.Type));
     UnitRule targetRule = UnitRules.GetRequired(target.Type);
     int baseDamage = AbilityRules.GetBaseAttack(attackerRule, attacker.Health);
     (int x, int y) targetFacing = AbilityStateRules.GetFacing(target.Team, target.FacingX, target.FacingY);
@@ -124,6 +127,8 @@ public static partial class CpuGameRules
       damaged.Id,
       damaged.Team);
     damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
+    damage = Math.Max(0, damage - AbilityEntityRules.GetDamageReduction(
+      state.AbilityEntities, damaged));
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       damagedRule,
@@ -490,6 +495,9 @@ public static partial class CpuGameRules
 
   private static void ResetSharedTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    state.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, team));
+
     for (int index = 0; index < state.Pieces.Count; index++)
     {
       NetworkPiece piece = state.Pieces[index];

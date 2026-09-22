@@ -13,13 +13,25 @@ namespace MedivalChess;
 /// </summary>
 internal sealed partial class Game1
 {
+  private static NetworkPiece SnapshotRuntimePiece(Piece piece) => new(
+    piece.NetworkId,
+    piece.Definition.Type.ToString(),
+    piece.Team.ToNetworkTeam(),
+    piece.Position.x,
+    piece.Position.y,
+    piece.CurrentHealth,
+    AbilityState: piece.AbilityState
+  );
+
   private UnitRule ApplyLocalAttachmentBonuses(Piece host, UnitRule rule)
   {
     bool hasImp = pieceSetup.Pieces.Any(piece =>
       piece.AttachedTo == host && piece.AttachmentKind == AttachmentKind.Imp);
     int museCount = pieceSetup.Pieces.Count(piece =>
       piece.AttachedTo == host && piece.AttachmentKind == AttachmentKind.Muse);
-    return AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyAttachmentBonuses(rule, hasImp, museCount);
+    rule = AdvancedAbilityRules.ApplyPersistentBonuses(rule, host.AbilityState);
+    return AbilityEntityRules.ApplyAuraBonuses(rule, _abilityEntities, SnapshotRuntimePiece(host));
   }
 
   private AbilityUnitSnapshot SnapshotAbilityUnit(Piece piece) => new(
@@ -75,7 +87,9 @@ internal sealed partial class Game1
     if (plan.HealAttacker > 0 && pieceSetup.Pieces.Contains(attacker) && attacker.CurrentHealth > 0)
     {
       attacker.CurrentHealth = Math.Min(
-        attacker.Definition.Health,
+        AdvancedAbilityRules.GetEffectiveMaximumHealth(
+          UnitRules.FromPieceDefinition(attacker.Definition),
+          attacker.AbilityState),
         attacker.CurrentHealth + plan.HealAttacker
       );
     }

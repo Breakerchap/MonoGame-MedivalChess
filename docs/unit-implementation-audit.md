@@ -25,7 +25,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.sumo` | Verified | Post-attack two-tile push is wired in local/server/CPU using footprint-centre direction, 2→1→0 legal fallback, preserved target move state, and runtime regression coverage. |
 | `dynasty.elephant` | Verified | Enemy traversal, trample damage, terrain/rivers immunity, and landing validation are implemented. |
 | `dynasty.ox` | Verified | Attachment, host movement bonus, and shared incoming damage are implemented. |
-| `dynasty.carpenter` | Partial | Bridge/Watchtower entities exist and persistent ability entities now participate in local/server/CPU pathing; build/demolish action parity and Watchtower bonuses remain. |
+| `dynasty.carpenter` | Partial | Server/CPU build and demolition actions exist; Watchtower +2 Attack Range is now consumed by local/server/CPU effective rules. Watchtower damage interception, Bridge completion, local action parity, and dedicated coverage remain. |
 | `dynasty.war_drum` | Verified | Refresh is wired across local/server/CPU and online play, clearing a moved friendly unit's moved state and preventing a second refresh that owner turn; green CPU runtime coverage verifies the full flow. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
@@ -79,7 +79,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.ballista` | Verified | Piercing attacks are wired in local/server/CPU and rays stop at forests, barricades, and attack-blocking ability entities, with green CPU blocker coverage. |
 | `greek.chimera` | Verified | Local/server/CPU damage uses the shared +15 rear-attack modifier, with green CPU front-vs-behind regression coverage. |
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
-| `greek.daedalus` | Partial | Gate/Snare entities exist and persistent ability entities now participate in local/server/CPU pathing; construction, Snare turn-lock, demolition, and tests remain. |
+| `greek.daedalus` | Partial | Server/CPU Gate/Snare construction and demolition exist. Ending movement on a Snare now consumes it and blocks the unit's next owner-turn movement across local/server/CPU; local construction parity and remaining coverage remain. |
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
@@ -93,7 +93,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.beserker` | Verified | Attack increases at 20 health or less. |
 | `norse.valkyrie` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `norse.shieldsman` | Verified | Shieldsman attachment is wired across local/server/CPU and online play, limited to friendly non-Royals with one Shieldsman per host; incoming host damage is redirected to the Shieldsman. CPU runtime coverage is green. |
-| `norse.runesmith` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.runesmith` | Partial | Server/CPU Rune construction and demolition exist; all four Rune auras now affect local/server/CPU effective combat and movement rules without same-type stacking. Local build/demolition action parity remains. |
 | `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
 | `norse.flying_longboat` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.fafnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -129,14 +129,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `modern.developer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `modern.armoured_truck` | Partial | Shared push fallback is implemented and tested; free landing-attack movement/damage/push runtime flow remains. |
 | `modern.helicopter` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `modern.command_centre` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `modern.command_centre` | Partial | Server/CPU upgrades charge 25 gold and persist; stored Attack/Health/Move upgrades now alter effective runtime stats and healing caps. Local/online client action selection parity remains. |
 | `modern.hacker` | Verified | Hack targeting/cooldown is wired across local/server/CPU and online play; all special-action entry points respect disabled state, normal movement/attacks remain available, and green CPU runtime coverage verifies expiry at the end of the target's owner turn. |
 | `angels_demons.fiend` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.cherub` | Verified | Terrain-ignoring movement is shared and enforced by local, server, and CPU pathfinding. |
 | `angels_demons.fallen` | Implemented | Core definition is loaded from the authoritative specification. |
 | `angels_demons.seraph` | Verified | Up to three distinct targets per owner turn are enforced by shared/local/server/CPU attack state, with runtime and CPU regression coverage. |
 | `angels_demons.ophan` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
-| `angels_demons.gatekeeper` | Partial | Portal/Seal entities exist and Seals now participate in local/server/CPU movement/attack blocking; portal transport, placement action parity, expiry, and tests remain. |
+| `angels_demons.gatekeeper` | Partial | Server/CPU Portal/Seal construction exists; Seals block movement/attacks and now expire at the start of their owner's next turn across local/server/CPU. Portal transport and local action parity remain. |
 | `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU with runtime coverage; pull-immunity integration will be verified alongside forced-movement abilities such as Fylgja. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -176,3 +176,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - CPU Bridge placement now permits water tiles, matching the codex.
 - Added CPU regression coverage for Hwacha reload, Command Centre upgrades, Demolitionist TNT, Thor storm creation/movement, and Fafnir transformation.
 - These rows remain **Partial** until local-play interaction parity and their remaining unit-specific edge cases are complete; this entry intentionally does not overstate implementation status.
+
+### 2026-09-22 — persistent bonus and ability-entity runtime batch
+
+- Wired Command Centre's stored Attack, Move, Attack Range, and maximum-Health state into the effective rules used by local play, authoritative server play, and CPU simulation. Healing now respects upgraded maximum Health.
+- Wired Runesmith auras into the same effective-rule pipeline: +10 Attack, +1 Move, 5 incoming-damage reduction, and +2 Attack Range. Same-type Rune bonuses remain non-stacking through the shared rule helpers.
+- Wired Watchtower's +2 Attack Range bonus into effective local/server/CPU rules when a friendly unit occupies the Watchtower.
+- Implemented Snare landing behaviour across local/server/CPU: only ending movement on a Snare consumes it, and the affected unit loses movement on its next owner turn only.
+- Implemented Seal expiry at the start of the Seal owner's next turn across local/server/CPU.
+- Added shared regression coverage for persistent upgrades, Rune/Watchtower bonuses, Snare timing and Seal expiry, plus CPU integration coverage proving Command Centre/Rune bonuses affect real combat/movement and Snare movement applies its state.
+- Carpenter, Daedalus, Runesmith, Command Centre and Gatekeeper remain **Partial** where noted above; this batch does not claim local action-selection parity, Watchtower damage interception, Bridge completion, or Portal transport.

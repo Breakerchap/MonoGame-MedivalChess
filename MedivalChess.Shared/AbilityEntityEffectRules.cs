@@ -3,7 +3,8 @@ namespace MedivalChess.Shared;
 public readonly record struct AbilityEntityEntryEffect(
   int UnitDamage,
   int EntityDamage,
-  bool ConsumeEntity
+  bool ConsumeEntity,
+  bool LockMovementNextOwnerTurn = false
 );
 
 public static class AbilityEntityEffectRules
@@ -24,6 +25,7 @@ public static class AbilityEntityEffectRules
           false),
       AbilityEntityKind.Thunderstorm when entity.Owner != unit.Team =>
         new(AbilityEntityRules.GetRequired(AbilityEntityKind.Thunderstorm).EnterDamage, 0, false),
+      AbilityEntityKind.Snare => new(0, 0, true, LockMovementNextOwnerTurn: true),
       _ => default
     };
   }
@@ -51,6 +53,9 @@ public static class AbilityEntityEffectRules
     }
     return false;
   }
+
+  public static bool ShouldExpireAtOwnerTurnStart(AbilityEntity entity, NetworkTeam ownerTurn) =>
+    entity.Kind == AbilityEntityKind.Seal && entity.Owner == ownerTurn;
 
   public static bool IsSourceBoundEffect(AbilityEntity entity) =>
     entity.Kind == AbilityEntityKind.PoisonCloud;

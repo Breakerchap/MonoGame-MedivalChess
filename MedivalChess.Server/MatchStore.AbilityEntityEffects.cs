@@ -10,6 +10,7 @@ public sealed partial class MatchStore
     IReadOnlyList<(int x, int y)> path)
   {
     HashSet<string> triggered = new(StringComparer.Ordinal);
+    (int x, int y)? finalStep = path.Count > 0 ? path[^1] : null;
     foreach ((int x, int y) step in path)
     {
       int pieceIndex = match.Pieces.FindIndex(piece => piece.Id == movingPieceId);
@@ -30,6 +31,10 @@ public sealed partial class MatchStore
         int entityIndex = match.AbilityEntities.FindIndex(entity => entity.Id == entityId);
         if (entityIndex < 0) continue;
         AbilityEntity entity = match.AbilityEntities[entityIndex];
+        if (entity.Kind == AbilityEntityKind.Snare && finalStep != step)
+        {
+          continue;
+        }
         AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(entity, moving);
         triggered.Add(entity.Id);
 
@@ -42,6 +47,21 @@ public sealed partial class MatchStore
         else if (effect.ConsumeEntity)
         {
           match.AbilityEntities.RemoveAt(entityIndex);
+        }
+
+        if (effect.LockMovementNextOwnerTurn)
+        {
+          pieceIndex = match.Pieces.FindIndex(piece => piece.Id == movingPieceId);
+          if (pieceIndex < 0) return;
+          moving = match.Pieces[pieceIndex];
+          match.Pieces[pieceIndex] = moving with
+          {
+            AbilityState = (moving.AbilityState ?? new UnitAbilityState()) with
+            {
+              SkipMovementOwnerTurns = Math.Max(moving.AbilityState?.SkipMovementOwnerTurns ?? 0, 2)
+            }
+          };
+          moving = match.Pieces[pieceIndex];
         }
 
         if (effect.UnitDamage > 0)

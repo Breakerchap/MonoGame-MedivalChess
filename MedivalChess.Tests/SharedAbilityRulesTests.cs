@@ -448,4 +448,64 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+  [Fact]
+  public void PersistentAndAuraBonusesProduceEffectiveCodexStats()
+  {
+    UnitRule baseRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    UnitAbilityState upgraded = new()
+    {
+      AttackBonus = 10,
+      MoveBonus = 1,
+      AttackRangeBonus = 1,
+      MaxHealthBonus = 20
+    };
+    UnitRule persistent = AdvancedAbilityRules.ApplyPersistentBonuses(baseRule, upgraded);
+
+    Assert.Equal(baseRule.Attack + 10, persistent.Attack);
+    Assert.Equal(baseRule.MoveRange + 1, persistent.MoveRange);
+    Assert.Equal(baseRule.AttackRange + 1, persistent.AttackRange);
+    Assert.Equal(baseRule.Health + 20, AdvancedAbilityRules.GetEffectiveMaximumHealth(baseRule, upgraded));
+
+    NetworkPiece unit = new(
+      "unit", nameof(PieceType.Swordsman), NetworkTeam.Red, 5, 5, baseRule.Health);
+    AbilityEntity[] entities =
+    [
+      new("attack", AbilityEntityKind.RuneAttack, NetworkTeam.Red, 5, 6, 5),
+      new("move", AbilityEntityKind.RuneMovement, NetworkTeam.Red, 4, 5, 5),
+      new("health", AbilityEntityKind.RuneHealth, NetworkTeam.Red, 6, 5, 5),
+      new("range", AbilityEntityKind.RuneRange, NetworkTeam.Red, 4, 4, 5),
+      new("tower", AbilityEntityKind.Watchtower, NetworkTeam.Red, 5, 5, 15)
+    ];
+
+    UnitRule aura = AbilityEntityRules.ApplyAuraBonuses(baseRule, entities, unit);
+    Assert.Equal(baseRule.Attack + AdvancedAbilityRules.RuneAttackBonus, aura.Attack);
+    Assert.Equal(baseRule.MoveRange + AdvancedAbilityRules.RuneMoveBonus, aura.MoveRange);
+    Assert.Equal(baseRule.AttackRange + AdvancedAbilityRules.RuneRangeBonus + 2, aura.AttackRange);
+    Assert.Equal(AdvancedAbilityRules.RuneDamageReduction,
+      AbilityEntityRules.GetDamageReduction(entities, unit));
+  }
+
+  [Fact]
+  public void SnareLocksExactlyNextOwnerMovementAndSealExpiresForItsOwner()
+  {
+    NetworkPiece unit = new(
+      "unit", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    AbilityEntity snare = new("snare", AbilityEntityKind.Snare, NetworkTeam.Blue, 0, 0);
+    AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(snare, unit);
+
+    Assert.True(effect.ConsumeEntity);
+    Assert.True(effect.LockMovementNextOwnerTurn);
+
+    UnitAbilityState state = new() { SkipMovementOwnerTurns = 2 };
+    state = AdvancedAbilityRules.StartOwnerTurn(state, 0, 0, 30);
+    Assert.False(AdvancedAbilityRules.CanMove(nameof(PieceType.Swordsman), state, false));
+    state = AdvancedAbilityRules.StartOwnerTurn(state, 0, 0, 30);
+    Assert.True(AdvancedAbilityRules.CanMove(nameof(PieceType.Swordsman), state, false));
+
+    AbilityEntity seal = new("seal", AbilityEntityKind.Seal, NetworkTeam.Red, 1, 1);
+    Assert.True(AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(seal, NetworkTeam.Red));
+    Assert.False(AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(seal, NetworkTeam.Blue));
+  }
+
+
 }

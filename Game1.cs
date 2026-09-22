@@ -1958,6 +1958,9 @@ internal sealed partial class Game1 : Game
 
   private void ResetPieceTurnActions(TeamName teamName)
   {
+    _abilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, teamName.ToNetworkTeam()));
+
     foreach (Piece piece in pieceSetup.Pieces.Where(piece => piece.Team == teamName))
     {
       if (piece.AbilityState.OdinProtectionAvailable)
@@ -3846,6 +3849,8 @@ internal sealed partial class Game1 : Game
       damagedPiece.NetworkId,
       damagedPiece.Team.ToNetworkTeam());
     damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
+    damage = Math.Max(0, damage - AbilityEntityRules.GetDamageReduction(
+      _abilityEntities, SnapshotRuntimePiece(damagedPiece)));
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       targetRule,

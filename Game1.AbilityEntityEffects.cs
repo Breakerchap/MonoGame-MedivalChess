@@ -14,6 +14,7 @@ internal sealed partial class Game1
     IReadOnlyList<(int x, int y)> path)
   {
     HashSet<string> triggered = new(StringComparer.Ordinal);
+    (int x, int y)? finalStep = path.Count > 0 ? path[^1] : null;
     foreach ((int x, int y) step in path)
     {
       if (!pieceSetup.Pieces.Contains(movingPiece)) return;
@@ -38,6 +39,10 @@ internal sealed partial class Game1
         int entityIndex = _abilityEntities.FindIndex(entity => entity.Id == entityId);
         if (entityIndex < 0) continue;
         AbilityEntity entity = _abilityEntities[entityIndex];
+        if (entity.Kind == AbilityEntityKind.Snare && finalStep != step)
+        {
+          continue;
+        }
         AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(entity, moving);
         triggered.Add(entity.Id);
 
@@ -50,6 +55,14 @@ internal sealed partial class Game1
         else if (effect.ConsumeEntity)
         {
           _abilityEntities.RemoveAt(entityIndex);
+        }
+
+        if (effect.LockMovementNextOwnerTurn)
+        {
+          movingPiece.AbilityState = movingPiece.AbilityState with
+          {
+            SkipMovementOwnerTurns = Math.Max(movingPiece.AbilityState.SkipMovementOwnerTurns, 2)
+          };
         }
 
         if (effect.UnitDamage > 0)

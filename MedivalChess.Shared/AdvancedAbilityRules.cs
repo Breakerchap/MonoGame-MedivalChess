@@ -430,6 +430,20 @@ public static class AdvancedAbilityRules
   public static int GetRaiderKillReward(int defeatedBaseCost) =>
     CombatRules.RoundCurrencyToNearestFive(Math.Max(0, defeatedBaseCost) * 0.5f);
 
+  public static UnitRule ApplyPersistentBonuses(UnitRule rule, UnitAbilityState? state)
+  {
+    state ??= new();
+    return rule with
+    {
+      Attack = rule.Attack + GetEffectiveAttackBonus(state),
+      MoveRange = rule.MoveRange + GetEffectiveMoveBonus(state),
+      AttackRange = rule.AttackRange + GetEffectiveRangeBonus(state)
+    };
+  }
+
+  public static int GetEffectiveMaximumHealth(UnitRule rule, UnitAbilityState? state) =>
+    rule.Health + GetEffectiveMaxHealthBonus(state);
+
   public static int GetEffectiveAttackBonus(UnitAbilityState? state) => Math.Max(0, state?.AttackBonus ?? 0);
   public static int GetEffectiveMoveBonus(UnitAbilityState? state) => Math.Max(0, state?.MoveBonus ?? 0);
   public static int GetEffectiveRangeBonus(UnitAbilityState? state) => Math.Max(0, state?.AttackRangeBonus ?? 0);

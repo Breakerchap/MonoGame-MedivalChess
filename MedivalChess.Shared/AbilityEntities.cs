@@ -87,27 +87,41 @@ public static class AbilityEntityRules
     kind is AbilityEntityKind.RuneAttack or AbilityEntityKind.RuneMovement or
       AbilityEntityKind.RuneHealth or AbilityEntityKind.RuneRange;
 
+  private static bool IsWithinAura(AbilityEntity entity, NetworkPiece unit, int radius)
+  {
+    UnitRule rule = UnitRules.GetRequired(unit.Type);
+    for (int y = 0; y < rule.Height; y++)
+    for (int x = 0; x < rule.Width; x++)
+    {
+      if (Math.Max(Math.Abs(entity.X - (unit.X + x)), Math.Abs(entity.Y - (unit.Y + y))) <= radius)
+      {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private static bool OccupiesEntity(AbilityEntity entity, NetworkPiece unit) =>
+    IsWithinAura(entity, unit, 0);
+
   public static int GetAttackBonus(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
   {
     bool rune = entities.Any(entity => entity.Owner == unit.Team &&
-      entity.Kind == AbilityEntityKind.RuneAttack &&
-      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+      entity.Kind == AbilityEntityKind.RuneAttack && IsWithinAura(entity, unit, 1));
     return rune ? AdvancedAbilityRules.RuneAttackBonus : 0;
   }
 
   public static int GetMoveBonus(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
   {
     bool rune = entities.Any(entity => entity.Owner == unit.Team &&
-      entity.Kind == AbilityEntityKind.RuneMovement &&
-      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+      entity.Kind == AbilityEntityKind.RuneMovement && IsWithinAura(entity, unit, 1));
     return rune ? AdvancedAbilityRules.RuneMoveBonus : 0;
   }
 
   public static int GetDamageReduction(IEnumerable<AbilityEntity> entities, NetworkPiece unit)
   {
     bool rune = entities.Any(entity => entity.Owner == unit.Team &&
-      entity.Kind == AbilityEntityKind.RuneHealth &&
-      Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1);
+      entity.Kind == AbilityEntityKind.RuneHealth && IsWithinAura(entity, unit, 1));
     return rune ? AdvancedAbilityRules.RuneDamageReduction : 0;
   }
 
@@ -115,17 +129,29 @@ public static class AbilityEntityRules
   {
     int bonus = 0;
     if (entities.Any(entity => entity.Owner == unit.Team &&
-        entity.Kind == AbilityEntityKind.RuneRange &&
-        Math.Max(Math.Abs(entity.X - unit.X), Math.Abs(entity.Y - unit.Y)) <= 1))
+        entity.Kind == AbilityEntityKind.RuneRange && IsWithinAura(entity, unit, 1)))
     {
       bonus += AdvancedAbilityRules.RuneRangeBonus;
     }
     if (entities.Any(entity => entity.Owner == unit.Team &&
-        entity.Kind == AbilityEntityKind.Watchtower && entity.X == unit.X && entity.Y == unit.Y))
+        entity.Kind == AbilityEntityKind.Watchtower && OccupiesEntity(entity, unit)))
     {
       bonus += 2;
     }
     return bonus;
+  }
+
+  public static UnitRule ApplyAuraBonuses(
+    UnitRule rule,
+    IEnumerable<AbilityEntity> entities,
+    NetworkPiece unit)
+  {
+    return rule with
+    {
+      Attack = rule.Attack + GetAttackBonus(entities, unit),
+      MoveRange = rule.MoveRange + GetMoveBonus(entities, unit),
+      AttackRange = rule.AttackRange + GetAttackRangeBonus(entities, unit)
+    };
   }
 
   public static AbilityEntity? GetLinkedPortal(IEnumerable<AbilityEntity> entities, AbilityEntity portal) =>

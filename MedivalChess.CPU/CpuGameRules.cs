@@ -94,7 +94,7 @@ public static partial class CpuGameRules
     {
       return false;
     }
-    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, attackerRule);
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, attackerRule);
     return AbilityRules.CanMakeNormalAttack(attackerRule) && !attacker.HasAttackedThisTurn &&
       UnitRules.CanAttack(attackerRule, attacker.X, attacker.Y, attacker.Team, targetRule, target.X, target.Y) &&
       HasClearAttackPath(state, state.Pieces, attacker, target, state.Barricades);
@@ -109,7 +109,7 @@ public static partial class CpuGameRules
     {
       return false;
     }
-    rule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, rule);
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, rule);
     return AbilityRules.CanMakeNormalAttack(rule) && !attacker.HasAttackedThisTurn &&
       CanUseActionSquare(state, attacker, targetX, targetY) &&
       HasClearAttackPath(state, state.Pieces, attacker, (targetX, targetY), occupiedTargetId, state.Barricades);
@@ -121,7 +121,7 @@ public static partial class CpuGameRules
     NetworkPiece damaged = state.Pieces.FirstOrDefault(piece => piece.AttachedToId == target.Id &&
       piece.AttachmentKind == NetworkAttachmentKind.Guard) ?? target;
     UnitRule effectiveAttackerRule = ApplyCpuAttachmentBonuses(
-      state.Pieces, attacker, UnitRules.GetRequired(attacker.Type));
+      state.Pieces, state.AbilityEntities, attacker, UnitRules.GetRequired(attacker.Type));
     int unmitigated = effectiveAttackerRule.Attack;
     bool selectedAttacker = AdvancedAbilityRules.IsBaronSelectedTarget(
       state.Pieces.Select(piece => (
@@ -187,7 +187,7 @@ public static partial class CpuGameRules
     {
       return false;
     }
-    rule = ApplyCpuAttachmentBonuses(state.Pieces, actor, rule);
+    rule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, actor, rule);
     if (rule.AttackPattern == RuleShape.None)
     {
       return false;
@@ -245,7 +245,7 @@ public static partial class CpuGameRules
     {
       return false;
     }
-    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, attacker, attackerRule);
+    attackerRule = ApplyCpuAttachmentBonuses(state.Pieces, state.AbilityEntities, attacker, attackerRule);
     if (!AbilityRules.CanMakeNormalAttack(attackerRule))
     {
       return false;
@@ -888,6 +888,9 @@ public static partial class CpuGameRules
 
   private static void ResetTurnActions(CpuMutableGameState state, NetworkTeam team)
   {
+    state.AbilityEntities.RemoveAll(entity =>
+      AbilityEntityEffectRules.ShouldExpireAtOwnerTurnStart(entity, team));
+
     for (int index = 0; index < state.Pieces.Count; index++)
     {
       NetworkPiece piece = state.Pieces[index];
@@ -909,7 +912,11 @@ public static partial class CpuGameRules
 
   private static int GetAttackDamage(CpuMutableGameState state, NetworkPiece attacker, NetworkPiece target)
   {
-    int damage = UnitRules.GetRequired(attacker.Type).Attack;
+    int damage = ApplyCpuAttachmentBonuses(
+      state.Pieces,
+      state.AbilityEntities,
+      attacker,
+      UnitRules.GetRequired(attacker.Type)).Attack;
     bool selectedByBaron = AdvancedAbilityRules.IsBaronSelectedTarget(
       state.Pieces.Select(piece => (
         piece.Type,

@@ -219,7 +219,9 @@ public static partial class CpuGameRules
         NetworkPiece liveAttacker = state.Pieces[attackerIndex];
         state.Pieces[attackerIndex] = liveAttacker with
         {
-          Health = Math.Min(attackerRule.Health, liveAttacker.Health + abilityPlan.HealAttacker)
+          Health = Math.Min(
+            AdvancedAbilityRules.GetEffectiveMaximumHealth(attackerRule, liveAttacker.AbilityState),
+            liveAttacker.Health + abilityPlan.HealAttacker)
         };
       }
     }

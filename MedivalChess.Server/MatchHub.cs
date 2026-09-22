@@ -1705,6 +1705,8 @@ public sealed partial class MatchStore
       damagedPiece.Id,
       damagedPiece.Team);
     damage = AdvancedAbilityRules.ApplyBaronIncomingReduction(damage, protectedByBaron);
+    damage = Math.Max(0, damage - AbilityEntityRules.GetDamageReduction(
+      match.AbilityEntities, damagedPiece));
     damage = Math.Max(0, damage - AbilityRules.GetTargetDamageReduction(
       attackerRule,
       targetRule,

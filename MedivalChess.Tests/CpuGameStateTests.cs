@@ -1818,7 +1818,8 @@ public sealed class CpuGameStateTests
   {
     CpuGameState state = CreateState(
       new NetworkPiece("command", nameof(PieceType.CommandCentre), NetworkTeam.Red, 0, 0, 160),
-      new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30)
+      new NetworkPiece("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 1, 0, 30),
+      new NetworkPiece("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 0, 30)
     );
     UseAbilityAction upgrade = new(NetworkTeam.Red, "command", "UpgradeAttack", "soldier", 1, 0);
 
@@ -1829,6 +1830,10 @@ public sealed class CpuGameStateTests
     Assert.True(soldier.AbilityState!.Upgraded);
     Assert.Equal(AdvancedAbilityRules.CommandCentreAttackBonus, soldier.AbilityState.AttackBonus);
     Assert.Equal(200 - AdvancedAbilityRules.CommandCentreUpgradeCost, after.Teams[NetworkTeam.Red].Money);
+    NetworkPiece enemy = after.Pieces.Single(piece => piece.Id == "enemy");
+    Assert.Equal(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Attack + AdvancedAbilityRules.CommandCentreAttackBonus,
+      CpuGameRules.EstimateAttackDamage(after, soldier, enemy));
   }
 
   [Fact]
@@ -1919,6 +1924,64 @@ public sealed class CpuGameStateTests
     Assert.Equal(nameof(PieceType.FafnirDragon), dragon.Type);
     Assert.Equal(UnitRules.GetRequired(nameof(PieceType.FafnirDragon)).Health, dragon.Health);
     Assert.Equal(200 - AdvancedAbilityRules.FafnirTransformCost, after.Teams[NetworkTeam.Red].Money);
+  }
+
+  [Fact]
+  public void RuneAndWatchtowerBonusesAffectCpuCombatAndMovement()
+  {
+    NetworkPiece soldier = new("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    NetworkPiece enemy = new("enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, 4, 0, 30);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [soldier, enemy],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("attack-rune", AbilityEntityKind.RuneAttack, NetworkTeam.Red, 0, 1, 5),
+        new AbilityEntity("move-rune", AbilityEntityKind.RuneMovement, NetworkTeam.Red, 1, 1, 5),
+        new AbilityEntity("range-rune", AbilityEntityKind.RuneRange, NetworkTeam.Red, -1, 0, 5),
+        new AbilityEntity("tower", AbilityEntityKind.Watchtower, NetworkTeam.Red, 0, 0, 15)
+      ]
+    );
+
+    Assert.True(CpuGameRules.CanDirectlyAttack(state, soldier, enemy));
+    Assert.Equal(
+      UnitRules.GetRequired(nameof(PieceType.Swordsman)).Attack + AdvancedAbilityRules.RuneAttackBonus,
+      CpuGameRules.EstimateAttackDamage(state, soldier, enemy));
+    Assert.Contains((0, 4), CpuGameRules.GetLegalMovementPaths(state, soldier).Keys);
+  }
+
+  [Fact]
+  public void EndingMovementOnSnareConsumesItAndLocksNextOwnerMovement()
+  {
+    NetworkPiece soldier = new("soldier", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [soldier],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      abilityEntities:
+      [
+        new AbilityEntity("snare", AbilityEntityKind.Snare, NetworkTeam.Blue, 1, 0)
+      ]
+    );
+    MoveAction move = new(NetworkTeam.Red, "soldier", 1, 0);
+
+    Assert.True(move.IsLegal(state));
+    CpuGameState after = move.Apply(state);
+
+    NetworkPiece moved = after.Pieces.Single(piece => piece.Id == "soldier");
+    Assert.Equal(2, moved.AbilityState!.SkipMovementOwnerTurns);
+    Assert.DoesNotContain(after.AbilityEntities, entity => entity.Id == "snare");
   }
 
   private static CpuGameState CreateState(params NetworkPiece[] pieces)

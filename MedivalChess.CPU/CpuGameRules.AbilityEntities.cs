@@ -10,6 +10,7 @@ public static partial class CpuGameRules
     IReadOnlyList<(int x, int y)> path)
   {
     HashSet<string> triggered = new(StringComparer.Ordinal);
+    (int x, int y)? finalStep = path.Count > 0 ? path[^1] : null;
     foreach ((int x, int y) step in path)
     {
       int pieceIndex = FindPieceIndex(state.Pieces, movingPieceId);
@@ -30,6 +31,10 @@ public static partial class CpuGameRules
         int entityIndex = state.AbilityEntities.FindIndex(entity => entity.Id == entityId);
         if (entityIndex < 0) continue;
         AbilityEntity entity = state.AbilityEntities[entityIndex];
+        if (entity.Kind == AbilityEntityKind.Snare && finalStep != step)
+        {
+          continue;
+        }
         AbilityEntityEntryEffect effect = AbilityEntityEffectRules.GetEntryEffect(entity, moving);
         triggered.Add(entity.Id);
 
@@ -42,6 +47,21 @@ public static partial class CpuGameRules
         else if (effect.ConsumeEntity)
         {
           state.AbilityEntities.RemoveAt(entityIndex);
+        }
+
+        if (effect.LockMovementNextOwnerTurn)
+        {
+          pieceIndex = FindPieceIndex(state.Pieces, movingPieceId);
+          if (pieceIndex < 0) return;
+          moving = state.Pieces[pieceIndex];
+          state.Pieces[pieceIndex] = moving with
+          {
+            AbilityState = (moving.AbilityState ?? new UnitAbilityState()) with
+            {
+              SkipMovementOwnerTurns = Math.Max(moving.AbilityState?.SkipMovementOwnerTurns ?? 0, 2)
+            }
+          };
+          moving = state.Pieces[pieceIndex];
         }
 
         if (effect.UnitDamage > 0)
