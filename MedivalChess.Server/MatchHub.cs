@@ -1121,6 +1121,11 @@ public sealed partial class MatchStore
           : NetworkAttachmentKind.None,
         LastBid: isOpeningFarmPlacement ? 0 : purchaseCost,
         AbilityState: isOpeningFarmPlacement ? new UnitAbilityState() : purchaseState));
+      if (unit.Type == nameof(PieceType.Necromancer))
+      {
+        SpawnServerSkeletonForNecromancer(
+          foundMatch, foundMatch.Pieces.Count - 1, initialPlacement: true);
+      }
       buyPhase.RecordPurchase();
       if (buyPhase.IsComplete)
       {
@@ -1270,6 +1275,11 @@ public sealed partial class MatchStore
         CannotContributeToConquestThisTurn: true,
         AbilityState: purchaseState
       ));
+      if (unit.Type == nameof(PieceType.Necromancer))
+      {
+        SpawnServerSkeletonForNecromancer(
+          foundMatch, foundMatch.Pieces.Count - 1, initialPlacement: true);
+      }
       SpendAction(foundMatch, player);
       foundMatch.Version++;
       foundMatch.Touch();
@@ -1720,7 +1730,8 @@ public sealed partial class MatchStore
     bool mayUsePalaceSupport = false
   )
   {
-    if (!IsServerLichDestinationWithinLink(match, piece, destination)) return false;
+    if (!IsServerLichDestinationWithinLink(match, piece, destination) ||
+        !IsServerSkeletonDestinationWithinLink(match, piece, destination)) return false;
     if (CanServerChessCaptureLand(match, piece, rule, destination)) return true;
     bool longboatBoarding = GetServerLongboatBoardTarget(match, piece, destination) is not null;
     bool landingAttack = CanServerLandingAttackLand(match, piece, rule, destination);
@@ -2131,6 +2142,14 @@ public sealed partial class MatchStore
     if (defeatedPiece.Type == nameof(PieceType.Lich))
     {
       ApplyServerLichDeathLink(match, defeatedPiece, attackingPlayer);
+    }
+    if (defeatedPiece.Type == nameof(PieceType.SkeletonMinion))
+    {
+      ApplyServerSkeletonDeathLink(match, defeatedPiece);
+    }
+    if (defeatedPiece.Type == nameof(PieceType.Necromancer))
+    {
+      RemoveServerSkeletonForNecromancerDeath(match, defeatedPiece);
     }
 
     RemoveServerLongboatPassengerReference(match, defeatedPiece);
@@ -2686,6 +2705,7 @@ public sealed partial class MatchStore
     }
     RefreshServerBountySelectionAtOwnerTurnStart(match, team);
     SpawnServerLinkedLichesAtOwnerTurnStart(match, team);
+    RespawnServerSkeletonsAtOwnerTurnStart(match, team);
   }
 
   private static void SpendAction(Match match, PlayerSlot player)

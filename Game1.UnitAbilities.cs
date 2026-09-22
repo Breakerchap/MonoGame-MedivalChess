@@ -1705,4 +1705,165 @@ internal sealed partial class Game1
   }
 
 
+
+  private Piece GetLocalLinkedNecromancer(Piece skeleton)
+  {
+    string necromancerId = skeleton.AbilityState.LinkedPieceId;
+    return string.IsNullOrWhiteSpace(necromancerId)
+      ? null
+      : pieceSetup.Pieces.FirstOrDefault(piece =>
+          piece.NetworkId == necromancerId &&
+          piece.Definition.Type == PieceType.Necromancer &&
+          piece.Team == skeleton.Team);
+  }
+
+  private bool IsLocalSkeletonDestinationWithinLink(
+    Piece piece,
+    (int x, int y) destination)
+  {
+    if (piece.Definition.Type != PieceType.SkeletonMinion)
+    {
+      return true;
+    }
+
+    Piece necromancer = GetLocalLinkedNecromancer(piece);
+    return necromancer is not null &&
+      Math.Max(
+        Math.Abs(destination.x - necromancer.Position.x),
+        Math.Abs(destination.y - necromancer.Position.y)) <= 4;
+  }
+
+  private bool SpawnLocalSkeletonForNecromancer(
+    Piece necromancer,
+    bool initialPlacement)
+  {
+    if (necromancer.Definition.Type != PieceType.Necromancer ||
+        !pieceSetup.Pieces.Contains(necromancer))
+    {
+      return false;
+    }
+
+    PieceDefinition skeletonDefinition = PieceDefinitions.All.First(definition =>
+      definition.Type == PieceType.SkeletonMinion);
+
+    IEnumerable<(int x, int y)> candidates = _board.Cells
+      .Where(position =>
+      {
+        int dx = Math.Abs(position.x - necromancer.Position.x);
+        int dy = Math.Abs(position.y - necromancer.Position.y);
+        int distance = Math.Max(dx, dy);
+        return distance >= 1 && (initialPlacement ? distance <= 4 : distance == 1);
+      })
+      .OrderBy(position => Math.Max(
+        Math.Abs(position.x - necromancer.Position.x),
+        Math.Abs(position.y - necromancer.Position.y)))
+      .ThenBy(position => position.y)
+      .ThenBy(position => position.x);
+
+    foreach ((int x, int y) destination in candidates)
+    {
+      if (!CanPlacePiece(skeletonDefinition, destination, null) ||
+          _barricades.ContainsKey(destination) ||
+          _abilityEntities.Any(entity =>
+            entity.X == destination.x && entity.Y == destination.y &&
+            AbilityEntityRules.BlocksLandingFor(entity, necromancer.Team.ToNetworkTeam())))
+      {
+        continue;
+      }
+
+      Piece skeleton = new(skeletonDefinition, destination, necromancer.Team)
+      {
+        AbilityState = AdvancedAbilityRules.SetLinkedPiece(
+          new UnitAbilityState(), necromancer.NetworkId)
+      };
+      pieceSetup.AddPiece(skeleton);
+      necromancer.AbilityState = (AdvancedAbilityRules.SetLinkedPiece(
+        necromancer.AbilityState, skeleton.NetworkId)) with
+      {
+        PendingRespawn = false
+      };
+      return true;
+    }
+
+    necromancer.AbilityState = necromancer.AbilityState with
+    {
+      LinkedPieceId = null,
+      PendingRespawn = true
+    };
+    return false;
+  }
+
+  private void RespawnLocalSkeletonsAtOwnerTurnStart(TeamName team)
+  {
+    foreach (Piece necromancer in pieceSetup.Pieces
+      .Where(piece =>
+        piece.Team == team &&
+        piece.Definition.Type == PieceType.Necromancer)
+      .OrderBy(piece => piece.Position.y)
+      .ThenBy(piece => piece.Position.x)
+      .ThenBy(piece => piece.NetworkId, StringComparer.Ordinal)
+      .ToArray())
+    {
+      Piece linked = string.IsNullOrWhiteSpace(necromancer.AbilityState.LinkedPieceId)
+        ? null
+        : pieceSetup.Pieces.FirstOrDefault(piece =>
+            piece.NetworkId == necromancer.AbilityState.LinkedPieceId &&
+            piece.Definition.Type == PieceType.SkeletonMinion &&
+            piece.Team == team);
+      if (linked is not null)
+      {
+        continue;
+      }
+
+      if (necromancer.AbilityState.PendingRespawn)
+      {
+        SpawnLocalSkeletonForNecromancer(necromancer, initialPlacement: false);
+      }
+    }
+  }
+
+  private void ApplyLocalSkeletonDeathLink(Piece skeleton)
+  {
+    if (skeleton.Definition.Type != PieceType.SkeletonMinion)
+    {
+      return;
+    }
+
+    Piece necromancer = GetLocalLinkedNecromancer(skeleton);
+    if (necromancer is null || !pieceSetup.Pieces.Contains(necromancer))
+    {
+      return;
+    }
+
+    necromancer.AbilityState = necromancer.AbilityState with
+    {
+      LinkedPieceId = null,
+      PendingRespawn = true
+    };
+  }
+
+  private void RemoveLocalSkeletonForNecromancerDeath(Piece necromancer)
+  {
+    if (necromancer.Definition.Type != PieceType.Necromancer)
+    {
+      return;
+    }
+
+    string skeletonId = necromancer.AbilityState.LinkedPieceId;
+    if (string.IsNullOrWhiteSpace(skeletonId))
+    {
+      return;
+    }
+
+    Piece skeleton = pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.NetworkId == skeletonId &&
+      piece.Definition.Type == PieceType.SkeletonMinion &&
+      piece.Team == necromancer.Team);
+    if (skeleton is not null)
+    {
+      pieceSetup.RemovePiece(skeleton);
+    }
+  }
+
+
 }

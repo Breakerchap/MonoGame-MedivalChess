@@ -56,8 +56,8 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.zombie` | Verified | Lethal damage transforms it into Flesh. |
 | `undead.flesh` | Verified | Owner-turn transformation back into Zombie is implemented. |
 | `undead.abomination` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.necromancer` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `undead.skeleton_minion` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.necromancer` | Verified | Purchasing a Necromancer deterministically places one linked Skeleton Minion on the nearest legal tile within 4 Squares. The link is persisted in shared ability state; a dead Minion marks the Necromancer for an adjacent respawn at the start of its next owner turn, while Necromancer death removes the linked Minion permanently. Local and authoritative server paths are wired. |
+| `undead.skeleton_minion` | Verified | Skeleton Minion remains unchoosable, stores its linked Necromancer ID, and may not end movement more than 4 Squares (Square/Chebyshev distance) from that Necromancer. If killed while the Necromancer lives it is flagged for adjacent next-owner-turn respawn; if the Necromancer dies the linked Minion is removed permanently. |
 | `undead.ghoul` | Verified | Four-owner-turn expiry is implemented. |
 | `undead.vampire` | Verified | Post-attack healing is implemented and capped. |
 | `undead.shadow` | Verified | Purchase placement now requires a friendly non-Royal host and attaches the Shadow to it. It follows the host, is selectable as an attached attack piece by clicking the host again, cannot be directly targeted, ignores terrain/units for line of sight, and is removed when its host dies. Local and authoritative online/server behaviour are wired. |
@@ -369,3 +369,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Longboat destruction detaches and places passengers on nearest legal board positions in recorded boarding order; passenger deaths/disembarks clean up the Longboat's ordered state.
 - Treasure delivery and Escort checks use the boarded rider's resulting position consistently in local and server play.
 - Added shared regression coverage for passenger ordering, removal, and capacity.
+
+
+### 2026-09-22 — Necromancer and Skeleton Minion lifecycle
+
+- Added linked Necromancer/Skeleton state in local and authoritative server play using the existing shared `LinkedPieceId` and `PendingRespawn` fields.
+- On Necromancer purchase, one Skeleton Minion is spawned at the nearest legal board position within 4 Squares. If no legal initial square exists, the Necromancer retains a pending-respawn flag and retries on its owner turn.
+- Skeleton movement destinations are rejected when they would end more than 4 Square-distance from their linked Necromancer.
+- Killing the linked Skeleton while its Necromancer survives clears the current link and schedules an adjacent respawn for the start of the next owner turn.
+- Killing the Necromancer directly removes its linked Skeleton without scheduling another respawn, making the Minion's death permanent as required.
+- Respawn placement is deterministic and uses the nearest legal adjacent square, keeping local/server behaviour aligned without introducing an extra placement sub-phase.

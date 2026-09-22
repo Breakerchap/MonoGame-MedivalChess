@@ -1202,6 +1202,10 @@ internal sealed partial class Game1 : Game
     {
       pieceSetup.Attach(boughtPiece, purchaseHost, AttachmentKind.Shadow);
     }
+    if (definition.Type == PieceType.Necromancer)
+    {
+      SpawnLocalSkeletonForNecromancer(boughtPiece, initialPlacement: true);
+    }
 
     Console.WriteLine(
       $"Bought and placed {definition.Type} at ({purchasePlacement.x}, {purchasePlacement.y})."
@@ -2115,6 +2119,7 @@ internal sealed partial class Game1 : Game
     }
     RefreshLocalBountySelectionAtOwnerTurnStart(teamName);
     SpawnLocalLinkedLichesAtOwnerTurnStart(teamName);
+    RespawnLocalSkeletonsAtOwnerTurnStart(teamName);
   }
 
   private void ApplyTurnEconomy(TeamName teamName)
@@ -3651,7 +3656,8 @@ internal sealed partial class Game1 : Game
 
   private bool CanLandPieceAt(Piece piece, (int x, int y) destination, bool mayUsePalaceSupport)
   {
-    if (!IsLocalLichDestinationWithinLink(piece, destination))
+    if (!IsLocalLichDestinationWithinLink(piece, destination) ||
+        !IsLocalSkeletonDestinationWithinLink(piece, destination))
     {
       return false;
     }
@@ -4284,6 +4290,14 @@ internal sealed partial class Game1 : Game
     if (damagedPiece.Definition.Type == PieceType.Lich)
     {
       ApplyLocalLichDeathLink(damagedPiece, attackingTeamName);
+    }
+    if (damagedPiece.Definition.Type == PieceType.SkeletonMinion)
+    {
+      ApplyLocalSkeletonDeathLink(damagedPiece);
+    }
+    if (damagedPiece.Definition.Type == PieceType.Necromancer)
+    {
+      RemoveLocalSkeletonForNecromancerDeath(damagedPiece);
     }
 
     RemoveLocalLongboatPassengerReference(damagedPiece);
