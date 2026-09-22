@@ -269,6 +269,7 @@ public static partial class CpuGameRules
     {
       return false;
     }
+    rule = ApplyCpuAttachmentBonuses(pieces, state.AbilityEntities, attacker, rule);
     return LineOfSightRules.HasClearAttackPath(
       rule,
       OccupiedSquares(rule, (attacker.X, attacker.Y)),

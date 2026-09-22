@@ -1597,6 +1597,7 @@ public sealed partial class MatchStore
   private static bool HasClearAttackPath(Match match, NetworkPiece attacker, (int x, int y) targetPosition, string? targetId)
   {
     if (!UnitRules.TryGet(attacker.Type, out UnitRule attackerRule)) return false;
+    attackerRule = ApplySharedServerAttachmentBonuses(match, attacker, attackerRule);
     if (attackerRule.Type == "Catapult") return true;
 
     return LineOfSightRules.HasClearAttackPath(

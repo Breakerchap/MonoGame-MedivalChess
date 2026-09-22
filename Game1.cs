@@ -4973,7 +4973,8 @@ internal sealed partial class Game1 : Game
 
   private bool HasClearAttackPath(Piece attacker, (int x, int y) targetPosition)
   {
-    UnitRule rule = UnitRules.FromPieceDefinition(attacker.Definition);
+    UnitRule rule = ApplyLocalAttachmentBonuses(
+      attacker, UnitRules.FromPieceDefinition(attacker.Definition));
     if (attacker.Definition.Type == PieceType.Catapult) return true;
     return LineOfSightRules.HasClearAttackPath(
       rule,
