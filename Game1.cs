@@ -2628,7 +2628,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Atlas or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2727,6 +2727,16 @@ internal sealed partial class Game1 : Game
             Math.Abs(targetPosition.y - atlasTarget.Position.y) <= 1 &&
             targetPosition != atlasTarget.Position &&
             CanLandPieceAt(atlasTarget, targetPosition, mayUsePalaceSupport: false),
+      PieceType.Poltergeist =>
+        GetLocalPoltergeistStructure(actor) is Piece heldStructure
+          ? target is null &&
+            CanAttackSquareWithAttachments(actor, targetPosition) &&
+            CanPlacePiece(heldStructure.Definition, targetPosition, null, heldStructure)
+          : target is not null &&
+            target.AttachedTo is null &&
+            target.Definition.Category == PieceCategory.Structure &&
+            target.OccupiedSquares().Any(square =>
+              CanAttackSquareWithAttachments(actor, square)),
       PieceType.Fylgja =>
         string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
         actor.AbilityState.PendingSelections.Count > 0
@@ -2816,6 +2826,8 @@ internal sealed partial class Game1 : Game
       ? "Recruit"
       : actor.Definition.Type == PieceType.Atlas
       ? "AtlasMove"
+      : actor.Definition.Type == PieceType.Poltergeist
+      ? GetLocalPoltergeistStructure(actor) is null ? "PickUpStructure" : "PlaceStructure"
       : actor.Definition.Type == PieceType.Fylgja
       ? "ForceMove"
       : IsCodexBuilder(actor.Definition.Type)
@@ -4515,7 +4527,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.Atlas or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.Poltergeist or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4551,6 +4563,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Atlas)
     {
       return TryUseLocalAtlasAbility(actor, targetPosition, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Poltergeist)
+    {
+      return TryUseLocalPoltergeistAbility(actor, targetPosition, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.Fafnir &&
@@ -11519,6 +11536,14 @@ internal sealed partial class Game1 : Game
       if (piece.AbilityState.PendingSelections.Count > 0)
         return "RIGHT-CLICK another unit, or RIGHT-CLICK Atlas to finish";
       return "RIGHT-CLICK up to 3 friendly movable units, then their adjacent destinations";
+    }
+
+    if (piece.Definition.Type == PieceType.Poltergeist)
+    {
+      if (piece.AbilityState.UsedThisTurn) return "POLTERGEIST ABILITY USED THIS TURN";
+      return GetLocalPoltergeistStructure(piece) is null
+        ? "RIGHT-CLICK an in-range Structure to pick it up"
+        : "RIGHT-CLICK an empty in-range square to place the held Structure";
     }
 
     if (piece.Definition.Type == PieceType.Fafnir)

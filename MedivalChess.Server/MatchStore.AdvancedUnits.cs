@@ -569,6 +569,87 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Poltergeist):
+        if (!AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+        {
+          int heldIndex = match.Pieces.FindIndex(piece =>
+            piece.AttachedToId == actor.Id &&
+            piece.AttachmentKind == NetworkAttachmentKind.Carried &&
+            UnitRules.TryGet(piece.Type, out UnitRule heldRule) &&
+            heldRule.Category == RuleCategory.Structure);
+
+          if (string.Equals(ability, "PickUpStructure", StringComparison.OrdinalIgnoreCase))
+          {
+            if (heldIndex >= 0 || target is null || target.Id == actor.Id ||
+                target.AttachedToId is not null ||
+                !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
+                targetRule.Category != RuleCategory.Structure ||
+                !CanUseActionTarget(match, actor, target))
+            {
+              return AdvancedSpecialResult.Rejected;
+            }
+
+            match.Pieces[targetIndex] = target with
+            {
+              AttachedToId = actor.Id,
+              AttachmentKind = NetworkAttachmentKind.Carried,
+              X = actor.X,
+              Y = actor.Y
+            };
+            match.Pieces[actorIndex] = actor with
+            {
+              AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+                actor.AbilityState)
+            };
+            return AdvancedSpecialResult.AppliedAction;
+          }
+
+          if (string.Equals(ability, "PlaceStructure", StringComparison.OrdinalIgnoreCase))
+          {
+            if (heldIndex < 0 || target is not null ||
+                !CanUseActionSquare(match, actor, request.TargetX, request.TargetY))
+            {
+              return AdvancedSpecialResult.Rejected;
+            }
+
+            NetworkPiece held = match.Pieces[heldIndex];
+            if (!UnitRules.TryGet(held.Type, out UnitRule heldRule) ||
+                !CanLandAt(
+                  match,
+                  held with
+                  {
+                    AttachedToId = null,
+                    AttachmentKind = NetworkAttachmentKind.None
+                  },
+                  heldRule,
+                  (request.TargetX, request.TargetY),
+                  mayUsePalaceSupport: false))
+            {
+              return AdvancedSpecialResult.Rejected;
+            }
+
+            match.Pieces[heldIndex] = held with
+            {
+              AttachedToId = null,
+              AttachmentKind = NetworkAttachmentKind.None,
+              X = request.TargetX,
+              Y = request.TargetY,
+              HasMovedThisTurn = true
+            };
+            match.Pieces[actorIndex] = actor with
+            {
+              AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+                actor.AbilityState)
+            };
+            return AdvancedSpecialResult.AppliedAction;
+          }
+
+          return AdvancedSpecialResult.Rejected;
+        }
+
       case nameof(PieceType.Atlas):
         if (!string.Equals(ability, "AtlasMove", StringComparison.OrdinalIgnoreCase) ||
             !AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
@@ -948,7 +1029,7 @@ public sealed partial class MatchStore
 
   private static bool IsAdvancedSpecialUnit(string type) => type is
     nameof(PieceType.Baron) or nameof(PieceType.WarDrum) or nameof(PieceType.Harvester) or
-    nameof(PieceType.Mimic) or
+    nameof(PieceType.Mimic) or nameof(PieceType.Poltergeist) or
     nameof(PieceType.Mason) or nameof(PieceType.Carpenter) or nameof(PieceType.Witch) or
     nameof(PieceType.Druid) or nameof(PieceType.Phoenix) or nameof(PieceType.WillOWisp) or
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or

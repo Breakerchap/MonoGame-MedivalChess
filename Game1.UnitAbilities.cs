@@ -1963,4 +1963,64 @@ internal sealed partial class Game1
   }
 
 
+
+  private Piece GetLocalPoltergeistStructure(Piece poltergeist) =>
+    pieceSetup.Pieces.FirstOrDefault(piece =>
+      piece.AttachedTo == poltergeist &&
+      piece.AttachmentKind == AttachmentKind.Carried &&
+      piece.Definition.Category == PieceCategory.Structure);
+
+  private bool TryUseLocalPoltergeistAbility(
+    Piece poltergeist,
+    (int x, int y) targetPosition,
+    Piece targetPiece)
+  {
+    if (poltergeist.Definition.Type != PieceType.Poltergeist ||
+        !AdvancedAbilityRules.CanUseOncePerOwnerTurn(poltergeist.AbilityState))
+    {
+      return false;
+    }
+
+    Piece held = GetLocalPoltergeistStructure(poltergeist);
+    if (held is null)
+    {
+      if (targetPiece is null ||
+          targetPiece == poltergeist ||
+          targetPiece.AttachedTo is not null ||
+          targetPiece.Definition.Category != PieceCategory.Structure ||
+          !targetPiece.OccupiedSquares().Any(square =>
+            CanAttackSquareWithAttachments(poltergeist, square)))
+      {
+        return false;
+      }
+
+      if (!pieceSetup.Attach(targetPiece, poltergeist, AttachmentKind.Carried))
+      {
+        return false;
+      }
+
+      poltergeist.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+        poltergeist.AbilityState);
+      CompleteAction();
+      return true;
+    }
+
+    if (targetPiece is not null ||
+        !CanAttackSquareWithAttachments(poltergeist, targetPosition) ||
+        !CanPlacePiece(held.Definition, targetPosition, null, held))
+    {
+      return false;
+    }
+
+    pieceSetup.Detach(held);
+    held.Position = targetPosition;
+    held.HasMovedThisTurn = true;
+    pieceSetup.RefreshOccupancy();
+    poltergeist.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+      poltergeist.AbilityState);
+    CompleteAction();
+    return true;
+  }
+
+
 }

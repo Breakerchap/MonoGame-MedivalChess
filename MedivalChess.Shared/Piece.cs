@@ -175,7 +175,7 @@ public sealed class PieceDefinition
     PieceType.Cannon or PieceType.Catapult or PieceType.Ballista or PieceType.Tank => PieceCategory.Mechanical,
     PieceType.Spy or PieceType.Engineer or PieceType.Carpenter or PieceType.Druid or PieceType.Mason or
     PieceType.Gatekeeper or PieceType.Daedalus or PieceType.Runesmith or PieceType.Demolitionist or PieceType.Pickpocket => PieceCategory.Intelligence,
-    PieceType.Farm => PieceCategory.Structure,
+    PieceType.Farm or PieceType.Prison => PieceCategory.Structure,
     PieceType.Ox or PieceType.Stagecoach => PieceCategory.Transport,
     PieceType.King or PieceType.Baron or PieceType.Sorceress or PieceType.Palace or PieceType.Emperor or
     PieceType.TerracottaWarrior or PieceType.GoblinRoyalty or PieceType.Atlas or PieceType.Chronos or

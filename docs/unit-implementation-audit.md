@@ -64,7 +64,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.wendigo` | Verified | Friendly normal attacks, attack counting, and end-owner-turn death after zero attacks are wired in local/server/CPU with green CPU runtime coverage. |
 | `undead.will_o_wisp` | Verified | Settle and adjacent Wisp spawning are wired across local/server/CPU and online play; green CPU runtime coverage verifies settled movement lock and spawned-Wisp attack consumption. |
 | `undead.wisp` | Verified | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks, with green CPU runtime regression coverage. |
-| `undead.poltergeist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.poltergeist` | Verified | Terrain-ignoring movement was already shared. Local and authoritative online/server play now implement its once-per-owner-turn Structure carry ability: pick up one unattached board Structure in its 1–3 Diamond range, carry it as an attachment across turns, or place the held Structure onto a legal empty in-range footprint. It can hold only one Structure. Farm and Prison are classified as board-piece Structures; walls/gates/portals remain separate ability entities. |
 | `undead.skinwalker` | Verified | Local and authoritative server damage resolution now transforms a Skinwalker only when its own attack genuinely kills/removes a non-Farm unit. It copies the defeated unit type at full base Health, cannot move or attack again that turn, and relocates to the nearest legal square only when a larger copied footprint cannot fit at its current position. Revived targets do not trigger the transformation. |
 | `undead.lich` | Verified | A linked Lich is spawned adjacent to its Phylactery when missing at the start of the owner's turn. Its movement destinations are constrained to remain within 4 Diamond of that linked Phylactery. On death, it clears the link and deals 5 Health to the Phylactery; the fourth linked Lich death defeats the Phylactery regardless of healing or Odin protection. Local and authoritative server paths are wired. |
 | `undead.phylactery` | Verified | Direct damage immunity is enforced by the shared targeting rule. At owner-turn start, if its linked Lich is absent, it spawns one on the first legal adjacent tile and links both units. Each linked Lich death deals 5 Health and increments the death count; the fourth death forcibly defeats the Royal. Local and authoritative server behaviour are wired. |
@@ -388,3 +388,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Atlas may move up to three different units in one active use. After one or two completed moves, right-click Atlas itself to finish early; after the third move the action completes automatically.
 - Local play and authoritative online/server play use the same pending-selection state, and intermediate selections/moves do not spend extra player actions.
 - Normal landing legality still applies to Atlas-forced moves, so off-board, occupied, terrain-blocked, Structure-blocked and ability-entity-blocked destinations remain illegal.
+
+
+### 2026-09-22 — Poltergeist Structure carrying
+
+- Completed Poltergeist's missing active ability in local and authoritative online/server play.
+- If it is not carrying anything, right-click an unattached in-range board Structure to pick it up. The Structure becomes a carried attachment and follows the Poltergeist through the existing attachment movement system.
+- If it is already carrying a Structure, right-click a legal empty in-range destination to place that Structure. The full Structure footprint must fit and obey normal landing/collision restrictions.
+- Pickup or placement consumes the Poltergeist's once-per-owner-turn active use; it cannot pick up and place in the same owner turn.
+- Classified Prison alongside Farm as a board-piece Structure so Poltergeist targeting and later Prison lifecycle rules use the same category semantics.
