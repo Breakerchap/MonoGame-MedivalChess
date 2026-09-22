@@ -1286,4 +1286,109 @@ internal sealed partial class Game1
   }
 
 
+
+  private Dictionary<(int x, int y), List<(int x, int y)>>
+    GetLocalFylgjaForcedMovementPaths(Piece target)
+  {
+    UnitRule baseRule = GetEffectiveMovementRule(target);
+    UnitRule forcedRule = baseRule with
+    {
+      Type = "FylgjaForcedMovement",
+      MoveRange = 3,
+      MinimumMoveRange = 1,
+      MovePattern = RuleShape.Any
+    };
+
+    return MovementPathfinder.FindPaths(
+      target,
+      destination =>
+        pieceSetup.IsFootprintClear(target.Definition, destination, target) &&
+        CanLandPieceAt(target, destination, mayUsePalaceSupport: false),
+      (from, destination) => CanTravelThroughPosition(target, from, destination),
+      destination => GetMovementCost(target, destination),
+      (from, to) => CrossesRiver(target, from, to),
+      forcedRule,
+      (from, destination) => GetMovementCost(target, from, destination),
+      _ => 3,
+      3,
+      _ => true);
+  }
+
+  private bool TryUseLocalFylgjaAbility(
+    Piece fylgja,
+    (int x, int y) targetPosition,
+    Piece targetPiece)
+  {
+    if (fylgja.Definition.Type != PieceType.Fylgja ||
+        fylgja.HasAttackedThisTurn)
+    {
+      return false;
+    }
+
+    UnitAbilityState state = fylgja.AbilityState;
+    if (!string.Equals(state.PendingAbility, "ForceMove", StringComparison.Ordinal) ||
+        state.PendingSelections.Count == 0)
+    {
+      if (targetPiece is null || targetPiece == fylgja ||
+          targetPiece.AttachedTo is not null ||
+          targetPiece.Definition.Category == PieceCategory.Structure ||
+          !targetPiece.OccupiedSquares().Any(square =>
+            CanAttackSquareWithAttachments(fylgja, square)))
+      {
+        return false;
+      }
+
+      fylgja.AbilityState = AdvancedAbilityRules.AddPendingSelection(
+        state,
+        "ForceMove",
+        new AbilitySelection(targetPiece.NetworkId, targetPiece.Position.x, targetPiece.Position.y));
+      return true;
+    }
+
+    string forcedId = state.PendingSelections[0].TargetId;
+    Piece forced = string.IsNullOrWhiteSpace(forcedId)
+      ? null
+      : pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == forcedId);
+    if (forced is null || forced.AttachedTo is not null ||
+        forced.Definition.Category == PieceCategory.Structure)
+    {
+      fylgja.AbilityState = AdvancedAbilityRules.ClearPendingSelections(state);
+      return false;
+    }
+
+    Dictionary<(int x, int y), List<(int x, int y)>> paths =
+      GetLocalFylgjaForcedMovementPaths(forced);
+    if (!paths.TryGetValue(targetPosition, out List<(int x, int y)> path))
+    {
+      return false;
+    }
+
+    fylgja.AbilityState = AdvancedAbilityRules.ClearPendingSelections(
+      fylgja.AbilityState);
+    AttackTurnState attackState = AbilityStateRules.RecordAttack(
+      fylgja.Definition.Type.ToString(), fylgja.AttacksThisTurn);
+    fylgja.AttacksThisTurn = attackState.AttacksThisTurn;
+    fylgja.HasAttackedThisTurn = attackState.HasAttackedThisTurn;
+    fylgja.AbilityState = AdvancedAbilityRules.RecordAttack(
+      fylgja.Definition.Type.ToString(), fylgja.AbilityState, forced.NetworkId);
+
+    pieceSetup.MovePiece(forced, targetPosition);
+    ReleaseLocalPetrificationIfBroken(forced);
+    TriggerMinesAlongMovement(forced, path);
+    TriggerLocalAbilityEntitiesAlongMovement(forced, path);
+    if (pieceSetup.Pieces.Contains(forced))
+    {
+      TryDeliverTreasure(forced);
+      if (HasEscortVictory(forced))
+      {
+        _winningTeam = forced.Team;
+        _screen = Screen.GameOver;
+      }
+    }
+
+    CompleteAction();
+    return true;
+  }
+
+
 }

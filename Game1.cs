@@ -2654,6 +2654,17 @@ internal sealed partial class Game1 : Game
         actor.AbilityState.CooldownOwnerTurns <= 0 &&
         target.OccupiedSquares().Any(square =>
           CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Fylgja =>
+        string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        actor.AbilityState.PendingSelections.Count > 0
+          ? actor.AbilityState.PendingSelections[0].TargetId is string forcedId &&
+            pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == forcedId) is Piece forced &&
+            GetLocalFylgjaForcedMovementPaths(forced).ContainsKey(targetPosition)
+          : target is not null && target != actor &&
+            target.AttachedTo is null &&
+            target.Definition.Category != PieceCategory.Structure &&
+            target.OccupiedSquares().Any(square =>
+              CanAttackSquareWithAttachments(actor, square)),
       PieceType.Mason or PieceType.Carpenter or PieceType.Daedalus or PieceType.Runesmith or PieceType.Gatekeeper =>
         CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
@@ -2730,6 +2741,8 @@ internal sealed partial class Game1 : Game
       ? "Rewind"
       : actor.Definition.Type == PieceType.GangLeader
       ? "Recruit"
+      : actor.Definition.Type == PieceType.Fylgja
+      ? "ForceMove"
       : IsCodexBuilder(actor.Definition.Type)
       ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
@@ -2749,7 +2762,11 @@ internal sealed partial class Game1 : Game
           : string.Empty;
     string? specialTargetId = actor.Definition.Type == PieceType.Thor
       ? GetSelectedLocalThorStormId(actor)
-      : target?.NetworkId;
+      : actor.Definition.Type == PieceType.Fylgja &&
+        string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        actor.AbilityState.PendingSelections.Count > 0
+        ? null
+        : target?.NetworkId;
     _ = SendOnlineSpecialAsync(
       actor,
       ability,
@@ -4428,6 +4445,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.GangLeader && targetPiece is not null)
     {
       return TryUseLocalGangLeaderRecruit(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Fylgja)
+    {
+      return TryUseLocalFylgjaAbility(actor, targetPosition, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.CommandCentre &&
@@ -11364,6 +11386,14 @@ internal sealed partial class Game1 : Game
       return piece.AbilityState.CooldownOwnerTurns > 0
         ? $"RECRUIT READY IN {piece.AbilityState.CooldownOwnerTurns} OWNER TURN(S)"
         : "RIGHT-CLICK an enemy non-Royal in range to buy it for 2x base cost";
+    }
+
+    if (piece.Definition.Type == PieceType.Fylgja)
+    {
+      return string.Equals(piece.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
+        piece.AbilityState.PendingSelections.Count > 0
+        ? "RIGHT-CLICK a legal destination within the selected unit's 3-Square forced move"
+        : "RIGHT-CLICK a unit in range, then choose its forced destination";
     }
 
     if (piece.HasAttackedThisTurn)

@@ -754,4 +754,23 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void FylgjaUsesAnyShapeForItsThreeSquareForcedMovement()
+  {
+    UnitRule baseRule = UnitRules.GetRequired(nameof(PieceType.Swordsman));
+    UnitRule forced = baseRule with
+    {
+      Type = "FylgjaForcedMovement",
+      MoveRange = 3,
+      MinimumMoveRange = 1,
+      MovePattern = RuleShape.Any
+    };
+
+    Assert.True(UnitRules.CanMove(forced, 0, 0, 3, 3));
+    Assert.True(UnitRules.CanMove(forced, 0, 0, 2, 1));
+    Assert.False(UnitRules.CanMove(forced, 0, 0, 4, 0));
+  }
+
+
 }

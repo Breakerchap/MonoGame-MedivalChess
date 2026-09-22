@@ -612,6 +612,107 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Fylgja):
+        if (!string.Equals(ability, "ForceMove", StringComparison.OrdinalIgnoreCase) ||
+            actor.HasAttackedThisTurn)
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        UnitAbilityState fylgjaState = actor.AbilityState ?? new UnitAbilityState();
+        if (!string.Equals(fylgjaState.PendingAbility, "ForceMove", StringComparison.Ordinal) ||
+            fylgjaState.PendingSelections.Count == 0)
+        {
+          if (target is null || target.Id == actor.Id || target.AttachedToId is not null ||
+              !UnitRules.TryGet(target.Type, out UnitRule selectedRule) ||
+              selectedRule.Category == RuleCategory.Structure ||
+              !CanUseActionTarget(match, actor, target))
+          {
+            return AdvancedSpecialResult.Rejected;
+          }
+
+          match.Pieces[actorIndex] = actor with
+          {
+            AbilityState = AdvancedAbilityRules.AddPendingSelection(
+              fylgjaState,
+              "ForceMove",
+              new AbilitySelection(target.Id, target.X, target.Y))
+          };
+          return AdvancedSpecialResult.AppliedWithoutAction;
+        }
+
+        string? forcedId = fylgjaState.PendingSelections[0].TargetId;
+        int forcedIndex = string.IsNullOrWhiteSpace(forcedId)
+          ? -1
+          : match.Pieces.FindIndex(piece => piece.Id == forcedId);
+        if (forcedIndex < 0)
+        {
+          match.Pieces[actorIndex] = actor with
+          {
+            AbilityState = AdvancedAbilityRules.ClearPendingSelections(fylgjaState)
+          };
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        NetworkPiece forced = match.Pieces[forcedIndex];
+        if (forced.AttachedToId is not null ||
+            !UnitRules.TryGet(forced.Type, out UnitRule forcedBaseRule) ||
+            forcedBaseRule.Category == RuleCategory.Structure ||
+            !TryGetServerFylgjaForcedMovementPath(
+              match, forced, request.TargetX, request.TargetY,
+              out List<(int x, int y)> forcedPath))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+
+        AttackTurnState fylgjaAttackState = AbilityStateRules.RecordAttack(
+          actor.Type, actor.AttacksThisTurn);
+        match.Pieces[actorIndex] = actor with
+        {
+          AttacksThisTurn = fylgjaAttackState.AttacksThisTurn,
+          HasAttackedThisTurn = fylgjaAttackState.HasAttackedThisTurn,
+          AbilityState = AdvancedAbilityRules.RecordAttack(
+            actor.Type,
+            AdvancedAbilityRules.ClearPendingSelections(fylgjaState),
+            forced.Id)
+        };
+
+        NetworkPiece movedForced = forced with
+        {
+          X = request.TargetX,
+          Y = request.TargetY,
+          HasMovedThisTurn = true,
+          AbilityState = AdvancedAbilityRules.RecordMove(forced.AbilityState)
+        };
+        match.Pieces[forcedIndex] = movedForced;
+        for (int attachmentIndex = 0; attachmentIndex < match.Pieces.Count; attachmentIndex++)
+        {
+          NetworkPiece attachment = match.Pieces[attachmentIndex];
+          if (attachment.AttachedToId == forced.Id)
+          {
+            match.Pieces[attachmentIndex] = attachment with
+            {
+              X = request.TargetX,
+              Y = request.TargetY
+            };
+          }
+        }
+
+        ReleaseServerPetrificationIfBroken(match, movedForced);
+        TriggerMinesAlongMovement(match, movedForced, forcedPath);
+        TriggerServerAbilityEntitiesAlongMovement(match, movedForced.Id, forcedPath);
+        int liveForcedIndex = match.Pieces.FindIndex(piece => piece.Id == movedForced.Id);
+        if (liveForcedIndex >= 0)
+        {
+          NetworkPiece liveForced = match.Pieces[liveForcedIndex];
+          TryDeliverTreasure(match, liveForced);
+          if (IsEscortVictory(match, liveForced, liveForced.X, liveForced.Y))
+          {
+            match.Winner = liveForced.Team;
+          }
+        }
+        return AdvancedSpecialResult.AppliedAction;
+
       case nameof(PieceType.Hacker):
         if (!string.Equals(ability, "Hack", StringComparison.OrdinalIgnoreCase) ||
             (actor.AbilityState?.CooldownOwnerTurns ?? 0) > 0 || target is null || target.Team == actor.Team ||
@@ -1031,4 +1132,63 @@ public sealed partial class MatchStore
       TryDestroyTerrainTile(match, x, y);
     }
   }
+
+  private static bool TryGetServerFylgjaForcedMovementPath(
+    Match match,
+    NetworkPiece forced,
+    int targetX,
+    int targetY,
+    out List<(int x, int y)> path)
+  {
+    path = null!;
+    if (!UnitRules.TryGet(forced.Type, out UnitRule baseRule))
+    {
+      return false;
+    }
+
+    baseRule = GetEffectiveMovementRule(match, forced, baseRule);
+    UnitRule forcedRule = baseRule with
+    {
+      Type = "FylgjaForcedMovement",
+      MoveRange = 3,
+      MinimumMoveRange = 1,
+      MovePattern = RuleShape.Any
+    };
+
+    bool CanLand((int x, int y) destination)
+    {
+      if (match.Pieces.Any(other =>
+        other.Id != forced.Id &&
+        other.AttachedToId is null &&
+        other.Type != nameof(PieceType.Farm) &&
+        UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
+        UnitRules.FootprintsOverlap(
+          other.X, other.Y, otherRule.Width, otherRule.Height,
+          destination.x, destination.y, baseRule.Width, baseRule.Height)))
+      {
+        return false;
+      }
+      return CanLandAt(match, forced, baseRule, destination);
+    }
+
+    Dictionary<(int x, int y), List<(int x, int y)>> paths =
+      MovementRules.FindPaths(
+        forcedRule,
+        (forced.X, forced.Y),
+        forced.Team,
+        CanLand,
+        (from, destination) =>
+          CanTravelThrough(match, forced, baseRule, from, destination),
+        destination => GetMovementCost(match, forced, baseRule, destination),
+        (from, to) => CrossesRiver(match, forced, baseRule, from, to),
+        (from, destination) =>
+          GetMovementCost(match, forced, baseRule, from, destination),
+        _ => 3,
+        3,
+        _ => true);
+
+    return paths.TryGetValue((targetX, targetY), out path!);
+  }
+
+
 }
