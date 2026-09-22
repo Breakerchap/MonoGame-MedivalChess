@@ -122,7 +122,8 @@ public static class AdvancedAbilityRules
     {
       return false;
     }
-    if (unitType == nameof(PieceType.Hwacha) && state.ReloadRequired)
+    if (unitType == nameof(PieceType.Hwacha) &&
+        (state.ReloadRequired || state.ReloadedThisTurn))
     {
       return false;
     }

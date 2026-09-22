@@ -121,6 +121,61 @@ internal sealed partial class Game1
       entity.SourcePieceId == sourcePieceId && AbilityEntityEffectRules.IsSourceBoundEffect(entity));
   }
 
+  private bool IsLocalDestructibleTerrainAt((int x, int y) position) =>
+    _terrain.IsForest(position) || _terrain.IsLake(position);
+
+  private bool TryDestroyLocalTerrainTile((int x, int y) position) =>
+    _terrain.DestroyTile(position);
+
+  private bool IsLocalStructureAt((int x, int y) position) =>
+    _abilityEntities.Any(entity => entity.X == position.x && entity.Y == position.y) ||
+    _barricades.ContainsKey(position) ||
+    _roads.ContainsKey(position) ||
+    _mines.ContainsKey(position) ||
+    _restoredLakeTiles.Contains(position);
+
+  private bool TryDestroyLocalStructure((int x, int y) position)
+  {
+    int entityIndex = _abilityEntities.FindIndex(entity =>
+      entity.X == position.x && entity.Y == position.y);
+    if (entityIndex >= 0)
+    {
+      AbilityEntity entity = _abilityEntities[entityIndex];
+      _abilityEntities.RemoveAt(entityIndex);
+      if (entity.Kind == AbilityEntityKind.Portal && entity.LinkedEntityId is not null)
+      {
+        _abilityEntities.RemoveAll(candidate => candidate.Id == entity.LinkedEntityId);
+      }
+      return true;
+    }
+
+    return _barricades.Remove(position) ||
+      _roads.Remove(position) ||
+      _mines.Remove(position) ||
+      _restoredLakeTiles.Remove(position);
+  }
+
+  private void DetonateLocalTnt(Piece demolitionist, AbilityEntity tnt)
+  {
+    _abilityEntities.RemoveAll(entity => entity.Id == tnt.Id);
+
+    foreach (Piece victim in pieceSetup.Pieces.ToArray())
+    {
+      bool inBlast = victim.OccupiedSquares().Any(square =>
+        Math.Max(Math.Abs(square.x - tnt.X), Math.Abs(square.y - tnt.Y)) <= 1);
+      if (inBlast)
+      {
+        ApplyLocalAbilityEntityDamage(victim, demolitionist.Team.ToNetworkTeam(), 30);
+      }
+    }
+
+    for (int y = tnt.Y - 1; y <= tnt.Y + 1; y++)
+    for (int x = tnt.X - 1; x <= tnt.X + 1; x++)
+    {
+      _terrain.DestroyTile((x, y));
+    }
+  }
+
   private bool CanPlaceLocalAbilityEntity((int x, int y) position)
   {
     return IsBoardCell(position.x - _board.MinX, position.y - _board.MinY) &&

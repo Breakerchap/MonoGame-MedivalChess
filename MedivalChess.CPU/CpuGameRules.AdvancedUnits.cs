@@ -18,7 +18,8 @@ public static partial class CpuGameRules
     if (string.Equals(action.Ability, "ReloadHwacha", StringComparison.OrdinalIgnoreCase))
     {
       if (target is null || target.Team != actor.Team || target.Type != nameof(PieceType.Hwacha) ||
-          actor.HasAttackedThisTurn ||
+          actor.HasAttackedThisTurn || target.HasAttackedThisTurn ||
+          !AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) ||
           !UnitRules.TryGet(actor.Type, out UnitRule actorRule) ||
           !UnitRules.TryGet(target.Type, out UnitRule targetRule))
       {
@@ -292,7 +293,11 @@ public static partial class CpuGameRules
         {
           state.AbilityEntities.Add(CreateCpuAbilityEntity(
             state, AbilityEntityKind.Tnt, actor.Team, action.TargetX, action.TargetY, actor.Id));
-          state.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          state.Pieces[actorIndex] = actor with
+          {
+            HasAttackedThisTurn = true,
+            AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState)
+          };
           return true;
         }
         AbilityEntity tnt = state.AbilityEntities.First(entity =>

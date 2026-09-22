@@ -1795,22 +1795,57 @@ public sealed class CpuGameStateTests
   }
 
   [Fact]
-  public void HwachaCanBeReloadedByAdjacentFriendlyUnit()
+  public void HwachaReloadUsesSeparateOwnerTurnFromFiring()
   {
-    CpuGameState state = CreateState(
-      new NetworkPiece("helper", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30),
-      new NetworkPiece(
-        "hwacha", nameof(PieceType.Hwacha), NetworkTeam.Red, 1, 0, 45,
-        AbilityState: new UnitAbilityState { ReloadRequired = true })
-    );
-    UseAbilityAction reload = new(NetworkTeam.Red, "helper", "ReloadHwacha", "hwacha", 1, 0);
+    NetworkPiece helper = new(
+      "helper", nameof(PieceType.Swordsman), NetworkTeam.Red, 0, 0, 30);
+    NetworkPiece hwacha = new(
+      "hwacha", nameof(PieceType.Hwacha), NetworkTeam.Red, 1, 0, 25,
+      AbilityState: new UnitAbilityState { ReloadRequired = true });
+    NetworkPiece enemy = new(
+      "enemy", nameof(PieceType.Swordsman), NetworkTeam.Blue, -4, 0, 30);
+    UseAbilityAction reload = new(
+      NetworkTeam.Red, "helper", "ReloadHwacha", "hwacha", 1, 0);
 
+    CpuGameState justFired = CreateState(
+      helper,
+      hwacha with { HasAttackedThisTurn = true },
+      enemy);
+    Assert.False(reload.IsLegal(justFired));
+
+    CpuGameState state = CreateState(helper, hwacha, enemy);
     Assert.True(reload.IsLegal(state));
     CpuGameState after = reload.Apply(state);
 
+    NetworkPiece reloaded = after.Pieces.Single(piece => piece.Id == "hwacha");
     Assert.True(after.Pieces.Single(piece => piece.Id == "helper").HasAttackedThisTurn);
-    Assert.False(after.Pieces.Single(piece => piece.Id == "hwacha").AbilityState!.ReloadRequired);
-    Assert.True(after.Pieces.Single(piece => piece.Id == "hwacha").AbilityState!.ReloadedThisTurn);
+    Assert.False(reloaded.AbilityState!.ReloadRequired);
+    Assert.True(reloaded.AbilityState.ReloadedThisTurn);
+
+    AttackAction attackSameTurn = new(
+      NetworkTeam.Red, "hwacha", "enemy", -4, 0);
+    Assert.False(attackSameTurn.IsLegal(after));
+
+    CpuGameState nextOwnerTurn = new(
+      CreateConfiguration(),
+      after.Pieces.Select(piece => piece.Id == "hwacha"
+        ? piece with
+        {
+          HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(
+            piece.AbilityState, piece.X, piece.Y, piece.Health)
+        }
+        : piece),
+      after.Teams.Values.Select(team => team.Team == NetworkTeam.Red
+        ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
+        : team),
+      NetworkTeam.Red,
+      terrain: after.Terrain,
+      board: after.Board,
+      abilityEntities: after.AbilityEntities
+    );
+    Assert.True(attackSameTurn.IsLegal(nextOwnerTurn));
   }
 
   [Fact]
@@ -1849,10 +1884,21 @@ public sealed class CpuGameStateTests
     Assert.Contains(placed.AbilityEntities, entity =>
       entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == "demo");
 
+    UseAbilityAction detonate = new(NetworkTeam.Red, "demo", "Detonate", null, 0, 0);
+    Assert.False(detonate.IsLegal(placed));
+
     NetworkPiece demo = placed.Pieces.Single(piece => piece.Id == "demo");
     CpuGameState nextOwnerTurn = new(
       CreateConfiguration(),
-      placed.Pieces.Select(piece => piece.Id == demo.Id ? piece with { HasAttackedThisTurn = false } : piece),
+      placed.Pieces.Select(piece => piece.Id == demo.Id
+        ? piece with
+        {
+          HasAttackedThisTurn = false,
+          AttacksThisTurn = 0,
+          AbilityState = AdvancedAbilityRules.StartOwnerTurn(
+            piece.AbilityState, piece.X, piece.Y, piece.Health)
+        }
+        : piece),
       placed.Teams.Values.Select(team => team.Team == NetworkTeam.Red
         ? team with { ActionsRemaining = MatchRules.ActionsPerTurn }
         : team),
@@ -1861,7 +1907,6 @@ public sealed class CpuGameStateTests
       board: placed.Board,
       abilityEntities: placed.AbilityEntities
     );
-    UseAbilityAction detonate = new(NetworkTeam.Red, "demo", "Detonate", null, 0, 0);
     Assert.True(detonate.IsLegal(nextOwnerTurn));
     CpuGameState after = detonate.Apply(nextOwnerTurn);
 
@@ -1982,6 +2027,35 @@ public sealed class CpuGameStateTests
     NetworkPiece moved = after.Pieces.Single(piece => piece.Id == "soldier");
     Assert.Equal(2, moved.AbilityState!.SkipMovementOwnerTurns);
     Assert.DoesNotContain(after.AbilityEntities, entity => entity.Id == "snare");
+  }
+
+  [Fact]
+  public void MashhitDestroysBarricadeInAttackRange()
+  {
+    NetworkPiece mashhit = new(
+      "mashhit", nameof(PieceType.Mashhit), NetworkTeam.Red, 0, 0, 45);
+    CpuGameState state = new(
+      CreateConfiguration(),
+      [mashhit],
+      [
+        new CpuTeamState(NetworkTeam.Red, 200, MatchRules.ActionsPerTurn),
+        new CpuTeamState(NetworkTeam.Blue, 200, MatchRules.ActionsPerTurn)
+      ],
+      NetworkTeam.Red,
+      terrain: new BattlefieldTerrain(),
+      barricades:
+      [
+        KeyValuePair.Create((x: 1, y: 0), 30)
+      ]
+    );
+    UseAbilityAction destroy = new(
+      NetworkTeam.Red, "mashhit", "Destroy", null, 1, 0);
+
+    Assert.True(destroy.IsLegal(state));
+    CpuGameState after = destroy.Apply(state);
+
+    Assert.False(after.Barricades.ContainsKey((1, 0)));
+    Assert.True(after.Pieces.Single(piece => piece.Id == "mashhit").HasAttackedThisTurn);
   }
 
   private static CpuGameState CreateState(params NetworkPiece[] pieces)

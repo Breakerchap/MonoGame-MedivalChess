@@ -28,7 +28,9 @@ public sealed partial class MatchStore
     if (string.Equals(ability, "ReloadHwacha", StringComparison.OrdinalIgnoreCase))
     {
       if (target is null || target.Team != actor.Team || target.Type != nameof(PieceType.Hwacha) ||
-          actor.HasAttackedThisTurn || !UnitRules.TryGet(actor.Type, out UnitRule actorRule) ||
+          actor.HasAttackedThisTurn || target.HasAttackedThisTurn ||
+          !AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) ||
+          !UnitRules.TryGet(actor.Type, out UnitRule actorRule) ||
           !UnitRules.TryGet(target.Type, out UnitRule targetRule) ||
           !AbilityRules.AreAdjacent(actorRule, (actor.X, actor.Y), targetRule, (target.X, target.Y), includeDiagonal: true) ||
           !AdvancedAbilityRules.CanReloadHwacha(target.AbilityState))
@@ -349,7 +351,11 @@ public sealed partial class MatchStore
           }
           match.AbilityEntities.Add(CreateEntity(
             AbilityEntityKind.Tnt, actor.Team, request.TargetX, request.TargetY, actor.Id));
-          match.Pieces[actorIndex] = actor with { HasAttackedThisTurn = true };
+          match.Pieces[actorIndex] = actor with
+          {
+            HasAttackedThisTurn = true,
+            AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState)
+          };
           return AdvancedSpecialResult.AppliedAction;
         }
         if (string.Equals(ability, "Detonate", StringComparison.OrdinalIgnoreCase))
@@ -360,7 +366,7 @@ public sealed partial class MatchStore
           {
             return AdvancedSpecialResult.Rejected;
           }
-          DetonateServerTnt(match, actor, tnt, player);
+          DetonateServerTnt(match, actor, tnt);
           actorIndex = match.Pieces.FindIndex(piece => piece.Id == actor.Id);
           if (actorIndex >= 0)
           {
@@ -428,7 +434,8 @@ public sealed partial class MatchStore
           return AdvancedSpecialResult.Rejected;
         }
         bool destroyed = TryDestroyTerrainTile(match, request.TargetX, request.TargetY) ||
-          TryDestroyAbilityEntity(match, request.TargetX, request.TargetY);
+          TryDestroyAbilityEntity(match, request.TargetX, request.TargetY) ||
+          match.Barricades.Remove((request.TargetX, request.TargetY));
         if (!destroyed)
         {
           return AdvancedSpecialResult.Rejected;
@@ -801,8 +808,7 @@ public sealed partial class MatchStore
   private static void DetonateServerTnt(
     Match match,
     NetworkPiece demolitionist,
-    AbilityEntity tnt,
-    PlayerSlot owner
+    AbilityEntity tnt
   )
   {
     match.AbilityEntities.Remove(tnt);
@@ -813,7 +819,7 @@ public sealed partial class MatchStore
         .Any(square => Math.Max(Math.Abs(square.x - tnt.X), Math.Abs(square.y - tnt.Y)) <= 1);
       if (inBlast)
       {
-        ResolvePieceDamage(match, demolitionist, owner, victim.Id, 30);
+        ApplyServerAbilityEntityDamage(match, victim.Id, demolitionist.Team, 30);
       }
     }
     for (int y = tnt.Y - 1; y <= tnt.Y + 1; y++)

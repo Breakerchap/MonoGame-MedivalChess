@@ -2390,6 +2390,26 @@ internal sealed partial class Game1 : Game
     {
       return false;
     }
+
+    if (target is not null &&
+        target.Team == actor.Team &&
+        target.Definition.Type == PieceType.Hwacha &&
+        actor != target &&
+        !actor.HasAttackedThisTurn &&
+        !target.HasAttackedThisTurn &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AbilityRules.AreAdjacent(
+          UnitRules.FromPieceDefinition(actor.Definition),
+          actor.Position,
+          UnitRules.FromPieceDefinition(target.Definition),
+          target.Position,
+          includeDiagonal: true) &&
+        AdvancedAbilityRules.CanReloadHwacha(target.AbilityState))
+    {
+      _ = SendOnlineSpecialAsync(actor, "ReloadHwacha", target.NetworkId, target.Position);
+      return true;
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
@@ -2398,7 +2418,8 @@ internal sealed partial class Game1 : Game
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
-      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker ||
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
+      PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2456,6 +2477,16 @@ internal sealed partial class Game1 : Game
       PieceType.Hacker => target is not null && target.Team != actor.Team && target.Team != TeamName.Neutral &&
         actor.AbilityState.CooldownOwnerTurns <= 0 && IsWithinLocalCircleRange(actor, target, 5),
       PieceType.Engineer => true,
+      PieceType.Demolitionist =>
+        (_abilityEntities.Any(entity =>
+            entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId)
+          ? targetPosition == actor.Position && AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState)
+          : !actor.HasAttackedThisTurn && target is null &&
+            Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+            CanPlaceLocalAbilityEntity(targetPosition)),
+      PieceType.Mashhit => !actor.HasAttackedThisTurn && target is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        (IsLocalDestructibleTerrainAt(targetPosition) || IsLocalStructureAt(targetPosition)),
       PieceType.Muse => target is not null && target.Team == actor.Team && target != actor &&
         target.AttachedTo is null,
       PieceType.Shieldsman => target is not null && target.Team == actor.Team && target != actor &&
@@ -2507,6 +2538,12 @@ internal sealed partial class Game1 : Game
       ? "Hack"
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
+      : actor.Definition.Type == PieceType.Demolitionist
+      ? (_abilityEntities.Any(entity =>
+          entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId)
+          ? "Detonate" : "PlaceTnt")
+      : actor.Definition.Type == PieceType.Mashhit
+      ? "Destroy"
       : actor.Definition.Type is PieceType.Muse or PieceType.Shieldsman or PieceType.Imp
       ? "Attach"
       : AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString())
@@ -4030,6 +4067,28 @@ internal sealed partial class Game1 : Game
       Console.WriteLine($"{actor.Definition.Type}'s ability is disabled for this campaign level.");
       return false;
     }
+
+    if (targetPiece is not null &&
+        targetPiece.Team == actor.Team &&
+        targetPiece.Definition.Type == PieceType.Hwacha &&
+        actor != targetPiece &&
+        !actor.HasAttackedThisTurn &&
+        !targetPiece.HasAttackedThisTurn &&
+        AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState) &&
+        AbilityRules.AreAdjacent(
+          UnitRules.FromPieceDefinition(actor.Definition),
+          actor.Position,
+          UnitRules.FromPieceDefinition(targetPiece.Definition),
+          targetPiece.Position,
+          includeDiagonal: true) &&
+        AdvancedAbilityRules.CanReloadHwacha(targetPiece.AbilityState))
+    {
+      targetPiece.AbilityState = AdvancedAbilityRules.ReloadHwacha(targetPiece.AbilityState);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
     if (!AdvancedAbilityRules.CanUseSpecialAbility(actor.AbilityState))
     {
       return false;
@@ -4037,7 +4096,8 @@ internal sealed partial class Game1 : Game
     bool engineerDemolition = actor.Definition.Type == PieceType.Engineer &&
       _selectedEngineerAbility == EngineerAbility.Demolish;
     bool independentActiveAbility = actor.Definition.Type is
-      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker ||
+      PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
+      PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4096,6 +4156,50 @@ internal sealed partial class Game1 : Game
     {
       _abilityEntities.Add(CreateLocalAbilityEntity(
         AbilityEntityKind.Bramble, actor, targetPosition));
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (actor.Definition.Type == PieceType.Demolitionist)
+    {
+      AbilityEntity tnt = _abilityEntities.FirstOrDefault(entity =>
+        entity.Kind == AbilityEntityKind.Tnt && entity.SourcePieceId == actor.NetworkId);
+
+      if (tnt is not null &&
+          targetPosition == actor.Position &&
+          AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+      {
+        DetonateLocalTnt(actor, tnt);
+        if (pieceSetup.Pieces.Contains(actor))
+        {
+          actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+        }
+        CompleteAction();
+        return true;
+      }
+
+      if (tnt is null &&
+          !actor.HasAttackedThisTurn &&
+          targetPiece is null &&
+          Math.Max(Math.Abs(targetPosition.x - actor.Position.x), Math.Abs(targetPosition.y - actor.Position.y)) == 1 &&
+          CanPlaceLocalAbilityEntity(targetPosition))
+      {
+        _abilityEntities.Add(CreateLocalAbilityEntity(
+          AbilityEntityKind.Tnt, actor, targetPosition));
+        actor.HasAttackedThisTurn = true;
+        actor.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(actor.AbilityState);
+        CompleteAction();
+        return true;
+      }
+    }
+
+    if (actor.Definition.Type == PieceType.Mashhit &&
+        !actor.HasAttackedThisTurn &&
+        targetPiece is null &&
+        CanAttackSquareWithAttachments(actor, targetPosition) &&
+        (TryDestroyLocalTerrainTile(targetPosition) || TryDestroyLocalStructure(targetPosition)))
+    {
       actor.HasAttackedThisTurn = true;
       CompleteAction();
       return true;

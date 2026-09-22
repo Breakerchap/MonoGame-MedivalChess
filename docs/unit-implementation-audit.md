@@ -29,7 +29,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `dynasty.war_drum` | Verified | Refresh is wired across local/server/CPU and online play, clearing a moved friendly unit's moved state and preventing a second refresh that owner turn; green CPU runtime coverage verifies the full flow. |
 | `dynasty.monk` | Verified | Each attack or effect damage instance is capped at 12 in local, server, and CPU damage resolution. |
 | `dynasty.qilin` | Partial | Implements the legal X=40 baseline; purchase-time player choice of X still requires the shared purchase-choice flow. |
-| `dynasty.hwacha` | Partial | Shared attack targeting now correctly hits the selected target plus only directly-adjacent splash units, with regression coverage. Reload/reload-assist runtime flow remains. |
+| `dynasty.hwacha` | Verified | Shared splash targeting, persistent reload requirement, adjacent-friendly reload assist, and the no-fire-and-reload-on-one-owner-turn rule are wired across local/server/CPU. CPU runtime coverage exercises the reload turn cycle. |
 | `dynasty.harvester` | Verified | Harvest is wired in server, CPU, offline local, and online client flows; it destroys in-range terrain, grants 15 gold, consumes the attack, preserves simulation snapshots, and has regression coverage. |
 | `dynasty.keshik` | Implemented | Core definition is loaded from the authoritative specification. |
 | `dynasty.emperor` | Verified | First lethal damage transforms it into Terracotta Warrior. |
@@ -105,7 +105,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `wild_west.cowboy` | Implemented | Core definition is loaded from the authoritative specification. |
 | `wild_west.frontiersmen` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `wild_west.musketeer` | Verified | Post-attack retreat is wired in local/server/CPU: it moves exactly two tiles directly away only when the full retreat is legal, does not consume its normal move, and has runtime regression coverage. |
-| `wild_west.demolitionist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `wild_west.demolitionist` | Verified | TNT placement/detonation is wired across local/server/CPU: one active TNT, placement consumes the attack, same-turn detonation is blocked, later active detonation deals fixed 30 damage in the surrounding 3x3 and destroys terrain. CPU runtime coverage verifies timing and damage. |
 | `wild_west.pickpocket` | Verified | Theft and its codex-required zero-damage normal attack are wired in local/server/CPU with green CPU runtime coverage. |
 | `wild_west.duelist` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `wild_west.cactus_jack` | Verified | Half-damage reflection is wired in local/server/CPU without recursive reflection, with green CPU runtime coverage. |
@@ -139,7 +139,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.gatekeeper` | Partial | Server/CPU Portal/Seal construction exists; Seals block movement/attacks and now expire at the start of their owner's next turn across local/server/CPU. Portal transport and local action parity remain. |
 | `angels_demons.beelzebub` | Partial | Terrain/unit traversal, push immunity, and centre-based retaliatory push are wired in local/server/CPU with runtime coverage; pull-immunity integration will be verified alongside forced-movement abilities such as Fylgja. |
 | `angels_demons.contract_demon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
-| `angels_demons.mashhit` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.archangel` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.archdemon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -186,3 +186,10 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Implemented Seal expiry at the start of the Seal owner's next turn across local/server/CPU.
 - Added shared regression coverage for persistent upgrades, Rune/Watchtower bonuses, Snare timing and Seal expiry, plus CPU integration coverage proving Command Centre/Rune bonuses affect real combat/movement and Snare movement applies its state.
 - Carpenter, Daedalus, Runesmith, Command Centre and Gatekeeper remain **Partial** where noted above; this batch does not claim local action-selection parity, Watchtower damage interception, Bridge completion, or Portal transport.
+
+### 2026-09-22 — Hwacha, Demolitionist, and Mashhit parity batch
+
+- Completed Hwacha reload parity in local play and the online client. An adjacent friendly unit spends its attack to reload, disabled/petrified helpers cannot reload, and the Hwacha cannot fire and reload during the same owner turn in either order.
+- Completed Demolitionist local/client parity and tightened authoritative timing: placing TNT marks the active ability used for that owner turn, so detonation is only legal on a later owner turn. TNT damage is a fixed 30 across local/server/CPU and terrain in the surrounding 3x3 is destroyed.
+- Completed Mashhit local/client parity and corrected the server path so all supported Structure representations, including barricades, can be destroyed in range.
+- Extended CPU runtime regression coverage for the full Hwacha reload cycle, later-turn-only TNT detonation, and Mashhit structure destruction.
