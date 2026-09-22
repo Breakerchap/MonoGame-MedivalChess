@@ -2628,7 +2628,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -2714,6 +2714,19 @@ internal sealed partial class Game1 : Game
         actor.AbilityState.CooldownOwnerTurns <= 0 &&
         target.OccupiedSquares().Any(square =>
           CanAttackSquareWithAttachments(actor, square)),
+      PieceType.Atlas =>
+        string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId)
+          ? (target == actor &&
+              string.Equals(actor.AbilityState.PendingAbility, "AtlasMove", StringComparison.Ordinal) &&
+              actor.AbilityState.PendingSelections.Count > 0) ||
+            (target is not null && IsValidLocalAtlasTarget(actor, target))
+          : actor.AbilityState.SelectedTargetId is string atlasTargetId &&
+            pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == atlasTargetId) is Piece atlasTarget &&
+            target is null &&
+            Math.Abs(targetPosition.x - atlasTarget.Position.x) <= 1 &&
+            Math.Abs(targetPosition.y - atlasTarget.Position.y) <= 1 &&
+            targetPosition != atlasTarget.Position &&
+            CanLandPieceAt(atlasTarget, targetPosition, mayUsePalaceSupport: false),
       PieceType.Fylgja =>
         string.Equals(actor.AbilityState.PendingAbility, "ForceMove", StringComparison.Ordinal) &&
         actor.AbilityState.PendingSelections.Count > 0
@@ -2801,6 +2814,8 @@ internal sealed partial class Game1 : Game
       ? "Rewind"
       : actor.Definition.Type == PieceType.GangLeader
       ? "Recruit"
+      : actor.Definition.Type == PieceType.Atlas
+      ? "AtlasMove"
       : actor.Definition.Type == PieceType.Fylgja
       ? "ForceMove"
       : IsCodexBuilder(actor.Definition.Type)
@@ -2832,6 +2847,16 @@ internal sealed partial class Game1 : Game
       ability,
       specialTargetId,
       AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) ? actor.Position : targetPosition);
+    if (actor.Definition.Type == PieceType.Atlas)
+    {
+      bool finishingEarly = target == actor &&
+        string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId) &&
+        actor.AbilityState.PendingSelections.Count > 0;
+      bool finishingThirdMove = !string.IsNullOrWhiteSpace(actor.AbilityState.SelectedTargetId) &&
+        actor.AbilityState.PendingSelections.Count >= 2 &&
+        target is null;
+      return finishingEarly || finishingThirdMove;
+    }
     return !IsCodexBuilder(actor.Definition.Type) ||
       CodexBuilderSelectionCompletesAction(actor, ability);
   }
@@ -4490,7 +4515,7 @@ internal sealed partial class Game1 : Game
     bool independentActiveAbility = actor.Definition.Type is
       PieceType.Phoenix or PieceType.Imp or PieceType.Baron or PieceType.Odin or PieceType.Hacker or
       PieceType.CommandCentre or PieceType.Fafnir or PieceType.Thor or PieceType.Chronos or
-      PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
+      PieceType.Atlas or PieceType.GangLeader or PieceType.Mimic or PieceType.Demolitionist ||
       (actor.Definition.Type == PieceType.WillOWisp && !actor.AbilityState.Settled);
     if (actor.HasAttackedThisTurn && !engineerDemolition && !independentActiveAbility)
     {
@@ -4521,6 +4546,11 @@ internal sealed partial class Game1 : Game
     if (actor.Definition.Type == PieceType.Medusa)
     {
       return TryPetrifyLocalTarget(actor, targetPiece);
+    }
+
+    if (actor.Definition.Type == PieceType.Atlas)
+    {
+      return TryUseLocalAtlasAbility(actor, targetPosition, targetPiece);
     }
 
     if (actor.Definition.Type == PieceType.Fafnir &&
@@ -11479,6 +11509,16 @@ internal sealed partial class Game1 : Game
       return piece.AbilityState.UsedThisTurn
         ? "UPGRADE USED THIS TURN"
         : "RIGHT-CLICK a friendly non-Royal within 2 squares to upgrade";
+    }
+
+    if (piece.Definition.Type == PieceType.Atlas)
+    {
+      if (piece.AbilityState.UsedThisTurn) return "ATLAS MOVE USED THIS TURN";
+      if (!string.IsNullOrWhiteSpace(piece.AbilityState.SelectedTargetId))
+        return "RIGHT-CLICK an adjacent legal square for the staged unit";
+      if (piece.AbilityState.PendingSelections.Count > 0)
+        return "RIGHT-CLICK another unit, or RIGHT-CLICK Atlas to finish";
+      return "RIGHT-CLICK up to 3 friendly movable units, then their adjacent destinations";
     }
 
     if (piece.Definition.Type == PieceType.Fafnir)

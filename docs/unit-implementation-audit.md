@@ -82,7 +82,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.daedalus` | Verified | Three-Gate construction, Snare construction/consumption, and free demolition are wired across local/server/CPU and online play; multi-Gate selection does not spend the action until all three placements are chosen. |
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
 | `greek.medusa` | Verified | Petrify is wired in local and authoritative online play: it targets non-Royal units in range, replaces the Medusa's previous petrification, blocks the petrified unit from moving/attacking/using active abilities or being directly attacked, and ends when Medusa dies or moves more than 5 tiles away. Shared regression coverage checks the state and range break. |
-| `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
+| `greek.atlas` | Verified | The existing post-attack 2-tile shortened-fallback push remains shared across local/server/CPU. Atlas now also has its once-per-owner-turn active move in local/online/server play: stage up to three friendly unattached units with non-zero Move, then move each exactly one adjacent tile to a legal square; every moved unit has its normal movement spent. Right-click Atlas after one or two completed moves to finish early, or the action completes automatically after the third. |
 | `greek.chronos` | Verified | Owner-turn start snapshots already track each living unit's previous position and Health. Chronos now has a local/online/server Rewind action on a friendly unit within 3 Circle: both Chronos and the target return to their previous-owner-turn-start positions and Health, attachments follow, illegal/overlapping rewind destinations are rejected, and the action starts the codex five-owner-turn cooldown. No money, objectives, structures or dead units are restored. |
 | `greek.muse` | Verified | Muse attachment is wired across local/server/CPU and online play. Its target is any friendly unit as specified by the codex (Muse itself has no normal attack range), it consumes the Muse's attack, and the host dynamically advances both Move and Attack patterns one step. Shared and CPU runtime coverage is green. |
 | `norse.viking` | Implemented | Core definition is loaded from the authoritative specification. |
@@ -379,3 +379,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Killing the linked Skeleton while its Necromancer survives clears the current link and schedules an adjacent respawn for the start of the next owner turn.
 - Killing the Necromancer directly removes its linked Skeleton without scheduling another respawn, making the Minion's death permanent as required.
 - Respawn placement is deterministic and uses the nearest legal adjacent square, keeping local/server behaviour aligned without introducing an extra placement sub-phase.
+
+
+### 2026-09-22 — Atlas active movement
+
+- Completed Atlas's missing active ability without changing its already-wired attack push.
+- Right-click a friendly unattached unit with non-zero Move to stage it, then right-click one adjacent legal destination to move it exactly one tile. The moved unit's normal movement is consumed through the shared movement state.
+- Atlas may move up to three different units in one active use. After one or two completed moves, right-click Atlas itself to finish early; after the third move the action completes automatically.
+- Local play and authoritative online/server play use the same pending-selection state, and intermediate selections/moves do not spend extra player actions.
+- Normal landing legality still applies to Atlas-forced moves, so off-board, occupied, terrain-blocked, Structure-blocked and ability-entity-blocked destinations remain illegal.

@@ -569,6 +569,122 @@ public sealed partial class MatchStore
         };
         return AdvancedSpecialResult.AppliedAction;
 
+      case nameof(PieceType.Atlas):
+        if (!string.Equals(ability, "AtlasMove", StringComparison.OrdinalIgnoreCase) ||
+            !AdvancedAbilityRules.CanUseOncePerOwnerTurn(actor.AbilityState))
+        {
+          return AdvancedSpecialResult.Rejected;
+        }
+        {
+          UnitAbilityState atlasState = actor.AbilityState ?? new UnitAbilityState();
+          bool atlasPending = string.Equals(
+            atlasState.PendingAbility, "AtlasMove", StringComparison.Ordinal);
+          IReadOnlyList<AbilitySelection> moved = atlasPending
+            ? atlasState.PendingSelections
+            : Array.Empty<AbilitySelection>();
+
+          if (string.IsNullOrWhiteSpace(atlasState.SelectedTargetId))
+          {
+            if (target?.Id == actor.Id && moved.Count > 0)
+            {
+              match.Pieces[actorIndex] = actor with
+              {
+                AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+                  AdvancedAbilityRules.ClearPendingSelections(
+                    atlasState with { SelectedTargetId = null }))
+              };
+              return AdvancedSpecialResult.AppliedAction;
+            }
+
+            if (target is null || target.Id == actor.Id ||
+                target.Team != actor.Team || target.AttachedToId is not null ||
+                !UnitRules.TryGet(target.Type, out UnitRule atlasTargetRule) ||
+                atlasTargetRule.MoveRange <= 0 ||
+                moved.Any(selection =>
+                  string.Equals(selection.TargetId, target.Id, StringComparison.Ordinal)))
+            {
+              return AdvancedSpecialResult.Rejected;
+            }
+
+            match.Pieces[actorIndex] = actor with
+            {
+              AbilityState = atlasState with
+              {
+                PendingAbility = "AtlasMove",
+                PendingSelections = moved,
+                SelectedTargetId = target.Id
+              }
+            };
+            return AdvancedSpecialResult.AppliedWithoutAction;
+          }
+
+          int movingIndex = match.Pieces.FindIndex(piece =>
+            string.Equals(piece.Id, atlasState.SelectedTargetId, StringComparison.Ordinal));
+          if (movingIndex < 0)
+          {
+            match.Pieces[actorIndex] = actor with
+            {
+              AbilityState = atlasState with { SelectedTargetId = null }
+            };
+            return AdvancedSpecialResult.Rejected;
+          }
+
+          NetworkPiece moving = match.Pieces[movingIndex];
+          if (moving.Team != actor.Team || moving.AttachedToId is not null ||
+              !UnitRules.TryGet(moving.Type, out UnitRule movingRule) ||
+              movingRule.MoveRange <= 0)
+          {
+            return AdvancedSpecialResult.Rejected;
+          }
+
+          int dx = Math.Abs(request.TargetX - moving.X);
+          int dy = Math.Abs(request.TargetY - moving.Y);
+          if (target is not null || (dx == 0 && dy == 0) ||
+              dx > 1 || dy > 1 ||
+              !CanLandAt(
+                match, moving, movingRule,
+                (request.TargetX, request.TargetY),
+                mayUsePalaceSupport: false))
+          {
+            return AdvancedSpecialResult.Rejected;
+          }
+
+          int oldX = moving.X;
+          int oldY = moving.Y;
+          NetworkPiece movedPiece = moving with
+          {
+            X = request.TargetX,
+            Y = request.TargetY,
+            HasMovedThisTurn = true,
+            AbilityState = AdvancedAbilityRules.RecordMove(moving.AbilityState)
+          };
+          match.Pieces[movingIndex] = movedPiece;
+          MoveAttachedPieces(match, movedPiece, oldX, oldY);
+          ReleaseServerPetrificationIfBroken(match, movedPiece);
+
+          UnitAbilityState updated = atlasState with { SelectedTargetId = null };
+          updated = AdvancedAbilityRules.AddPendingSelection(
+            updated,
+            "AtlasMove",
+            new AbilitySelection(moving.Id, request.TargetX, request.TargetY));
+
+          if (updated.PendingSelections.Count >= 3)
+          {
+            match.Pieces[actorIndex] = match.Pieces[actorIndex] with
+            {
+              AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+                AdvancedAbilityRules.ClearPendingSelections(updated))
+            };
+            return AdvancedSpecialResult.AppliedAction;
+          }
+
+          match.Pieces[actorIndex] = match.Pieces[actorIndex] with
+          {
+            AbilityState = updated
+          };
+          return AdvancedSpecialResult.AppliedWithoutAction;
+        }
+
       case nameof(PieceType.Herald):
         if (!string.Equals(ability, "ToggleCompanion", StringComparison.OrdinalIgnoreCase) ||
             target is null || target.Id == actor.Id ||
@@ -838,6 +954,7 @@ public sealed partial class MatchStore
     nameof(PieceType.Medusa) or nameof(PieceType.Daedalus) or nameof(PieceType.Muse) or
     nameof(PieceType.Shieldsman) or nameof(PieceType.Runesmith) or
     nameof(PieceType.Fafnir) or nameof(PieceType.Odin) or nameof(PieceType.Thor) or
+    nameof(PieceType.Atlas) or
     nameof(PieceType.Demolitionist) or nameof(PieceType.CommandCentre) or nameof(PieceType.Hacker) or
     nameof(PieceType.Mashhit) or nameof(PieceType.Imp) or nameof(PieceType.Gatekeeper);
 

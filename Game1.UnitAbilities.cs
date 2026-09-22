@@ -1866,4 +1866,101 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool IsValidLocalAtlasTarget(Piece atlas, Piece target)
+  {
+    if (atlas.Definition.Type != PieceType.Atlas ||
+        target is null || target == atlas ||
+        target.Team != atlas.Team ||
+        target.AttachedTo is not null ||
+        GetEffectiveMovementRule(target).MoveRange <= 0)
+    {
+      return false;
+    }
+
+    return !atlas.AbilityState.PendingSelections.Any(selection =>
+      string.Equals(selection.TargetId, target.NetworkId, StringComparison.Ordinal));
+  }
+
+  private bool TryUseLocalAtlasAbility(
+    Piece atlas,
+    (int x, int y) targetPosition,
+    Piece targetPiece)
+  {
+    if (atlas.Definition.Type != PieceType.Atlas ||
+        !AdvancedAbilityRules.CanUseOncePerOwnerTurn(atlas.AbilityState))
+    {
+      return false;
+    }
+
+    UnitAbilityState state = atlas.AbilityState;
+    bool atlasPending = string.Equals(
+      state.PendingAbility, "AtlasMove", StringComparison.Ordinal);
+    IReadOnlyList<AbilitySelection> moved = atlasPending
+      ? state.PendingSelections
+      : Array.Empty<AbilitySelection>();
+
+    if (string.IsNullOrWhiteSpace(state.SelectedTargetId))
+    {
+      if (targetPiece == atlas && moved.Count > 0)
+      {
+        atlas.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+          AdvancedAbilityRules.ClearPendingSelections(state with { SelectedTargetId = null }));
+        CompleteAction();
+        return true;
+      }
+
+      if (!IsValidLocalAtlasTarget(atlas, targetPiece))
+      {
+        return false;
+      }
+
+      atlas.AbilityState = state with
+      {
+        PendingAbility = "AtlasMove",
+        PendingSelections = moved,
+        SelectedTargetId = targetPiece.NetworkId
+      };
+      return false;
+    }
+
+    Piece moving = pieceSetup.Pieces.FirstOrDefault(piece =>
+      string.Equals(piece.NetworkId, state.SelectedTargetId, StringComparison.Ordinal));
+    if (moving is null || !IsValidLocalAtlasTarget(atlas, moving))
+    {
+      atlas.AbilityState = state with { SelectedTargetId = null };
+      return false;
+    }
+
+    int dx = Math.Abs(targetPosition.x - moving.Position.x);
+    int dy = Math.Abs(targetPosition.y - moving.Position.y);
+    if (targetPiece is not null || (dx == 0 && dy == 0) ||
+        dx > 1 || dy > 1 ||
+        !CanLandPieceAt(moving, targetPosition, mayUsePalaceSupport: false))
+    {
+      return false;
+    }
+
+    pieceSetup.MovePiece(moving, targetPosition);
+    ReleaseLocalPetrificationIfBroken(moving);
+
+    UnitAbilityState updated = state with { SelectedTargetId = null };
+    updated = AdvancedAbilityRules.AddPendingSelection(
+      updated,
+      "AtlasMove",
+      new AbilitySelection(moving.NetworkId, targetPosition.x, targetPosition.y));
+
+    if (updated.PendingSelections.Count >= 3)
+    {
+      atlas.AbilityState = AdvancedAbilityRules.RecordOncePerOwnerTurnUse(
+        AdvancedAbilityRules.ClearPendingSelections(updated));
+      CompleteAction();
+      return true;
+    }
+
+    atlas.AbilityState = updated;
+    return false;
+  }
+
+
 }
