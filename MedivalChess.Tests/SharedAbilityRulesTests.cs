@@ -508,4 +508,29 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void BuilderPendingSelectionsAccumulateAndSwitchingModeResetsThem()
+  {
+    UnitAbilityState state = AdvancedAbilityRules.AddPendingSelection(
+      new UnitAbilityState(), "StoneWall", new AbilitySelection(null, 1, 2));
+    state = AdvancedAbilityRules.AddPendingSelection(
+      state, "StoneWall", new AbilitySelection(null, 2, 2));
+
+    Assert.Equal("StoneWall", state.PendingAbility);
+    Assert.Equal(2, state.PendingSelections.Count);
+
+    state = AdvancedAbilityRules.AddPendingSelection(
+      state, "Gatehouse", new AbilitySelection(null, 3, 2));
+
+    Assert.Equal("Gatehouse", state.PendingAbility);
+    AbilitySelection selection = Assert.Single(state.PendingSelections);
+    Assert.Equal((3, 2), (selection.X, selection.Y));
+
+    state = AdvancedAbilityRules.ClearPendingSelections(state);
+    Assert.Null(state.PendingAbility);
+    Assert.Empty(state.PendingSelections);
+  }
+
+
 }

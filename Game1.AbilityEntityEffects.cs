@@ -200,4 +200,203 @@ internal sealed partial class Game1
       definition.Health,
       SourcePieceId: source.NetworkId);
   }
+
+  private static bool IsCodexBuilder(PieceType type) =>
+    type is PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith;
+
+  private static string[] GetCodexBuilderAbilities(PieceType type) => type switch
+  {
+    PieceType.Mason => ["StoneWall", "Gatehouse", "Demolish"],
+    PieceType.Daedalus => ["Gate", "Snare", "Demolish"],
+    PieceType.Runesmith => ["RuneAttack", "RuneMovement", "RuneHealth", "RuneRange", "Demolish"],
+    _ => Array.Empty<string>()
+  };
+
+  private string GetSelectedCodexBuilderAbility(Piece actor)
+  {
+    string[] abilities = GetCodexBuilderAbilities(actor.Definition.Type);
+    if (abilities.Length == 0) return string.Empty;
+    int index = ((_selectedCodexBuilderAbilityIndex % abilities.Length) + abilities.Length) % abilities.Length;
+    return abilities[index];
+  }
+
+  private void CycleCodexBuilderAbility(Piece actor, int direction)
+  {
+    string[] abilities = GetCodexBuilderAbilities(actor.Definition.Type);
+    if (abilities.Length == 0) return;
+    _selectedCodexBuilderAbilityIndex =
+      ((_selectedCodexBuilderAbilityIndex + direction) % abilities.Length + abilities.Length) % abilities.Length;
+  }
+
+  private static string GetCodexBuilderDisplayTitle(string ability) => ability switch
+  {
+    "StoneWall" => "STONE WALL",
+    "RuneAttack" => "ATTACK RUNE",
+    "RuneMovement" => "MOVE RUNE",
+    "RuneHealth" => "WARD RUNE",
+    "RuneRange" => "RANGE RUNE",
+    _ => ability.ToUpperInvariant()
+  };
+
+  private static string GetCodexBuilderDetail(PieceType type, string ability) => (type, ability) switch
+  {
+    (PieceType.Mason, "StoneWall") => "Place 2 walls; costs 10 gold total.",
+    (PieceType.Mason, "Gatehouse") => "Place 2 friendly-pass gatehouses.",
+    (PieceType.Daedalus, "Gate") => "Place 3 friendly-pass gates.",
+    (PieceType.Daedalus, "Snare") => "Place 1 movement-locking snare.",
+    (PieceType.Runesmith, "RuneAttack") => "5 HP rune; nearby allies gain +10 Attack.",
+    (PieceType.Runesmith, "RuneMovement") => "5 HP rune; nearby allies gain +1 Move.",
+    (PieceType.Runesmith, "RuneHealth") => "5 HP rune; nearby allies take 5 less damage.",
+    (PieceType.Runesmith, "RuneRange") => "5 HP rune; nearby allies gain +2 Attack Range.",
+    (_, "Demolish") => "Destroy an in-range structure for free.",
+    _ => "RIGHT-CLICK a legal square to use."
+  };
+
+  private string GetCodexBuilderStatusLabel(Piece actor)
+  {
+    string ability = GetSelectedCodexBuilderAbility(actor);
+    if (!TryGetCodexBuilderOption(actor.Definition.Type, ability, out _, out int requiredCount, out _))
+    {
+      return GetCodexBuilderDisplayTitle(ability);
+    }
+
+    int selected = string.Equals(actor.AbilityState.PendingAbility, ability, StringComparison.Ordinal)
+      ? actor.AbilityState.PendingSelections.Count
+      : 0;
+    return requiredCount > 1
+      ? $"{GetCodexBuilderDisplayTitle(ability)} ({Math.Max(0, requiredCount - selected)})"
+      : GetCodexBuilderDisplayTitle(ability);
+  }
+
+  private bool CodexBuilderSelectionCompletesAction(Piece actor, string ability)
+  {
+    if (string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase))
+    {
+      return true;
+    }
+    if (!TryGetCodexBuilderOption(actor.Definition.Type, ability, out _, out int requiredCount, out _))
+    {
+      return true;
+    }
+
+    int selected = string.Equals(actor.AbilityState.PendingAbility, ability, StringComparison.Ordinal)
+      ? actor.AbilityState.PendingSelections.Count
+      : 0;
+    return selected + 1 >= requiredCount;
+  }
+
+  private static bool TryGetCodexBuilderOption(
+    PieceType type,
+    string ability,
+    out AbilityEntityKind kind,
+    out int requiredCount,
+    out int totalCost)
+  {
+    kind = default;
+    requiredCount = 0;
+    totalCost = 0;
+
+    (AbilityEntityKind kind, int count, int cost)? option = (type, ability) switch
+    {
+      (PieceType.Mason, "StoneWall") => (AbilityEntityKind.StoneWall, 2, 10),
+      (PieceType.Mason, "Gatehouse") => (AbilityEntityKind.Gatehouse, 2, 0),
+      (PieceType.Daedalus, "Gate") => (AbilityEntityKind.Gate, 3, 0),
+      (PieceType.Daedalus, "Snare") => (AbilityEntityKind.Snare, 1, 0),
+      (PieceType.Runesmith, "RuneAttack") => (AbilityEntityKind.RuneAttack, 1, 0),
+      (PieceType.Runesmith, "RuneMovement") => (AbilityEntityKind.RuneMovement, 1, 0),
+      (PieceType.Runesmith, "RuneHealth") => (AbilityEntityKind.RuneHealth, 1, 0),
+      (PieceType.Runesmith, "RuneRange") => (AbilityEntityKind.RuneRange, 1, 0),
+      _ => null
+    };
+    if (option is null) return false;
+    (kind, requiredCount, totalCost) = option.Value;
+    return true;
+  }
+
+  private bool CanUseCodexBuilderAbilityAt(
+    Piece actor,
+    (int x, int y) position,
+    Piece targetPiece)
+  {
+    if (!IsCodexBuilder(actor.Definition.Type) || actor.HasAttackedThisTurn ||
+        targetPiece is not null || !CanAttackSquareWithAttachments(actor, position))
+    {
+      return false;
+    }
+
+    string ability = GetSelectedCodexBuilderAbility(actor);
+    if (string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase))
+    {
+      return IsLocalStructureAt(position);
+    }
+
+    return TryGetCodexBuilderOption(actor.Definition.Type, ability, out _, out _, out _) &&
+      CanPlaceLocalAbilityEntity(position);
+  }
+
+  private bool TryUseCodexBuilderAbility(
+    Piece actor,
+    (int x, int y) position,
+    Piece targetPiece)
+  {
+    if (!CanUseCodexBuilderAbilityAt(actor, position, targetPiece))
+    {
+      return false;
+    }
+
+    string ability = GetSelectedCodexBuilderAbility(actor);
+    if (string.Equals(ability, "Demolish", StringComparison.OrdinalIgnoreCase))
+    {
+      if (!TryDestroyLocalStructure(position)) return false;
+      actor.AbilityState = AdvancedAbilityRules.ClearPendingSelections(actor.AbilityState);
+      actor.HasAttackedThisTurn = true;
+      CompleteAction();
+      return true;
+    }
+
+    if (!TryGetCodexBuilderOption(
+          actor.Definition.Type, ability, out AbilityEntityKind kind,
+          out int requiredCount, out int totalCost))
+    {
+      return false;
+    }
+
+    UnitAbilityState pending = AdvancedAbilityRules.AddPendingSelection(
+      actor.AbilityState, ability, new AbilitySelection(null, position.x, position.y));
+    if (pending.PendingSelections.Select(selection => (selection.X, selection.Y)).Distinct().Count() !=
+        pending.PendingSelections.Count)
+    {
+      return false;
+    }
+
+    if (pending.PendingSelections.Count < requiredCount)
+    {
+      actor.AbilityState = pending;
+      return false;
+    }
+    if (pending.PendingSelections.Count != requiredCount)
+    {
+      return false;
+    }
+
+    Team team = _teams.Find(candidate => candidate.TeamName == actor.Team);
+    if (team is null || team.Money < totalCost ||
+        pending.PendingSelections.Any(selection =>
+          !CanPlaceLocalAbilityEntity((selection.X, selection.Y))))
+    {
+      return false;
+    }
+
+    team.Money = ClampCurrency((long)team.Money - totalCost);
+    foreach (AbilitySelection selection in pending.PendingSelections)
+    {
+      _abilityEntities.Add(CreateLocalAbilityEntity(
+        kind, actor, (selection.X, selection.Y)));
+    }
+
+    actor.AbilityState = AdvancedAbilityRules.ClearPendingSelections(pending);
+    actor.HasAttackedThisTurn = true;
+    CompleteAction();
+    return true;
+  }
 }

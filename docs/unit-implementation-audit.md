@@ -15,7 +15,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `medival.cannon` | Implemented | Core definition is loaded from the authoritative specification. |
 | `medival.catapult` | Verified | Line-of-sight bypass is enforced by attack validation. |
 | `medival.guard` | Verified | Friendly non-Royal attachment and damage interception are implemented. |
-| `medival.mason` | Partial | Stone Wall/Gatehouse entities and their team-aware movement/attack blocking are wired into local, server, and CPU pathing; build/demolish action parity and tests remain. |
+| `medival.mason` | Verified | Stone Wall/Gatehouse multi-build and free demolition are wired across local/server/CPU and online play; local selection preserves the pending multi-placement flow and the Stone Wall pair costs 10 gold total. |
 | `medival.farm` | Verified | Owner-turn income and pass-through handling are implemented. |
 | `medival.king` | Implemented | Core definition is loaded from the authoritative specification. |
 | `medival.baron` | Verified | Selected-target action and +10 outgoing/-10 incoming combat effects are wired across local/server/CPU and online play; green CPU runtime coverage verifies selection, once-per-turn use and the damage bonus. |
@@ -79,7 +79,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `greek.ballista` | Verified | Piercing attacks are wired in local/server/CPU and rays stop at forests, barricades, and attack-blocking ability entities, with green CPU blocker coverage. |
 | `greek.chimera` | Verified | Local/server/CPU damage uses the shared +15 rear-attack modifier, with green CPU front-vs-behind regression coverage. |
 | `greek.zeus` | Verified | Lightning chaining is applied through the shared local/server/CPU attack pipeline, follows the eight-square Adjacent definition, excludes friendlies, deals 20 to chained enemies, and has shared plus CPU runtime coverage. |
-| `greek.daedalus` | Partial | Server/CPU Gate/Snare construction and demolition exist. Ending movement on a Snare now consumes it and blocks the unit's next owner-turn movement across local/server/CPU; local construction parity and remaining coverage remain. |
+| `greek.daedalus` | Verified | Three-Gate construction, Snare construction/consumption, and free demolition are wired across local/server/CPU and online play; multi-Gate selection does not spend the action until all three placements are chosen. |
 | `greek.cyclops` | Verified | Local/server/CPU share the carry/throw flow with Cyclops-specific 2–3 Diamond throw geometry. Runtime coverage distinguishes its Diamond throw area from the Giant's Circle area. |
 | `greek.medusa` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `greek.atlas` | Partial | Its centre-based post-attack push is wired in local/server/CPU with shortened fallback; dedicated coverage and the once-per-turn three-unit movement action remain. |
@@ -93,7 +93,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.beserker` | Verified | Attack increases at 20 health or less. |
 | `norse.valkyrie` | Verified | No-Man's-Land placement is enforced locally, by the server, and in CPU simulation. |
 | `norse.shieldsman` | Verified | Shieldsman attachment is wired across local/server/CPU and online play, limited to friendly non-Royals with one Shieldsman per host; incoming host damage is redirected to the Shieldsman. CPU runtime coverage is green. |
-| `norse.runesmith` | Partial | Server/CPU Rune construction and demolition exist; all four Rune auras now affect local/server/CPU effective combat and movement rules without same-type stacking. Local build/demolition action parity remains. |
+| `norse.runesmith` | Verified | All four Rune builds, non-stacking Rune auras, and free demolition are wired across local/server/CPU and online play with local ability-mode selection. |
 | `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
 | `norse.flying_longboat` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `norse.fafnir` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -199,3 +199,12 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Added a shared Archangel Royal-adjacency placement requirement.
 - Local purchase placement and previews, authoritative server placement, and CPU purchase legality now all require the Archangel's 2x2 footprint to be adjacent to the owning team's current Royal; Royal proxies are recognised consistently.
 - Added CPU runtime coverage proving a valid adjacent purchase succeeds while an otherwise-valid non-adjacent purchase is rejected.
+
+
+### 2026-09-22 — Mason, Daedalus, and Runesmith local/online parity batch
+
+- Added an Engineer-style ability selector for Mason, Daedalus, and Runesmith in local play, with the selected mode sent unchanged to authoritative online play.
+- Mason now locally builds the codex-required two Stone Walls for 10 gold total or two Gatehouses, and can demolish an in-range structure for free.
+- Daedalus now locally builds either three Gates or one Snare and can demolish an in-range structure for free. Multi-Gate placement keeps the unit selected and does not spend the action until the third legal square is chosen.
+- Runesmith can now locally choose and build any of the four 5-Health Rune types or demolish an in-range structure; the already-shared aura effects continue to drive local/server/CPU effective stats.
+- Multi-placement state is regression-tested for accumulation, mode switching, and clearing; the branch-wide test workflow validates the complete project after this commit.

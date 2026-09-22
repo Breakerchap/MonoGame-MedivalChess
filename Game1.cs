@@ -197,6 +197,7 @@ internal sealed partial class Game1 : Game
   private int _selectedPurchaseIndex;
   private int _selectedPurchasePackIndex;
   private EngineerAbility _selectedEngineerAbility;
+  private int _selectedCodexBuilderAbilityIndex;
   private Screen _screen = Screen.Title;
   private TeamName _setupTeam = TeamName.Red;
   private int _selectedRoyalIndex;
@@ -536,6 +537,8 @@ internal sealed partial class Game1 : Game
       wasLeftClick && HandleDebugTeamSwitchClick(ToUiPoint(mouse.Position));
     bool clickedEngineerPanel =
       wasLeftClick && HandleEngineerAbilityClick(ToUiPoint(mouse.Position));
+    bool clickedCodexBuilderPanel =
+      wasLeftClick && HandleCodexBuilderAbilityClick(ToUiPoint(mouse.Position));
     bool clickedOxCarryPanel =
       wasLeftClick && HandleOxCarryPanelClick(ToUiPoint(mouse.Position));
     bool clickedCarryThrowPanel =
@@ -543,7 +546,7 @@ internal sealed partial class Game1 : Game
     bool clickedMercenaryPanel =
       wasLeftClick && HandleMercenaryPanelClick(ToUiPoint(mouse.Position));
 
-    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
+    if (!planningInput && !clickedPurchasePanel && !clickedInitialBuyStop && !clickedSkipTurn && !clickedDebugTeamSwitch && !clickedEngineerPanel && !clickedCodexBuilderPanel && !clickedOxCarryPanel && !clickedCarryThrowPanel && !clickedMercenaryPanel && (wasLeftClick || wasRightClick))
     {
       const int cellSize = 64;
       int boardX = (int)MathF.Floor(mouseWorldBefore.X / cellSize) + _board.MinX;
@@ -2476,6 +2479,8 @@ internal sealed partial class Game1 : Game
           UnitRules.FromPieceDefinition(target.Definition), target.Position, 3),
       PieceType.Hacker => target is not null && target.Team != actor.Team && target.Team != TeamName.Neutral &&
         actor.AbilityState.CooldownOwnerTurns <= 0 && IsWithinLocalCircleRange(actor, target, 5),
+      PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith =>
+        CanUseCodexBuilderAbilityAt(actor, targetPosition, target),
       PieceType.Engineer => true,
       PieceType.Demolitionist =>
         (_abilityEntities.Any(entity =>
@@ -2536,6 +2541,8 @@ internal sealed partial class Game1 : Game
       ? "Protect"
       : actor.Definition.Type == PieceType.Hacker
       ? "Hack"
+      : IsCodexBuilder(actor.Definition.Type)
+      ? GetSelectedCodexBuilderAbility(actor)
       : actor.Definition.Type == PieceType.Engineer
       ? _selectedEngineerAbility.ToString()
       : actor.Definition.Type == PieceType.Demolitionist
@@ -2556,7 +2563,8 @@ internal sealed partial class Game1 : Game
       ability,
       target?.NetworkId,
       AdvancedAbilityRules.IsUpkeepFireUnit(actor.Definition.Type.ToString()) ? actor.Position : targetPosition);
-    return true;
+    return !IsCodexBuilder(actor.Definition.Type) ||
+      CodexBuilderSelectionCompletesAction(actor, ability);
   }
 
   private async System.Threading.Tasks.Task SendOnlineSpecialAsync(
@@ -4145,6 +4153,11 @@ internal sealed partial class Game1 : Game
       return TryUseGiantOrCyclopsAbility(actor, targetPosition, targetPiece);
     }
 
+    if (IsCodexBuilder(actor.Definition.Type))
+    {
+      return TryUseCodexBuilderAbility(actor, targetPosition, targetPiece);
+    }
+
     if (actor.Definition.Type == PieceType.Harvester &&
         targetPiece is null &&
         CanAttackSquareWithAttachments(actor, targetPosition) &&
@@ -5560,6 +5573,26 @@ internal sealed partial class Game1 : Game
     else if (GetEngineerNextButtonBounds().Contains(mousePosition))
     {
       CycleEngineerAbility(1);
+    }
+
+    return true;
+  }
+
+  private bool HandleCodexBuilderAbilityClick(Point mousePosition)
+  {
+    if (selectedPiece is null || !IsCodexBuilder(selectedPiece.Definition.Type) ||
+        !GetSelectedPiecePanelBounds().Contains(mousePosition))
+    {
+      return false;
+    }
+
+    if (GetEngineerPreviousButtonBounds().Contains(mousePosition))
+    {
+      CycleCodexBuilderAbility(selectedPiece, -1);
+    }
+    else if (GetEngineerNextButtonBounds().Contains(mousePosition))
+    {
+      CycleCodexBuilderAbility(selectedPiece, 1);
     }
 
     return true;
@@ -10574,18 +10607,22 @@ internal sealed partial class Game1 : Game
     );
     _ui.StatBlock(
       UiLayout.HorizontalSlot(actionGrid, 2, 1, UiTheme.SpaceSm),
-      selectedPiece.Definition.Type == PieceType.Engineer ? "ABILITY" : "ATTACK",
+      selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type) ? "ABILITY" : "ATTACK",
       canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn
         ? "USED"
         : selectedPiece.Definition.Type == PieceType.Engineer
           ? $"{_selectedEngineerAbility.ToString().ToUpperInvariant()} ({2 - selectedPiece.EngineerBuildsThisTurn})"
-          : selectedPiece.Definition.Attack.ToString(),
+          : IsCodexBuilder(selectedPiece.Definition.Type)
+            ? GetCodexBuilderStatusLabel(selectedPiece)
+            : selectedPiece.Definition.Attack.ToString(),
       canActWithSelectedPiece && selectedPiece.HasAttackedThisTurn ? UiTheme.TextDim : UiTheme.Attack
     );
     Rectangle rangeRow = new(content.X, actionGrid.Bottom + UiTheme.SpaceSm, content.Width, 44);
     _ui.StatBlock(
       rangeRow,
-      selectedPiece.Definition.Type == PieceType.Engineer ? "BUILD RANGE" : "ATTACK RANGE",
+      selectedPiece.Definition.Type == PieceType.Engineer || IsCodexBuilder(selectedPiece.Definition.Type)
+        ? "BUILD RANGE"
+        : "ATTACK RANGE",
       UiText.FormatAction(selectedPiece.Definition.AttackRange, selectedPiece.Definition.AttackPattern),
       UiTheme.TextPrimary
     );
@@ -10605,7 +10642,8 @@ internal sealed partial class Game1 : Game
     int abilityInfoY = rangeRow.Bottom + UiTheme.SpaceMd + 44;
     int abilityInfoBottom = selectedPiece.Definition.Type switch
     {
-      PieceType.Engineer => GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
+      PieceType.Engineer or PieceType.Mason or PieceType.Daedalus or PieceType.Runesmith =>
+        GetEngineerAbilityBounds().Y - UiTheme.SpaceSm,
       PieceType.Ox => GetOxCargoButtonBounds().Y - UiTheme.SpaceSm,
       PieceType.Guard => GetGuardControlBounds().Y - UiTheme.SpaceSm,
       PieceType.Giant or PieceType.Cyclops => GetCarryThrowButtonBounds().Y - UiTheme.SpaceSm,
@@ -10623,6 +10661,12 @@ internal sealed partial class Game1 : Game
     if (selectedPiece.Definition.Type == PieceType.Engineer)
     {
       DrawEngineerAbilityControls();
+      return;
+    }
+
+    if (IsCodexBuilder(selectedPiece.Definition.Type))
+    {
+      DrawCodexBuilderAbilityControls();
       return;
     }
 
@@ -10763,6 +10807,22 @@ internal sealed partial class Game1 : Game
     _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.58f);
   }
 
+  private void DrawCodexBuilderAbilityControls()
+  {
+    Rectangle row = GetEngineerAbilityBounds();
+    Rectangle valueBounds = GetEngineerAbilityValueBounds();
+    string ability = GetSelectedCodexBuilderAbility(selectedPiece);
+    string title = GetCodexBuilderDisplayTitle(ability);
+    string detail = GetCodexBuilderDetail(selectedPiece.Definition.Type, ability);
+
+    _ui.Text("BUILDER ABILITY", new Vector2(row.X, row.Y), UiTheme.Gold, 0.68f);
+    DrawMenuButton(GetEngineerPreviousButtonBounds(), "<", UiButtonTone.Neutral);
+    DrawPanel(valueBounds, UiTheme.PanelRaised, UiTheme.Gold);
+    _ui.CenterText(title, valueBounds, UiTheme.TextPrimary, 0.68f);
+    DrawMenuButton(GetEngineerNextButtonBounds(), ">", UiButtonTone.Neutral);
+    _ui.Text(detail, new Vector2(row.X, row.Bottom - 16), UiTheme.TextMuted, 0.54f);
+  }
+
   private Piece GetOxCargo(Piece ox)
   {
     return ox.AttachmentKind == AttachmentKind.Carried ? ox.AttachedTo : null;
@@ -10790,6 +10850,13 @@ internal sealed partial class Game1 : Game
       return piece.HasAttackedThisTurn && _selectedEngineerAbility != EngineerAbility.Demolish
         ? "ABILITY USED THIS TURN"
         : "RIGHT-CLICK to use the selected ability";
+    }
+
+    if (IsCodexBuilder(piece.Definition.Type))
+    {
+      return piece.HasAttackedThisTurn
+        ? "ABILITY USED THIS TURN"
+        : "RIGHT-CLICK to use the selected build/demolish ability";
     }
 
     if (piece.HasAttackedThisTurn)
