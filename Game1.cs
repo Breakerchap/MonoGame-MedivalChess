@@ -597,7 +597,20 @@ internal sealed partial class Game1 : Game
       }
       else if (selectedPiece.Occupies(targetPosition) && !wasRightClick)
       {
-        selectedPiece = null;
+        Piece attachedShadow = selectedPiece.AttachmentKind == AttachmentKind.Shadow
+          ? null
+          : pieceSetup.Pieces.FirstOrDefault(piece =>
+              piece.AttachedTo == selectedPiece &&
+              piece.AttachmentKind == AttachmentKind.Shadow &&
+              piece.Team == Team.CurrentTurn);
+        if (attachedShadow is not null)
+        {
+          SelectPiece(attachedShadow, allowAttachedPiece: true);
+        }
+        else
+        {
+          selectedPiece = null;
+        }
       }
       else if (
         wasLeftClick &&
@@ -1074,10 +1087,12 @@ internal sealed partial class Game1 : Game
 
     bool isOpeningFarmPlacement = _initialBuyPhase?.IsFarmPlacementPhase == true && definition.Type == PieceType.Farm;
     int selectedPurchasePrice = GetSelectedPurchasePrice(definition);
+    bool specialPurchasePlacement = CanPlaceSpecialPurchase(definition, targetPosition);
     bool canPlace =
-      (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
+      (specialPurchasePlacement ||
+       (AbilityRules.MayPlaceInNoMansLand(definition.Type.ToString())
         ? CanPlaceNoMansLand(definition, targetPosition)
-        : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)) &&
+        : CanPlacePiece(definition, targetPosition, Team.CurrentTurn))) &&
       (isOpeningFarmPlacement || buyingTeam.Money >=
         (long)selectedPurchasePrice + AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString()));
 
@@ -1094,7 +1109,28 @@ internal sealed partial class Game1 : Game
       AdvancedAbilityRules.GetImmediateGoldUpkeep(definition.Type.ToString());
     buyingTeam.Money = ClampCurrency((long)buyingTeam.Money - price - immediateUpkeep);
     int qilinCost = definition.Type == PieceType.Qilin ? price : 0;
-    Piece boughtPiece = new(definition, targetPosition, buyingTeam.TeamName)
+    (int x, int y) purchasePlacement = targetPosition;
+    Piece purchaseHost = null;
+    if (definition.Type == PieceType.Shadow)
+    {
+      if (!TryGetLocalShadowHost(targetPosition, out purchaseHost))
+      {
+        return;
+      }
+      purchasePlacement = purchaseHost.Position;
+    }
+    else if (definition.Type == PieceType.Archdemon)
+    {
+      if (!TryGetLocalArchdemonSacrifice(
+            definition, targetPosition, out Piece sacrifice, out purchasePlacement))
+      {
+        return;
+      }
+      RemoveLocalShadowsAttachedTo(sacrifice);
+      pieceSetup.RemovePiece(sacrifice);
+    }
+
+    Piece boughtPiece = new(definition, purchasePlacement, buyingTeam.TeamName)
     {
       LastBid = price,
       CurrentHealth = definition.Type == PieceType.Qilin
@@ -1108,9 +1144,13 @@ internal sealed partial class Game1 : Game
         : new UnitAbilityState()
     };
     pieceSetup.AddPiece(boughtPiece);
+    if (definition.Type == PieceType.Shadow && purchaseHost is not null)
+    {
+      pieceSetup.Attach(boughtPiece, purchaseHost, AttachmentKind.Shadow);
+    }
 
     Console.WriteLine(
-      $"Bought and placed {definition.Type} at ({targetPosition.x}, {targetPosition.y})."
+      $"Bought and placed {definition.Type} at ({purchasePlacement.x}, {purchasePlacement.y})."
     );
 
     CompletePurchase();
@@ -3233,6 +3273,7 @@ internal sealed partial class Game1 : Game
     bool isEligibleForPurchase =
       !(definition.Type == PieceType.Mercenary && _initialBuyPhase != null) &&
       (isNeutralMercenaryHire ||
+       CanPlaceSpecialPurchase(definition, targetPosition) ||
        (definition.Type == PieceType.Mercenary
          ? CanPlaceMercenary(targetPosition)
          : CanPlacePiece(definition, targetPosition, Team.CurrentTurn)));
@@ -4071,6 +4112,7 @@ internal sealed partial class Game1 : Game
       ClearLocalPetrificationBy(damagedPiece.NetworkId);
     }
 
+    RemoveLocalShadowsAttachedTo(damagedPiece);
     RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
 
     if (damagedPiece.Definition.Type == PieceType.Phantom)
@@ -5274,7 +5316,7 @@ internal sealed partial class Game1 : Game
   {
     UnitRule rule = ApplyLocalAttachmentBonuses(
       attacker, UnitRules.FromPieceDefinition(attacker.Definition));
-    if (attacker.Definition.Type == PieceType.Catapult) return true;
+    if (AbilityRules.AttacksOverObstacles(rule)) return true;
     return LineOfSightRules.HasClearAttackPath(
       rule,
       attacker.OccupiedSquares(),

@@ -97,7 +97,8 @@ public static class AbilityRules
     attachmentType == nameof(PieceType.Ox);
 
   public static bool AttacksOverObstacles(UnitRule unit) =>
-    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Sorceress) or nameof(PieceType.Banshee);
+    unit.Type is nameof(PieceType.Catapult) or nameof(PieceType.Sorceress) or
+      nameof(PieceType.Banshee) or nameof(PieceType.Shadow);
 
   public static bool AttacksThroughForests(UnitRule unit) =>
     unit.Type is nameof(PieceType.Artemis) or nameof(PieceType.Sorceress);

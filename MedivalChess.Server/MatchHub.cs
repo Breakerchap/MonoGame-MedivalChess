@@ -596,7 +596,8 @@ public sealed partial class MatchStore
       }
       bool carriedCargoMayAttackHost = attacker.AttachmentKind == NetworkAttachmentKind.Carried &&
         target is not null && attacker.AttachedToId == target.Id && target.Team != attacker.Team;
-      if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost)
+      bool attachedShadowMayAttack = attacker.AttachmentKind == NetworkAttachmentKind.Shadow;
+      if (attacker.AttachedToId is not null && !carriedCargoMayAttackHost && !attachedShadowMayAttack)
       {
         return new(false, "An attached unit may only attack its carrier.", foundMatch.State());
       }
@@ -1027,13 +1028,41 @@ public sealed partial class MatchStore
         return new(false, "Place an affordable unit on an empty square on your side.", foundMatch.State());
       }
 
+      NetworkPiece? specialHost = null;
+      (int x, int y) placement = (request.X, request.Y);
+      if (unit.Type == nameof(PieceType.Shadow))
+      {
+        specialHost = GetServerSpecialPurchaseHost(
+          foundMatch, player.Team, request.X, request.Y, requireNonRoyal: true);
+        if (specialHost is null)
+        {
+          return new(false, "Shadow must be placed on a friendly non-Royal unit.", foundMatch.State());
+        }
+        placement = (specialHost.X, specialHost.Y);
+      }
+      else if (unit.Type == nameof(PieceType.Archdemon))
+      {
+        if (!TryGetServerArchdemonPlacement(
+              foundMatch, player.Team, request.X, request.Y, unit.Width, unit.Height,
+              out specialHost, out placement))
+        {
+          return new(false, "Archdemon must replace one friendly unit in a legal footprint.", foundMatch.State());
+        }
+        RemoveServerShadowsAttachedTo(foundMatch, specialHost!.Id);
+        RemovePiece(foundMatch, specialHost.Id);
+      }
+
       if (!isOpeningFarmPlacement)
       {
         player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       }
       foundMatch.Pieces.Add(new NetworkPiece(
-        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y,
+        Guid.NewGuid().ToString("N"), unit.Type, player.Team, placement.x, placement.y,
         isOpeningFarmPlacement ? unit.Health : purchaseHealth,
+        AttachedToId: unit.Type == nameof(PieceType.Shadow) ? specialHost?.Id : null,
+        AttachmentKind: unit.Type == nameof(PieceType.Shadow)
+          ? NetworkAttachmentKind.Shadow
+          : NetworkAttachmentKind.None,
         LastBid: isOpeningFarmPlacement ? 0 : purchaseCost,
         AbilityState: isOpeningFarmPlacement ? new UnitAbilityState() : purchaseState));
       buyPhase.RecordPurchase();
@@ -1133,11 +1162,39 @@ public sealed partial class MatchStore
         return new(false, "Place an affordable unit on a valid empty square.", foundMatch.State());
       }
 
+      NetworkPiece? specialHost = null;
+      (int x, int y) placement = (request.X, request.Y);
+      if (unit.Type == nameof(PieceType.Shadow))
+      {
+        specialHost = GetServerSpecialPurchaseHost(
+          foundMatch, player.Team, request.X, request.Y, requireNonRoyal: true);
+        if (specialHost is null)
+        {
+          return new(false, "Shadow must be placed on a friendly non-Royal unit.", foundMatch.State());
+        }
+        placement = (specialHost.X, specialHost.Y);
+      }
+      else if (unit.Type == nameof(PieceType.Archdemon))
+      {
+        if (!TryGetServerArchdemonPlacement(
+              foundMatch, player.Team, request.X, request.Y, unit.Width, unit.Height,
+              out specialHost, out placement))
+        {
+          return new(false, "Archdemon must replace one friendly unit in a legal footprint.", foundMatch.State());
+        }
+        RemoveServerShadowsAttachedTo(foundMatch, specialHost!.Id);
+        RemovePiece(foundMatch, specialHost.Id);
+      }
+
       player.Money = ClampCurrency((long)player.Money - purchaseCost - immediateUpkeep);
       foundMatch.Pieces.Add(new NetworkPiece(
-        Guid.NewGuid().ToString("N"), unit.Type, player.Team, request.X, request.Y, purchaseHealth,
+        Guid.NewGuid().ToString("N"), unit.Type, player.Team, placement.x, placement.y, purchaseHealth,
         HasMovedThisTurn: true,
         HasAttackedThisTurn: true,
+        AttachedToId: unit.Type == nameof(PieceType.Shadow) ? specialHost?.Id : null,
+        AttachmentKind: unit.Type == nameof(PieceType.Shadow)
+          ? NetworkAttachmentKind.Shadow
+          : NetworkAttachmentKind.None,
         LastBid: purchaseCost,
         CannotContributeToConquestThisTurn: true,
         AbilityState: purchaseState
@@ -1473,6 +1530,17 @@ public sealed partial class MatchStore
     bool initialBuy
   )
   {
+    if (unit.Type == nameof(PieceType.Shadow))
+    {
+      return GetServerSpecialPurchaseHost(
+        match, team, x, y, requireNonRoyal: true) is not null;
+    }
+    if (unit.Type == nameof(PieceType.Archdemon))
+    {
+      return TryGetServerArchdemonPlacement(
+        match, team, x, y, unit.Width, unit.Height, out _, out _);
+    }
+
     bool inValidTerritory = AbilityRules.MayPlaceInNoMansLand(unit.Type) && !initialBuy
       ? NetworkBoardRules.CanPlaceMercenary(match.Configuration, x, y)
       : NetworkBoardRules.CanPlaceForTeam(match.Configuration, team, x, y, unit.Width, unit.Height);
@@ -1713,7 +1781,7 @@ public sealed partial class MatchStore
   {
     if (!UnitRules.TryGet(attacker.Type, out UnitRule attackerRule)) return false;
     attackerRule = ApplySharedServerAttachmentBonuses(match, attacker, attackerRule);
-    if (attackerRule.Type == "Catapult") return true;
+    if (AbilityRules.AttacksOverObstacles(attackerRule)) return true;
 
     return LineOfSightRules.HasClearAttackPath(
       attackerRule,
@@ -1963,6 +2031,8 @@ public sealed partial class MatchStore
     {
       ClearServerPetrificationBy(match, defeatedPiece.Id);
     }
+
+    RemoveServerShadowsAttachedTo(match, defeatedPiece.Id);
 
     if (defeatedPiece.Type == nameof(PieceType.Phantom))
     {

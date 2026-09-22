@@ -887,4 +887,77 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static NetworkPiece? GetServerSpecialPurchaseHost(
+    Match match,
+    NetworkTeam team,
+    int x,
+    int y,
+    bool requireNonRoyal)
+  {
+    return match.Pieces.FirstOrDefault(piece =>
+      piece.Team == team &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      (!requireNonRoyal || !RoyalAbilityRules.IsRoyal(piece.Type, piece.IsRoyalProxy, piece.PossessedUnitId)) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        x, y, 1, 1));
+  }
+
+  private static bool TryGetServerArchdemonPlacement(
+    Match match,
+    NetworkTeam team,
+    int clickedX,
+    int clickedY,
+    int width,
+    int height,
+    out NetworkPiece? sacrifice,
+    out (int x, int y) placement)
+  {
+    sacrifice = GetServerSpecialPurchaseHost(
+      match, team, clickedX, clickedY, requireNonRoyal: false);
+    placement = sacrifice is null ? (clickedX, clickedY) : (sacrifice.X, sacrifice.Y);
+    if (sacrifice is null ||
+        !NetworkPieceRules.FootprintFitsBoard(
+          match.Configuration, placement.x, placement.y, width, height))
+    {
+      return false;
+    }
+
+    for (int y = 0; y < height; y++)
+    for (int x = 0; x < width; x++)
+    {
+      (int x, int y) square = (placement.x + x, placement.y + y);
+      if (match.Terrain.IsLake(square) || match.Barricades.ContainsKey(square))
+      {
+        return false;
+      }
+    }
+
+    return !match.Pieces.Any(piece =>
+      piece.Id != sacrifice.Id &&
+      piece.AttachedToId is null &&
+      piece.Type != nameof(PieceType.Farm) &&
+      UnitRules.TryGet(piece.Type, out UnitRule rule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, rule.Width, rule.Height,
+        placement.x, placement.y, width, height));
+  }
+
+  private static void RemoveServerShadowsAttachedTo(Match match, string hostId)
+  {
+    foreach (string shadowId in match.Pieces
+      .Where(piece =>
+        piece.AttachedToId == hostId &&
+        piece.AttachmentKind == NetworkAttachmentKind.Shadow)
+      .Select(piece => piece.Id)
+      .ToArray())
+    {
+      RemovePiece(match, shadowId);
+    }
+  }
+
+
 }

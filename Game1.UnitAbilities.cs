@@ -802,4 +802,71 @@ internal sealed partial class Game1
   }
 
 
+
+  private bool TryGetLocalShadowHost((int x, int y) position, out Piece host)
+  {
+    host = GetUnattachedPieceAt(position, Team.CurrentTurn);
+    return host is not null &&
+      host.Definition.Type != PieceType.Farm &&
+      !host.IsRoyal;
+  }
+
+  private bool TryGetLocalArchdemonSacrifice(
+    PieceDefinition archdemon,
+    (int x, int y) clickedPosition,
+    out Piece sacrifice,
+    out (int x, int y) placement)
+  {
+    sacrifice = GetUnattachedPieceAt(clickedPosition, Team.CurrentTurn);
+    placement = sacrifice?.Position ?? clickedPosition;
+    if (sacrifice is null || sacrifice.Definition.Type == PieceType.Farm)
+    {
+      return false;
+    }
+
+    if (!IsFootprintOnBoard(archdemon, placement))
+    {
+      return false;
+    }
+
+    foreach ((int x, int y) square in OccupiedSquares(archdemon, placement))
+    {
+      if (!IsTraversableTerrainSquare(square))
+      {
+        return false;
+      }
+    }
+
+    return !pieceSetup.Pieces.Any(piece =>
+      piece != sacrifice &&
+      piece.AttachedTo is null &&
+      piece.Definition.Type != PieceType.Farm &&
+      UnitRules.FootprintsOverlap(
+        piece.Position.x, piece.Position.y, piece.Definition.Size.x, piece.Definition.Size.y,
+        placement.x, placement.y, archdemon.Size.x, archdemon.Size.y));
+  }
+
+  private bool CanPlaceSpecialPurchase(
+    PieceDefinition definition,
+    (int x, int y) clickedPosition)
+  {
+    return definition.Type switch
+    {
+      PieceType.Shadow => TryGetLocalShadowHost(clickedPosition, out _),
+      PieceType.Archdemon => TryGetLocalArchdemonSacrifice(
+        definition, clickedPosition, out _, out _),
+      _ => false
+    };
+  }
+
+  private void RemoveLocalShadowsAttachedTo(Piece host)
+  {
+    foreach (Piece shadow in pieceSetup.Pieces.Where(piece =>
+      piece.AttachedTo == host && piece.AttachmentKind == AttachmentKind.Shadow).ToArray())
+    {
+      pieceSetup.RemovePiece(shadow);
+    }
+  }
+
+
 }

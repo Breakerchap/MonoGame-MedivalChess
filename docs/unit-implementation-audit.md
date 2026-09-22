@@ -60,7 +60,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `undead.skeleton_minion` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `undead.ghoul` | Verified | Four-owner-turn expiry is implemented. |
 | `undead.vampire` | Verified | Post-attack healing is implemented and capped. |
-| `undead.shadow` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `undead.shadow` | Verified | Purchase placement now requires a friendly non-Royal host and attaches the Shadow to it. It follows the host, is selectable as an attached attack piece by clicking the host again, cannot be directly targeted, ignores terrain/units for line of sight, and is removed when its host dies. Local and authoritative online/server behaviour are wired. |
 | `undead.wendigo` | Verified | Friendly normal attacks, attack counting, and end-owner-turn death after zero attacks are wired in local/server/CPU with green CPU runtime coverage. |
 | `undead.will_o_wisp` | Verified | Settle and adjacent Wisp spawning are wired across local/server/CPU and online play; green CPU runtime coverage verifies settled movement lock and spawned-Wisp attack consumption. |
 | `undead.wisp` | Verified | Shared local/server/CPU attack plans self-destruct Wisp immediately after it attacks, with green CPU runtime regression coverage. |
@@ -142,7 +142,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `angels_demons.mashhit` | Verified | Terrain/Structure destruction in attack range is wired across local/server/CPU, including ability entities and engineering structures; CPU runtime coverage verifies structure destruction. |
 | `angels_demons.succubus` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.archangel` | Verified | Placement is restricted to otherwise-legal squares adjacent (including diagonally) to the owning team's current Royal across local/server/CPU, including Royal proxies; CPU purchase coverage verifies adjacent acceptance and non-adjacent rejection. |
-| `angels_demons.archdemon` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `angels_demons.archdemon` | Verified | Purchase placement now requires one friendly non-Structure unit under the Archdemon footprint. The 2×2 footprint must fit legal terrain, may be centred from a sacrifice in No-Man's-Land or the normal placement area, the sacrificed unit is removed, and the Archdemon is placed at that unit's position in local and authoritative online/server play. |
 | `angels_demons.imp` | Verified | Imp active attachment is wired across local/server/CPU and online play with one Imp per host; the host dynamically gains +1 Move and +15 Attack and loses 5 Health at each owner-turn start. Shared and CPU runtime coverage is green. |
 | `angels_demons.herald` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
 | `angels_demons.satan` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
@@ -256,3 +256,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - Qilin purchases now charge the chosen X, initialise at `20 + X/2` Health, and use X for death refunds and percentage-based maintenance rather than silently reverting to the catalogue's X=40 baseline.
 - Health displays now use effective maximum Health, which also fixes display accuracy for Command Centre maximum-Health upgrades.
 - Added focused shared regression coverage for valid Qilin costs and effective stat resolution.
+
+
+### 2026-09-22 — Shadow and Archdemon purchase-placement batch
+
+- Implemented Shadow as a true purchase-time attachment rather than an ordinary empty-square purchase. It must be bought onto a friendly non-Royal unit, inherits the host's position and movement through the existing attachment system, and cannot be purchased onto empty terrain.
+- Added a simple player-facing selection path for attached Shadows: clicking a selected host again selects one attached Shadow for its independent attack.
+- Allowed attached Shadows to attack on the authoritative server while keeping ordinary attachment attack restrictions intact. Shadow attacks now use the shared obstacle-ignoring LOS rule, and the existing direct-target immunity prevents separate targeting.
+- Shadow attachments are explicitly removed when their host dies instead of being detached and left behind.
+- Implemented Archdemon purchase placement on top of one friendly non-Farm unit. Its full 2×2 footprint must fit the board and traversable terrain without overlapping another ordinary unit; the sacrificed unit is removed before the Archdemon is created at its position. This works in normal territory and No-Man's-Land as required by the codex.
+- Added focused shared coverage confirming Shadow's LOS and direct-target rules. CPU purchase behaviour was not expanded.

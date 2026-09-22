@@ -645,4 +645,15 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void ShadowIgnoresLineOfSightBlockers()
+  {
+    Assert.True(AbilityRules.AttacksOverObstacles(
+      UnitRules.GetRequired(nameof(PieceType.Shadow))));
+    Assert.False(AdvancedAbilityRules.CanTakeDirectDamage(
+      nameof(PieceType.Shadow), new UnitAbilityState()));
+  }
+
+
 }
