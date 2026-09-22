@@ -817,4 +817,22 @@ public sealed class SharedAbilityRulesTests
   }
 
 
+
+  [Fact]
+  public void FlyingLongboatTracksPassengerOrderAndCapacity()
+  {
+    UnitAbilityState state = new();
+    state = AdvancedAbilityRules.RecordLongboatBoarding(state, "a");
+    state = AdvancedAbilityRules.RecordLongboatBoarding(state, "b");
+    state = AdvancedAbilityRules.RecordLongboatBoarding(state, "c");
+
+    Assert.Equal(new[] { "a", "b", "c" }, state.PassengerIds);
+    Assert.False(AdvancedAbilityRules.CanLongboatBoard(state));
+
+    state = AdvancedAbilityRules.RecordLongboatDisembark(state, "b");
+    Assert.Equal(new[] { "a", "c" }, state.PassengerIds);
+    Assert.True(AdvancedAbilityRules.CanLongboatBoard(state));
+  }
+
+
 }

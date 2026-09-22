@@ -1521,4 +1521,188 @@ internal sealed partial class Game1
   }
 
 
+
+  private Piece GetLocalLongboatBoardTarget(Piece rider, (int x, int y) destination)
+  {
+    if (rider.AttachedTo is not null ||
+        rider.Definition.Size != (1, 1) ||
+        rider.Definition.Type == PieceType.FlyingLongboat)
+    {
+      return null;
+    }
+
+    Piece longboat = GetUnattachedPieceAt(destination, rider.Team);
+    if (longboat?.Definition.Type != PieceType.FlyingLongboat ||
+        pieceSetup.Pieces.Count(piece =>
+          piece.AttachedTo == longboat &&
+          piece.AttachmentKind == AttachmentKind.Passenger) >= 3)
+    {
+      return null;
+    }
+
+    return longboat;
+  }
+
+  private bool TryBoardLocalLongboat(Piece rider, (int x, int y) destination)
+  {
+    Piece longboat = GetLocalLongboatBoardTarget(rider, destination);
+    if (longboat is null)
+    {
+      return false;
+    }
+
+    if (!pieceSetup.Attach(rider, longboat, AttachmentKind.Passenger))
+    {
+      return false;
+    }
+
+    rider.HasMovedThisTurn = true;
+    rider.AbilityState = AdvancedAbilityRules.RecordMove(rider.AbilityState);
+    rider.AbilityState = rider.AbilityState with
+    {
+      CannotActThisTurn = true,
+      CannotMoveThisTurn = true
+    };
+    longboat.AbilityState = AdvancedAbilityRules.RecordLongboatBoarding(
+      longboat.AbilityState, rider.NetworkId);
+    return true;
+  }
+
+  private Piece GetNextLocalLongboatPassenger(Piece longboat, string afterPassengerId = null)
+  {
+    string[] orderedIds = longboat.AbilityState.PassengerIds
+      .Where(id => pieceSetup.Pieces.Any(piece =>
+        piece.NetworkId == id &&
+        piece.AttachedTo == longboat &&
+        piece.AttachmentKind == AttachmentKind.Passenger))
+      .ToArray();
+    if (orderedIds.Length == 0)
+    {
+      return null;
+    }
+
+    int index = string.IsNullOrWhiteSpace(afterPassengerId)
+      ? 0
+      : Array.FindIndex(orderedIds, id => id == afterPassengerId) + 1;
+    if (index < 0 || index >= orderedIds.Length)
+    {
+      index = 0;
+    }
+
+    return pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == orderedIds[index]);
+  }
+
+  private bool CanLocalLongboatPassengerDisembark(Piece passenger, (int x, int y) destination)
+  {
+    Piece longboat = passenger.AttachedTo;
+    if (passenger.AttachmentKind != AttachmentKind.Passenger ||
+        longboat?.Definition.Type != PieceType.FlyingLongboat ||
+        !AbilityRules.AreAdjacent(
+          UnitRules.FromPieceDefinition(longboat.Definition), longboat.Position,
+          UnitRules.FromPieceDefinition(passenger.Definition), destination,
+          includeDiagonal: true))
+    {
+      return false;
+    }
+
+    return CanDisplaceLocalPieceTo(passenger, destination);
+  }
+
+  private bool TryDisembarkLocalLongboatPassenger(
+    Piece passenger,
+    (int x, int y) destination,
+    Piece targetPiece)
+  {
+    if (targetPiece is not null ||
+        !CanLocalLongboatPassengerDisembark(passenger, destination))
+    {
+      return false;
+    }
+
+    Piece longboat = passenger.AttachedTo;
+    longboat.AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+      longboat.AbilityState, passenger.NetworkId);
+    pieceSetup.Detach(passenger);
+    passenger.Position = destination;
+    passenger.HasMovedThisTurn = true;
+    passenger.HasAttackedThisTurn = true;
+    passenger.AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(
+      passenger.Definition.Type.ToString());
+    passenger.AbilityState = passenger.AbilityState with
+    {
+      CannotActThisTurn = true,
+      CannotMoveThisTurn = true
+    };
+    pieceSetup.RefreshOccupancy();
+    CompleteAction();
+    return true;
+  }
+
+
+  private void RemoveLocalLongboatPassengerReference(Piece passenger)
+  {
+    if (passenger.AttachmentKind != AttachmentKind.Passenger ||
+        passenger.AttachedTo?.Definition.Type != PieceType.FlyingLongboat)
+    {
+      return;
+    }
+
+    Piece longboat = passenger.AttachedTo;
+    longboat.AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+      longboat.AbilityState, passenger.NetworkId);
+  }
+
+  private void ReleaseLocalLongboatPassengers(Piece longboat)
+  {
+    if (longboat.Definition.Type != PieceType.FlyingLongboat)
+    {
+      return;
+    }
+
+    string[] boardingOrder = longboat.AbilityState.PassengerIds.ToArray();
+    foreach (string passengerId in boardingOrder)
+    {
+      Piece passenger = pieceSetup.Pieces.FirstOrDefault(piece =>
+        piece.NetworkId == passengerId &&
+        piece.AttachedTo == longboat &&
+        piece.AttachmentKind == AttachmentKind.Passenger);
+      if (passenger is null) continue;
+
+      pieceSetup.Detach(passenger);
+      (int x, int y)? destination = null;
+      foreach ((int x, int y) candidate in _board.Cells
+        .OrderBy(position => Math.Max(
+          Math.Abs(position.x - longboat.Position.x),
+          Math.Abs(position.y - longboat.Position.y)))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x))
+      {
+        if (CanDisplaceLocalPieceTo(passenger, candidate))
+        {
+          destination = candidate;
+          break;
+        }
+      }
+
+      if (destination is not null)
+      {
+        passenger.Position = destination.Value;
+        passenger.AbilityState = passenger.AbilityState with
+        {
+          CannotActThisTurn = true,
+          CannotMoveThisTurn = true
+        };
+        passenger.HasMovedThisTurn = true;
+        passenger.HasAttackedThisTurn = true;
+      }
+      pieceSetup.RefreshOccupancy();
+    }
+
+    longboat.AbilityState = longboat.AbilityState with
+    {
+      PassengerIds = Array.Empty<string>()
+    };
+  }
+
+
 }

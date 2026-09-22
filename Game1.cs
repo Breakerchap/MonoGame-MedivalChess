@@ -603,19 +603,43 @@ internal sealed partial class Game1 : Game
       }
       else if (selectedPiece.Occupies(targetPosition) && !wasRightClick)
       {
-        Piece attachedShadow = selectedPiece.AttachmentKind == AttachmentKind.Shadow
-          ? null
-          : pieceSetup.Pieces.FirstOrDefault(piece =>
-              piece.AttachedTo == selectedPiece &&
-              piece.AttachmentKind == AttachmentKind.Shadow &&
-              piece.Team == Team.CurrentTurn);
-        if (attachedShadow is not null)
+        if (selectedPiece.AttachmentKind == AttachmentKind.Passenger &&
+            selectedPiece.AttachedTo?.Definition.Type == PieceType.FlyingLongboat)
         {
-          SelectPiece(attachedShadow, allowAttachedPiece: true);
+          Piece nextPassenger = GetNextLocalLongboatPassenger(
+            selectedPiece.AttachedTo, selectedPiece.NetworkId);
+          if (nextPassenger is not null)
+          {
+            SelectPiece(nextPassenger, allowAttachedPiece: true);
+          }
+          else
+          {
+            SelectPiece(selectedPiece.AttachedTo);
+          }
         }
         else
         {
-          selectedPiece = null;
+          Piece attachedShadow = selectedPiece.AttachmentKind == AttachmentKind.Shadow
+            ? null
+            : pieceSetup.Pieces.FirstOrDefault(piece =>
+                piece.AttachedTo == selectedPiece &&
+                piece.AttachmentKind == AttachmentKind.Shadow &&
+                piece.Team == Team.CurrentTurn);
+          Piece firstPassenger = selectedPiece.Definition.Type == PieceType.FlyingLongboat
+            ? GetNextLocalLongboatPassenger(selectedPiece)
+            : null;
+          if (attachedShadow is not null)
+          {
+            SelectPiece(attachedShadow, allowAttachedPiece: true);
+          }
+          else if (firstPassenger is not null)
+          {
+            SelectPiece(firstPassenger, allowAttachedPiece: true);
+          }
+          else
+          {
+            selectedPiece = null;
+          }
         }
       }
       else if (
@@ -686,6 +710,7 @@ internal sealed partial class Game1 : Game
           if (_onlineClient != null)
           {
             bool canSendOnlineAttack =
+              selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
               (normalAttackTarget is not null ||
                _barricades.ContainsKey(targetPosition) ||
                selectedPiece.Definition.Type == PieceType.MissileSilo) &&
@@ -729,6 +754,7 @@ internal sealed partial class Game1 : Game
 
             bool isValidAttack =
               isBoardCell &&
+              selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
               AdvancedAbilityRules.CanAttack(
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
@@ -2522,6 +2548,15 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    if (actor.AttachmentKind == AttachmentKind.Passenger &&
+        actor.AttachedTo?.Definition.Type == PieceType.FlyingLongboat &&
+        target is null &&
+        CanLocalLongboatPassengerDisembark(actor, targetPosition))
+    {
+      _ = SendOnlineSpecialAsync(actor, "Disembark", null, targetPosition);
+      return true;
+    }
+
     if (target?.Definition.Type == PieceType.Helicopter)
     {
       return false;
@@ -3627,6 +3662,7 @@ internal sealed partial class Game1 : Game
       return true;
     }
 
+    bool longboatBoarding = GetLocalLongboatBoardTarget(piece, destination) is not null;
     bool landingAttack = CanLocalLandingAttackLand(piece, destination);
     bool ignoresTerrain = AbilityRules.IgnoresImpassableTerrain(rule);
     if (!IsFootprintOnBoard(piece.Definition, destination) ||
@@ -3641,7 +3677,7 @@ internal sealed partial class Game1 : Game
     {
       return false;
     }
-    return pieceSetup.IsFootprintClear(
+    return longboatBoarding || pieceSetup.IsFootprintClear(
       piece.Definition,
       destination,
       piece,
@@ -3681,6 +3717,11 @@ internal sealed partial class Game1 : Game
           continue;
         }
         if (GetLocalChessCaptureTarget(piece, rule, destination) == blockingPiece)
+        {
+          continue;
+        }
+        if (position == destination &&
+            GetLocalLongboatBoardTarget(piece, destination) == blockingPiece)
         {
           continue;
         }
@@ -4245,6 +4286,8 @@ internal sealed partial class Game1 : Game
       ApplyLocalLichDeathLink(damagedPiece, attackingTeamName);
     }
 
+    RemoveLocalLongboatPassengerReference(damagedPiece);
+    ReleaseLocalLongboatPassengers(damagedPiece);
     RemoveLocalShadowsAttachedTo(damagedPiece);
     RemoveSourceBoundLocalAbilityEntities(damagedPiece.NetworkId);
 
@@ -4386,6 +4429,12 @@ internal sealed partial class Game1 : Game
       actor.HasAttackedThisTurn = true;
       CompleteAction();
       return true;
+    }
+
+    if (actor.AttachmentKind == AttachmentKind.Passenger &&
+        actor.AttachedTo?.Definition.Type == PieceType.FlyingLongboat)
+    {
+      return TryDisembarkLocalLongboatPassenger(actor, targetPosition, targetPiece);
     }
 
     if (targetPiece?.Definition.Type == PieceType.Helicopter)
@@ -5262,8 +5311,12 @@ internal sealed partial class Game1 : Game
       return;
     }
     destination = ResolveLocalChessLandingCapture(movedPiece, completedAnimation.Path, destination);
-    MovePieceWithCompanions(movedPiece, destination);
-    ReleaseLocalPetrificationIfBroken(movedPiece);
+    bool boardedLongboat = TryBoardLocalLongboat(movedPiece, destination);
+    if (!boardedLongboat)
+    {
+      MovePieceWithCompanions(movedPiece, destination);
+      ReleaseLocalPetrificationIfBroken(movedPiece);
+    }
     if (usesCavalierFollowUpMove)
     {
       movedPiece.CavalierFollowUpMoveAvailable = false;

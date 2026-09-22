@@ -469,6 +469,31 @@ public sealed partial class MatchStore
 
       int pieceIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
       if (pieceIndex < 0) return new(false, "That unit is no longer on the board.", foundMatch.State());
+
+      if (TryBoardServerLongboat(foundMatch, pieceIndex, landingResolvedDestination))
+      {
+        piece = foundMatch.Pieces[pieceIndex];
+        TriggerMinesAlongMovement(foundMatch, piece, movementPath);
+        TriggerServerAbilityEntitiesAlongMovement(foundMatch, piece.Id, movementPath);
+        int boardedIndex = foundMatch.Pieces.FindIndex(candidate => candidate.Id == piece.Id);
+        if (boardedIndex >= 0)
+        {
+          piece = foundMatch.Pieces[boardedIndex];
+          TryDeliverTreasure(foundMatch, piece);
+          if (IsEscortVictory(foundMatch, piece, piece.X, piece.Y))
+          {
+            foundMatch.Winner = piece.Team;
+          }
+        }
+        if (foundMatch.Winner is null)
+        {
+          SpendAction(foundMatch, player);
+        }
+        foundMatch.Version++;
+        foundMatch.Touch();
+        return new(true, null, foundMatch.State());
+      }
+
       int oldX = piece.X;
       int oldY = piece.Y;
       (int finalX, int finalY) = chessCaptureSurvived
@@ -760,7 +785,9 @@ public sealed partial class MatchStore
       bool carryThrow = AbilityRules.IsCarryThrowUnit(actor.Type) &&
         (string.Equals(request.Ability, "Carry", StringComparison.OrdinalIgnoreCase) ||
          string.Equals(request.Ability, "Throw", StringComparison.OrdinalIgnoreCase));
-      if (!plunderPickup && !carryThrow &&
+      bool longboatDisembark = actor.AttachmentKind == NetworkAttachmentKind.Passenger &&
+        string.Equals(request.Ability, "Disembark", StringComparison.OrdinalIgnoreCase);
+      if (!plunderPickup && !carryThrow && !longboatDisembark &&
           !AdvancedAbilityRules.IsUpkeepFireUnit(actor.Type) &&
           actor.Type != nameof(PieceType.Phantom) &&
           !CanUseActionSquare(actor, request.TargetX, request.TargetY))
@@ -782,6 +809,9 @@ public sealed partial class MatchStore
           nameof(PieceType.Mercenary) or nameof(PieceType.SummonedGolem) or
           nameof(PieceType.HiredGun) or nameof(PieceType.ContractDemon) =>
             TryFireUpkeepUnit(foundMatch, actorIndex, request.Ability),
+          _ when longboatDisembark =>
+            TryDisembarkServerLongboatPassenger(
+              foundMatch, actorIndex, request.TargetX, request.TargetY),
           _ => false
         };
       if (!applied) return new(false, "That special action has no valid target.", foundMatch.State());
@@ -1692,6 +1722,7 @@ public sealed partial class MatchStore
   {
     if (!IsServerLichDestinationWithinLink(match, piece, destination)) return false;
     if (CanServerChessCaptureLand(match, piece, rule, destination)) return true;
+    bool longboatBoarding = GetServerLongboatBoardTarget(match, piece, destination) is not null;
     bool landingAttack = CanServerLandingAttackLand(match, piece, rule, destination);
     if (!NetworkPieceRules.FootprintFitsBoard(match.Configuration, destination.x, destination.y, rule.Width, rule.Height)) return false;
     foreach ((int x, int y) square in OccupiedSquares(rule, destination))
@@ -1713,6 +1744,7 @@ public sealed partial class MatchStore
       (rule.Type == "Farm" || other.Type != "Farm") &&
       (!AbilityRules.IsTrampleAttacker(rule) || other.Team == piece.Team) &&
       (!landingAttack || other.Team == piece.Team) &&
+      (!longboatBoarding || other.Type != nameof(PieceType.FlyingLongboat)) &&
       NetworkPieceRules.FootprintsOverlap(other, destination.x, destination.y, rule.Width, rule.Height))) return false;
 
     return true;
@@ -1761,7 +1793,9 @@ public sealed partial class MatchStore
           UnitRules.TryGet(other.Type, out UnitRule otherRule) &&
           UnitRules.FootprintsOverlap(other.X, other.Y, otherRule.Width, otherRule.Height, square.x, square.y, 1, 1));
         if (blocker is not null && !AbilityRules.CanTravelThroughUnit(rule, piece.Team, blocker.Team) &&
-            GetServerChessCaptureTarget(match, piece, rule, position) != blocker) return false;
+            GetServerChessCaptureTarget(match, piece, rule, position) != blocker &&
+            !(position == destination &&
+              GetServerLongboatBoardTarget(match, piece, destination)?.Id == blocker.Id)) return false;
       }
 
     return true;
@@ -2099,6 +2133,8 @@ public sealed partial class MatchStore
       ApplyServerLichDeathLink(match, defeatedPiece, attackingPlayer);
     }
 
+    RemoveServerLongboatPassengerReference(match, defeatedPiece);
+    ReleaseServerLongboatPassengers(match, defeatedPiece);
     RemoveServerShadowsAttachedTo(match, defeatedPiece.Id);
 
     if (defeatedPiece.Type == nameof(PieceType.Phantom))

@@ -95,7 +95,7 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 | `norse.shieldsman` | Verified | Shieldsman attachment is wired across local/server/CPU and online play, limited to friendly non-Royals with one Shieldsman per host; incoming host damage is redirected to the Shieldsman. CPU runtime coverage is green. |
 | `norse.runesmith` | Verified | All four Rune builds, non-stacking Rune auras, and free demolition are wired across local/server/CPU and online play with local ability-mode selection. |
 | `norse.serpent` | Partial | Implements the 1x1, 40-Health segment baseline; formation spawning/reconnection remains a board-entity task. |
-| `norse.flying_longboat` | Partial | Core definition is loaded; special behaviour requires a runtime hook. |
+| `norse.flying_longboat` | Verified | Friendly unattached 1×1 units may board by ending movement on the Longboat, up to three passengers. Passenger boarding order is persisted, riders move with the Longboat and cannot act while aboard, attached riders can be cycled/selected through the Longboat and disembark onto a legal adjacent tile as their action, and Longboat death places surviving riders onto nearest legal tiles in boarding order. Local and authoritative server paths are wired. |
 | `norse.fafnir` | Verified | Its 125-gold active transformation is wired in local/online/server play, requires the resulting 3×3 Fafnir Dragon footprint to fit the board, replaces Fafnir with the Dragon at full Dragon Health, and consumes the once-per-owner-turn ability use. |
 | `norse.fafnir_dragon` | Verified | Fafnir Dragon inherits shared terrain immunity; transformation destroys overlapping terrain and Structures, destroys overlapping Farm structures, and pushes other overlapping units with their attachments to the nearest legal empty positions in local/server play. |
 | `norse.fylgja` | Verified | Its own terrain/unit-collision immunity remains shared. The attack ability is now a two-stage local/online/server action: first choose an unattached non-Structure unit in the Fylgja's attack range, then choose a legal destination reachable by a temporary 1–3 Square movement. The forced movement uses the target's current terrain/river/collision rules, moves attachments with the host, triggers movement hazards/effects and objectives, and consumes Fylgja's attack only when the move completes. |
@@ -358,3 +358,14 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - The Skinwalker copies the defeated unit's type and full base Health, then has both movement and action locked for the rest of that turn as required by the codex.
 - Larger copied forms first try to remain on the Skinwalker's current square; if their footprint cannot legally fit there, the transformed unit is moved to the nearest legal board position while keeping any attachments aligned.
 - Farm structures are excluded because the codex specifies killing a unit, not transforming into a Structure.
+
+
+### 2026-09-22 — Flying Longboat passenger lifecycle
+
+- Added persistent ordered passenger IDs to shared ability state, with shared board/disembark helpers and a hard capacity of three.
+- Friendly unattached 1×1 units can now board a Flying Longboat by moving onto any square of its footprint. Boarding consumes the rider's movement and attaches it as a Passenger so ordinary host movement automatically carries it.
+- Riders cannot make ordinary moves or attacks while aboard. Clicking the Longboat cycles through its passengers; right-clicking a legal adjacent empty tile disembarks the selected rider and prevents any further action that turn.
+- Online/server movement accepts the Longboat as a legal terminal occupied square for boarding without making it traversable as an intermediate blocker.
+- Longboat destruction detaches and places passengers on nearest legal board positions in recorded boarding order; passenger deaths/disembarks clean up the Longboat's ordered state.
+- Treasure delivery and Escort checks use the boarded rider's resulting position consistently in local and server play.
+- Added shared regression coverage for passenger ordering, removal, and capacity.

@@ -30,6 +30,7 @@ public sealed record UnitAbilityState
   public string? BountyTargetId { get; init; }
   public bool BountySelectionAvailable { get; init; }
   public IReadOnlyList<string> TargetIdsThisTurn { get; init; } = Array.Empty<string>();
+  public IReadOnlyList<string> PassengerIds { get; init; } = Array.Empty<string>();
   public string? PendingAbility { get; init; }
   public IReadOnlyList<AbilitySelection> PendingSelections { get; init; } = Array.Empty<AbilitySelection>();
   public bool Upgraded { get; init; }
@@ -342,6 +343,30 @@ public static class AdvancedAbilityRules
     nameof(PieceType.HiredGun) => HiredGunUpkeep,
     _ => 0
   };
+
+  public static bool CanLongboatBoard(UnitAbilityState? state) =>
+    (state?.PassengerIds?.Count ?? 0) < 3;
+
+  public static UnitAbilityState RecordLongboatBoarding(UnitAbilityState? state, string passengerId)
+  {
+    state ??= new();
+    if (state.PassengerIds.Contains(passengerId, StringComparer.Ordinal))
+    {
+      return state;
+    }
+    return state with { PassengerIds = [.. state.PassengerIds, passengerId] };
+  }
+
+  public static UnitAbilityState RecordLongboatDisembark(UnitAbilityState? state, string passengerId)
+  {
+    state ??= new();
+    return state with
+    {
+      PassengerIds = state.PassengerIds
+        .Where(id => !string.Equals(id, passengerId, StringComparison.Ordinal))
+        .ToArray()
+    };
+  }
 
   public static bool CanUseOncePerOwnerTurn(UnitAbilityState? state) =>
     CanUseSpecialAbility(state) && !(state?.UsedThisTurn ?? false);

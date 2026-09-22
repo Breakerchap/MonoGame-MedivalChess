@@ -1405,4 +1405,199 @@ public sealed partial class MatchStore
   }
 
 
+
+  private static NetworkPiece? GetServerLongboatBoardTarget(
+    Match match,
+    NetworkPiece rider,
+    (int x, int y) destination)
+  {
+    if (rider.AttachedToId is not null ||
+        !UnitRules.TryGet(rider.Type, out UnitRule riderRule) ||
+        riderRule.Width != 1 || riderRule.Height != 1 ||
+        rider.Type == nameof(PieceType.FlyingLongboat))
+    {
+      return null;
+    }
+
+    NetworkPiece? longboat = match.Pieces.FirstOrDefault(piece =>
+      piece.Team == rider.Team &&
+      piece.AttachedToId is null &&
+      piece.Type == nameof(PieceType.FlyingLongboat) &&
+      UnitRules.TryGet(piece.Type, out UnitRule longboatRule) &&
+      UnitRules.FootprintsOverlap(
+        piece.X, piece.Y, longboatRule.Width, longboatRule.Height,
+        destination.x, destination.y, 1, 1));
+    if (longboat is null)
+    {
+      return null;
+    }
+
+    int passengerCount = match.Pieces.Count(piece =>
+      piece.AttachedToId == longboat.Id &&
+      piece.AttachmentKind == NetworkAttachmentKind.Passenger);
+    return passengerCount < 3 ? longboat : null;
+  }
+
+  private static bool TryBoardServerLongboat(
+    Match match,
+    int riderIndex,
+    (int x, int y) destination)
+  {
+    if (riderIndex < 0 || riderIndex >= match.Pieces.Count) return false;
+    NetworkPiece rider = match.Pieces[riderIndex];
+    NetworkPiece? longboat = GetServerLongboatBoardTarget(match, rider, destination);
+    if (longboat is null) return false;
+
+    int longboatIndex = match.Pieces.FindIndex(piece => piece.Id == longboat.Id);
+    if (longboatIndex < 0) return false;
+
+    match.Pieces[riderIndex] = rider with
+    {
+      X = longboat.X,
+      Y = longboat.Y,
+      HasMovedThisTurn = true,
+      AttachedToId = longboat.Id,
+      AttachmentKind = NetworkAttachmentKind.Passenger,
+      AbilityState = AdvancedAbilityRules.RecordMove(rider.AbilityState) with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      }
+    };
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatBoarding(
+        longboat.AbilityState, rider.Id)
+    };
+    return true;
+  }
+
+  private static bool TryDisembarkServerLongboatPassenger(
+    Match match,
+    int passengerIndex,
+    int targetX,
+    int targetY)
+  {
+    if (passengerIndex < 0 || passengerIndex >= match.Pieces.Count) return false;
+    NetworkPiece passenger = match.Pieces[passengerIndex];
+    if (passenger.AttachmentKind != NetworkAttachmentKind.Passenger ||
+        string.IsNullOrWhiteSpace(passenger.AttachedToId) ||
+        !UnitRules.TryGet(passenger.Type, out UnitRule passengerRule))
+    {
+      return false;
+    }
+
+    int longboatIndex = match.Pieces.FindIndex(piece =>
+      piece.Id == passenger.AttachedToId &&
+      piece.Type == nameof(PieceType.FlyingLongboat));
+    if (longboatIndex < 0) return false;
+    NetworkPiece longboat = match.Pieces[longboatIndex];
+    UnitRule longboatRule = UnitRules.GetRequired(longboat.Type);
+    (int x, int y) destination = (targetX, targetY);
+    if (!AbilityRules.AreAdjacent(
+          longboatRule, (longboat.X, longboat.Y),
+          passengerRule, destination, includeDiagonal: true) ||
+        !CanDisplaceServerPieceTo(match, passenger, passengerRule, destination))
+    {
+      return false;
+    }
+
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+        longboat.AbilityState, passenger.Id)
+    };
+    match.Pieces[passengerIndex] = passenger with
+    {
+      X = targetX,
+      Y = targetY,
+      AttachedToId = null,
+      AttachmentKind = NetworkAttachmentKind.None,
+      HasMovedThisTurn = true,
+      HasAttackedThisTurn = true,
+      AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(passenger.Type),
+      AbilityState = (passenger.AbilityState ?? new UnitAbilityState()) with
+      {
+        CannotActThisTurn = true,
+        CannotMoveThisTurn = true
+      }
+    };
+    return true;
+  }
+
+  private static void RemoveServerLongboatPassengerReference(
+    Match match,
+    NetworkPiece passenger)
+  {
+    if (passenger.AttachmentKind != NetworkAttachmentKind.Passenger ||
+        string.IsNullOrWhiteSpace(passenger.AttachedToId))
+    {
+      return;
+    }
+
+    int longboatIndex = match.Pieces.FindIndex(piece =>
+      piece.Id == passenger.AttachedToId &&
+      piece.Type == nameof(PieceType.FlyingLongboat));
+    if (longboatIndex < 0) return;
+    NetworkPiece longboat = match.Pieces[longboatIndex];
+    match.Pieces[longboatIndex] = longboat with
+    {
+      AbilityState = AdvancedAbilityRules.RecordLongboatDisembark(
+        longboat.AbilityState, passenger.Id)
+    };
+  }
+
+  private static void ReleaseServerLongboatPassengers(
+    Match match,
+    NetworkPiece longboat)
+  {
+    if (longboat.Type != nameof(PieceType.FlyingLongboat)) return;
+
+    string[] boardingOrder = (longboat.AbilityState?.PassengerIds ?? Array.Empty<string>())
+      .ToArray();
+    foreach (string passengerId in boardingOrder)
+    {
+      int passengerIndex = match.Pieces.FindIndex(piece =>
+        piece.Id == passengerId &&
+        piece.AttachedToId == longboat.Id &&
+        piece.AttachmentKind == NetworkAttachmentKind.Passenger);
+      if (passengerIndex < 0) continue;
+
+      NetworkPiece passenger = match.Pieces[passengerIndex];
+      if (!UnitRules.TryGet(passenger.Type, out UnitRule passengerRule)) continue;
+      NetworkPiece detached = passenger with
+      {
+        AttachedToId = null,
+        AttachmentKind = NetworkAttachmentKind.None
+      };
+      match.Pieces[passengerIndex] = detached;
+
+      var board = BoardRules.GetBoard(match.Configuration);
+      foreach ((int x, int y) candidate in board.Cells
+        .OrderBy(position => Math.Max(
+          Math.Abs(position.x - longboat.X),
+          Math.Abs(position.y - longboat.Y)))
+        .ThenBy(position => position.y)
+        .ThenBy(position => position.x))
+      {
+        if (!CanDisplaceServerPieceTo(match, detached, passengerRule, candidate)) continue;
+        match.Pieces[passengerIndex] = detached with
+        {
+          X = candidate.x,
+          Y = candidate.y,
+          HasMovedThisTurn = true,
+          HasAttackedThisTurn = true,
+          AttacksThisTurn = AbilityRules.MaximumAttacksPerTurn(detached.Type),
+          AbilityState = (detached.AbilityState ?? new UnitAbilityState()) with
+          {
+            CannotActThisTurn = true,
+            CannotMoveThisTurn = true
+          }
+        };
+        break;
+      }
+    }
+  }
+
+
 }
