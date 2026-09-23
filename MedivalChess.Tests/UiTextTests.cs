@@ -47,4 +47,39 @@ public class UiTextTests
   {
     Assert.False(UiText.IsSpriteFontSafe("damage • range"));
   }
+
+  [Fact]
+  public void SanitiseForSpriteFont_TransliteratesCommonUnsupportedCharacters()
+  {
+    HashSet<char> ascii = Enumerable.Range(' ', '~' - ' ' + 1)
+      .Select(value => (char)value)
+      .ToHashSet();
+
+    string sanitised = UiText.SanitiseForSpriteFont(
+      "1×1 – dash — Muse → Circle • “quoted”…\t✓",
+      ascii);
+
+    Assert.Equal("1x1 - dash - Muse -> Circle * \"quoted\"...    ?", sanitised);
+    Assert.All(sanitised, character =>
+      Assert.True(character == '\n' || ascii.Contains(character), $"Unsupported output character U+{(int)character:X4}."));
+  }
+
+  [Fact]
+  public void EveryAuthoritativeUnitLabelAndAbilityCanBeMadeSpriteFontSafe()
+  {
+    HashSet<char> ascii = Enumerable.Range(' ', '~' - ' ' + 1)
+      .Select(value => (char)value)
+      .ToHashSet();
+
+    foreach (PieceDefinition definition in PieceDefinitions.All)
+    {
+      foreach (string text in new[] { definition.DisplayName, definition.AbilityDescription })
+      {
+        string sanitised = UiText.SanitiseForSpriteFont(text, ascii);
+        Assert.All(sanitised, character =>
+          Assert.True(character == '\n' || ascii.Contains(character),
+            $"{definition.SourceUnitId}: unsupported output character U+{(int)character:X4}."));
+      }
+    }
+  }
 }
