@@ -476,3 +476,9 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 - CPU movement now matches local and authoritative-server behaviour exactly: an attached unit cannot move independently, except an Ox attached as carried cargo; moving that Ox detaches it first.
 - Added attachment-kind regression coverage for Guard, Shieldsman, Shadow, Muse, Succubus, Imp, Passenger, Prisoner, and generic carried cargo, plus a positive regression proving a carried Ox can move and detaches.
 - Added a 54-configuration Sheriff setup matrix across Small/Medium/Large boards, all Light/Standard/Heavy forest-waterway density combinations, and two deterministic procedural terrain seeds. Each case must leave at least one legal free-Prison placement that the authoritative server accepts.
+
+
+### 2026-09-23 — authoritative Sheriff capacity stress coverage
+
+- Added an end-to-end authoritative-server Sheriff regression using only the public MatchStore API. The scenario places the Sheriff at a legal forward-territory location, buys four low-health Frontiersmen into legal nearby No-Man's-Land squares, and exercises Arrest over multiple real turn boundaries.
+- The first three Arrests must succeed and preserve ordered Prisoner IDs/Prisoner attachment state. The fourth Arrest must be rejected at capacity three and leave its target unattached.

@@ -290,6 +290,172 @@ public sealed class UnitStressTests
   }
 
   [Fact]
+  public void AuthoritativeSheriffArrestEnforcesCapacityAcrossTurns()
+  {
+    NetworkMatchConfiguration configuration = CreateConfiguration() with
+    {
+      BoardSize = "Medium",
+      TerrainSource = "None",
+      StartingCash = 600,
+      InitialBuysPerTurn = 1,
+      InitialBuyTurnsPerTeam = 1
+    };
+    Board board = BoardRules.GetBoard(configuration);
+    UnitRule sheriffRule = UnitRules.GetRequired(nameof(PieceType.Sheriff));
+    UnitRule frontiersmanRule = UnitRules.GetRequired(nameof(PieceType.Frontiersmen));
+
+    (int x, int y) sheriffPosition = default;
+    (int x, int y)[] arrestTargets = [];
+    foreach ((int x, int y) candidate in board.Cells.Where(position =>
+      BoardRules.CanPlaceForTeam(
+        configuration,
+        NetworkTeam.Blue,
+        position.x,
+        position.y,
+        sheriffRule.Width,
+        sheriffRule.Height)))
+    {
+      (int x, int y)[] targets = board.Cells
+        .Where(position =>
+          MatchRules.GetSquareOwner(
+            board, configuration.GameMode, position,
+            configuration.PlayerCount) is null &&
+          UnitRules.CanAttack(
+            sheriffRule,
+            candidate.x,
+            candidate.y,
+            NetworkTeam.Blue,
+            frontiersmanRule,
+            position.x,
+            position.y))
+        .OrderBy(position => position.y)
+        .ThenBy(position => position.x)
+        .Take(4)
+        .ToArray();
+      if (targets.Length == 4)
+      {
+        sheriffPosition = candidate;
+        arrestTargets = targets;
+        break;
+      }
+    }
+    Assert.Equal(4, arrestTargets.Length);
+
+    MatchStore matches = new();
+    RoomJoinResult host = matches.Create(
+      "capacity-host", new CreateGameRequest(configuration));
+    RoomJoinResult guest = matches.Join(
+      "capacity-guest", new JoinGameRequest(host.JoinCode!));
+    Assert.True(host.Accepted);
+    Assert.True(guest.Accepted);
+
+    string redConnection =
+      host.Team == NetworkTeam.Red ? "capacity-host" : "capacity-guest";
+    string blueConnection =
+      host.Team == NetworkTeam.Blue ? "capacity-host" : "capacity-guest";
+
+    Assert.True(matches.ChooseRoyal(
+      redConnection,
+      new RoyalSelectionRequest(nameof(PieceType.Palace))).Accepted);
+    ActionResult sheriffPlaced = matches.ChooseRoyal(
+      blueConnection,
+      new RoyalSelectionRequest(
+        nameof(PieceType.Sheriff),
+        sheriffPosition.x,
+        sheriffPosition.y));
+    Assert.True(sheriffPlaced.Accepted, sheriffPlaced.Error);
+
+    (int x, int y) prisonPosition = FindSheriffPrisonPlacement(
+      sheriffPlaced.State!, NetworkTeam.Blue);
+    ActionResult ready = matches.ChooseRoyal(
+      blueConnection,
+      new RoyalSelectionRequest(
+        nameof(PieceType.Sheriff),
+        prisonPosition.x,
+        prisonPosition.y));
+    Assert.True(ready.Accepted, ready.Error);
+    Assert.True(ready.State!.MatchReady);
+
+    Assert.True(matches.StopInitialBuying(redConnection).Accepted);
+    Assert.True(matches.StopInitialBuying(blueConnection).Accepted);
+
+    ActionResult current = ready;
+    foreach ((int x, int y) targetPosition in arrestTargets)
+    {
+      current = matches.PurchaseUnit(
+        redConnection,
+        new PurchaseRequest(
+          nameof(PieceType.Frontiersmen),
+          targetPosition.x,
+          targetPosition.y));
+      Assert.True(current.Accepted, current.Error);
+    }
+
+    Assert.True(matches.TrySkipTurn(redConnection).Accepted);
+    for (int arrestIndex = 0; arrestIndex < 3; arrestIndex++)
+    {
+      NetworkPiece sheriff = current.State!.Pieces.Single(piece =>
+        piece.Team == NetworkTeam.Blue &&
+        piece.Type == nameof(PieceType.Sheriff));
+      NetworkPiece target = current.State.Pieces.Single(piece =>
+        piece.Team == NetworkTeam.Red &&
+        piece.Type == nameof(PieceType.Frontiersmen) &&
+        piece.X == arrestTargets[arrestIndex].x &&
+        piece.Y == arrestTargets[arrestIndex].y);
+
+      ActionResult arrested = matches.TrySpecial(
+        blueConnection,
+        new SpecialActionRequest(
+          sheriff.Id,
+          "Arrest",
+          target.Id,
+          target.X,
+          target.Y));
+      Assert.True(arrested.Accepted, arrested.Error);
+      NetworkPiece prison = arrested.State!.Pieces.Single(piece =>
+        piece.Team == NetworkTeam.Blue &&
+        piece.Type == nameof(PieceType.Prison) &&
+        AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+      NetworkPiece prisoner = arrested.State.Pieces.Single(piece =>
+        piece.Id == target.Id);
+      Assert.Equal(arrestIndex + 1, prison.AbilityState!.PrisonerIds.Count);
+      Assert.Equal(prison.Id, prisoner.AttachedToId);
+      Assert.Equal(NetworkAttachmentKind.Prisoner, prisoner.AttachmentKind);
+
+      Assert.True(matches.TrySkipTurn(blueConnection).Accepted);
+      ActionResult backToBlue = matches.TrySkipTurn(redConnection);
+      Assert.True(backToBlue.Accepted);
+      current = backToBlue;
+    }
+
+    NetworkPiece liveSheriff = current.State!.Pieces.Single(piece =>
+      piece.Team == NetworkTeam.Blue &&
+      piece.Type == nameof(PieceType.Sheriff));
+    NetworkPiece fourthTarget = current.State.Pieces.Single(piece =>
+      piece.Team == NetworkTeam.Red &&
+      piece.Type == nameof(PieceType.Frontiersmen) &&
+      piece.X == arrestTargets[3].x &&
+      piece.Y == arrestTargets[3].y);
+    ActionResult fourth = matches.TrySpecial(
+      blueConnection,
+      new SpecialActionRequest(
+        liveSheriff.Id,
+        "Arrest",
+        fourthTarget.Id,
+        fourthTarget.X,
+        fourthTarget.Y));
+
+    Assert.False(fourth.Accepted);
+    NetworkPiece fullPrison = fourth.State!.Pieces.Single(piece =>
+      piece.Team == NetworkTeam.Blue &&
+      piece.Type == nameof(PieceType.Prison) &&
+      AdvancedAbilityRules.IsSheriffPrison(piece.AbilityState));
+    Assert.Equal(3, fullPrison.AbilityState!.PrisonerIds.Count);
+    Assert.Null(fourth.State.Pieces.Single(piece =>
+      piece.Id == fourthTarget.Id).AttachedToId);
+  }
+
+  [Fact]
   public void SheriffPrisonSetupRejectsIllegalPlacementWithoutLosingPendingState()
   {
     NetworkMatchConfiguration configuration = CreateConfiguration();
