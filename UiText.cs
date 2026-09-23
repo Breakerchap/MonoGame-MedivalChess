@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using MedivalChess.GameBoard;
 using MedivalChess.Player;
 using MedivalChess.Shared;
@@ -98,6 +100,75 @@ internal static class UiText
       Shape.PierceStraight => "Pierce",
       _ => shape.ToString()
     };
+  }
+
+  internal static string SanitiseForSpriteFont(string text, ISet<char> supportedCharacters)
+  {
+    ArgumentNullException.ThrowIfNull(supportedCharacters);
+    if (string.IsNullOrEmpty(text))
+    {
+      return text;
+    }
+
+    StringBuilder result = new(text.Length);
+    foreach (char character in text)
+    {
+      if (character == '\r')
+      {
+        continue;
+      }
+      if (character == '\n')
+      {
+        // MonoGame handles line breaks separately; they do not need a font glyph.
+        result.Append(character);
+        continue;
+      }
+      if (supportedCharacters.Contains(character))
+      {
+        result.Append(character);
+        continue;
+      }
+
+      string replacement = character switch
+      {
+        '\t' => "    ",
+        '\u00A0' => " ",
+        '\u00D7' => "x",
+        '\u2010' or '\u2011' or '\u2012' or '\u2013' or '\u2014' or '\u2015' => "-",
+        '\u2018' or '\u2019' => "'",
+        '\u201C' or '\u201D' => "\"",
+        '\u2022' => "*",
+        '\u2026' => "...",
+        '\u2192' => "->",
+        _ => "?"
+      };
+
+      AppendSupportedReplacement(result, replacement, supportedCharacters);
+    }
+
+    return result.ToString();
+  }
+
+  private static void AppendSupportedReplacement(
+    StringBuilder result,
+    string replacement,
+    ISet<char> supportedCharacters)
+  {
+    foreach (char replacementCharacter in replacement)
+    {
+      if (supportedCharacters.Contains(replacementCharacter))
+      {
+        result.Append(replacementCharacter);
+      }
+      else if (supportedCharacters.Contains('?'))
+      {
+        result.Append('?');
+      }
+      else if (supportedCharacters.Contains(' '))
+      {
+        result.Append(' ');
+      }
+    }
   }
 
   internal static bool IsSpriteFontSafe(string text)
