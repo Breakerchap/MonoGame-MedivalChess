@@ -18,9 +18,26 @@ jobs:
         run: |
           set -o pipefail
           dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj -c Release --logger "console;verbosity=normal" 2>&1 | tee unit-pack-test.log
+      - name: Build deployment targets
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build MedivalChess.csproj -c Release --no-restore 2>&1 | tee desktop-build.log
+          dotnet build MedivalChess.CPU/MedivalChess.CPU.csproj -c Release --no-restore 2>&1 | tee cpu-build.log
+          dotnet publish MedivalChess.Server/MedivalChess.Server.csproj -c Release --no-restore --output /tmp/server-publish 2>&1 | tee server-build.log
+      - name: Build server Docker image
+        shell: bash
+        run: |
+          set -o pipefail
+          docker build -f MedivalChess.Server/Dockerfile . 2>&1 | tee server-docker-build.log
       - name: Upload test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-pack-test-log
-          path: unit-pack-test.log
+          path: |
+            unit-pack-test.log
+            desktop-build.log
+            cpu-build.log
+            server-build.log
+            server-docker-build.log
