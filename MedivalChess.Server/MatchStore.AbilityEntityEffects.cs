@@ -38,7 +38,7 @@ public sealed partial class MatchStore
         if (entity.Kind == AbilityEntityKind.Portal && finalStep == step &&
             entity.Owner == moving.Team)
         {
-          AbilityEntity linked = AbilityEntityRules.GetLinkedPortal(match.AbilityEntities, entity);
+          AbilityEntity? linked = AbilityEntityRules.GetLinkedPortal(match.AbilityEntities, entity);
           if (linked is not null &&
               CanDisplaceServerPieceTo(match, moving, rule, (linked.X, linked.Y)))
           {
@@ -106,7 +106,7 @@ public sealed partial class MatchStore
     int damage)
   {
     if (!UnitRules.TryGet(target.Type, out UnitRule targetRule)) return false;
-    AbilityEntity tower = match.AbilityEntities.FirstOrDefault(entity =>
+    AbilityEntity? tower = match.AbilityEntities.FirstOrDefault(entity =>
       entity.Kind == AbilityEntityKind.Watchtower &&
       entity.Owner == target.Team &&
       OccupiedSquares(targetRule, (target.X, target.Y))
