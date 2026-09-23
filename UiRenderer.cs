@@ -19,6 +19,7 @@ internal sealed class UiRenderer
   private readonly SpriteBatch _spriteBatch;
   private readonly Texture2D _pixel;
   private readonly SpriteFont _font;
+  private readonly HashSet<char> _supportedCharacters;
   internal float InputScale { get; set; } = 1f;
 
   internal UiRenderer(SpriteBatch spriteBatch, Texture2D pixel, SpriteFont font)
@@ -26,6 +27,7 @@ internal sealed class UiRenderer
     _spriteBatch = spriteBatch;
     _pixel = pixel;
     _font = font;
+    _supportedCharacters = new HashSet<char>(_font.Characters);
   }
 
   internal void Panel(Rectangle bounds, Color fill, Color border)
@@ -94,7 +96,8 @@ internal sealed class UiRenderer
 
   internal void Text(string text, Vector2 position, Color colour, float scale = 1f)
   {
-    _spriteBatch.DrawString(_font, text, position, colour, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
+    string drawableText = GetDrawableText(text);
+    _spriteBatch.DrawString(_font, drawableText, position, colour, 0f, Vector2.Zero, scale, SpriteEffects.None, 0f);
   }
 
   internal void TextFitted(
@@ -149,7 +152,7 @@ internal sealed class UiRenderer
 
   internal void CenterText(string text, Rectangle bounds, Color colour, float scale = 1f)
   {
-    Vector2 size = _font.MeasureString(text) * scale;
+    Vector2 size = MeasureString(text) * scale;
     Text(
       text,
       new Vector2(bounds.Center.X - size.X / 2f, bounds.Center.Y - size.Y / 2f),
@@ -207,7 +210,7 @@ internal sealed class UiRenderer
 
   internal void RightText(string text, Rectangle bounds, Color colour, float scale = 1f)
   {
-    Vector2 size = _font.MeasureString(text) * scale;
+    Vector2 size = MeasureString(text) * scale;
     Text(text, new Vector2(bounds.Right - size.X, bounds.Center.Y - size.Y / 2f), colour, scale);
   }
 
@@ -251,7 +254,7 @@ internal sealed class UiRenderer
       foreach (string word in paragraph.Split(' ', StringSplitOptions.RemoveEmptyEntries))
       {
         string candidate = string.IsNullOrEmpty(currentLine) ? word : $"{currentLine} {word}";
-        if (_font.MeasureString(candidate).X * scale <= maximumWidth)
+        if (MeasureString(candidate).X * scale <= maximumWidth)
         {
           currentLine = candidate;
           continue;
@@ -263,7 +266,7 @@ internal sealed class UiRenderer
           currentLine = string.Empty;
         }
 
-        if (_font.MeasureString(word).X * scale <= maximumWidth)
+        if (MeasureString(word).X * scale <= maximumWidth)
         {
           currentLine = word;
           continue;
@@ -289,7 +292,7 @@ internal sealed class UiRenderer
       return preferredScale;
     }
 
-    float textWidth = _font.MeasureString(text).X;
+    float textWidth = MeasureString(text).X;
     if (textWidth <= 0f)
     {
       return preferredScale;
@@ -303,13 +306,13 @@ internal sealed class UiRenderer
 
   private string TruncateToWidth(string text, int maximumWidth, float scale)
   {
-    if (string.IsNullOrEmpty(text) || _font.MeasureString(text).X * scale <= maximumWidth)
+    if (string.IsNullOrEmpty(text) || MeasureString(text).X * scale <= maximumWidth)
     {
       return text;
     }
 
     const string suffix = "...";
-    if (_font.MeasureString(suffix).X * scale > maximumWidth)
+    if (MeasureString(suffix).X * scale > maximumWidth)
     {
       return string.Empty;
     }
@@ -318,7 +321,7 @@ internal sealed class UiRenderer
     while (length > 0)
     {
       string candidate = text[..length] + suffix;
-      if (_font.MeasureString(candidate).X * scale <= maximumWidth)
+      if (MeasureString(candidate).X * scale <= maximumWidth)
       {
         return candidate;
       }
@@ -331,7 +334,7 @@ internal sealed class UiRenderer
 
   private IEnumerable<string> SplitLongWord(string word, int maximumWidth, float scale)
   {
-    if (_font.MeasureString(word).X * scale <= maximumWidth)
+    if (MeasureString(word).X * scale <= maximumWidth)
     {
       yield return word;
       yield break;
@@ -341,7 +344,7 @@ internal sealed class UiRenderer
     foreach (char character in word)
     {
       string candidate = fragment + character;
-      if (!string.IsNullOrEmpty(fragment) && _font.MeasureString(candidate).X * scale > maximumWidth)
+      if (!string.IsNullOrEmpty(fragment) && MeasureString(candidate).X * scale > maximumWidth)
       {
         yield return fragment;
         fragment = character.ToString();
@@ -356,6 +359,16 @@ internal sealed class UiRenderer
     {
       yield return fragment;
     }
+  }
+
+  private string GetDrawableText(string text)
+  {
+    return UiText.SanitiseForSpriteFont(text, _supportedCharacters);
+  }
+
+  private Vector2 MeasureString(string text)
+  {
+    return _font.MeasureString(GetDrawableText(text));
   }
 
   private void DrawBorder(Rectangle bounds, Color colour)
