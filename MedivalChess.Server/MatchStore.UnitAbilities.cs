@@ -667,7 +667,7 @@ public sealed partial class MatchStore
       .ToArray();
     foreach (string farmId in farmIds)
     {
-      NetworkPiece farm = match.Pieces.FirstOrDefault(piece => piece.Id == farmId);
+      NetworkPiece? farm = match.Pieces.FirstOrDefault(piece => piece.Id == farmId);
       if (farm is not null)
       {
         HandlePieceDestroyed(match, farm with { Health = 0 }, source);

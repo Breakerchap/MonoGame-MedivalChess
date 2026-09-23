@@ -3,6 +3,8 @@ WORKDIR /src
 
 COPY MedivalChess.Shared/MedivalChess.Shared.csproj MedivalChess.Shared/
 COPY MedivalChess.Server/MedivalChess.Server.csproj MedivalChess.Server/
+# Shared embeds the authoritative root-level unit codex, so it must exist even during restore/build.
+COPY docs/game-data/units_codex.json docs/game-data/units_codex.json
 RUN dotnet restore MedivalChess.Server/MedivalChess.Server.csproj
 
 COPY MedivalChess.Shared/ MedivalChess.Shared/

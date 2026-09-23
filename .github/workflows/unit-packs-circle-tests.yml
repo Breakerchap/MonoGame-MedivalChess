@@ -18,9 +18,42 @@ jobs:
         run: |
           set -o pipefail
           dotnet test MedivalChess.Tests/MedivalChess.Tests.csproj -c Release --logger "console;verbosity=normal" 2>&1 | tee unit-pack-test.log
+      - name: Build deployment targets
+        shell: bash
+        run: |
+          set -o pipefail
+          dotnet build MedivalChess.csproj -c Release --no-restore 2>&1 | tee desktop-build.log
+          dotnet build MedivalChess.CPU/MedivalChess.CPU.csproj -c Release --no-restore 2>&1 | tee cpu-build.log
+          dotnet publish MedivalChess.Server/MedivalChess.Server.csproj -c Release --no-restore --output /tmp/server-publish 2>&1 | tee server-build.log
+      - name: Build server Docker image
+        shell: bash
+        run: |
+          set -o pipefail
+          docker build -t crown-and-siege-server:test -f MedivalChess.Server/Dockerfile . 2>&1 | tee server-docker-build.log
+      - name: Smoke-test server Docker image
+        shell: bash
+        run: |
+          set -euo pipefail
+          container_id="$(docker run -d -e PORT=5057 -p 5057:5057 crown-and-siege-server:test)"
+          trap 'docker logs "$container_id" > server-container.log 2>&1 || true; docker rm -f "$container_id" >/dev/null 2>&1 || true' EXIT
+          for attempt in {1..20}; do
+            if curl --fail --silent --show-error http://127.0.0.1:5057/health | tee server-health.log; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Server health endpoint did not become ready." >&2
+          exit 1
       - name: Upload test log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: unit-pack-test-log
-          path: unit-pack-test.log
+          path: |
+            unit-pack-test.log
+            desktop-build.log
+            cpu-build.log
+            server-build.log
+            server-docker-build.log
+            server-health.log
+            server-container.log
