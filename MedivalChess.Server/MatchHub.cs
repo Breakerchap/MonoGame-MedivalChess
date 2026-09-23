@@ -2459,6 +2459,7 @@ public sealed partial class MatchStore
         ? herald.AbilityState!.PendingSelections
           .Select(selection => selection.TargetId)
           .Where(id => !string.IsNullOrWhiteSpace(id))
+          .Select(id => id!)
           .Take(3)
           .ToHashSet(StringComparer.Ordinal)
         : [];
