@@ -482,3 +482,13 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 
 - Added an end-to-end authoritative-server Sheriff regression using only the public MatchStore API. The scenario places the Sheriff at a legal forward-territory location, buys four low-health Frontiersmen into legal nearby No-Man's-Land squares, and exercises Arrest over multiple real turn boundaries.
 - The first three Arrests must succeed and preserve ordered Prisoner IDs/Prisoner attachment state. The fourth Arrest must be rejected at capacity three and leave its target unattached.
+
+
+### 2026-09-23 — UI glyph crash and deployment-parity hardening
+
+- Fixed the purchase-panel crash caused by authoritative ability text containing Unicode glyphs that the UI SpriteFont could not resolve. The codex currently uses `×`, en/em dashes, and `→`; the font now includes those glyphs explicitly.
+- Hardened `UiRenderer` so every text measurement and draw passes through the actual loaded SpriteFont character set. Unsupported input is transliterated to safe ASCII where possible and replaced safely otherwise, preventing a future data/string change from crashing `MeasureString` or `DrawString`.
+- Added UI regressions for Unicode transliteration and for every authoritative unit display name/ability description, so all codex text can always be converted into drawable text.
+- Fixed the server Docker build context. `MedivalChess.Shared` embeds `docs/game-data/units_codex.json`, so the Dockerfile now copies that authoritative file into the build stage before restore/publish.
+- Expanded branch CI to run the full test suite, explicitly build the desktop client and CPU project, publish the server, build the real server Docker image, start that image, and probe `/health`. This guards both compile-time parity and the deployment path that previously failed.
+- The stricter server build also exposed nullable lookup warnings around Herald companion IDs, linked ability entities/watchtowers, and Fafnir-overlapped farms. Those lookups now model missing values explicitly instead of assigning possible nulls to non-nullable locals.
