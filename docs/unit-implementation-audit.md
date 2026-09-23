@@ -451,3 +451,34 @@ Authoritative source: `docs/game-data/units_codex.json`. `Implemented` covers th
 
 - Removed the stale catalogue alias that mapped the authoritative `wild_west.sheriff` row to the legacy misspelled `Sherrif` enum. The codex Sheriff now resolves to `PieceType.Sheriff`, matching the completed Sheriff mechanics while leaving the old legacy `Sherrif` definition untouched and out of scope.
 - Added an explicit catalogue regression assertion that `wild_west.sheriff` resolves to `PieceType.Sheriff` and remains a Royal.
+
+
+### 2026-09-23 — broad unit stress/regression pass
+
+- Added a broad stress suite over every non-Legacy, non-Chess authoritative unit. It checks catalogue/shared-rule consistency, CPU movement generation, generated action legality, action application invariants, and spawned/attached piece validity.
+- Added 24 deterministic mixed-roster fuzz states covering random combinations of in-scope units. Up to 50 generated actions per state are independently simulated and checked for legal board footprints, valid live health, known runtime unit types, valid attachment hosts, and unique piece IDs.
+- Added authoritative server setup coverage for every selectable in-scope Royal, with dedicated Sheriff two-stage placement checks including rejection/recovery from an illegal Prison placement.
+- Added owner-turn state coverage ensuring release locks clear at the next owner turn while Sheriff Prison identity/link/prisoner ordering state persists.
+- These tests are intentionally broader than the unit-specific regression suite and are used as a bug-finding pass; any failures are fixed before this audit is considered complete.
+
+
+### 2026-09-23 — stress-pass bugs and hardening
+
+- The first broad stress run exposed two false assumptions in the new harness rather than gameplay defects: Helicopter intentionally has 0 Health in the authoritative codex because it is non-interactable, and fixed edge coordinates cannot host arbitrary large random units. The stress harness now honours authoritative zero-Health units and deterministically finds legal non-overlapping footprints for mixed rosters.
+- Fixed a local Royal-setup rollback bug. Backing up now removes the complete previous Royal group rather than one Royal piece, so four-piece Goblin Royalty cannot leave orphaned members. A linked Sheriff Prison is also removed with its Sheriff, and backing out while waiting to place the free Sheriff Prison cleanly cancels that Sheriff's setup.
+- Fixed a prisoner-action loophole in the local client. A jailed Succubus could previously be discovered through the generic attached-unit action selector because Succubi normally remain actionable while attached. `Prisoner` attachments are now explicitly rejected by selection, action ownership, normal attacks, CPU-to-local attacks, and local/online special-action dispatch.
+- Added regression coverage asserting that a Succubus attached as a Prisoner cannot move, attack, detach, or produce CPU actions.
+
+
+### 2026-09-23 — CPU attachment movement parity
+
+- The second stress run exposed a broader CPU-only attachment bug: movement legality blocked Guards and most carried units but could still generate independent movement for other attached kinds such as Muse, Succubus, Imp, Shadow, Passenger, and Prisoner.
+- CPU movement now matches local and authoritative-server behaviour exactly: an attached unit cannot move independently, except an Ox attached as carried cargo; moving that Ox detaches it first.
+- Added attachment-kind regression coverage for Guard, Shieldsman, Shadow, Muse, Succubus, Imp, Passenger, Prisoner, and generic carried cargo, plus a positive regression proving a carried Ox can move and detaches.
+- Added a 54-configuration Sheriff setup matrix across Small/Medium/Large boards, all Light/Standard/Heavy forest-waterway density combinations, and two deterministic procedural terrain seeds. Each case must leave at least one legal free-Prison placement that the authoritative server accepts.
+
+
+### 2026-09-23 — authoritative Sheriff capacity stress coverage
+
+- Added an end-to-end authoritative-server Sheriff regression using only the public MatchStore API. The scenario places the Sheriff at a legal forward-territory location, buys four low-health Frontiersmen into legal nearby No-Man's-Land squares, and exercises Arrest over multiple real turn boundaries.
+- The first three Arrests must succeed and preserve ordered Prisoner IDs/Prisoner attachment state. The fourth Arrest must be rejected at capacity three and leave its target unattached.

@@ -738,6 +738,7 @@ internal sealed partial class Game1 : Game
           {
             bool canSendOnlineAttack =
               selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
+              selectedPiece.AttachmentKind != AttachmentKind.Prisoner &&
               (normalAttackTarget is not null ||
                _barricades.ContainsKey(targetPosition) ||
                selectedPiece.Definition.Type == PieceType.MissileSilo) &&
@@ -782,6 +783,7 @@ internal sealed partial class Game1 : Game
             bool isValidAttack =
               isBoardCell &&
               selectedPiece.AttachmentKind != AttachmentKind.Passenger &&
+              selectedPiece.AttachmentKind != AttachmentKind.Prisoner &&
               AdvancedAbilityRules.CanAttack(
                 selectedPiece.Definition.Type.ToString(),
                 selectedPiece.AbilityState,
@@ -2080,6 +2082,7 @@ internal sealed partial class Game1 : Game
       : pieceSetup.Pieces.FirstOrDefault(piece => piece.NetworkId == action.TargetPieceId);
     var targetPosition = (action.TargetX, action.TargetY);
     bool isValidAttack = attacker is not null &&
+      attacker.AttachmentKind != AttachmentKind.Prisoner &&
       AdvancedAbilityRules.CanAttack(
         attacker.Definition.Type.ToString(),
         attacker.AbilityState,
@@ -2577,7 +2580,7 @@ internal sealed partial class Game1 : Game
 
   private bool TrySendOnlineSpecialAbility(Piece actor, (int x, int y) targetPosition, Piece target)
   {
-    if (IsOnlineSpectator)
+    if (IsOnlineSpectator || actor.AttachmentKind == AttachmentKind.Prisoner)
     {
       return false;
     }
@@ -4316,7 +4319,8 @@ internal sealed partial class Game1 : Game
 
   private void SelectPiece(Piece piece, bool allowAttachedPiece = false)
   {
-    if (piece.AttachedTo != null && !allowAttachedPiece)
+    if (piece.AttachmentKind == AttachmentKind.Prisoner ||
+        (piece.AttachedTo != null && !allowAttachedPiece))
     {
       return;
     }
@@ -4354,6 +4358,7 @@ internal sealed partial class Game1 : Game
 
   private bool CanActWithPiece(Piece piece) =>
     piece.Team == Team.CurrentTurn && IsOnlineLocalTurn() && !IsCpuTurn() &&
+    piece.AttachmentKind != AttachmentKind.Prisoner &&
     !IsLocalSerpentFollower(piece) &&
     (!HasPendingLocalSatanChoice(piece.Team) ||
       IsPendingLocalSatanChoiceRoyal(piece));
@@ -4661,6 +4666,11 @@ internal sealed partial class Game1 : Game
     KeyboardState keyboard
   )
   {
+    if (actor.AttachmentKind == AttachmentKind.Prisoner)
+    {
+      return false;
+    }
+
     bool shiftHeld =
       keyboard.IsKeyDown(Keys.LeftShift) ||
       keyboard.IsKeyDown(Keys.RightShift);
@@ -9301,8 +9311,51 @@ internal sealed partial class Game1 : Game
     return currentIndex;
   }
 
+
+  private void RemoveLocalSetupRoyal(TeamName teamName)
+  {
+    Piece[] royals = pieceSetup.Pieces
+      .Where(piece =>
+        piece.Team == teamName &&
+        piece.Definition.Category == PieceCategory.Royal)
+      .ToArray();
+
+    foreach (Piece sheriff in royals.Where(piece =>
+      piece.Definition.Type == PieceType.Sheriff))
+    {
+      Piece prison = GetLocalSheriffPrison(sheriff);
+      if (prison is not null)
+      {
+        pieceSetup.RemovePiece(prison);
+      }
+    }
+
+    foreach (Piece royal in royals)
+    {
+      if (pieceSetup.Pieces.Contains(royal))
+      {
+        pieceSetup.RemovePiece(royal);
+      }
+    }
+
+    _teams.Find(team => team.TeamName == teamName)?.ClearRoyal();
+  }
+
   private void NavigateSetupBack()
   {
+    if (_setupStage == SetupStage.RoyalSelection &&
+        _sheriffPrisonAwaitingPlacement is not null &&
+        _onlineClient is null)
+    {
+      TeamName sheriffTeam = _sheriffPrisonAwaitingPlacement.Team;
+      RemoveLocalSetupRoyal(sheriffTeam);
+      _sheriffPrisonAwaitingPlacement = null;
+      _royalAwaitingPlacement = null;
+      _setupTeam = sheriffTeam;
+      _selectedRoyalIndex = 0;
+      return;
+    }
+
     switch (_setupStage)
     {
       case SetupStage.Mode:
@@ -9332,13 +9385,7 @@ internal sealed partial class Game1 : Game
           break;
         }
         TeamName previousTeam = Team.ActiveTeams[setupIndex - 1];
-        Piece previousRoyal = pieceSetup.Pieces.FirstOrDefault(piece =>
-          piece.Team == previousTeam && piece.Definition.Category == PieceCategory.Royal);
-        if (previousRoyal != null)
-        {
-          pieceSetup.RemovePiece(previousRoyal);
-          _teams.Find(team => team.TeamName == previousTeam).ClearRoyal();
-        }
+        RemoveLocalSetupRoyal(previousTeam);
         _setupTeam = previousTeam;
         _selectedRoyalIndex = 0;
         break;

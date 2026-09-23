@@ -1351,6 +1351,7 @@ internal sealed partial class Game1
     return pieceSetup.Pieces.FirstOrDefault(piece =>
       piece.Team == team &&
       piece.AttachedTo is not null &&
+      piece.AttachmentKind != AttachmentKind.Prisoner &&
       piece.Position == position &&
       AdvancedAbilityRules.CanAttachedUnitAttack(piece.Definition.Type.ToString()));
   }
