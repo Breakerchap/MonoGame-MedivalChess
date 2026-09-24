@@ -63,6 +63,14 @@ public sealed class PieceCatalogueCompletenessTests
   }
 
   [Fact]
+  public void MovableAuthoritativeUnitsNeverSilentlyLoadAsNoMovement()
+  {
+    Assert.DoesNotContain(
+      PieceDefinitions.All,
+      unit => unit.Movement.Maximum > 0 && unit.Movement.Shape == Shape.None);
+  }
+
+  [Fact]
   public void CanonicalCompositeShapesLoadAndBehaveAsLinesOrDiagonals()
   {
     PieceDefinition keshik = PieceDefinitions.All.Single(unit => unit.SourceUnitId == "dynasty.keshik");

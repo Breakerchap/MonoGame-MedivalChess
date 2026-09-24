@@ -5550,10 +5550,16 @@ internal sealed partial class Game1 : Game
     (int x, int y) to
   )
   {
+    if (piece.Definition.Movement.shape == Shape.ChessKnight)
+    {
+      return [to];
+    }
+
     List<(int x, int y)> path = [];
     (int x, int y) current = from;
     bool canMoveDiagonally = piece.Definition.Movement.shape is
-      Shape.Any or Shape.AbsoluteStraightOrDiagonal or Shape.ForwardOrForwardDiagonal;
+      Shape.Any or Shape.Circle or Shape.Diagonal or Shape.LineOrDiagonal or
+      Shape.AbsoluteStraightOrDiagonal or Shape.ForwardOrForwardDiagonal or Shape.ForwardDiagonal;
 
     while (canMoveDiagonally && current.x != to.x && current.y != to.y)
     {

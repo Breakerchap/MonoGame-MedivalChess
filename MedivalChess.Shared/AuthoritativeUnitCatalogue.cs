@@ -131,7 +131,7 @@ internal static class AuthoritativeUnitCatalogue
       "chessknight" => Shape.ChessKnight,
       "na" => Shape.MoveOnEnemy,
       "none" => Shape.None,
-      _ => Shape.None
+      _ => throw new InvalidDataException($"Unsupported shape pattern '{pattern}'.")
     };
   }
 
