@@ -6076,6 +6076,32 @@ internal sealed partial class Game1 : Game
       statHeight);
   }
 
+  private Rectangle GetQilinCostDecreaseButtonBounds()
+  {
+    Rectangle control = GetQilinCostControlBounds();
+    int buttonWidth = Math.Clamp(control.Width / 4, 28, 40);
+    return new Rectangle(control.X, control.Y, buttonWidth, control.Height);
+  }
+
+  private Rectangle GetQilinCostIncreaseButtonBounds()
+  {
+    Rectangle control = GetQilinCostControlBounds();
+    int buttonWidth = Math.Clamp(control.Width / 4, 28, 40);
+    return new Rectangle(control.Right - buttonWidth, control.Y, buttonWidth, control.Height);
+  }
+
+  private Rectangle GetQilinCostValueBounds()
+  {
+    Rectangle control = GetQilinCostControlBounds();
+    Rectangle decrease = GetQilinCostDecreaseButtonBounds();
+    Rectangle increase = GetQilinCostIncreaseButtonBounds();
+    return new Rectangle(
+      decrease.Right + 2,
+      control.Y,
+      Math.Max(1, increase.X - decrease.Right - 4),
+      control.Height);
+  }
+
   private Rectangle GetPurchaseUnitListToggleBounds()
   {
     Rectangle panel = GetPurchasePanelBounds();
@@ -6289,9 +6315,14 @@ internal sealed partial class Game1 : Game
     else if (GetPurchasablePieces()[_selectedPurchaseIndex].Type == PieceType.Qilin &&
         GetQilinCostControlBounds().Contains(mousePosition))
     {
-      Rectangle control = GetQilinCostControlBounds();
-      int direction = mousePosition.X < control.Center.X ? -1 : 1;
-      _selectedQilinCost = Math.Clamp(_selectedQilinCost + direction * 20, 40, 160);
+      if (GetQilinCostDecreaseButtonBounds().Contains(mousePosition))
+      {
+        _selectedQilinCost = Math.Max(40, _selectedQilinCost - 20);
+      }
+      else if (GetQilinCostIncreaseButtonBounds().Contains(mousePosition))
+      {
+        _selectedQilinCost = Math.Min(160, _selectedQilinCost + 20);
+      }
     }
     else if (GetPreviousPurchaseButtonBounds().Contains(mousePosition))
     {
@@ -6870,14 +6901,25 @@ internal sealed partial class Game1 : Game
       statHeight);
     if (definition.Type == PieceType.Qilin)
     {
-      _ui.StatBlock(finalRightStat, "QILIN COST", $"< {_selectedQilinCost} >", UiTheme.Gold, purchaseStatFontScale);
+      Rectangle decrease = GetQilinCostDecreaseButtonBounds();
+      Rectangle increase = GetQilinCostIncreaseButtonBounds();
+      Rectangle value = GetQilinCostValueBounds();
+      _ui.Panel(value, UiTheme.PanelRaised, UiTheme.PanelBorderSubtle);
+      Rectangle valueLabel = new(value.X, value.Y + 2, value.Width, Math.Max(1, value.Height / 2 - 1));
+      Rectangle valueAmount = new(value.X, value.Center.Y - 1, value.Width, Math.Max(1, value.Height / 2 - 1));
+      _ui.CenterTextFitted("QILIN COST", valueLabel, UiTheme.TextMuted, 0.58f, 0.42f, 2);
+      _ui.CenterTextFitted($"{_selectedQilinCost}", valueAmount, UiTheme.Gold, 0.82f, 0.55f, 2);
+      _ui.Button(decrease, "-", UiButtonTone.Neutral, _selectedQilinCost == 40, 0.92f);
+      _ui.Button(increase, "+", UiButtonTone.Neutral, _selectedQilinCost == 160, 0.92f);
     }
     else
     {
       _ui.StatBlock(finalRightStat, "TEAM", UiText.GetTeamDisplayName(Team.CurrentTurn), teamColour, purchaseStatFontScale);
     }
 
-    string purchaseHint = definition.Type == PieceType.Mercenary
+    string purchaseHint = definition.Type == PieceType.Qilin
+      ? "Use - and + to choose 40-160 gold in 20-gold steps. Attack and Health update immediately."
+      : definition.Type == PieceType.Mercenary
       ? _initialBuyPhase != null
         ? "Mercenaries are unavailable during the initial buy phase."
         : "Place anywhere in No-Man's-Land, or hire a neutral Mercenary for 15 gold."

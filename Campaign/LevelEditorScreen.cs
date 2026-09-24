@@ -667,14 +667,14 @@ internal sealed class LevelEditorScreen
     DrawUnitCatalogueField(fields.Abbreviation, "ABBREVIATION", UiText.BuildPieceLabel(unit), TextField.UnitAbbreviation, false, layout);
     DrawUnitCatalogueField(fields.Cost, "COST", unit.Cost.ToString(), TextField.UnitCost, false, layout);
     DrawUnitCatalogueField(fields.MoveRange, "MOVEMENT", unit.Movement.range.ToString(), TextField.UnitMoveRange, false, layout);
-    DrawUnitCatalogueField(fields.MoveShape, "MOVE STYLE", unit.Movement.shape.ToString(), TextField.None, true, layout);
+    DrawUnitCatalogueField(fields.MoveShape, "MOVE STYLE", UiText.GetShapeLabel(unit.Movement.shape), TextField.None, true, layout);
     DrawUnitCatalogueField(fields.Health, "HEALTH", unit.Health.ToString(), TextField.UnitHealth, false, layout);
     DrawUnitCatalogueField(fields.Attack, "ATTACK", unit.Attack.ToString(), TextField.UnitAttack, false, layout);
     DrawUnitCatalogueField(fields.Width, "SIZE X", unit.Size.x.ToString(), TextField.UnitWidth, false, layout);
     DrawUnitCatalogueField(fields.Height, "SIZE Y", unit.Size.y.ToString(), TextField.UnitHeight, false, layout);
     DrawUnitCatalogueField(fields.MinimumRange, "MIN RANGE", unit.AttackRange.Minimum.ToString(), TextField.UnitMinimumRange, false, layout);
     DrawUnitCatalogueField(fields.MaximumRange, "MAX RANGE", unit.AttackRange.Maximum.ToString(), TextField.UnitMaximumRange, false, layout);
-    DrawUnitCatalogueField(fields.AttackShape, "RANGE STYLE", unit.AttackPattern.ToString(), TextField.None, true, layout);
+    DrawUnitCatalogueField(fields.AttackShape, "RANGE STYLE", UiText.GetShapeLabel(unit.AttackPattern), TextField.None, true, layout);
     DrawUnitCatalogueField(fields.Ability, "ABILITY", GetAbilityLabel(entry.AbilitySource), TextField.None, true, layout);
     _ui.Button(fields.Place, "PLACE", UiButtonTone.Primary, false, layout.SmallControlScale);
     CampaignTeamDefinition? team = State.Level.Teams.FirstOrDefault(candidate => candidate.Team == _settingsTeam);
@@ -1648,10 +1648,16 @@ internal sealed class LevelEditorScreen
       switch (_unitCatalogueDropdown)
       {
         case UnitCatalogueDropdown.MoveShape:
-          UpdateCatalogueStats(entry, value => value.MovePattern = Enum.Parse<Shape>(selected));
+          if (UiText.TryParseShapeLabel(selected, out Shape moveShape))
+          {
+            UpdateCatalogueStats(entry, value => value.MovePattern = moveShape);
+          }
           break;
         case UnitCatalogueDropdown.AttackShape:
-          UpdateCatalogueStats(entry, value => value.AttackPattern = Enum.Parse<Shape>(selected));
+          if (UiText.TryParseShapeLabel(selected, out Shape attackShape))
+          {
+            UpdateCatalogueStats(entry, value => value.AttackPattern = attackShape);
+          }
           break;
         case UnitCatalogueDropdown.Ability:
           SetCatalogueAbility(entry, selected);
@@ -1669,15 +1675,15 @@ internal sealed class LevelEditorScreen
   private IReadOnlyList<string> GetUnitDropdownOptions() => _unitCatalogueDropdown switch
   {
     UnitCatalogueDropdown.MoveShape or UnitCatalogueDropdown.AttackShape =>
-      [Shape.Any.ToString(), Shape.Straight.ToString(), Shape.Line.ToString(), Shape.Forward.ToString(), Shape.AbsoluteStraightOrDiagonal.ToString(), Shape.ForwardOrForwardDiagonal.ToString(), Shape.None.ToString()],
+      Enum.GetValues<Shape>().Select(UiText.GetShapeLabel).ToArray(),
     UnitCatalogueDropdown.Ability => ["None", .. PieceDefinitions.All.Where(unit => !string.IsNullOrWhiteSpace(unit.AbilityDescription)).Select(unit => unit.Identifier)],
     _ => []
   };
 
   private string GetSelectedDropdownValue(UnitCatalogueEntry entry) => _unitCatalogueDropdown switch
   {
-    UnitCatalogueDropdown.MoveShape => entry.Definition.Movement.shape.ToString(),
-    UnitCatalogueDropdown.AttackShape => entry.Definition.AttackPattern.ToString(),
+    UnitCatalogueDropdown.MoveShape => UiText.GetShapeLabel(entry.Definition.Movement.shape),
+    UnitCatalogueDropdown.AttackShape => UiText.GetShapeLabel(entry.Definition.AttackPattern),
     UnitCatalogueDropdown.Ability => GetAbilityLabel(entry.AbilitySource) == "NONE" ? "None" : entry.AbilitySource,
     _ => string.Empty
   };

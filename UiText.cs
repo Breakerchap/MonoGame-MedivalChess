@@ -12,40 +12,53 @@ internal static class UiText
 {
   internal static string BuildPieceLabel(PieceDefinition definition)
   {
+    string label;
     if (!string.IsNullOrWhiteSpace(definition.Abbreviation))
     {
-      return new string(definition.Abbreviation.Take(3).ToArray()).ToUpperInvariant();
+      label = new string(definition.Abbreviation.Take(3).ToArray());
     }
-    if (!string.Equals(definition.Identifier, definition.Type.ToString(), StringComparison.Ordinal))
+    else if (!string.Equals(definition.Identifier, definition.Type.ToString(), StringComparison.Ordinal))
     {
       string letters = new(definition.DisplayName.Where(char.IsLetterOrDigit).Take(3).ToArray());
-      return string.IsNullOrWhiteSpace(letters) ? "CU" : letters.ToUpperInvariant();
+      label = string.IsNullOrWhiteSpace(letters) ? "CU" : letters;
     }
-    return definition.Type switch
+    else
     {
-      PieceType.Defender => "Df",
-      PieceType.Archer => "Ar",
-      PieceType.Peasant => "Pe",
-      PieceType.Knight => "Kn",
-      PieceType.Crossbowman => "Cb",
-      PieceType.Cavalier => "Cv",
-      PieceType.Chariot => "Ch",
-      PieceType.Cannon => "Cn",
-      PieceType.Spy => "Sy",
-      PieceType.Catapult => "Ct",
-      PieceType.Bombard => "Bd",
-      PieceType.Ox => "Ox",
-      PieceType.Engineer => "En",
-      PieceType.Ballista => "Bl",
-      PieceType.Elephant => "El",
-      PieceType.Guard => "Gd",
-      PieceType.Mercenary => "Mc",
-      PieceType.Farm => "Fm",
-      PieceType.King => "KI",
-      PieceType.Palace => "PA",
-      PieceType.Baron => "BR",
-      _ => "??"
-    };
+      label = definition.Type switch
+      {
+        PieceType.Defender => "Df",
+        PieceType.Archer => "Ar",
+        PieceType.Peasant => "Pe",
+        PieceType.Knight => "Kn",
+        PieceType.Crossbowman => "Cb",
+        PieceType.Cavalier => "Cv",
+        PieceType.Chariot => "Ch",
+        PieceType.Cannon => "Cn",
+        PieceType.Spy => "Sy",
+        PieceType.Catapult => "Ct",
+        PieceType.Bombard => "Bd",
+        PieceType.Ox => "Ox",
+        PieceType.Engineer => "En",
+        PieceType.Ballista => "Bl",
+        PieceType.Elephant => "El",
+        PieceType.Guard => "Gd",
+        PieceType.Mercenary => "Mc",
+        PieceType.Farm => "Fm",
+        PieceType.King => "KI",
+        PieceType.Palace => "PA",
+        PieceType.Baron => "BR",
+        _ => "??"
+      };
+    }
+
+    if (definition.Category == PieceCategory.Royal)
+    {
+      return label.ToUpperInvariant();
+    }
+
+    return label.Length == 0
+      ? label
+      : char.ToUpperInvariant(label[0]) + label[1..].ToLowerInvariant();
   }
 
   internal static string BuildAttackDetails(PieceDefinition definition)
@@ -90,16 +103,37 @@ internal static class UiText
   {
     return shape switch
     {
-      Shape.Straight => "Straight",
+      Shape.Any => "Square",
+      Shape.Straight => "Diamond",
       Shape.Circle => "Circle",
       Shape.Line => "Line",
+      Shape.Diagonal => "Diagonal",
+      Shape.LineOrDiagonal => "Line or Diagonal",
       Shape.Forward => "Forward",
-      Shape.AbsoluteStraightOrDiagonal => "Line/Diag",
-      Shape.ForwardOrForwardDiagonal => "Fwd/Diag",
+      Shape.AbsoluteStraightOrDiagonal => "Absolute Line or Diagonal",
+      Shape.ForwardOrForwardDiagonal => "Forward or Forward Diagonal",
+      Shape.ForwardDiagonal => "Forward Diagonal",
       Shape.ForwardLine => "Forward Line",
-      Shape.PierceStraight => "Pierce",
+      Shape.PierceStraight => "Piercing Line",
+      Shape.ChessKnight => "Knight Jump",
+      Shape.MoveOnEnemy => "Capture on Landing",
+      Shape.None => "None",
       _ => shape.ToString()
     };
+  }
+
+  internal static bool TryParseShapeLabel(string text, out Shape shape)
+  {
+    foreach (Shape candidate in Enum.GetValues<Shape>())
+    {
+      if (string.Equals(GetShapeLabel(candidate), text, StringComparison.OrdinalIgnoreCase))
+      {
+        shape = candidate;
+        return true;
+      }
+    }
+
+    return Enum.TryParse(text, ignoreCase: true, out shape);
   }
 
   internal static string SanitiseForSpriteFont(string text, ISet<char> supportedCharacters)

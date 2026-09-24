@@ -105,21 +105,35 @@ internal static class AuthoritativeUnitCatalogue
     _ => Enum.Parse<Pack>(char.ToUpperInvariant(id[0]) + id[1..])
   };
 
-  private static Shape ParseShape(string? pattern) => pattern switch
+  private static Shape ParseShape(string? pattern)
   {
-    "Square" => Shape.Any,
-    "Diamond" => Shape.Straight,
-    "Circle" => Shape.Circle,
-    "Line" => Shape.Line,
-    "Diagonal" => Shape.Diagonal,
-    "Line OR Diagonal" => Shape.LineOrDiagonal,
-    "Forward" => Shape.Forward,
-    "ForwardDiagonal" => Shape.ForwardDiagonal,
-    "ForwardLine" => Shape.ForwardLine,
-    "ChessKnight" => Shape.ChessKnight,
-    "NA" => Shape.MoveOnEnemy,
-    _ => Shape.None
-  };
+    if (string.IsNullOrWhiteSpace(pattern))
+    {
+      return Shape.None;
+    }
+
+    string normalised = new(pattern
+      .Where(char.IsLetterOrDigit)
+      .Select(char.ToLowerInvariant)
+      .ToArray());
+
+    return normalised switch
+    {
+      "square" or "any" => Shape.Any,
+      "diamond" or "straight" => Shape.Straight,
+      "circle" => Shape.Circle,
+      "line" => Shape.Line,
+      "diagonal" => Shape.Diagonal,
+      "lineordiagonal" or "diagonalorline" => Shape.LineOrDiagonal,
+      "forward" => Shape.Forward,
+      "forwarddiagonal" => Shape.ForwardDiagonal,
+      "forwardline" => Shape.ForwardLine,
+      "chessknight" => Shape.ChessKnight,
+      "na" => Shape.MoveOnEnemy,
+      "none" => Shape.None,
+      _ => Shape.None
+    };
+  }
 
   private sealed class Specification { public List<Unit>? Units { get; set; } }
   private sealed class Unit

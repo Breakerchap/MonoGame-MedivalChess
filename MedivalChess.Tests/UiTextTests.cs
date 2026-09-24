@@ -6,11 +6,11 @@ namespace MedivalChess.Tests;
 public class UiTextTests
 {
   [Fact]
-  public void PieceLabels_PreserveAllThreeAbbreviationCharacters()
+  public void PieceLabels_UseTitleCaseForNonRoyals()
   {
     PieceDefinition definition = new(
       PieceType.Swordsman,
-      "abc",
+      "aBC",
       Pack.Medival,
       (1, Shape.Any),
       1,
@@ -21,7 +21,27 @@ public class UiTextTests
       1
     );
 
-    Assert.Equal("ABC", UiText.BuildPieceLabel(definition));
+    Assert.Equal("Abc", UiText.BuildPieceLabel(definition));
+  }
+
+  [Fact]
+  public void PieceLabels_UseAllCapsForRoyals()
+  {
+    PieceDefinition definition = new(
+      PieceType.King,
+      "kiN",
+      Pack.Medival,
+      (1, Shape.Any),
+      1,
+      1,
+      (1, 1),
+      (1, 1),
+      Shape.Any,
+      0,
+      category: PieceCategory.Royal
+    );
+
+    Assert.Equal("KIN", UiText.BuildPieceLabel(definition));
   }
 
   [Fact]
@@ -39,7 +59,21 @@ public class UiTextTests
   [Fact]
   public void FormatAction_ShowsTheEntireInclusiveAttackRange()
   {
-    Assert.Equal("2-3 Any", UiText.FormatAction(new AttackRange(2, 3), Shape.Any));
+    Assert.Equal("2-3 Square", UiText.FormatAction(new AttackRange(2, 3), Shape.Any));
+  }
+
+  [Theory]
+  [InlineData(Shape.Any, "Square")]
+  [InlineData(Shape.Straight, "Diamond")]
+  [InlineData(Shape.Circle, "Circle")]
+  [InlineData(Shape.Line, "Line")]
+  [InlineData(Shape.Diagonal, "Diagonal")]
+  [InlineData(Shape.LineOrDiagonal, "Line or Diagonal")]
+  public void ShapeLabels_UsePlayerFacingGeometryNames(Shape shape, string expected)
+  {
+    Assert.Equal(expected, UiText.GetShapeLabel(shape));
+    Assert.True(UiText.TryParseShapeLabel(expected, out Shape parsed));
+    Assert.Equal(shape, parsed);
   }
 
   [Fact]
