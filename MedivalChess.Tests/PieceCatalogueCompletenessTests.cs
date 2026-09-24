@@ -63,6 +63,29 @@ public sealed class PieceCatalogueCompletenessTests
   }
 
   [Fact]
+  public void MovableAuthoritativeUnitsNeverSilentlyLoadAsNoMovement()
+  {
+    Assert.DoesNotContain(
+      PieceDefinitions.All,
+      unit => unit.Movement.Maximum > 0 && unit.Movement.Shape == Shape.None);
+  }
+
+  [Fact]
+  public void CanonicalCompositeShapesLoadAndBehaveAsLinesOrDiagonals()
+  {
+    PieceDefinition keshik = PieceDefinitions.All.Single(unit => unit.SourceUnitId == "dynasty.keshik");
+    PieceDefinition fallen = PieceDefinitions.All.Single(unit => unit.SourceUnitId == "angels_demons.fallen");
+
+    Assert.Equal(Shape.LineOrDiagonal, keshik.Movement.Shape);
+    Assert.Equal(Shape.LineOrDiagonal, fallen.Movement.Shape);
+
+    UnitRule rule = UnitRules.GetRequired(keshik.Identifier);
+    Assert.True(UnitRules.CanMove(rule, 0, 0, 0, 3));
+    Assert.True(UnitRules.CanMove(rule, 0, 0, 3, 3));
+    Assert.False(UnitRules.CanMove(rule, 0, 0, 2, 1));
+  }
+
+  [Fact]
   public void VariableAndFormationUnitsHaveDocumentedBaselineDefinitions()
   {
     PieceDefinition qilin = PieceDefinitions.All.Single(unit => unit.Type == PieceType.Qilin);
